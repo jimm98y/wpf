@@ -54,6 +54,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         private readonly Dictionary<int, (int Words, int Stride, bool Atomic)> _tgsm = new();   // g# -> words, stride (0 raw)
         private readonly HashSet<int> _atomicTgsm = new();
         private readonly HashSet<int> _usedUavs = new();
+        private readonly HashSet<int> _uavRead = new();
         private readonly HashSet<int> _usedCounters = new();
         private bool _usesRasterizerSamples, _usesSamplePositions;
         private int[] _threadGroup = { 1, 1, 1 };
@@ -251,13 +252,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             return ret switch { 'i' => "r32sint", 'u' => "r32uint", _ => "r32float" };
         }
 
-        private static string StorageTextureType(int dim, string format) => dim switch
+        /// <summary>A storage texture: read_write when the shader reads it (WebGPU allows that for the R32
+        /// formats, and more with the format tiers), write-only otherwise.</summary>
+        private static string StorageTextureType(int dim, string format, bool read)
         {
-            Dim1D or Dim2D => $"texture_storage_2d<{format}, read_write>",
-            Dim1DArray or Dim2DArray => $"texture_storage_2d_array<{format}, read_write>",
-            Dim3D => $"texture_storage_3d<{format}, read_write>",
-            _ => throw new NotSupportedException($"typed UAV of dimension {dim}"),
-        };
+            string access = read ? "read_write" : "write";
+            return dim switch
+            {
+                Dim1D or Dim2D => $"texture_storage_2d<{format}, {access}>",
+                Dim1DArray or Dim2DArray => $"texture_storage_2d_array<{format}, {access}>",
+                Dim3D => $"texture_storage_3d<{format}, {access}>",
+                _ => throw new NotSupportedException($"typed UAV of dimension {dim}"),
+            };
+        }
 
         /// <summary>The texel coordinate of a typed UAV access, with its layer.</summary>
         private static string UavCoord(int dim, string c, out string? layer)
@@ -281,6 +288,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             int u = o[2].Index0;
             if (!_uavs.TryGetValue(u, out var d) || d.Kind != 't') throw new NotSupportedException($"ld_uav_typed on u{u}, which is not a typed UAV");
             _usedUavs.Add(u);
+            _uavRead.Add(u);
             string c = USource(o[1]);
             string v;
             if (d.Dim == DimBuffer)
@@ -435,7 +443,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 if (!_usedUavs.Contains(u) && !_atomicUavs.Contains(u)) continue;
                 string binding = $"@group({_group}) @binding({UavBase + u})";
                 if (d.Kind == 't' && d.Dim != DimBuffer)
-                    w.Append($"{binding} var u{u}: {StorageTextureType(d.Dim, UavFormat(u, d.Ret))};\n");
+                    w.Append($"{binding} var u{u}: {StorageTextureType(d.Dim, UavFormat(u, d.Ret), _uavRead.Contains(u))};\n");
                 else
                     w.Append($"{binding} var<storage, read_write> u{u}: array<{(_atomicUavs.Contains(u) ? "atomic<u32>" : "u32")}>;\n");
             }

@@ -32,6 +32,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11DeviceContext.VSSetShader, (delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)&VSSetShader);
             vt.Set(Vtbl.ID3D11DeviceContext.PSSetShader, (delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)&PSSetShader);
             vt.Set(Vtbl.ID3D11DeviceContext.GSSetShader, (delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)&GSSetShader);
+            vt.Set(Vtbl.ID3D11DeviceContext.CSSetShader, (delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)&CSSetShader);
+            vt.Set(Vtbl.ID3D11DeviceContext.HSSetShader, (delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)&HSSetShader);
+            vt.Set(Vtbl.ID3D11DeviceContext.DSSetShader, (delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)&DSSetShader);
+            vt.Set(Vtbl.ID3D11DeviceContext.CSSetConstantBuffers, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&CSSetConstantBuffers);
+            vt.Set(Vtbl.ID3D11DeviceContext.HSSetConstantBuffers, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&HSSetConstantBuffers);
+            vt.Set(Vtbl.ID3D11DeviceContext.DSSetConstantBuffers, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&DSSetConstantBuffers);
+            vt.Set(Vtbl.ID3D11DeviceContext.CSSetShaderResources, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&CSSetShaderResources);
+            vt.Set(Vtbl.ID3D11DeviceContext.HSSetShaderResources, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&HSSetShaderResources);
+            vt.Set(Vtbl.ID3D11DeviceContext.DSSetShaderResources, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&DSSetShaderResources);
+            vt.Set(Vtbl.ID3D11DeviceContext.CSSetSamplers, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&CSSetSamplers);
+            vt.Set(Vtbl.ID3D11DeviceContext.HSSetSamplers, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&HSSetSamplers);
+            vt.Set(Vtbl.ID3D11DeviceContext.DSSetSamplers, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)&DSSetSamplers);
+            vt.Set(Vtbl.ID3D11DeviceContext.CSSetUnorderedAccessViews, (delegate* unmanaged<IntPtr, uint, uint, IntPtr*, uint*, void>)&CSSetUnorderedAccessViews);
+            vt.Set(Vtbl.ID3D11DeviceContext.OMSetRenderTargetsAndUnorderedAccessViews, (delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, uint, uint, IntPtr*, uint*, void>)&OMSetRenderTargetsAndUnorderedAccessViews);
+            vt.Set(Vtbl.ID3D11DeviceContext.Dispatch, (delegate* unmanaged<IntPtr, uint, uint, uint, void>)&DispatchSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.DispatchIndirect, (delegate* unmanaged<IntPtr, IntPtr, uint, void>)&DispatchIndirectSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.ClearUnorderedAccessViewUint, (delegate* unmanaged<IntPtr, IntPtr, uint*, void>)&ClearUavUint);
+            vt.Set(Vtbl.ID3D11DeviceContext.ClearUnorderedAccessViewFloat, (delegate* unmanaged<IntPtr, IntPtr, float*, void>)&ClearUavFloat);
+            vt.Set(Vtbl.ID3D11DeviceContext.CopyStructureCount, (delegate* unmanaged<IntPtr, IntPtr, uint, IntPtr, void>)&CopyStructureCountSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexed, (delegate* unmanaged<IntPtr, uint, uint, int, void>)&DrawIndexed);
             vt.Set(Vtbl.ID3D11DeviceContext.Draw, (delegate* unmanaged<IntPtr, uint, uint, void>)&DrawSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.DrawIndexedInstanced, (delegate* unmanaged<IntPtr, uint, uint, uint, int, uint, void>)&DrawIndexedInstanced);
@@ -87,6 +106,94 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static void SetSrvs(IntPtr self, ShaderStage s, uint start, uint n, IntPtr* pp) { var c = C(self); if (c != null) Guard("SetShaderResources", () => c.SetResources(s, (int)start, Objects<D3DShaderResourceView>(pp, n))); }
         private static void SetSmps(IntPtr self, ShaderStage s, uint start, uint n, IntPtr* pp) { var c = C(self); if (c != null) Guard("SetSamplers", () => c.SetSamplers(s, (int)start, Objects<D3DSamplerState>(pp, n))); }
         private static void SetSh(IntPtr self, ShaderStage s, IntPtr shader) { var c = C(self); if (c != null) Guard("SetShader", () => c.SetShader(s, From<D3DShader>(shader))); }
+
+        [UnmanagedCallersOnly] private static void CSSetShader(IntPtr self, IntPtr sh, IntPtr* ci, uint nci) => SetSh(self, ShaderStage.Compute, sh);
+        [UnmanagedCallersOnly] private static void HSSetShader(IntPtr self, IntPtr sh, IntPtr* ci, uint nci) => SetSh(self, ShaderStage.Hull, sh);
+        [UnmanagedCallersOnly] private static void DSSetShader(IntPtr self, IntPtr sh, IntPtr* ci, uint nci) => SetSh(self, ShaderStage.Domain, sh);
+        [UnmanagedCallersOnly] private static void CSSetConstantBuffers(IntPtr self, uint start, uint n, IntPtr* pp) => SetCbs(self, ShaderStage.Compute, start, n, pp);
+        [UnmanagedCallersOnly] private static void HSSetConstantBuffers(IntPtr self, uint start, uint n, IntPtr* pp) => SetCbs(self, ShaderStage.Hull, start, n, pp);
+        [UnmanagedCallersOnly] private static void DSSetConstantBuffers(IntPtr self, uint start, uint n, IntPtr* pp) => SetCbs(self, ShaderStage.Domain, start, n, pp);
+        [UnmanagedCallersOnly] private static void CSSetShaderResources(IntPtr self, uint start, uint n, IntPtr* pp) => SetSrvs(self, ShaderStage.Compute, start, n, pp);
+        [UnmanagedCallersOnly] private static void HSSetShaderResources(IntPtr self, uint start, uint n, IntPtr* pp) => SetSrvs(self, ShaderStage.Hull, start, n, pp);
+        [UnmanagedCallersOnly] private static void DSSetShaderResources(IntPtr self, uint start, uint n, IntPtr* pp) => SetSrvs(self, ShaderStage.Domain, start, n, pp);
+        [UnmanagedCallersOnly] private static void CSSetSamplers(IntPtr self, uint start, uint n, IntPtr* pp) => SetSmps(self, ShaderStage.Compute, start, n, pp);
+        [UnmanagedCallersOnly] private static void HSSetSamplers(IntPtr self, uint start, uint n, IntPtr* pp) => SetSmps(self, ShaderStage.Hull, start, n, pp);
+        [UnmanagedCallersOnly] private static void DSSetSamplers(IntPtr self, uint start, uint n, IntPtr* pp) => SetSmps(self, ShaderStage.Domain, start, n, pp);
+
+        private static uint[]? Counts(uint* counts, uint n)
+        {
+            if (counts == null) return null;
+            var r = new uint[n];
+            for (int i = 0; i < n; i++) r[i] = counts[i];
+            return r;
+        }
+
+        [UnmanagedCallersOnly]
+        private static void CSSetUnorderedAccessViews(IntPtr self, uint start, uint n, IntPtr* uavs, uint* counts)
+        {
+            var c = C(self);
+            if (c == null) return;
+            var v = Objects<D3DUnorderedAccessView>(uavs, Math.Min(n, (uint)MaxUavs));
+            var k = Counts(counts, (uint)v.Length);
+            Guard("CSSetUnorderedAccessViews", () => c.SetUavs(true, (int)start, v, k));
+        }
+
+        [UnmanagedCallersOnly]
+        private static void OMSetRenderTargetsAndUnorderedAccessViews(IntPtr self, uint nRtv, IntPtr* rtvs, IntPtr dsv, uint uavStart, uint nUav, IntPtr* uavs, uint* counts)
+        {
+            var c = C(self);
+            if (c == null) return;
+            if (nRtv != 0xFFFFFFFF)                    // D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL
+            {
+                var v = Objects<D3DRenderTargetView>(rtvs, Math.Min(nRtv, (uint)MaxTargets));
+                Guard("OMSetRenderTargetsAndUnorderedAccessViews", () => c.SetTargets(v, From<D3DDepthStencilView>(dsv)));
+            }
+            if (nUav != 0xFFFFFFFF)                    // D3D11_KEEP_UNORDERED_ACCESS_VIEWS
+            {
+                var u = Objects<D3DUnorderedAccessView>(uavs, Math.Min(nUav, (uint)MaxUavs));
+                var k = Counts(counts, (uint)u.Length);
+                Guard("OMSetRenderTargetsAndUnorderedAccessViews", () => c.SetUavs(false, (int)uavStart, u, k));
+            }
+        }
+
+        [UnmanagedCallersOnly] private static void DispatchSlot(IntPtr self, uint x, uint y, uint z) { var c = C(self); if (c != null) Guard("Dispatch", () => c.Dispatch(x, y, z)); }
+
+        [UnmanagedCallersOnly]
+        private static void DispatchIndirectSlot(IntPtr self, IntPtr args, uint offset)
+        {
+            var c = C(self);
+            var b = From<D3DBuffer>(args);
+            if (c != null && b != null) Guard("DispatchIndirect", () => c.DispatchIndirect(b, offset));
+        }
+
+        [UnmanagedCallersOnly]
+        private static void ClearUavUint(IntPtr self, IntPtr view, uint* values)
+        {
+            var c = C(self);
+            var v = From<D3DUnorderedAccessView>(view);
+            if (c == null || v == null || values == null) return;
+            var copy = new[] { values[0], values[1], values[2], values[3] };
+            Guard("ClearUnorderedAccessViewUint", () => c.ClearUav(v, copy, false));
+        }
+
+        [UnmanagedCallersOnly]
+        private static void ClearUavFloat(IntPtr self, IntPtr view, float* values)
+        {
+            var c = C(self);
+            var v = From<D3DUnorderedAccessView>(view);
+            if (c == null || v == null || values == null) return;
+            var copy = new[] { BitConverter.SingleToUInt32Bits(values[0]), BitConverter.SingleToUInt32Bits(values[1]), BitConverter.SingleToUInt32Bits(values[2]), BitConverter.SingleToUInt32Bits(values[3]) };
+            Guard("ClearUnorderedAccessViewFloat", () => c.ClearUav(v, copy, true));
+        }
+
+        [UnmanagedCallersOnly]
+        private static void CopyStructureCountSlot(IntPtr self, IntPtr dst, uint offset, IntPtr src)
+        {
+            var c = C(self);
+            var b = From<D3DBuffer>(dst);
+            var v = From<D3DUnorderedAccessView>(src);
+            if (c != null && b != null && v != null) Guard("CopyStructureCount", () => c.CopyStructureCount(b, offset, v));
+        }
 
         [UnmanagedCallersOnly] private static void VSSetConstantBuffers(IntPtr self, uint start, uint n, IntPtr* pp) => SetCbs(self, ShaderStage.Vertex, start, n, pp);
         [UnmanagedCallersOnly] private static void PSSetConstantBuffers(IntPtr self, uint start, uint n, IntPtr* pp) => SetCbs(self, ShaderStage.Pixel, start, n, pp);

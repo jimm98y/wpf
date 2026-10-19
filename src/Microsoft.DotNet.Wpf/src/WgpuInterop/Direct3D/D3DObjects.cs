@@ -142,6 +142,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static readonly Vtable s_vs = Build("ID3D11VertexShader", Vtbl.ID3D11VertexShader.IID);
         private static readonly Vtable s_ps = Build("ID3D11PixelShader", Vtbl.ID3D11PixelShader.IID);
         private static readonly Vtable s_gs = Build("ID3D11GeometryShader", Vtbl.ID3D11GeometryShader.IID);
+        private static readonly Vtable s_cs = Build("ID3D11ComputeShader", Vtbl.ID3D11ComputeShader.IID);
+        private static readonly Vtable s_hs = Build("ID3D11HullShader", Vtbl.ID3D11HullShader.IID);
+        private static readonly Vtable s_ds = Build("ID3D11DomainShader", Vtbl.ID3D11DomainShader.IID);
 
         private static Vtable Build(string name, Guid iid)
         {
@@ -155,6 +158,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             ShaderStage.Vertex => s_vs,
             ShaderStage.Pixel => s_ps,
             ShaderStage.Geometry => s_gs,
+            ShaderStage.Compute => s_cs,
+            ShaderStage.Hull => s_hs,
+            ShaderStage.Domain => s_ds,
             _ => throw new NotSupportedException($"{code.Stage} shaders"),
         })
         {

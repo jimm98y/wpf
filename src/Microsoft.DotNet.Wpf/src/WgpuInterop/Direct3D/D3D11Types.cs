@@ -71,6 +71,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct D3D11_TEXTURE1D_DESC
+    {
+        public uint Width, MipLevels, ArraySize;
+        public DXGI_FORMAT Format;
+        public D3D11_USAGE Usage;
+        public D3D11_BIND BindFlags;
+        public D3D11_CPU_ACCESS CPUAccessFlags;
+        public D3D11_RESOURCE_MISC MiscFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct D3D11_TEXTURE3D_DESC
+    {
+        public uint Width, Height, Depth, MipLevels;
+        public DXGI_FORMAT Format;
+        public D3D11_USAGE Usage;
+        public D3D11_BIND BindFlags;
+        public D3D11_CPU_ACCESS CPUAccessFlags;
+        public D3D11_RESOURCE_MISC MiscFlags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct D3D11_TEXTURE2D_DESC
     {
         public uint Width, Height, MipLevels, ArraySize;

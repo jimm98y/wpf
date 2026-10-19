@@ -192,10 +192,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var d = desc ?? new D3D11_VIEW_DESC
                 {
                     Format = t.Desc.Format,
-                    ViewDimension = (t.Desc.MiscFlags & D3D11_RESOURCE_MISC.TEXTURECUBE) != 0 ? (t.Desc.ArraySize > 6 ? 10u : 9u)
+                    ViewDimension = t.Kind == 3 ? 8u : t.Kind == 1 ? (t.Desc.ArraySize > 1 ? 3u : 2u)
+                        : (t.Desc.MiscFlags & D3D11_RESOURCE_MISC.TEXTURECUBE) != 0 ? (t.Desc.ArraySize > 6 ? 10u : 9u)
                         : t.SampleCount > 1 ? (t.Desc.ArraySize > 1 ? 7u : 6u) : (t.Desc.ArraySize > 1 ? 5u : 4u),
                     U0 = 0, U1 = t.MipLevels, U2 = 0, U3 = t.Desc.ArraySize,
                 };
+                if (d.ViewDimension == 10 && desc == null) d.U3 = t.Desc.ArraySize / 6;   // a cube array counts cubes
                 if (desc != null && d.ViewDimension == 9) d.U3 = 6;
                 if (d.Format == DXGI_FORMAT.UNKNOWN) d.Format = t.Desc.Format;
                 Desc = d;
@@ -224,7 +226,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 uint layer = 0, layers = 1;
                 switch (Desc.ViewDimension)
                 {
-                    case 5: layer = Desc.U2; layers = Desc.U3; break;
+                    case 3: case 5: layer = Desc.U2; layers = Desc.U3; break;   // 1D and 2D arrays
                     case 6: mip = 0; mips = 1; break;
                     case 7: mip = 0; mips = 1; layer = Desc.U0; layers = Desc.U1; break;
                     case 9: layers = 6; break;
@@ -232,11 +234,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 var dim = shaderDim switch
                 {
+                    5 => WGPUTextureViewDimension._3D,
                     6 => WGPUTextureViewDimension.Cube,
                     10 => WGPUTextureViewDimension.CubeArray,
                     7 or 8 => WGPUTextureViewDimension._2DArray,
                     _ => WGPUTextureViewDimension._2D,
                 };
+                if (dim == WGPUTextureViewDimension._3D) { layer = 0; layers = 1; }
                 if (dim == WGPUTextureViewDimension._2D) layers = 1;
                 var fmt = Formats.Texture(Desc.Format);
                 var aspect = Formats.IsDepth(t.Format) ? WGPUTextureAspect.DepthOnly : WGPUTextureAspect.All;

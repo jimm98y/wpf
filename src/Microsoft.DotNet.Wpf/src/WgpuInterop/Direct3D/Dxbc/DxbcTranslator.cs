@@ -53,6 +53,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public readonly SortedDictionary<int, (char Kind, int Dim, char Ret, int Stride)> Uavs = new();
         /// <summary>UAVs whose hidden counter the shader uses (binding 64 + slot).</summary>
         public readonly SortedSet<int> Counters = new();
+        /// <summary>Typed UAV textures the shader reads (read_write); the others are write-only.</summary>
+        public readonly SortedSet<int> UavReads = new();
     }
 
     internal sealed class LinkedElement
@@ -152,6 +154,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             foreach (var (u, d) in _uavs) if (_usedUavs.Contains(u) || _atomicUavs.Contains(u)) _bindings.Uavs[u] = (d.Kind, d.Dim, d.Ret, d.Stride);
             foreach (int u in _usedCounters) _bindings.Counters.Add(u);
             foreach (int t in _usedRawSrvs) _bindings.StorageResources.Add(t);
+            foreach (int u in _uavRead) _bindings.UavReads.Add(u);
             Wgsl = Assemble();
         }
 

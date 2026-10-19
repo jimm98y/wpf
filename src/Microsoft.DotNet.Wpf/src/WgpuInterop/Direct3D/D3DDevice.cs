@@ -291,6 +291,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 Vtbl.ID3D11Device.IID, Vtbl.ID3D11Device1.IID, Vtbl.ID3D11Device2.IID, Vtbl.ID3D11Device3.IID, Vtbl.ID3D11Device4.IID, Vtbl.ID3D11Device5.IID);
             vt.Set(Vtbl.ID3D11Device.CreateBuffer, (delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateBuffer);
             vt.Set(Vtbl.ID3D11Device.CreateTexture2D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture2D);
+            vt.Set(Vtbl.ID3D11Device.CreateTexture1D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE1D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture1D);
+            vt.Set(Vtbl.ID3D11Device.CreateTexture3D, (delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)&CreateTexture3D);
+            vt.Set(Vtbl.ID3D11Device.CreateUnorderedAccessView, (delegate* unmanaged<IntPtr, IntPtr, D3D11_VIEW_DESC*, IntPtr*, int>)&CreateUnorderedAccessView);
+            vt.Set(Vtbl.ID3D11Device.CreateComputeShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateComputeShader);
+            vt.Set(Vtbl.ID3D11Device.CreateHullShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateHullShader);
+            vt.Set(Vtbl.ID3D11Device.CreateDomainShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateDomainShader);
             vt.Set(Vtbl.ID3D11Device.OpenSharedResource, (delegate* unmanaged<IntPtr, IntPtr, Guid*, IntPtr*, int>)&OpenSharedResource);
             vt.Set(Vtbl.ID3D11Device1.OpenSharedResource1, (delegate* unmanaged<IntPtr, IntPtr, Guid*, IntPtr*, int>)&OpenSharedResource);
             vt.Set(Vtbl.ID3D11Device.CreateShaderResourceView, (delegate* unmanaged<IntPtr, IntPtr, D3D11_VIEW_DESC*, IntPtr*, int>)&CreateShaderResourceView);
@@ -440,6 +446,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static int CreateGeometryShader(IntPtr self, byte* bytecode, nuint length, IntPtr linkage, IntPtr* shader)
             => CreateShader(self, bytecode, length, shader, Dxbc.ShaderStage.Geometry, "CreateGeometryShader");
+
+        [UnmanagedCallersOnly]
+        private static int CreateComputeShader(IntPtr self, byte* bytecode, nuint length, IntPtr linkage, IntPtr* shader)
+            => CreateShader(self, bytecode, length, shader, Dxbc.ShaderStage.Compute, "CreateComputeShader");
+
+        [UnmanagedCallersOnly]
+        private static int CreateHullShader(IntPtr self, byte* bytecode, nuint length, IntPtr linkage, IntPtr* shader)
+            => CreateShader(self, bytecode, length, shader, Dxbc.ShaderStage.Hull, "CreateHullShader");
+
+        [UnmanagedCallersOnly]
+        private static int CreateDomainShader(IntPtr self, byte* bytecode, nuint length, IntPtr linkage, IntPtr* shader)
+            => CreateShader(self, bytecode, length, shader, Dxbc.ShaderStage.Domain, "CreateDomainShader");
+
+        [UnmanagedCallersOnly]
+        private static int CreateTexture1D(IntPtr self, D3D11_TEXTURE1D_DESC* desc, D3D11_SUBRESOURCE_DATA* init, IntPtr* texture)
+        {
+            var d = Self(self);
+            if (d == null || desc == null) return HResult.E_INVALIDARG;
+            if (texture != null) *texture = IntPtr.Zero;
+            var copy = *desc;
+            return Guard("CreateTexture1D", () => ComObject.Out(texture, D3DTexture2D.Create1D(d, copy, init)));
+        }
+
+        [UnmanagedCallersOnly]
+        private static int CreateTexture3D(IntPtr self, D3D11_TEXTURE3D_DESC* desc, D3D11_SUBRESOURCE_DATA* init, IntPtr* texture)
+        {
+            var d = Self(self);
+            if (d == null || desc == null) return HResult.E_INVALIDARG;
+            if (texture != null) *texture = IntPtr.Zero;
+            var copy = *desc;
+            return Guard("CreateTexture3D", () => ComObject.Out(texture, D3DTexture2D.Create3D(d, copy, init)));
+        }
+
+        [UnmanagedCallersOnly]
+        private static int CreateUnorderedAccessView(IntPtr self, IntPtr resource, D3D11_VIEW_DESC* desc, IntPtr* view)
+        {
+            var d = Self(self);
+            var r = From<D3DResource>(resource);
+            if (d == null || r == null) return HResult.E_INVALIDARG;
+            if (view != null) *view = IntPtr.Zero;
+            D3D11_VIEW_DESC? copy = desc == null ? null : *desc;
+            return Guard("CreateUnorderedAccessView", () => ComObject.Out(view, new D3DUnorderedAccessView(d, r, copy)));
+        }
 
         [UnmanagedCallersOnly]
         private static int CreateBlendState(IntPtr self, D3D11_BLEND_DESC* desc, IntPtr* state)

@@ -36,7 +36,7 @@ namespace WgpuInterop.Tests.Direct3D
 
         internal sealed class CBVar { public string Name = ""; public int Offset, Size, Class, Type, Rows, Cols, Elements; }
         internal sealed class CBuffer { public string Name = ""; public int Size, Slot = -1; public List<CBVar> Vars = new(); }
-        internal sealed class Binding { public string Name = ""; public int Kind, ReturnType, Dimension, Slot, Count, Flags; }
+        internal sealed class Binding { public string Name = ""; public int Kind, ReturnType, Dimension, Samples, Slot, Count, Flags; }
         internal sealed class Reflection { public List<CBuffer> CBuffers = new(); public List<Binding> Bindings = new(); }
 
         private static int I32(byte[] b, int o) => BitConverter.ToInt32(b, o);
@@ -68,7 +68,7 @@ namespace WgpuInterop.Tests.Direct3D
             for (int i = 0; i < bindCount; i++)
             {
                 int o = bindOff + i * 32;
-                r.Bindings.Add(new Binding { Name = Str(d, I32(d, o)), Kind = I32(d, o + 4), ReturnType = I32(d, o + 8), Dimension = I32(d, o + 12), Slot = I32(d, o + 20), Count = I32(d, o + 24), Flags = I32(d, o + 28) });
+                r.Bindings.Add(new Binding { Name = Str(d, I32(d, o)), Kind = I32(d, o + 4), ReturnType = I32(d, o + 8), Dimension = I32(d, o + 12), Samples = I32(d, o + 16), Slot = I32(d, o + 20), Count = I32(d, o + 24), Flags = I32(d, o + 28) });
             }
             for (int i = 0; i < cbCount; i++)
             {
@@ -186,10 +186,10 @@ namespace WgpuInterop.Tests.Direct3D
 
         // ---- drawing on one device ------------------------------------------------------------------
 
-        private static IntPtr Fn(IntPtr com, int slot) => (*(IntPtr**)com)[slot];
-        private static void Release(IntPtr com) { if (com != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)Fn(com, 2))(com); }
+        internal static IntPtr Fn(IntPtr com, int slot) => (*(IntPtr**)com)[slot];
+        internal static void Release(IntPtr com) { if (com != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)Fn(com, 2))(com); }
 
-        private static void Check(int hr, string what) { if (hr < 0) throw new InvalidOperationException($"{what}: 0x{hr:x8}"); }
+        internal static void Check(int hr, string what) { if (hr < 0) throw new InvalidOperationException($"{what}: 0x{hr:x8}"); }
 
         /// <summary>Draws the pair on the device and returns each target's texels as four floats
         /// each (W x H; integer targets' components as their bits), in SV_Target order.</summary>
@@ -400,7 +400,7 @@ namespace WgpuInterop.Tests.Direct3D
             return sb.ToString();
         }
 
-        private static IntPtr MakeTexture(IntPtr dev, IntPtr ctx, Binding b, bool comparison, Func<IntPtr, IntPtr> keep)
+        internal static IntPtr MakeTexture(IntPtr dev, IntPtr ctx, Binding b, bool comparison, Func<IntPtr, IntPtr> keep)
         {
             const int S = 16;
             if (b.Dimension is 1 or 11)
@@ -420,6 +420,7 @@ namespace WgpuInterop.Tests.Direct3D
                 Check(((delegate* unmanaged<IntPtr, IntPtr, D3D11_VIEW_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateShaderResourceView))(dev, buf, &vd, &view), "CreateShaderResourceView buffer");
                 return keep(view);
             }
+            if (b.Dimension is 2 or 3 or 8) return MakeTexture1D3D(dev, b, keep);
             bool cube = b.Dimension is 9 or 10;
             uint layers = cube ? 6u : b.Dimension is 5 ? 2u : 1u;
             bool depth = comparison && !cube && b.Dimension == 4 && b.ReturnType == 5;
@@ -462,6 +463,41 @@ namespace WgpuInterop.Tests.Direct3D
             var vd2 = new D3D11_VIEW_DESC { Format = DXGI_FORMAT.R8G8B8A8_UNORM, ViewDimension = cube ? 9u : layers > 1 ? 5u : 4u, U0 = 0, U1 = 1, U2 = 0, U3 = layers };
             if (b.Dimension == 10) { vd2.ViewDimension = 10; vd2.U2 = 0; vd2.U3 = 1; }
             Check(((delegate* unmanaged<IntPtr, IntPtr, D3D11_VIEW_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateShaderResourceView))(dev, tex, &vd2, &srv), "CreateShaderResourceView");
+            return keep(srv);
+        }
+
+        /// <summary>A 1D, 1D array or 3D texture of the same gradient pattern.</summary>
+        private static IntPtr MakeTexture1D3D(IntPtr dev, Binding b, Func<IntPtr, IntPtr> keep)
+        {
+            const uint S = 16, D = 4;
+            uint layers = b.Dimension == 3 ? 2u : 1u, height = b.Dimension == 8 ? S : 1u, depth = b.Dimension == 8 ? D : 1u;
+            var px = new uint[S * height * depth * layers];
+            for (int i = 0; i < px.Length; i++)
+            {
+                int x = i % (int)S, y = (i / (int)S) % (int)height, z = i / (int)(S * height);
+                px[i] = (uint)((x * 8) | ((y * 8 + 10) << 8) | ((z * 30 + 30) << 16) | (200 + x) << 24);
+            }
+            IntPtr tex, srv;
+            fixed (uint* p = px)
+            {
+                var init = new D3D11_SUBRESOURCE_DATA[layers];
+                for (int l = 0; l < layers; l++) init[l] = new D3D11_SUBRESOURCE_DATA { pSysMem = p + l * S, SysMemPitch = S * 4, SysMemSlicePitch = S * height * 4 };
+                fixed (D3D11_SUBRESOURCE_DATA* ip = init)
+                {
+                    if (b.Dimension == 8)
+                    {
+                        var d = new D3D11_TEXTURE3D_DESC { Width = S, Height = S, Depth = D, MipLevels = 1, Format = DXGI_FORMAT.R8G8B8A8_UNORM, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.SHADER_RESOURCE };
+                        Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE3D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture3D))(dev, &d, ip, &tex), "CreateTexture3D srv");
+                    }
+                    else
+                    {
+                        var d = new D3D11_TEXTURE1D_DESC { Width = S, MipLevels = 1, ArraySize = layers, Format = DXGI_FORMAT.R8G8B8A8_UNORM, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.SHADER_RESOURCE };
+                        Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE1D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture1D))(dev, &d, ip, &tex), "CreateTexture1D srv");
+                    }
+                }
+            }
+            keep(tex);
+            Check(((delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateShaderResourceView))(dev, tex, null, &srv), "CreateShaderResourceView 1D/3D");
             return keep(srv);
         }
 
