@@ -243,31 +243,55 @@ app that renders into it. The native `InteropDeviceBitmap` P/Invokes are replace
 implementation. The DUCE commands `MILCMD_D3DIMAGE` and `MILCMD_D3DIMAGE_PRESENT` become a scene
 primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty rectangle.
 
-- **The surface is the shim's** (`IDirect3DSurface9` from section 7): it takes the same path as a
-  real one below: a GPU readback through the shim's `GetRenderTargetData`, then an upload.
-  - **Decided (2026-10-19, the user): the copy path stays; no device sharing for now.** A copy-free
-    path needs the shim's textures and the compositor on one WebGPU device. The compositor has one
-    device per UI thread (the multi-UI-thread fix), and the shim's device logs validation errors
-    instead of aborting. On the GL backend textures cannot cross wgpu devices.
-  - The option kept for later: the compositor adopts the shim's device rules and the shim uses the
-    UI thread's device. A present is then a GPU-to-GPU copy into the compositor's texture, which is
-    what stock does with a shared D3D9Ex surface.
+- **The surface is the shim's** (`IDirect3DSurface9` from section 7): **zero-copy.**
+  - **Decided (2026-10-19, the user, replacing "the copy path stays"): device sharing.** The first UI
+    thread's compositor adopts the shim's device, `D3DDevice.SharedGpu`
+    (`WpfCompositionSink.CreateOrShareContext`; `WPF_D3DIMAGE_SHARE=0` turns it off). Every other UI
+    thread's compositor keeps a device of its own and takes the copy path below; on the GL backend
+    textures cannot cross wgpu devices.
+  - A present (`IMilCompositionSink.SendSurface`, made under D3DImage's lock) flushes the shim's
+    immediate context, then on the one queue runs a pass that un-premultiplies (to the integer, as the
+    copy path does) or, for X8R8G8B8, makes the surface opaque. The pass writes into a scratch texture,
+    and the dirty rectangle is copied from there into the image's texture. No readback, no upload.
+  - **The image's texture is the back buffer's front buffer**, as milcore's `CInteropDeviceBitmap`
+    keeps one (`ExternalImage`, keyed by `ManagedInteropBitmap.Key`):
+    - it is kept across frames of one size, so a dirty rectangle is copied alone;
+    - a D3DImage resource that leaves its channel and comes back in the same batch (its visual
+      re-rendered) still shows the last frame;
+    - it is let go of when no resource shows it at the end of a batch, or on a resize.
+  - A synchronous channel (RenderTargetBitmap, printing) always takes the whole back buffer, as
+    `CopyBackBuffer` does, and leaves the dirty rectangle to the window's channel.
+  - The scene carries the texture itself (`ImageBrush.External`, with a version), so there is no
+    content hash and no image-cache lookup.
+  - `D3DImageZeroCopyTests` covers:
+    - the zero-copy path is taken (no readback counted), translucent and X8R8G8B8;
+    - in a window, the next frame copies its dirty rectangle only;
+    - the pixels are identical to the copy path's over an alpha and colour gradient;
+    - a second UI thread falls back to the copy path;
+    - the app releasing its surface and device mid-frame is harmless, and so are a resize and
+      `SetBackBuffer(null)`.
 - **The surface is a real Direct3D 9 surface** (Windows): it is read through its vtable (`GetDesc`,
   `GetDevice`, then `CreateOffscreenPlainSurface(SYSTEMMEM)`, `GetRenderTargetData`, `LockRect`) and
   uploaded with `queue.writeTexture` into the primitive's texture. This is WPF's own software-
-  fallback copy, done for every present.
+  fallback copy, done for every present. Only the dirty rectangle is read and written
+  (`SendBitmapRegion`), into the same front-buffer texture; a new texture takes the whole frame first.
   - wgpu-native's C API has no way to import an external D3D texture, so a zero-copy path for
     native surfaces is not possible without native code.
   - `IsFrontBufferAvailable` stays true and `enableSoftwareFallback` makes no difference.
 - **First-class GPU images.** A port-only `WebGpuImage : ImageSource` exposes the composition device and
   a texture, with D3DImage's lock semantics, for new code that renders with WebGPU directly. It is
   the same `ExternalImage` primitive.
-- **The cost of the copy path, measured (2026-10-19).** SharpMediaPlayer plays Big Buck Bunny (480p
-  H.264, 24 fps) at 24 fps under the shim, 0.35 cores. SpatialVideoConverter's player shows IMG_7881's
-  two 1080p HEVC eyes (one 3840x1080 picture, 30 fps) at 7-18 fps, 3.3-3.6 cores: the compositor's
-  render thread is saturated by the copy -- SendBitmap 22%, the image cache's GetOrCreateImageView 16%
-  (it looks at every byte of the 16 MB frame), the upload and the frame. The decoders are not the
-  limit. The device-sharing option above is the path that removes it.
+- **Measured (2026-10-19, the shim, off screen, muted, 10 s after a 6 s warm-up).**
+  - SpatialVideoConverter's player shows IMG_7881's two 1080p HEVC eyes as one 3840x1080 picture at
+    30 fps.
+    - The copy path managed 6.7-10.7 fps at 3.1-3.3 cores. The compositor's render thread was
+      saturated: SendBitmap took 22%, and the image cache's GetOrCreateImageView took 16% (it looks at
+      every byte of the 16 MB frame).
+    - Zero-copy: 30.0-30.1 fps, the video's own rate, at 2.4-2.6 cores; what is left is the CPU decode
+      and the app's upload.
+    - The paused frame is identical to the copy path's, to the pixel.
+  - SharpMediaPlayer, Big Buck Bunny (480p H.264, 24 fps): 24.1 fps, 0.36 cores, both ways (the frame is
+    small); the frames are identical.
 
 **Video (2026-10-19).** WebGPU has no video decode. The shim's device answers
 `ID3D11VideoDevice` and its context `ID3D11VideoContext` as a **video processor only**:

@@ -20,6 +20,7 @@
 using System.Runtime.InteropServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Composition;
 using MS.Internal;
 
 namespace System.Windows.Interop
@@ -46,6 +47,9 @@ namespace System.Windows.Interop
         public readonly uint Width, Height;
         public readonly int Format;
         public Int32Rect Dirty;
+        /// <summary>This back buffer, to the compositor: its frames share one front buffer there.</summary>
+        public readonly long Key = System.Threading.Interlocked.Increment(ref s_keys);
+        private static long s_keys;
         private GCHandle _self;
         private IntPtr _unknown;           // the IUnknown block handed to D3DImage
         private int _refs = 1;
@@ -149,9 +153,28 @@ namespace System.Windows.Interop
             Dirty = new Int32Rect(l, t, rr - l, b - t);
         }
 
+        /// <summary>Frames read back through the CPU (GetRenderTargetData and LockRect), for tests: the
+        /// zero-copy path reads none.</summary>
+        internal static int Readbacks;
+
+        /// <summary>The surface to the compositor without its pixels, under this bitmap's lock (the app
+        /// cannot let go of it meanwhile): true when the compositor took it.</summary>
+        public bool SendSurface(DUCE.Channel channel, DUCE.ResourceHandle handle, Int32Rect dirty)
+        {
+            lock (this)
+            {
+                if (_surface == IntPtr.Zero) return false;
+                return channel.SendCommandSurface(handle, Key, _surface, (int)Width, (int)Height, Format != D3DFMT_X8R8G8B8, dirty.X, dirty.Y, dirty.Width, dirty.Height);
+            }
+        }
+
         /// <summary>The surface's pixels now: straight (non-premultiplied) BGRA32, top-down, Width*4 per
         /// row, or null when the surface cannot be read.</summary>
-        public byte[]? ReadPixels()
+        public byte[]? ReadPixels() => ReadPixels(new Int32Rect(0, 0, (int)Width, (int)Height));
+
+        /// <summary>The rectangle <paramref name="r"/> of the surface's pixels: straight BGRA32, top-down,
+        /// r.Width*4 per row, or null when the surface cannot be read.</summary>
+        public byte[]? ReadPixels(Int32Rect r)
         {
             lock (this)
             {
@@ -171,6 +194,7 @@ namespace System.Windows.Interop
                     }
                     hr = ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, int>)Slot(device, DeviceGetRenderTargetData))(device, _surface, _copy);
                     if (hr < 0) return null;
+                    System.Threading.Interlocked.Increment(ref Readbacks);
                 }
                 finally
                 {
@@ -179,25 +203,25 @@ namespace System.Windows.Interop
                 D3DLOCKED_RECT locked;
                 hr = ((delegate* unmanaged[Stdcall]<IntPtr, D3DLOCKED_RECT*, void*, uint, int>)Slot(_copy, SurfaceLockRect))(_copy, &locked, null, D3DLOCK_READONLY);
                 if (hr < 0) return null;
-                var px = new byte[Width * Height * 4];
+                var px = new byte[r.Width * r.Height * 4];
                 try
                 {
                     bool opaque = Format == D3DFMT_X8R8G8B8;
                     fixed (byte* dst = px)
                     {
-                        for (uint y = 0; y < Height; y++)
+                        for (int y = 0; y < r.Height; y++)
                         {
-                            uint* s = (uint*)((byte*)locked.pBits + y * locked.Pitch);
-                            uint* d = (uint*)(dst + y * Width * 4);
-                            for (uint x = 0; x < Width; x++)
+                            uint* s = (uint*)((byte*)locked.pBits + (r.Y + y) * locked.Pitch) + r.X;
+                            uint* d = (uint*)(dst + y * r.Width * 4);
+                            for (int x = 0; x < r.Width; x++)
                             {
                                 uint c = s[x];
                                 uint a = opaque ? 255u : c >> 24;
                                 if (a == 255) { d[x] = c | 0xFF000000; continue; }
                                 if (a == 0) { d[x] = 0; continue; }
                                 // D3DImage content is premultiplied; the compositor's bitmaps are straight
-                                uint r = Math.Min(255u, ((c >> 16) & 0xFF) * 255 / a), g = Math.Min(255u, ((c >> 8) & 0xFF) * 255 / a), b = Math.Min(255u, (c & 0xFF) * 255 / a);
-                                d[x] = (a << 24) | (r << 16) | (g << 8) | b;
+                                uint cr = Math.Min(255u, ((c >> 16) & 0xFF) * 255 / a), cg = Math.Min(255u, ((c >> 8) & 0xFF) * 255 / a), cb = Math.Min(255u, (c & 0xFF) * 255 / a);
+                                d[x] = (a << 24) | (cr << 16) | (cg << 8) | cb;
                             }
                         }
                     }

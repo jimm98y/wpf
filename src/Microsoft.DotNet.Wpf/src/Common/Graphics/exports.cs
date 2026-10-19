@@ -144,6 +144,24 @@ namespace System.Windows.Media.Composition
         /// </summary>
         void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels);
 
+        /// <summary>
+        /// A D3DImage's back buffer (an IDirect3DSurface9 pointer) for the image resource
+        /// <paramref name="handle"/>, the rectangle (dx, dy, dw, dh) changed (<paramref name="key"/>: the
+        /// D3DImage back buffer it is a frame of -- the frames of one keep one front buffer, whatever
+        /// resources show it): true when the backend took
+        /// it without the pixels (its surface is on the compositor's GPU device), false when the caller
+        /// must read the pixels and send them (<see cref="SendBitmapRegion"/>).
+        /// </summary>
+        bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh);
+
+        /// <summary>
+        /// The rectangle (dx, dy, dw, dh) of a D3DImage's back buffer, straight BGRA32,
+        /// <paramref name="stride"/> bytes a row, into the image resource <paramref name="handle"/> of
+        /// <paramref name="width"/> x <paramref name="height"/>, which keeps the rest. False when the backend
+        /// cannot take a part (the caller sends the whole bitmap with <see cref="SendBitmap"/>).
+        /// </summary>
+        bool SendBitmapRegion(int channelId, uint handle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh);
+
         /// <summary>BeginCommand analog: opens a variable-length command (header bytes).</summary>
         void BeginCommand(int channelId, byte[] data, int extraSize);
 
@@ -461,6 +479,12 @@ namespace System.Windows.Media.Composition
 
                 public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels)
                 { if (!IsDisposed) _impl.SendVideoFrame(channelId, mediaHandle, width, height, rowBytes, pixels); }
+
+                public bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh)
+                    => !IsDisposed && _impl.SendSurface(channelId, handle, key, surface, width, height, premultiplied, dx, dy, dw, dh);
+
+                public bool SendBitmapRegion(int channelId, uint handle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh)
+                    => !IsDisposed && _impl.SendBitmapRegion(channelId, handle, key, width, height, pixels, stride, dx, dy, dw, dh);
 
                 public void BeginCommand(int channelId, byte[] data, int extraSize)
                 { if (!IsDisposed) _impl.BeginCommand(channelId, data, extraSize); }
@@ -798,6 +822,8 @@ namespace System.Windows.Media.Composition
             public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch) { }
             public void SendBitmap(int channelId, uint handle, int width, int height, int stride, byte[] pixels) { }
             public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels) { }
+            public bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh) => false;
+            public bool SendBitmapRegion(int channelId, uint handle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh) => false;
             public void BeginCommand(int channelId, byte[] data, int extraSize) { }
             public void AppendCommandData(int channelId, byte[] data) { }
             public void EndCommand(int channelId) { }
@@ -838,6 +864,10 @@ namespace System.Windows.Media.Composition
             private readonly Func<int, uint, bool> _release;
             private readonly Action<int, byte[], bool> _sendCommand;
             private readonly Action<int, uint, int, int, int, byte[]> _sendBitmap;
+            private delegate bool SendSurfaceFn(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh);
+            private delegate bool SendBitmapRegionFn(int channelId, uint handle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh);
+            private readonly SendSurfaceFn _sendSurface;
+            private readonly SendBitmapRegionFn _sendBitmapRegion;
             private readonly Action<int, uint, int, int, int, byte[]> _sendVideoFrame;
             private readonly Action<int, byte[], int> _beginCommand;
             private readonly Action<int, byte[]> _appendCommandData;
@@ -859,6 +889,9 @@ namespace System.Windows.Media.Composition
                 _sendCommand = Bind<Action<int, byte[], bool>>(impl, t, "SendCommand");
                 _sendBitmap = Bind<Action<int, uint, int, int, int, byte[]>>(impl, t, "SendBitmap");
                 _sendVideoFrame = Bind<Action<int, uint, int, int, int, byte[]>>(impl, t, "SendVideoFrame");
+                // Optional: a backend without them takes D3DImage's frames as whole bitmaps.
+                if (t.GetMethod("SendSurface") != null) _sendSurface = Bind<SendSurfaceFn>(impl, t, "SendSurface");
+                if (t.GetMethod("SendBitmapRegion") != null) _sendBitmapRegion = Bind<SendBitmapRegionFn>(impl, t, "SendBitmapRegion");
                 _beginCommand = Bind<Action<int, byte[], int>>(impl, t, "BeginCommand");
                 _appendCommandData = Bind<Action<int, byte[]>>(impl, t, "AppendCommandData");
                 _endCommand = Bind<Action<int>>(impl, t, "EndCommand");
@@ -917,6 +950,12 @@ namespace System.Windows.Media.Composition
 
             public void SendVideoFrame(int channelId, uint mediaHandle, int width, int height, int rowBytes, byte[] pixels) =>
                 _sendVideoFrame(channelId, mediaHandle, width, height, rowBytes, pixels);
+
+            public bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh) =>
+                _sendSurface != null && _sendSurface(channelId, handle, key, surface, width, height, premultiplied, dx, dy, dw, dh);
+
+            public bool SendBitmapRegion(int channelId, uint handle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh) =>
+                _sendBitmapRegion != null && _sendBitmapRegion(channelId, handle, key, width, height, pixels, stride, dx, dy, dw, dh);
 
             public void BeginCommand(int channelId, byte[] data, int extraSize) => _beginCommand(channelId, data, extraSize);
 
@@ -1819,6 +1858,15 @@ namespace System.Windows.Media.Composition
             /// (macOS/browser backends). Only valid when a managed sink is bound; the native backend renders
             /// video through the native media resource instead.
             /// </summary>
+            /// <summary>A D3DImage's back buffer to the managed compositor without its pixels (see
+            /// IMilCompositionSink.SendSurface): false when the caller must send the pixels.</summary>
+            internal bool SendCommandSurface(DUCE.ResourceHandle imageHandle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh)
+                => _sink != null && _sink.SendSurface(_managedId, (uint)imageHandle, key, surface, width, height, premultiplied, dx, dy, dw, dh);
+
+            /// <summary>A changed rectangle of a D3DImage's back buffer (IMilCompositionSink.SendBitmapRegion).</summary>
+            internal bool SendCommandBitmapRegion(DUCE.ResourceHandle imageHandle, long key, int width, int height, byte[] pixels, int stride, int dx, int dy, int dw, int dh)
+                => _sink != null && _sink.SendBitmapRegion(_managedId, (uint)imageHandle, key, width, height, pixels, stride, dx, dy, dw, dh);
+
             internal void SendVideoFrame(
                 DUCE.ResourceHandle mediaHandle,
                 int width,

@@ -328,7 +328,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             public readonly byte[] Rgba;
             public readonly int Width, Height;
-            public MilBitmap(byte[] rgba, int w, int h) { Rgba = rgba; Width = w; Height = h; }
+            /// <summary>A D3DImage's texture (Rgba is its placeholder), and the frame it held.</summary>
+            public readonly ExternalImage? External;
+            public readonly long Version;
+            public MilBitmap(byte[] rgba, int w, int h) { Rgba = rgba; Width = w; Height = h; External = null; Version = 0; }
+            public MilBitmap(ExternalImage e) { Rgba = e.Placeholder; Width = e.Width; Height = e.Height; External = e; Version = e.Version; }
+
+            /// <summary>An image brush of these pixels, carrying the external texture when there is one.</summary>
+            public ImageBrush Brush() => new ImageBrush(Rgba, Width, Height) { WpfFilter = true, External = External, ExternalVersion = Version };
         }
 
         private readonly struct MilImageBrush
@@ -380,6 +387,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             Dirty = true;
             _bitmaps[handle] = new MilBitmap(rgba, width, height);
             BumpResource(handle);   // an ImageBrush baked these pixels in; make its visual re-parse
+        }
+
+        /// <summary>A D3DImage's new frame in its texture (ExternalImage.cs): no pixels cross.</summary>
+        public void SetExternalBitmap(uint handle, ExternalImage image)
+        {
+            Dirty = true;
+            _bitmaps[handle] = new MilBitmap(image);
+            BumpResource(handle);
         }
 
         // Current decoded video frame for a MediaPlayer (TYPE_MEDIAPLAYER) resource, keyed by its handle. A
@@ -1928,8 +1943,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             else if (_imageDrawings.TryGetValue(handle, out (Rect Rect, uint ImageSource) idr))
             {
                 if (_bitmaps.TryGetValue(idr.ImageSource, out MilBitmap ibmp))
-                    EmitFill(v.Content, new RectangleGeometry(idr.Rect),
-                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height) { WpfFilter = true }, RenderState.Default);
+                    EmitFill(v.Content, new RectangleGeometry(idr.Rect), ibmp.Brush(), RenderState.Default);
             }
             else if (_glyphRunDrawings.TryGetValue(handle, out (uint GlyphRun, uint Brush) grd))
             {
@@ -2089,8 +2103,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             else if (_imageDrawings.TryGetValue(handle, out (Rect Rect, uint ImageSource) idr))
             {
                 if (_bitmaps.TryGetValue(idr.ImageSource, out MilBitmap ibmp))
-                    EmitFill(output, new RectangleGeometry(idr.Rect),
-                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height) { WpfFilter = true }, state);
+                    EmitFill(output, new RectangleGeometry(idr.Rect), ibmp.Brush(), state);
             }
             else if (_glyphRunDrawings.TryGetValue(handle, out (uint GlyphRun, uint Brush) grd))
             {
@@ -2232,8 +2245,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                         uint hImg = r.U32(), hAnim = r.U32();
                         if (_bitmaps.TryGetValue(hImg, out MilBitmap abmp))
-                            EmitFill(output, new RectangleGeometry(Anim(hAnim, rect)),
-                                new ImageBrush(abmp.Rgba, abmp.Width, abmp.Height) { WpfFilter = true }, state);
+                            EmitFill(output, new RectangleGeometry(Anim(hAnim, rect)), abmp.Brush(), state);
                         break;
                     }
                     case Mil.DrawVideoAnimate:
@@ -2297,7 +2309,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                         uint hImg = r.U32();
                         if (_bitmaps.TryGetValue(hImg, out MilBitmap bmp))
-                            EmitFill(output, new RectangleGeometry(rect), new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height) { WpfFilter = true }, state);
+                            EmitFill(output, new RectangleGeometry(rect), bmp.Brush(), state);
                         else
                             EmitVectorImage(output, hImg, rect, state);
                         break;
@@ -2768,9 +2780,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             float vw = vp.Width > 0 ? vp.Width : bw, vh = vp.Height > 0 ? vp.Height : bh;
 
             // 3) TileMode != None: tile the (cropped) image every Viewport cell across the shape.
+            // a D3DImage's texture, when the pixels are its whole (a viewbox crop of it is not supported:
+            // its placeholder is cropped, transparent)
+            ExternalImage? ext = ReferenceEquals(pixels, bmp.Rgba) ? bmp.External : null;
+            if (bmp.External != null && ext == null) Trace("a cropped viewbox of a D3DImage brush draws nothing (its pixels are the GPU's)");
             if (ib.Tile != TileMode.None)
             {
-                fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh, (float)ib.Opacity) { WpfFilter = true };
+                fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh, (float)ib.Opacity) { WpfFilter = true, External = ext, ExternalVersion = bmp.Version };
                 return true;
             }
 
@@ -2807,7 +2823,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // Clip to the painted sub-rect unless it already covers the whole bounds (plain Fill).
             if (dest.X != bounds.X || dest.Y != bounds.Y || dest.Width != bw || dest.Height != bh)
                 g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(dest));
-            fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity) { WpfFilter = true };
+            fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity) { WpfFilter = true, External = ext, ExternalVersion = bmp.Version };
             return true;
         }
 
@@ -3067,7 +3083,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
             {
                 _parseResourceRefs.Add(ib.ImageHandle);   // the pixels are baked in too
-                return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity) { WpfFilter = true };
+                return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity) { WpfFilter = true, External = bmp.External, ExternalVersion = bmp.Version };
             }
             Trace($"brush 0x{handle:x} unresolved (type {(_resourceType.TryGetValue(handle, out MilResourceTypeId t) ? t.ToString() : "?")})");
             return null;

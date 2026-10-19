@@ -282,9 +282,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (Recording)
             {
                 Record(() => _engine.Release(handle));
-                return MirrorRelease(handle);
+                bool left = MirrorRelease(handle);
+                if (left) ExternalReleased(handle);
+                return left;
             }
-            return _engine.Release(handle);
+            bool gone = _engine.Release(handle);
+            if (gone) ExternalReleased(handle);
+            return gone;
         }
 
         public void SendCommand(int channelId, byte[] data, bool sendInSeparateBatch)
@@ -377,6 +381,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         public void Commit(int channelId)
         {
+            RetireOrphanedExternals();
             if (Recording) { HandOver(render: true, wait: false); return; }
             RenderTargets();
         }
@@ -1246,7 +1251,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (s_logPath != null) WgpuContext.LogSink = Log;
                 long created0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                _ctx = WgpuContext.Create();
+                _ctx = CreateOrShareContext();
 
                 // A real default font + shaper so text-STRING glyph runs (GlyphRunDraw with .Text) —
                 // emitted by embedded non-WPF content like a WinForms control via EmbeddedContent —
@@ -1543,8 +1548,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _surfaces.Clear();
             _renderer?.Dispose();
             _renderer = null;
-            _ctx?.Dispose();
+            if (!SharesShimDevice) _ctx?.Dispose();      // the shim's device outlives every compositor
             _ctx = null;
+            ForgetExternals();     // the renderer, gone, had them
             // Never bring a device back up for a disposed sink (EnsureGpu skips a headless one).
             _headless = true;
         }

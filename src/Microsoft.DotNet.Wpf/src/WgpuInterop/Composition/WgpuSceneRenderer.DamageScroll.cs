@@ -456,7 +456,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         h = Mix(h, 13); h = Mix(h, rg.Stops.Length); h = MixF(h, rg.RadiusX); h = MixF(h, rg.RadiusY);
                         return true;
                     case ImageBrush ib when ib.SourceVisual == null && ib.TileMode == TileMode.None:
-                        h = Mix(h, 14); h = Mix(h, ib.PixelWidth); h = Mix(h, ib.PixelHeight);
+                        h = Mix(h, 14); h = Mix(h, ib.PixelWidth); h = Mix(h, ib.PixelHeight); h = Mix(h, (int)ib.ExternalVersion);
                         return true;
                     default:
                         return false;
@@ -608,7 +608,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         return inn.SourceVisual == null && io.SourceVisual == null && inn.PixelWidth == io.PixelWidth
                             && inn.PixelHeight == io.PixelHeight && inn.TileMode == io.TileMode && inn.TileWidth == io.TileWidth
                             && inn.TileHeight == io.TileHeight && inn.Opacity == io.Opacity
-                            && (ReferenceEquals(inn.PixelsRgba, io.PixelsRgba) || inn.PixelsRgba.AsSpan().SequenceEqual(io.PixelsRgba));
+                            && (inn.External != null || io.External != null ? inn.SamePixels(io)
+                                : ReferenceEquals(inn.PixelsRgba, io.PixelsRgba) || inn.PixelsRgba.AsSpan().SequenceEqual(io.PixelsRgba));
                     default:
                         return false;
                 }
