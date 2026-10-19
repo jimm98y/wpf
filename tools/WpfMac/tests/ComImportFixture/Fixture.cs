@@ -21,6 +21,9 @@ namespace ComImportFixture
         [PreserveSig] int Length([MarshalAs(UnmanagedType.LPWStr)] string s);   // slot 10
         IOther MakeOther(int value);                            // slot 11: an interface retval
         object Variant();                                       // slot 12: unsupported (VARIANT)
+        [PreserveSig] int BLen(string s);                       // slot 13: a BSTR in
+        string Greet(string name);                              // slot 14: a BSTR retval
+        void Upper(ref string s);                               // slot 15: a BSTR by reference
     }
 
     [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A02"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -45,6 +48,31 @@ namespace ComImportFixture
 
     public static class Scenario
     {
+        [DllImport("fixturenative", EntryPoint = "GetFileVersionInfoSizeW", CharSet = CharSet.Unicode)]
+        private static extern uint FileVersionInfoSize(string file, out uint handle);
+
+        /// <summary>A library beside the assembly's original file (Windows: a copy of version.dll).</summary>
+        public static uint NativeBeside(string file) => FileVersionInfoSize(file, out _);
+
+#pragma warning disable SYSLIB0012, SYSLIB0044
+        /// <summary>Where the assembly says it is, every way it can be asked.</summary>
+        public static string[] Where()
+        {
+            var a = typeof(Scenario).Assembly;
+            return new[]
+            {
+                a.Location,
+                System.Reflection.Assembly.GetExecutingAssembly().Location,
+                a.CodeBase ?? "",
+                a.EscapedCodeBase,
+                a.GetName().CodeBase ?? "",
+                a.ManifestModule.FullyQualifiedName,
+                a.ManifestModule.Name,
+                (a == System.Reflection.Assembly.Load("ComImportFixture") && a == System.Reflection.Assembly.GetExecutingAssembly()).ToString(),
+            };
+        }
+#pragma warning restore SYSLIB0012, SYSLIB0044
+
         [DllImport("ole32.dll")]
         private static extern int CreateBindCtx(uint reserved, out IAppBindCtx ctx);
 
@@ -59,6 +87,8 @@ namespace ComImportFixture
         internal static ICalc Wrap(IntPtr p) => (ICalc)Marshal.GetObjectForIUnknown(p);
 
         public static int Add(IntPtr p, int a, int b) => Wrap(p).Add(a, b);
+        /// <summary>An object from somewhere else (a built-in RCW, on Windows) cast to a rewritten interface.</summary>
+        public static int AddThroughObject(object o, int a, int b) => ((ICalc)o).Add(a, b);
         public static int Twice(IntPtr p, int x) => Wrap(p).Twice(x);
         public static string Fail(IntPtr p)
         {
@@ -71,6 +101,9 @@ namespace ComImportFixture
         public static bool IsOdd(IntPtr p, int x) => Wrap(p).IsOdd(x);
         public static Pair Swap(IntPtr p, Pair x) { Wrap(p).Swap(ref x); return x; }
         public static int Length(IntPtr p, string s) => Wrap(p).Length(s);
+        public static int BLen(IntPtr p, string s) => Wrap(p).BLen(s);
+        public static string Greet(IntPtr p, string s) => Wrap(p).Greet(s);
+        public static string Upper(IntPtr p, string s) { Wrap(p).Upper(ref s); return s; }
         public static int MadeOther(IntPtr p, int v) => Wrap(p).MakeOther(v).Value();
         public static string Variant(IntPtr p)
         {

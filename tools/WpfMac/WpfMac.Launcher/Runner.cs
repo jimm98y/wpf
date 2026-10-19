@@ -49,8 +49,9 @@ internal sealed class Runner
         JsonObject deps = merger.Merge(App, appDeps, OverlayDir, payloadDeps);
         // app assemblies with [ComImport] types: rewritten copies in the cache (Documentation/comimport-rewriter.md)
         var comNotes = new List<string>();
+        var comList = new List<string>();
         ComImportStep.Apply(deps, App.Directory, OverlayDir, Locations.CacheRoot, HostInfo.IsWindows,
-            Environment.GetEnvironmentVariable("WPF_COMIMPORT_REWRITE"), comNotes);
+            Environment.GetEnvironmentVariable("WPF_COMIMPORT_REWRITE"), comNotes, comList);
 
         var props = new Dictionary<string, string>
         {
@@ -65,6 +66,8 @@ internal sealed class Runner
             // the default.
             ["Switch.System.Windows.Media.UseWebGpuComposition"] = "true",
         };
+        // the app assemblies the startup hook rewrites in memory as they load (ComImportStep)
+        if (comList.Count > 0) props["WpfMac.ComImport"] = string.Join('\n', comList);
         string fonts = Path.Combine(OverlayDir, "fonts");
         if (Directory.Exists(fonts)) props["WpfWebGpu.FontDirectory"] = fonts;
         if (!string.IsNullOrEmpty(TitlePrefix)) props["WpfMac.TitlePrefix"] = TitlePrefix;
@@ -97,7 +100,6 @@ internal sealed class Runner
             Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(OverlayDir))!,
             Path.GetDirectoryName(App.Directory)!,
             fetcher.Root,
-            Locations.CacheRoot,            // comimport/: the rewritten COM-import assemblies
         };
         psi.ArgumentList.Add("exec");
         psi.ArgumentList.Add("--runtimeconfig");

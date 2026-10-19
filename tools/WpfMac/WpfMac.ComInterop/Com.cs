@@ -67,6 +67,66 @@ public static unsafe class Com
         finally { Marshal.Release(p); }
     }
 
+    // ---- where a rewritten assembly came from -------------------------------------------------
+    //
+    // A rewritten assembly is loaded from memory (LoadFromStream): the runtime knows no file for it. Its
+    // calls to Assembly.Location, CodeBase, GetName() and Module.FullyQualifiedName are rewritten to these,
+    // which answer with the original file's for an assembly of this table, and as the runtime does for
+    // any other. The real Assembly objects are kept throughout.
+
+    private static readonly ConditionalWeakTable<Assembly, string> s_original = new();
+
+    /// <summary>The loader's: <paramref name="assembly"/> was rewritten from <paramref name="path"/>.</summary>
+    public static void RegisterOriginal(Assembly assembly, string path) => s_original.AddOrUpdate(assembly, Path.GetFullPath(path));
+
+    /// <summary>The original file of a rewritten assembly; null for any other.</summary>
+    public static string? OriginalPath(Assembly? assembly) => assembly != null && s_original.TryGetValue(assembly, out var p) ? p : null;
+
+    public static string AssemblyLocation(Assembly a) => OriginalPath(a) ?? a.Location;
+
+#pragma warning disable SYSLIB0012, SYSLIB0044
+    public static string? AssemblyCodeBase(Assembly a) => OriginalPath(a) is { } p ? new Uri(p).AbsoluteUri : a.CodeBase;
+
+    public static string AssemblyEscapedCodeBase(Assembly a) => OriginalPath(a) is { } p ? new Uri(p).AbsoluteUri : a.EscapedCodeBase;
+
+    public static AssemblyName AssemblyGetName(Assembly a) => WithCodeBase(a, a.GetName());
+
+    public static AssemblyName AssemblyGetName(Assembly a, bool copiedName) => WithCodeBase(a, a.GetName(copiedName));
+
+    private static AssemblyName WithCodeBase(Assembly a, AssemblyName n)
+    {
+        if (OriginalPath(a) is { } p) n.CodeBase = new Uri(p).AbsoluteUri;
+        return n;
+    }
+#pragma warning restore SYSLIB0012, SYSLIB0044
+
+    public static string ModuleFullyQualifiedName(Module m) => OriginalPath(m.Assembly) ?? m.FullyQualifiedName;
+
+    public static string ModuleName(Module m) => OriginalPath(m.Assembly) is { } p ? Path.GetFileName(p) : m.Name;
+
+    // ---- strings ------------------------------------------------------------------------------
+
+    /// <summary>A BSTR for an argument (null for null), which the caller frees with <see cref="FreeBstr"/>.</summary>
+    public static IntPtr ToBstr(string? s) => s == null ? IntPtr.Zero : Marshal.StringToBSTR(s);
+
+    public static void FreeBstr(IntPtr p) { if (p != IntPtr.Zero) Marshal.FreeBSTR(p); }
+
+    /// <summary>A BSTR the callee returned (the caller's to free): its string, and freed.</summary>
+    public static string? TakeBstr(IntPtr p)
+    {
+        if (p == IntPtr.Zero) return null;
+        try { return Marshal.PtrToStringBSTR(p); }
+        finally { Marshal.FreeBSTR(p); }
+    }
+
+    /// <summary>An LPWSTR the callee returned in CoTaskMem memory: its string, and freed.</summary>
+    public static string? TakeCoTaskString(IntPtr p)
+    {
+        if (p == IntPtr.Zero) return null;
+        try { return Marshal.PtrToStringUni(p); }
+        finally { Marshal.FreeCoTaskMem(p); }
+    }
+
     /// <summary>A failed HRESULT as built-in COM interop reports it.</summary>
     public static void Check(int hr)
     {
@@ -97,6 +157,15 @@ public static unsafe class Com
             return p;
         }
         finally { Marshal.Release(unk); }
+    }
+
+    /// <summary>Before a cast to a rewritten interface: a built-in RCW (from an assembly left on built-in
+    /// COM, an ActiveX control, the BCL) becomes the ComObject of the same native object; anything else
+    /// is returned as it is.</summary>
+    public static object? Adopt(object? o)
+    {
+        if (o == null || o is ComObject || !OperatingSystem.IsWindows() || !Marshal.IsComObject(o)) return o;
+        return Take(Marshal.GetIUnknownForObject(o));
     }
 
     // ---- System.Runtime.InteropServices.Marshal, rewritten -----------------------------------

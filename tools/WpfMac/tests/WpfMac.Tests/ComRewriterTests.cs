@@ -28,7 +28,7 @@ public sealed unsafe class ComRewriterTests
 
     private static IntPtr* BuildCalc()
     {
-        var vt = (IntPtr*)NativeMemory.AllocZeroed(13, (nuint)sizeof(IntPtr));
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(16, (nuint)sizeof(IntPtr));
         vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&QueryInterface;
         vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
         vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
@@ -42,6 +42,9 @@ public sealed unsafe class ComRewriterTests
         vt[10] = (IntPtr)(delegate* unmanaged<Obj*, char*, int>)&Length;
         vt[11] = (IntPtr)(delegate* unmanaged<Obj*, int, IntPtr*, int>)&MakeOther;
         vt[12] = (IntPtr)(delegate* unmanaged<Obj*, void*, int>)&Variant;
+        vt[13] = (IntPtr)(delegate* unmanaged<Obj*, char*, int>)&BLen;
+        vt[14] = (IntPtr)(delegate* unmanaged<Obj*, char*, IntPtr*, int>)&Greet;
+        vt[15] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&Upper;
         return vt;
     }
 
@@ -98,16 +101,43 @@ public sealed unsafe class ComRewriterTests
     [UnmanagedCallersOnly] private static int MakeOther(Obj* self, int v, IntPtr* other) { *other = (IntPtr)New(s_otherVt, v); return 0; }
     [UnmanagedCallersOnly] private static int Variant(Obj* self, void* v) => 0;
     [UnmanagedCallersOnly] private static int Value(Obj* self) => self->Value;
+    // BSTRs: the length is the prefix before the characters (in bytes)
+    [UnmanagedCallersOnly] private static int BLen(Obj* self, char* s) => s == null ? -1 : (int)(((uint*)s)[-1] / 2);
+    [UnmanagedCallersOnly] private static int Greet(Obj* self, char* name, IntPtr* r) { *r = Marshal.StringToBSTR("Hi " + Marshal.PtrToStringBSTR((IntPtr)name)); return 0; }
+    [UnmanagedCallersOnly]
+    private static int Upper(Obj* self, IntPtr* s)
+    {
+        string v = Marshal.PtrToStringBSTR(*s);
+        Marshal.FreeBSTR(*s);
+        *s = Marshal.StringToBSTR(v.ToUpperInvariant());
+        return 0;
+    }
 
     // ---- the rewritten fixture ------------------------------------------------------------------
 
+    internal static string FixtureFile => typeof(ComRewriterTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().First(a => a.Key == "ComImportFixture").Value!;
+
+    /// <summary>The fixture's original, copied to a folder of its own (with a native library beside it on
+    /// Windows), as the launcher's loader finds an app's.</summary>
+    internal static readonly Lazy<string> s_original = new(() =>
+    {
+        string dir = TestEnvironment.NewDirectory("comimport-app");
+        string file = Path.Combine(dir, "ComImportFixture.dll");
+        File.Copy(FixtureFile, file);
+        if (File.Exists(Path.ChangeExtension(FixtureFile, ".pdb"))) File.Copy(Path.ChangeExtension(FixtureFile, ".pdb"), Path.ChangeExtension(file, ".pdb"));
+        if (OperatingSystem.IsWindows()) File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(dir, "fixturenative.dll"));
+        return file;
+    });
+
     private static readonly Lazy<(Type Scenario, RewriteResult Result)> s_fixture = new(() =>
     {
-        string input = typeof(ComRewriterTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().First(a => a.Key == "ComImportFixture").Value!;
-        string output = Path.Combine(TestEnvironment.NewDirectory("comrewrite"), "ComImportFixture.dll");
-        var result = ComRewriter.Rewrite(input, output, new[] { AppContext.BaseDirectory }, partial: true);
+        // the verdict, as the launcher judges it
+        var result = ComRewriter.Rewrite(FixtureFile, null, new[] { AppContext.BaseDirectory }, partial: true);
+        // the load, as the startup hook does it: rewritten in memory on the first request
+        var loader = new ComImportLoader(new Dictionary<string, string> { ["ComImportFixture"] = s_original.Value }, new[] { AppContext.BaseDirectory }, null);
         var alc = new AssemblyLoadContext("comimport-fixture");
-        var asm = alc.LoadFromAssemblyPath(output);
+        loader.Install(alc);
+        var asm = alc.LoadFromAssemblyName(new AssemblyName("ComImportFixture"));
         return (asm.GetType("ComImportFixture.Scenario", throwOnError: true)!, result);
     });
 
@@ -126,14 +156,17 @@ public sealed unsafe class ComRewriterTests
     }
 
     [Fact]
-    public void TheFixture_IsRewritten_AndOnlyTheVariantIsUnsupported()
+    public void TheFixture_IsRewritten_WithTheVariantAndTheForeignCastNamed()
     {
         var r = s_fixture.Value.Result;
-        Assert.True(r.Written);
+        Assert.True(r.UsesComImport);
         Assert.Equal(4, r.Interfaces);
         Assert.Equal(1, r.PInvokes);
-        string u = Assert.Single(r.Unsupported);
-        Assert.Contains("Variant", u);
+        // the VARIANT method, and the cast of an object from elsewhere (adopted; on Windows it keeps the
+        // assembly on built-in COM)
+        Assert.Equal(2, r.Unsupported.Count);
+        Assert.Contains(r.Unsupported, u => u.Contains("Variant"));
+        Assert.Contains(r.Unsupported, u => u.Contains("AddThroughObject") && u.Contains("unknown origin"));
         Assert.Equal(1, r.Delegates);
     }
 
@@ -148,6 +181,14 @@ public sealed unsafe class ComRewriterTests
         Assert.False(WithCalc(0, p => (bool)Run("IsOdd", p, 8)!));
         Assert.Equal(5, WithCalc(0, p => (int)Run("Length", p, "hello")!));
         Assert.Equal(33, WithCalc(0, p => (int)Run("MadeOther", p, 33)!));
+    }
+
+    [Fact]
+    public void Bstrs_InOutAndByReference()
+    {
+        Assert.Equal(7, WithCalc(0, p => (int)Run("BLen", p, "a bcdef")!));       // a BSTR keeps an embedded NUL
+        Assert.Equal("Hi there", WithCalc(0, p => (string)Run("Greet", p, "there")!));
+        Assert.Equal("LOUD", WithCalc(0, p => (string)Run("Upper", p, "loud")!));
     }
 
     [Fact]
@@ -189,6 +230,41 @@ public sealed unsafe class ComRewriterTests
     }
 
     [Fact]
+    public void ABuiltInRcw_CastToARewrittenInterface_IsAdopted()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "built-in COM makes the RCW");
+        Assert.Equal(9, WithCalc(0, p =>
+        {
+            object rcw = Marshal.GetObjectForIUnknown(p);     // the test assembly is not rewritten: a real RCW
+            try { return (int)Run("AddThroughObject", rcw, 4, 5)!; }
+            finally { Marshal.ReleaseComObject(rcw); }
+        }));
+    }
+
+    [Fact]
+    public void TheAssemblyLoadedFromMemory_SaysItIsItsOriginalFile()
+    {
+        string original = s_original.Value;
+        string uri = new Uri(original).AbsoluteUri;
+        var w = (string[])Run("Where")!;
+        Assert.Equal(original, w[0]);              // typeof(X).Assembly.Location
+        Assert.Equal(original, w[1]);              // GetExecutingAssembly().Location
+        Assert.Equal(uri, w[2]);                   // CodeBase
+        Assert.Equal(uri, w[3]);                   // EscapedCodeBase
+        Assert.Equal(uri, w[4]);                   // GetName().CodeBase
+        Assert.Equal(original, w[5]);              // Module.FullyQualifiedName
+        Assert.Equal("ComImportFixture.dll", w[6]);
+        Assert.Equal("True", w[7]);                // typeof(X).Assembly == Assembly.Load(name) == GetExecutingAssembly()
+    }
+
+    [Fact]
+    public void ItsPInvokes_FindLibrariesBesideTheOriginal()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the library beside it is a copy of version.dll");
+        Assert.True((uint)Run("NativeBeside", Path.Combine(Environment.SystemDirectory, "kernel32.dll"))! > 0);
+    }
+
+    [Fact]
     public void ReleaseComObject_LetsGoOfTheNativeObject()
     {
         var o = New(s_calcVt, 0);
@@ -219,7 +295,10 @@ public sealed class ComImportStepTests
         string cache = TestEnvironment.NewDirectory("comstep-cache");
         var deps = Deps();
         var notes = new List<string>();
-        WpfMac.ComImportStep.Apply(deps, app, AppContext.BaseDirectory, cache, windows, setting, notes);
+        var list = new List<string>();
+        WpfMac.ComImportStep.Apply(deps, app, AppContext.BaseDirectory, cache, windows, setting, notes, list);
+        Assert.Empty(Directory.EnumerateFileSystemEntries(cache));       // nothing is written: the rewrite happens in memory, at load
+        s_lastList = list;
         return (deps, notes);
     }
 
@@ -229,26 +308,38 @@ public sealed class ComImportStepTests
         var (deps, notes) = Apply(windows: true);
         Assert.Contains(notes, n => n.Contains("ComImportFixture: left on built-in COM") && n.Contains("Variant"));
         Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
-        Assert.Null(deps["targets"]!["T"]![WpfMac.ComImportStep.Library]);
+        Assert.Empty(s_lastList!);
+    }
+
+    [ThreadStatic] private static List<string>? s_lastList;
+
+    [Fact]
+    public void OffWindows_TheSupportedPart_IsRewritten_AndLeavesTheDepsForTheLoader()
+    {
+        var (deps, notes) = Apply(windows: false);
+        Assert.Contains(notes, n => n.Contains("ComImportFixture: rewritten in memory"));
+        Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
+        Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["Other.dll"]);
+        string entry = Assert.Single(s_lastList!);
+        Assert.StartsWith("ComImportFixture|", entry);
+        Assert.EndsWith("ComImportFixture.dll", entry);
     }
 
     [Fact]
-    public void OffWindows_TheSupportedPart_IsRewritten_AndTheDepsNameTheCopy()
+    public void AnEarlierWpfmacsCopies_AreRemoved()
     {
-        var (deps, notes) = Apply(windows: false);
-        Assert.Contains(notes, n => n.Contains("ComImportFixture: rewritten"));
-        Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
-        Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["Other.dll"]);
-        var copy = Assert.Single(deps["targets"]!["T"]![WpfMac.ComImportStep.Library]!["runtime"]!.AsObject());
-        Assert.EndsWith("/ComImportFixture.dll", copy.Key);
-        Assert.Equal("comimport", deps["libraries"]![WpfMac.ComImportStep.Library]!["path"]!.GetValue<string>());
+        string cache = TestEnvironment.NewDirectory("comstep-old");
+        Directory.CreateDirectory(Path.Combine(cache, WpfMac.ComImportStep.Folder, "abc"));
+        File.WriteAllText(Path.Combine(cache, WpfMac.ComImportStep.Folder, "abc", "X.dll"), "");
+        WpfMac.ComImportStep.Apply(Deps(), TestEnvironment.NewDirectory("comstep-empty"), AppContext.BaseDirectory, cache, true, null, new(), new());
+        Assert.False(Directory.Exists(Path.Combine(cache, WpfMac.ComImportStep.Folder)));
     }
 
     [Fact]
     public void TheSwitch_TurnsItOff_OrNamesTheAssemblies()
     {
         Assert.Contains(Apply(windows: false, "off").Notes, n => n.Contains("left (WPF_COMIMPORT_REWRITE)"));
-        Assert.Contains(Apply(windows: false, "Some*;ComImport*").Notes, n => n.Contains("rewritten"));
+        Assert.Contains(Apply(windows: false, "Some*;ComImport*").Notes, n => n.Contains("rewritten in memory"));
         Assert.Contains(Apply(windows: false, "Other").Notes, n => n.Contains("left (WPF_COMIMPORT_REWRITE)"));
     }
 }

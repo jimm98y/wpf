@@ -1,4 +1,4 @@
-// Windows: an app's own P/Invokes into user32 reach the stack's windows when the handle is the stack's.
+﻿// Windows: an app's own P/Invokes into user32 reach the stack's windows when the handle is the stack's.
 //
 // The problem. On Windows the app runs on the real Windows API: wpfmac has nothing to emulate, so its
 // [DllImport("user32.dll")] calls bind to the real user32. But this stack's WinForms controls are not
@@ -209,6 +209,8 @@ namespace WpfMac.Bootstrap.Win32
             if (a.IsDynamic) return;
             string location;
             try { location = a.Location; } catch { return; }
+            // an app assembly the COM-import rewriter loaded from memory: its original file
+            if (string.IsNullOrEmpty(location) && RewrittenOriginal(a.GetName().Name) is { } original) location = original;
             if (string.IsNullOrEmpty(location)) return;
             if (s_stackDir != null && location.StartsWith(s_stackDir, StringComparison.OrdinalIgnoreCase)) return;
             // The runtime calls user32 on real handles only -- except where it answers a question
@@ -230,6 +232,24 @@ namespace WpfMac.Bootstrap.Win32
             {
                 // It set one first (from a module initializer): its own resolution stands.
             }
+        }
+
+        private static Dictionary<string, string>? s_rewritten;
+
+        /// <summary>The original file of an app assembly the startup hook rewrites in memory (the launcher's
+        /// WpfMac.ComImport list: "name|path" lines); null for any other.</summary>
+        private static string? RewrittenOriginal(string? name)
+        {
+            if (name == null) return null;
+            if (s_rewritten == null)
+            {
+                var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                if (AppContext.GetData("WpfMac.ComImport") is string list)
+                    foreach (string line in list.Split((char)10, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        if (line.IndexOf('|') is int bar and > 0) d[line[..bar]] = line[(bar + 1)..];
+                s_rewritten = d;
+            }
+            return s_rewritten.TryGetValue(name, out var p) ? p : null;
         }
 
         private static IntPtr Resolve(string name, Assembly requester, DllImportSearchPath? path)

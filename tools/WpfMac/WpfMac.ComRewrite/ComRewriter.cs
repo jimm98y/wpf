@@ -28,12 +28,16 @@ public sealed class RewriteResult
     public bool UsesComImport;
     /// <summary>What the rewriter cannot do in it, one line each (empty: all of it is supported).</summary>
     public List<string> Unsupported { get; } = new();
+    /// <summary>Assemblies whose COM types this one uses: it may be rewritten only together with them
+    /// (their objects must be ComObjects too). The caller decides over the whole app.</summary>
+    public SortedSet<string> UsesComTypesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Written to the output path.</summary>
     public bool Written;
     public int Interfaces, Methods, PInvokes, Delegates, CallSites;
 
     public override string ToString() => !UsesComImport ? "no ComImport"
         : $"{Interfaces} interfaces ({Methods} methods), {PInvokes} P/Invokes, {Delegates} delegates, {CallSites} call sites" +
+          (UsesComTypesOf.Count == 0 ? "" : $"; uses the COM types of {string.Join(", ", UsesComTypesOf)}") +
           (Unsupported.Count == 0 ? "" : $"; unsupported: {string.Join("; ", Unsupported.Take(8))}{(Unsupported.Count > 8 ? $" (+{Unsupported.Count - 8} more)" : "")}");
 }
 
@@ -61,6 +65,11 @@ public static class ComRewriter
     /// <paramref name="searchDirs"/>: where its references are (to resolve base types and structs).
     /// </summary>
     public static RewriteResult Rewrite(string input, string? output, IEnumerable<string> searchDirs, bool partial)
+        => Rewrite(input, output, searchDirs, partial, externallyReferenced: null);
+
+    /// <param name="externallyReferenced">The names (Namespace.Name, or Name for a nested type) of this
+    /// assembly's types that other assemblies of the app reference; null: assume any visible type is.</param>
+    public static RewriteResult Rewrite(string input, string? output, IEnumerable<string> searchDirs, bool partial, ISet<string>? externallyReferenced)
     {
         var result = new RewriteResult();
         var resolver = new DefaultAssemblyResolver();
@@ -70,7 +79,7 @@ public static class ComRewriter
         if (!module.Types.SelectMany(AllTypes).Any(t => t.IsImport)) return result;
         result.UsesComImport = true;
         if (!module.IsILOnly()) { result.Unsupported.Add("mixed-mode (not IL-only) assembly"); return result; }
-        var work = new Work(module, result);
+        var work = new Work(module, result, externallyReferenced);
         try { work.Run(); }
         catch (AssemblyResolutionException e)
         {
@@ -78,7 +87,7 @@ public static class ComRewriter
             result.Unsupported.Add($"cannot resolve {e.AssemblyReference.Name}");
             return result;
         }
-        if (output != null && (partial || result.Unsupported.Count == 0))
+        if (output != null && (partial || (result.Unsupported.Count == 0 && result.UsesComTypesOf.Count == 0)))
         {
             module.Attributes &= ~ModuleAttributes.StrongNameSigned;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
@@ -94,6 +103,53 @@ public static class ComRewriter
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// The rewritten image of <paramref name="input"/> (and its symbols, when a .pdb lies beside it), in
+    /// memory: what the loader hands to LoadFromStream. Rewrites what is supported whatever else the
+    /// assembly does (the decision to rewrite it was made already).
+    /// </summary>
+    public static (MemoryStream Image, MemoryStream? Symbols, RewriteResult Result) RewriteToMemory(string input, IEnumerable<string> searchDirs)
+    {
+        var result = new RewriteResult();
+        var resolver = new DefaultAssemblyResolver();
+        foreach (string d in searchDirs) if (Directory.Exists(d)) resolver.AddSearchDirectory(d);
+        resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(input))!);
+        string pdb = Path.ChangeExtension(input, ".pdb");
+        bool symbols = File.Exists(pdb);
+        var rp = new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Immediate, InMemory = true };
+        ModuleDefinition module;
+        try
+        {
+            rp.ReadSymbols = symbols;
+            module = ModuleDefinition.ReadModule(input, rp);
+        }
+        catch (Exception) when (symbols)
+        {
+            // symbols that do not match (or a format Cecil cannot read): the image without them
+            symbols = false;
+            rp.ReadSymbols = false;
+            module = ModuleDefinition.ReadModule(input, rp);
+        }
+        using (module)
+        {
+            result.UsesComImport = module.Types.SelectMany(AllTypes).Any(t => t.IsImport);
+            new Work(module, result, externallyReferenced: null).Run();
+            module.Attributes &= ~ModuleAttributes.StrongNameSigned;
+            var image = new MemoryStream();
+            MemoryStream? sym = null;
+            if (symbols)
+            {
+                sym = new MemoryStream();
+                module.Write(image, new WriterParameters { WriteSymbols = true, SymbolStream = sym, SymbolWriterProvider = new Mono.Cecil.Cil.PortablePdbWriterProvider() });
+                sym.Position = 0;
+            }
+            else module.Write(image);
+            image.Position = 0;
+            result.Written = true;
+            return (image, sym, result);
+        }
     }
 
     private static bool IsILOnly(this ModuleDefinition m) => (m.Attributes & ModuleAttributes.ILOnly) != 0;
@@ -116,13 +172,16 @@ public static class ComRewriter
         private TypeDefinition? _shims;
 
         // imported references
+        private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
         private readonly MethodReference _this, _borrow, _borrowUnknown, _release, _take, _check, _unsupported, _createInstance, _keepAlive;
         private readonly TypeReference _intPtr, _int32, _int16, _byte, _object, _void, _guid;
         private readonly MethodReference _guidCtor, _strToUni, _strToAnsi, _freeCoTask;
 
-        public Work(ModuleDefinition m, RewriteResult r)
+        private readonly ISet<string>? _external;
+
+        public Work(ModuleDefinition m, RewriteResult r, ISet<string>? externallyReferenced)
         {
-            _m = m; _r = r;
+            _m = m; _r = r; _external = externallyReferenced;
             var com = typeof(Com);
             MethodReference Imp(string name, params Type[] args) => m.ImportReference(com.GetMethod(name, args) ?? throw new MissingMethodException(name));
             _this = Imp(nameof(Com.This), typeof(object), typeof(RuntimeTypeHandle));
@@ -133,6 +192,11 @@ public static class ComRewriter
             _check = Imp(nameof(Com.Check), typeof(int));
             _unsupported = Imp(nameof(Com.Unsupported), typeof(string), typeof(string));
             _createInstance = Imp(nameof(Com.CreateInstance), typeof(Guid));
+            _adopt = Imp(nameof(Com.Adopt), typeof(object));
+            _toBstr = Imp(nameof(Com.ToBstr), typeof(string));
+            _freeBstr = Imp(nameof(Com.FreeBstr), typeof(IntPtr));
+            _takeBstr = Imp(nameof(Com.TakeBstr), typeof(IntPtr));
+            _takeCoTaskUni = Imp(nameof(Com.TakeCoTaskString), typeof(IntPtr));
             _keepAlive = m.ImportReference(typeof(GC).GetMethod(nameof(GC.KeepAlive))!);
             _intPtr = m.TypeSystem.IntPtr; _int32 = m.TypeSystem.Int32; _int16 = m.TypeSystem.Int16; _byte = m.TypeSystem.Byte;
             _object = m.TypeSystem.Object; _void = m.TypeSystem.Void;
@@ -174,7 +238,12 @@ public static class ComRewriter
             {
                 var d = Safe(tr);
                 if (d != null && d.IsImport && d.Module != _m)
-                    _r.Unsupported.Add($"uses COM type {d.FullName} of {d.Module.Assembly.Name.Name}");
+                {
+                    // the BCL's ComTypes are built-in COM's own, and never rewritten
+                    if (d.Module.Assembly.Name.Name is "System.Private.CoreLib" or "System.Runtime" or "mscorlib" or "netstandard")
+                        _r.Unsupported.Add($"uses COM type {d.FullName} of {d.Module.Assembly.Name.Name}");
+                    else _r.UsesComTypesOf.Add(d.Module.Assembly.Name.Name);
+                }
             }
             foreach (var t in _comTypes.ToList())
             {
@@ -184,7 +253,8 @@ public static class ComRewriter
 
             // A COM interface other assemblies can see may receive their built-in RCWs.
             foreach (var t in _comTypes.Where(t => t.IsInterface && Visible(t)))
-                _r.Unsupported.Add($"{t.FullName} is visible to other assemblies (they may hand it built-in RCWs)");
+                if (_external == null || _external.Contains(t.IsNested ? t.Name : t.FullName))
+                    _r.Unsupported.Add($"{t.FullName} is {(_external == null ? "visible to" : "used by")} other assemblies (they may hand it built-in RCWs)");
             foreach (var t in _comTypes.Where(t => t.IsInterface).ToList()) RewriteInterface(t);
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList()) if (IsDelegate(t) && !t.IsImport) MaybeRewriteDelegate(t);
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
@@ -223,7 +293,7 @@ public static class ComRewriter
 
         // ---- marshalling ------------------------------------------------------------------------
 
-        private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, BlitArray, RefBool4, RefBool2, RefBool1 }
+        private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW }
 
         private sealed record Arg(Kind Kind, TypeReference Native, TypeReference? Iface = null);
 
@@ -264,6 +334,11 @@ public static class ComRewriter
                 if (IsComInterface(e)) return new Arg(Kind.OutIface, _intPtr, e);
                 if (e.FullName == "System.Object" && nt is NativeType.IUnknown or NativeType.IntF) return new Arg(Kind.OutIface, _intPtr, null);
                 if (IsBlittable(e) && e.FullName != "System.Boolean") return new Arg(Kind.ByRefBlit, _intPtr);
+                if (e.FullName == "System.String")
+                {
+                    if (nt is NativeType.BStr || (nt == NativeType.None && comDefaults)) return new Arg(Kind.RefStrB, _intPtr);
+                    if (nt is NativeType.LPWStr or NativeType.LPTStr) return new Arg(Kind.RefStrW, _intPtr);
+                }
                 if (e.FullName == "System.Boolean")
                 {
                     if (nt is NativeType.Boolean || (nt == NativeType.None && !comDefaults)) return new Arg(Kind.RefBool4, _intPtr);
@@ -284,7 +359,8 @@ public static class ComRewriter
                 case "System.String":
                     if (nt is NativeType.LPWStr or NativeType.LPTStr) return new Arg(Kind.StrW, _intPtr);
                     if (nt is NativeType.LPStr) return new Arg(Kind.StrA, _intPtr);
-                    why = nt == NativeType.None ? "string (a BSTR)" : $"string as {nt}"; return null;
+                    if (nt is NativeType.BStr || (nt == NativeType.None && comDefaults)) return new Arg(Kind.StrB, _intPtr);
+                    why = $"string as {nt}"; return null;
                 case "System.Object":
                     if (nt is NativeType.IUnknown or NativeType.IntF) return new Arg(Kind.Unknown, _intPtr);
                     why = nt == NativeType.IDispatch ? "IDispatch" : "object (a VARIANT)"; return null;
@@ -356,7 +432,7 @@ public static class ComRewriter
             if (!isVoid)
             {
                 ret = Classify(decl.ReturnType, decl.MethodReturnType.MarshalInfo, comDefaults: true, out string? why);
-                if (ret == null || ret.Kind is Kind.ByRefBlit or Kind.OutIface or Kind.StrA or Kind.StrW)
+                if (ret == null || ret.Kind is Kind.ByRefBlit or Kind.OutIface or Kind.StrA or Kind.BlitArray or Kind.RefBool1 or Kind.RefBool2 or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW)
                 { Refuse(il, member, $"return {why ?? decl.ReturnType.Name}"); return; }
             }
 
@@ -535,6 +611,42 @@ public static class ComRewriter
                     });
                     break;
                 }
+                case Kind.StrB:
+                {
+                    var tmp = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Call, _toBstr);
+                    il.Emit(OpCodes.Stloc, tmp);
+                    pushes.Add(() => il.Emit(OpCodes.Ldloc, tmp));
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Call, _freeBstr); });
+                    break;
+                }
+                case Kind.RefStrB:
+                case Kind.RefStrW:
+                {
+                    // in: the current string (a ref; an out's is null); out: the callee's, which the caller frees
+                    var tmp = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Ldind_Ref);
+                    il.Emit(OpCodes.Call, a.Kind == Kind.RefStrB ? _toBstr : _strToUni);
+                    il.Emit(OpCodes.Stloc, tmp);
+                    pushes.Add(() => { il.Emit(OpCodes.Ldloca, tmp); il.Emit(OpCodes.Conv_U); });
+                    after.Add(() =>
+                    {
+                        il.Emit(OpCodes.Ldarg, argIndex);
+                        il.Emit(OpCodes.Ldloc, tmp);
+                        il.Emit(OpCodes.Call, a.Kind == Kind.RefStrB ? _takeBstr : _takeCoTaskUni);
+                        il.Emit(OpCodes.Stind_Ref);
+                        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Conv_I); il.Emit(OpCodes.Stloc, tmp);      // taken
+                    });
+                    cleanup.Add(() =>
+                    {
+                        // what the callee did not hand back (it failed): ours to free
+                        il.Emit(OpCodes.Ldloc, tmp);
+                        il.Emit(OpCodes.Call, a.Kind == Kind.RefStrB ? _freeBstr : _freeCoTask);
+                    });
+                    break;
+                }
                 case Kind.StrW:
                 case Kind.StrA:
                 {
@@ -560,6 +672,12 @@ public static class ComRewriter
                 case Kind.Iface: case Kind.Unknown:
                     il.Emit(OpCodes.Call, _take);
                     if (a.Iface != null) il.Emit(OpCodes.Castclass, a.Iface);
+                    break;
+                case Kind.StrB:
+                    il.Emit(OpCodes.Call, _takeBstr);
+                    break;
+                case Kind.StrW:
+                    il.Emit(OpCodes.Call, _takeCoTaskUni);
                     break;
             }
         }
@@ -719,6 +837,12 @@ public static class ComRewriter
                         ins.OpCode = OpCodes.Call; ins.Operand = shim; _r.CallSites++;
                         continue;
                     }
+                    // where the assembly came from: it is loaded from memory (Com.AssemblyLocation and kin)
+                    if (LocationReplacement(mr) is { } loc)
+                    {
+                        ins.OpCode = OpCodes.Call; ins.Operand = loc; _r.CallSites++;
+                        continue;
+                    }
                     // Marshal's COM members
                     if (mr.DeclaringType.FullName == "System.Runtime.InteropServices.Marshal" && s_marshal.Contains(mr.Name))
                     {
@@ -738,10 +862,12 @@ public static class ComRewriter
                         var g = t.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "System.Runtime.InteropServices.GuidAttribute");
                         if (g == null) { _r.Unsupported.Add($"new {t.FullName}: a COM class without a Guid"); continue; }
                         // new C()  ->  Com.CreateInstance(new Guid("..."))
-                        var ldstr = il.Create(OpCodes.Ldstr, (string)g.ConstructorArguments[0].Value);
-                        il.InsertBefore(ins, ldstr);
-                        il.InsertBefore(ins, il.Create(OpCodes.Newobj, _guidCtor));
-                        ins.OpCode = OpCodes.Call; ins.Operand = _createInstance;
+                        // in place, so that a branch to the newobj reaches the whole sequence
+                        var call = il.Create(OpCodes.Call, _createInstance);
+                        var guid = il.Create(OpCodes.Newobj, _guidCtor);
+                        ins.OpCode = OpCodes.Ldstr; ins.Operand = (string)g.ConstructorArguments[0].Value;
+                        il.InsertAfter(ins, guid);
+                        il.InsertAfter(guid, call);
                         _r.CallSites++;
                     }
                     else if (_rewrittenDelegates.Contains(t))
@@ -753,10 +879,21 @@ public static class ComRewriter
                     if (t != null && _comTypes.Contains(t) && !t.IsInterface)
                         _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: casts to the COM class {t.Name}");
                     // An object of unknown origin cast to a rewritten interface may be a built-in RCW (from
-                    // another assembly, an ActiveX control, the BCL), which no longer converts. Only what one
-                    // of the rewritten Marshal calls just made is known to be ours.
+                    // another assembly, an ActiveX control, the BCL), which would no longer convert: it is
+                    // adopted first (Com.Adopt: the same native object, as a ComObject).
                     else if (t != null && _comTypes.Contains(t) && !FromComWrapper(ins.Previous) && !IsCom(StackType(md, ins.Previous)))
-                        _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: casts an object of unknown origin to COM interface {t.Name} (it may be a built-in RCW)");
+                    {
+                        // in place (a branch to the cast reaches the adoption), then the cast again
+                        var cast = il.Create(ins.OpCode, (TypeReference)ins.Operand);
+                        ins.OpCode = OpCodes.Call; ins.Operand = _adopt;
+                        il.InsertAfter(ins, cast);
+                        _r.CallSites++;
+                        // Off Windows that is all. On Windows the assembly then gets objects that built-in COM
+                        // made for other assemblies, and in app the two that flipped this way did not run
+                        // as before (Ab3d.DXEngine stopped using Direct3D; GwxRuntimeCore's Location, asked by
+                        // IcoTrace from outside, changed): such an assembly stays on built-in COM there.
+                        _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: casts an object of unknown origin to COM interface {t.Name} (adopted off Windows; on Windows it may be another assembly's built-in RCW)");
+                    }
                 }
             }
         }
@@ -788,9 +925,29 @@ public static class ComRewriter
             return null;
         }
 
+        private MethodReference? LocationReplacement(MethodReference mr)
+        {
+            if (!mr.HasThis) return null;
+            string? helper = (mr.DeclaringType.FullName, mr.Name, mr.Parameters.Count) switch
+            {
+                ("System.Reflection.Assembly", "get_Location", 0) => nameof(Com.AssemblyLocation),
+                ("System.Reflection.Assembly", "get_CodeBase", 0) => nameof(Com.AssemblyCodeBase),
+                ("System.Reflection.Assembly", "get_EscapedCodeBase", 0) => nameof(Com.AssemblyEscapedCodeBase),
+                ("System.Reflection.Assembly", "GetName", 0) => nameof(Com.AssemblyGetName),
+                ("System.Reflection.Assembly", "GetName", 1) => nameof(Com.AssemblyGetName),
+                ("System.Reflection.Module", "get_FullyQualifiedName", 0) => nameof(Com.ModuleFullyQualifiedName),
+                ("System.Reflection.Module", "get_Name", 0) => nameof(Com.ModuleName),
+                _ => null,
+            };
+            if (helper == null) return null;
+            var self = mr.DeclaringType.Name == "Assembly" ? typeof(System.Reflection.Assembly) : typeof(System.Reflection.Module);
+            var args = new[] { self }.Concat(mr.Parameters.Select(_ => typeof(bool))).ToArray();
+            return _m.ImportReference(typeof(Com).GetMethod(helper, args)!);
+        }
+
         private static bool FromComWrapper(Instruction? prev)
             => prev != null && prev.OpCode == OpCodes.Call && prev.Operand is MethodReference m
-               && m.DeclaringType.FullName == typeof(Com).FullName && (m.Name.Contains("ForIUnknown") || m.Name == nameof(Com.Take));
+               && m.DeclaringType.FullName == typeof(Com).FullName && (m.Name.Contains("ForIUnknown") || m.Name is nameof(Com.Take) or nameof(Com.Adopt));
 
         private static MethodDefinition? SafeM(MethodReference m) { try { return m.Resolve(); } catch { return null; } }
 
