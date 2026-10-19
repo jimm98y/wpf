@@ -277,13 +277,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // The bind group an image fill samples its cached texture through, kept as long as the texture:
         // one per image draw per frame was a device call each (every ribbon icon on every hover frame).
-        private readonly Dictionary<(IntPtr View, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy), IntPtr> _imgBindGroups = new();
+        private readonly Dictionary<(IntPtr View, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy, FillKind Kind), IntPtr> _imgBindGroups = new();
 
-        private IntPtr ImageBindGroup(WGPUTextureFormat format, IntPtr view, IntPtr sampler, bool sourceCopy)
+        private IntPtr ImageBindGroup(WGPUTextureFormat format, IntPtr view, IntPtr sampler, bool sourceCopy, FillKind kind = FillKind.Textured)
         {
-            var key = (view, format, sampler, sourceCopy);
+            var key = (view, format, sampler, sourceCopy, kind);
             if (_imgBindGroups.TryGetValue(key, out IntPtr bg)) return bg;
-            bg = CreateSampledBindGroup(format, FillKind.Textured, view, sampler, sourceCopy);
+            bg = CreateSampledBindGroup(format, kind, view, sampler, sourceCopy);
             _imgBindGroups[key] = bg;
             return bg;
         }
@@ -291,8 +291,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void ReleaseImageBindGroups(IntPtr view)
         {
             if (_imgBindGroups.Count == 0) return;
-            List<(IntPtr, WGPUTextureFormat, IntPtr, bool)>? dead = null;
-            foreach (KeyValuePair<(IntPtr View, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy), IntPtr> kv in _imgBindGroups)
+            List<(IntPtr, WGPUTextureFormat, IntPtr, bool, FillKind)>? dead = null;
+            foreach (KeyValuePair<(IntPtr View, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy, FillKind Kind), IntPtr> kv in _imgBindGroups)
                 if (kv.Key.View == view) (dead ??= new()).Add(kv.Key);
             if (dead == null) return;
             foreach (var k in dead) { DeferReleaseBindGroup(_imgBindGroups[k]); _imgBindGroups.Remove(k); }
@@ -596,7 +596,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // visual. A shared 1x1 white coverage texture is bound for solid/bounds quads.
         private static string IdShaderWgsl => ShaderSource.Get("IdShader");
 
-        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd, LayerPoint, LayerSubpixelMultiply, LayerSubpixelAdd }
+        private enum FillKind { Solid, Textured, Text, Layer, Blur, Shadow, Clip, Coverage, MaskBrush, BrushAlpha, Id, MaskImage, Stroke, Shape, ShapeBrush, StrokeDraw, ShaderEffect, TextSubpixelMultiply, TextSubpixelAdd, LayerStretchAnd, LayerWindowFade, LayerWindowAdd, LayerPoint, LayerSubpixelMultiply, LayerSubpixelAdd, TexturedWpf }
 
         private readonly WgpuContext _ctx;
         private readonly Dictionary<(WGPUTextureFormat, FillKind, bool SourceCopy), IntPtr> _pipelines = new();
@@ -3680,20 +3680,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
                     IntPtr sampler = _nearestScaling ? NearestSampler() : LinearSampler();
+                    // A WPF bitmap is filtered as WPF filters it (fs_textured_wpf); not in linear-light
+                    // mode, whose sRGB textures load decoded.
+                    kind = img.WpfFilter && img.SourceVisual is null && !_nearestScaling && !_srgbOutput ? FillKind.TexturedWpf : FillKind.Textured;
                     if (img.SourceVisual is null)
                     {
                         view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
-                        bindGroup = ImageBindGroup(format, view, sampler, _srcCopy);   // owned by the image cache
+                        bindGroup = ImageBindGroup(format, view, sampler, _srcCopy, kind);   // owned by the image cache
                     }
                     else
                     {
                         bindGroup = CreateSampledBindGroup(format, FillKind.Textured, view, sampler, _srcCopy);
                         DeferReleaseBindGroup(bindGroup);
                     }
-                    kind = FillKind.Textured;
 
                     Bounds(mesh.Positions, out Vector2 min, out Vector2 size);
                     float imgAlpha = opacityF * img.Opacity;
+                    if (kind == FillKind.TexturedWpf)
+                    {
+                        // WPF's own fixed-point mapping, not a uv: see WpfImageMapping and fs_textured_wpf.
+                        var (stepX, offX) = WpfImageMapping(world.M11 * (size.X / img.PixelWidth), world.M11 * min.X + world.M31, _devOX);
+                        var (stepY, offY) = WpfImageMapping(world.M22 * (size.Y / img.PixelHeight), world.M22 * min.Y + world.M32, _devOY);
+                        foreach (Vector2 p in mesh.Positions)
+                            AddVertex(data.Verts, ToNdc(Vector2.Transform(p, world), width, height), 1f, 1f, 1f, imgAlpha, stepX, stepY,
+                                offX >> 16, offX & 0xFFFF, offY >> 16, offY & 0xFFFF);
+                        break;
+                    }
                     foreach (Vector2 p in mesh.Positions)
                     {
                         float u = size.X > 0f ? (p.X - min.X) / size.X : 0f;
@@ -6978,7 +6990,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private static IntPtr BindGroupFor(DrawItem d, IntPtr atlasBindGroup) => d.Kind switch
         {
-            FillKind.Textured or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.LayerPoint or FillKind.Blur or FillKind.Shadow or
+            FillKind.Textured or FillKind.TexturedWpf or FillKind.Layer or FillKind.LayerStretchAnd or FillKind.LayerWindowFade or FillKind.LayerWindowAdd or FillKind.LayerPoint or FillKind.Blur or FillKind.Shadow or
             FillKind.Clip or FillKind.Coverage or FillKind.MaskBrush or FillKind.MaskImage or
             FillKind.ShapeBrush or        // group 0 = gradient ramp + sampler + brush params
             FillKind.BrushAlpha or FillKind.Id or FillKind.Stroke or
@@ -7390,6 +7402,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             string fsName = kind switch
             {
                 FillKind.Textured => "fs_textured",
+                FillKind.TexturedWpf => "fs_textured_wpf",
                 FillKind.Text => "fs_text",
                 FillKind.TextSubpixelMultiply or FillKind.LayerSubpixelMultiply => "fs_text_subpixel_multiply",
                 FillKind.TextSubpixelAdd or FillKind.LayerSubpixelAdd => "fs_text_subpixel_add",
@@ -7413,7 +7426,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 FillKind.ShaderEffect => "fs_effect",
                 _ => "fs_solid",
             };
-            byte[] vsEntry = Encoding.UTF8.GetBytes("vs_main");
+            byte[] vsEntry = Encoding.UTF8.GetBytes(kind == FillKind.TexturedWpf ? "vs_wpf_image" : "vs_main");
             byte[] fsEntry = Encoding.UTF8.GetBytes(fsName);
 
             fixed (byte* pVs = vsEntry)
@@ -7422,7 +7435,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // All pipelines share the 12-float vertex stride. The shape and stroke-draw pipelines
                 // additionally read the last 4 floats as location 3 (shape params / stroke params); every
                 // other pipeline reads only locations 0-2 and ignores the trailing floats.
-                bool usesParams = kind is FillKind.Shape or FillKind.ShapeBrush or FillKind.StrokeDraw;
+                bool usesParams = kind is FillKind.Shape or FillKind.ShapeBrush or FillKind.StrokeDraw or FillKind.TexturedWpf;
                 var attributes = stackalloc WGPUVertexAttribute[4];
                 attributes[0] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x2, offset = 0, shaderLocation = 0 };
                 attributes[1] = new WGPUVertexAttribute { format = WGPUVertexFormat.Float32x4, offset = 2 * sizeof(float), shaderLocation = 1 };
@@ -8234,6 +8247,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             entries[1] = new WGPUBindGroupEntry { binding = 1, sampler = sampler };
             var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 2, entries = entries };
             return wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
+        }
+
+        /// <summary>
+        /// One axis of milcore's software bilinear mapping (CBilinearSpan, which a stock
+        /// RenderTargetBitmap and a software-rendered window use), in float as milcore computes it:
+        /// the texture-to-device scale and offset inverted (SetToInverseOfTranslateOrScale), moved
+        /// to pixel centres (AdjustForIPC), and rounded to 16.16 (InitializeFixedPointState). The
+        /// offset is rebased from device coordinates onto the current target's (origin
+        /// <paramref name="targetOrigin"/>), exactly, in integers.
+        /// </summary>
+        private static (int Step, int Offset) WpfImageMapping(float scale, float offset, float targetOrigin)
+        {
+            if (scale == 0f || !float.IsFinite(scale) || !float.IsFinite(offset)) return (0, 0);
+            float m = 1f / scale;
+            float d = -offset / scale;
+            d += m * 0.5f;
+            d -= 0.5f;
+            int step = RoundHalfUp(m * 65536f);
+            long off = (long)RoundHalfUp(d * 65536f) + (long)step * (long)MathF.Round(targetOrigin);
+            return (step, (int)Math.Clamp(off, int.MinValue, int.MaxValue));
+
+            static int RoundHalfUp(float x) => (int)Math.Clamp(Math.Floor((double)x + 0.5), int.MinValue, int.MaxValue);
         }
 
         private IntPtr LinearSampler() => _linearSampler != IntPtr.Zero ? _linearSampler : (_linearSampler = CreateSampler(WGPUFilterMode.Linear));

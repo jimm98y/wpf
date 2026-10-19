@@ -1929,7 +1929,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (_bitmaps.TryGetValue(idr.ImageSource, out MilBitmap ibmp))
                     EmitFill(v.Content, new RectangleGeometry(idr.Rect),
-                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height), RenderState.Default);
+                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height) { WpfFilter = true }, RenderState.Default);
             }
             else if (_glyphRunDrawings.TryGetValue(handle, out (uint GlyphRun, uint Brush) grd))
             {
@@ -1940,7 +1940,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (_videoFrames.TryGetValue(vd.Player, out MilBitmap vframe))
                     EmitFill(v.Content, new RectangleGeometry(Anim(vd.RectAnim, vd.Rect)),
-                        new ImageBrush(vframe.Rgba, vframe.Width, vframe.Height), RenderState.Default);
+                        new ImageBrush(vframe.Rgba, vframe.Width, vframe.Height) { WpfFilter = true }, RenderState.Default);
             }
             else if (_drawingImages.TryGetValue(handle, out uint hInner))
             {
@@ -2090,7 +2090,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (_bitmaps.TryGetValue(idr.ImageSource, out MilBitmap ibmp))
                     EmitFill(output, new RectangleGeometry(idr.Rect),
-                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height), state);
+                        new ImageBrush(ibmp.Rgba, ibmp.Width, ibmp.Height) { WpfFilter = true }, state);
             }
             else if (_glyphRunDrawings.TryGetValue(handle, out (uint GlyphRun, uint Brush) grd))
             {
@@ -2101,7 +2101,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 if (_videoFrames.TryGetValue(vd.Player, out MilBitmap vframe))
                     EmitFill(output, new RectangleGeometry(Anim(vd.RectAnim, vd.Rect)),
-                        new ImageBrush(vframe.Rgba, vframe.Width, vframe.Height), state);
+                        new ImageBrush(vframe.Rgba, vframe.Width, vframe.Height) { WpfFilter = true }, state);
                 _parseTouchedContentBrush = true;   // frames change without the render data changing
             }
             else if (_drawingImages.TryGetValue(handle, out uint hInner))
@@ -2233,7 +2233,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         uint hImg = r.U32(), hAnim = r.U32();
                         if (_bitmaps.TryGetValue(hImg, out MilBitmap abmp))
                             EmitFill(output, new RectangleGeometry(Anim(hAnim, rect)),
-                                new ImageBrush(abmp.Rgba, abmp.Width, abmp.Height), state);
+                                new ImageBrush(abmp.Rgba, abmp.Width, abmp.Height) { WpfFilter = true }, state);
                         break;
                     }
                     case Mil.DrawVideoAnimate:
@@ -2244,7 +2244,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         _parseTouchedContentBrush = true;      // as MilDrawVideo: frames change out of band
                         if (_videoFrames.TryGetValue(hPlayer, out MilBitmap aframe))
                             EmitFill(output, new RectangleGeometry(Anim(hAnim, rect)),
-                                new ImageBrush(aframe.Rgba, aframe.Width, aframe.Height), state);
+                                new ImageBrush(aframe.Rgba, aframe.Width, aframe.Height) { WpfFilter = true }, state);
                         break;
                     }
                     case Mil.PushOpacityAnimate:
@@ -2297,7 +2297,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         var rect = new Rect((float)r.F64(), (float)r.F64(), (float)r.F64(), (float)r.F64());
                         uint hImg = r.U32();
                         if (_bitmaps.TryGetValue(hImg, out MilBitmap bmp))
-                            EmitFill(output, new RectangleGeometry(rect), new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height), state);
+                            EmitFill(output, new RectangleGeometry(rect), new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height) { WpfFilter = true }, state);
                         else
                             EmitVectorImage(output, hImg, rect, state);
                         break;
@@ -2315,7 +2315,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         // static-skip optimization would keep sampling the first frame's texture.
                         _parseTouchedContentBrush = true;
                         if (_videoFrames.TryGetValue(hPlayer, out MilBitmap frame))
-                            EmitFill(output, new RectangleGeometry(rect), new ImageBrush(frame.Rgba, frame.Width, frame.Height), state);
+                            EmitFill(output, new RectangleGeometry(rect), new ImageBrush(frame.Rgba, frame.Width, frame.Height) { WpfFilter = true }, state);
                         break;
                     }
                     case Mil.DrawGlyphRun:
@@ -2770,7 +2770,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // 3) TileMode != None: tile the (cropped) image every Viewport cell across the shape.
             if (ib.Tile != TileMode.None)
             {
-                fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh, (float)ib.Opacity);
+                fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh, (float)ib.Opacity) { WpfFilter = true };
                 return true;
             }
 
@@ -2784,7 +2784,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 int cy = Math.Clamp((ih - ch) / 2, 0, ih - ch);
                 if (vp.Width != bw || vp.Height != bh || vp.X != bounds.X || vp.Y != bounds.Y)
                     g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(vp));
-                fill = new ImageBrush(CropRgba(pixels, iw, cx, cy, cw, ch), cw, ch, TileMode.None, vw, vh, (float)ib.Opacity);
+                fill = new ImageBrush(CropRgba(pixels, iw, cx, cy, cw, ch), cw, ch, TileMode.None, vw, vh, (float)ib.Opacity) { WpfFilter = true };
                 return true;
             }
 
@@ -2807,7 +2807,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // Clip to the painted sub-rect unless it already covers the whole bounds (plain Fill).
             if (dest.X != bounds.X || dest.Y != bounds.Y || dest.Width != bw || dest.Height != bh)
                 g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(dest));
-            fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity);
+            fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity) { WpfFilter = true };
             return true;
         }
 
@@ -3067,7 +3067,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
             {
                 _parseResourceRefs.Add(ib.ImageHandle);   // the pixels are baked in too
-                return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity);
+                return new ImageBrush(bmp.Rgba, bmp.Width, bmp.Height, ib.Tile, bounds.Width, bounds.Height, (float)ib.Opacity) { WpfFilter = true };
             }
             Trace($"brush 0x{handle:x} unresolved (type {(_resourceType.TryGetValue(handle, out MilResourceTypeId t) ? t.ToString() : "?")})");
             return null;
