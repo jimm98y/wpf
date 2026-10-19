@@ -299,8 +299,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 mipLevelCount = MipLevels,
                 sampleCount = SampleCount,
             };
-            Gpu = wgpuDeviceCreateTexture(Device.Gpu.Device, &tdesc);
-            if (Gpu == IntPtr.Zero) throw new InvalidOperationException("wgpuDeviceCreateTexture failed");
+            // in a validation scope: a texture this adapter cannot make (a format it cannot render to
+            // on a downlevel backend) fails CreateTexture2D, rather than reaching a pass, where an
+            // invalid view aborts the process inside wgpu
+            wgpuDevicePushErrorScope(Device.Gpu.Device, WGPUErrorFilter.Validation);
+            Gpu = D3DContext.PopScope(Device.Gpu, wgpuDeviceCreateTexture(Device.Gpu.Device, &tdesc), out string? error);
+            if (Gpu == IntPtr.Zero) throw new NotSupportedException($"texture {desc.Format} {desc.Width}x{desc.Height} (bind {desc.BindFlags}) on this adapter: {error}");
 
             if (init != null)
             {

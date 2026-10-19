@@ -200,10 +200,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (d.Format == DXGI_FORMAT.UNKNOWN) d.Format = t.Desc.Format;
                 Desc = d;
             }
-            else if (resource is D3DBuffer)
+            else if (resource is D3DBuffer b)
             {
-                Desc = desc ?? default;
-                throw new NotSupportedException("buffer shader resource views");
+                // D3D11_SRV_DIMENSION_BUFFER (1) and BUFFEREX (11): U0 first element, U1 element count
+                if (desc == null) throw new ArgumentException("a buffer's shader resource view needs a description");
+                var d = desc.Value;
+                if (d.ViewDimension is not (1 or 11)) throw new NotSupportedException($"buffer view dimension {d.ViewDimension}");
+                if ((b.Desc.BindFlags & D3D11_BIND.SHADER_RESOURCE) == 0) throw new ArgumentException("the buffer has no SHADER_RESOURCE binding");
+                Desc = d;
             }
             else throw new NotSupportedException($"shader resource view of {resource.GetType().Name}");
         }
