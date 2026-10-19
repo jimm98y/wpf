@@ -542,11 +542,16 @@ namespace System.Drawing
         /// <summary>The whole frame as straight RGBA bytes (what a scene's ImageBrush takes).</summary>
         internal static byte[] ToRgba (GdipFrame f, Rectangle r)
         {
-            uint[] argb = ToArgb (f, r);
-            var rgba = new byte [argb.Length * 4];
-            for (int i = 0; i < argb.Length; i++) {
-                uint c = argb [i];
-                rgba [i * 4] = (byte) (c >> 16); rgba [i * 4 + 1] = (byte) (c >> 8); rgba [i * 4 + 2] = (byte) c; rgba [i * 4 + 3] = (byte) (c >> 24);
+            // A row at a time: a whole ARGB copy first was a second window-sized array per conversion.
+            var rgba = new byte [r.Width * r.Height * 4];
+            var argb = new uint [r.Width];
+            for (int y = 0; y < r.Height; y++) {
+                ReadArgb (f, r.X, r.Y + y, r.Width, argb, 0);
+                int o = y * r.Width * 4;
+                for (int i = 0; i < argb.Length; i++, o += 4) {
+                    uint c = argb [i];
+                    rgba [o] = (byte) (c >> 16); rgba [o + 1] = (byte) (c >> 8); rgba [o + 2] = (byte) c; rgba [o + 3] = (byte) (c >> 24);
+                }
             }
             return rgba;
         }
