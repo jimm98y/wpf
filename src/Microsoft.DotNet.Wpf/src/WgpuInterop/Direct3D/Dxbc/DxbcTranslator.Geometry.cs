@@ -86,6 +86,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public const int PlumbingGroup = 1, PlumbingParams = 0, PlumbingIndices = 1, PlumbingVsOut = 2, PlumbingGsOut = 3, PlumbingGsIndices = 4, PlumbingVertexBuffer = 8;
         /// <summary>The strip-cut primitive table of an indexed strip into a GS (ia_scan writes it).</summary>
         public const int PlumbingPrimitiveTable = 18;
+        /// <summary>A GS after tessellation: the list of its primitives' vertices.</summary>
+        public const int PlumbingInputIndices = 19;
         /// <summary>vec4&lt;u32&gt;s of the draw's parameters: four of the draw, then one per vertex-buffer slot.</summary>
         public const int ParamVec4s = 4 + 32;
         /// <summary>Invocations per row of a dispatch: 65535 workgroups of 64.</summary>
@@ -311,6 +313,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingGsOut}) var<storage, read_write> dx_gsout: array<vec4<f32>>;\n");
             w.Append($"@group({PlumbingGroup}) @binding({PlumbingGsIndices}) var<storage, read_write> dx_gsidx: array<u32>;\n");
             if (_options.StripCut) AppendStripCutScan(w, g.InputVertices);
+            if (_options.IndexedInput) w.Append($"@group({PlumbingGroup}) @binding({PlumbingInputIndices}) var<storage, read> dx_vin: array<u32>;\n");
             w.Append($"var<private> dx_gv: array<array<vec4<f32>, {inRegs}>, {g.InputVertices}>;\n");
             w.Append("var<private> dx_n: u32;\nvar<private> dx_k: u32;\nvar<private> dx_vbase: u32;\nvar<private> dx_ibase: u32;\nvar<private> dx_open: bool;\n\n");
 
@@ -338,7 +341,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             // strip's odd triangles come as (n, n+2, n+1) (D3D's order, measured on WARP)
             for (int k = 0; k < g.InputVertices; k++)
             {
-                if (_options.StripCut)
+                if (_options.IndexedInput)
+                    w.Append($"    {{\n        let o = dx_vin[prim * {g.InputVertices}u + {k}u];\n");
+                else if (_options.StripCut)
                 {
                     w.Append($"    {{\n        var o = start + {k}u;\n");
                     if (k > 0) w.Append($"        if (dx_p[2].z == 2u && odd == 1u) {{ o = start + {3 - k}u; }}\n");

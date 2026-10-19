@@ -48,6 +48,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>A geometry shader fed by an indexed strip: its primitives come from a table the
         /// ia_scan kernel builds, honouring strip-cut indices (all ones).</summary>
         public bool StripCut;
+        /// <summary>A geometry shader after tessellation: primitive p's vertex k is dx_vin[p * V + k]
+        /// (the tessellator's indices), from the domain shader's outputs.</summary>
+        public bool IndexedInput;
     }
 
     internal sealed partial class DxbcTranslator

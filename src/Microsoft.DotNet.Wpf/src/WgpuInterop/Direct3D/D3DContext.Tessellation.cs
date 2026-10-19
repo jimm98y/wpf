@@ -163,7 +163,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var hs = _hs.Shader;
             var ds = _ds.Shader;
             if (hs == null || ds == null) { D3DLog.Once("tsmissing", "a draw with only one of the hull and domain shaders bound (D3D rejects it)"); DrawsSkipped++; return; }
-            if (_gs.Shader != null) { D3DLog.Once("tsgs", "a geometry shader after tessellation is not drawn yet"); DrawsSkipped++; return; }
+            if (_gs.Shader is { } gsAfter && (gsAfter.StreamOutput != null || gsAfter.Code.Stage != ShaderStage.Geometry))
+            { D3DLog.Once("tsso", "stream output after tessellation is not written"); DrawsSkipped++; return; }
             var t = TranslateTessellation(vs, hs, ds, _ps.Shader);
             if (t.Error != null) { DrawsSkipped++; return; }
             var h = t.Info;
@@ -279,6 +280,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Device.Gpu.WriteBuffer(pts, 0, System.Runtime.InteropServices.MemoryMarshal.AsBytes(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(points)));
             Device.Gpu.WriteBuffer(ib, 0, System.Runtime.InteropServices.MemoryMarshal.AsBytes(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(indices)));
 
+            if (_gs.Shader != null)
+            {
+                DrawTessellatedGeometry(t, ds, _gs.Shader, pts, (ulong)points.Count / 4, ib, (ulong)indices.Count, cpOut, cpBytes, pcOut, pcBytes);
+                return;
+            }
+
             // 4: the domain shader's draw
             try
             {
@@ -308,5 +315,179 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             DrawsIssued++;
             for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
         }
+
+        // ---- a geometry shader after tessellation ---------------------------------------------------------
+
+        private sealed class TessellatedGeometry
+        {
+            public string? Error;
+            public int DsRegs, GsRegs;
+            public GeometryInfo Info = new();
+            public ShaderBindings? DsBindings, GsBindings;
+            public IntPtr DsLayout, DsPlumbing, DsPipeline, GsLayout, GsPlumbing, GsPipeline;
+            public readonly Translation Draw = new();
+            public GeometryDraw Pipeline = new();
+            public bool SelectsAny;
+        }
+
+        private readonly Dictionary<string, TessellatedGeometry> _tessellatedGeometries = new();
+
+        /// <summary>The domain shader as compute over the tessellator's points, the geometry shader as
+        /// compute over its primitives (the tessellator's indices), and the pass-through draw.</summary>
+        private void DrawTessellatedGeometry(TessellationTranslation tt, D3DShader ds, D3DShader gs, IntPtr points, ulong pointCount, IntPtr indices, ulong indexCount,
+                                             IntPtr cpOut, ulong cpBytes, IntPtr pcOut, ulong pcBytes)
+        {
+            var ps = _ps.Shader;
+            string key = $"{tt.Pipeline.Key}|{gs.Code.Hash:x16}";
+            if (!_tessellatedGeometries.TryGetValue(key, out var t))
+            {
+                t = new TessellatedGeometry();
+                _tessellatedGeometries[key] = t;
+                t.Pipeline.Key = "tsgs:" + key;
+                try
+                {
+                    t.Info = GeometryInfo.Of(gs.Code);
+                    int want = tt.Info.Output switch { TessOutput.Point => 1, TessOutput.Line => 2, _ => tt.Info.Domain == 1 ? 2 : 3 };
+                    if (t.Info.InputPrimitive != want) throw new NotSupportedException($"a geometry shader of input primitive {t.Info.InputPrimitive} after tessellation that makes primitive {want} (D3D rejects it)");
+                    var dsc = DxbcTranslator.TranslateDomain(ds.Code, _hs.Shader!.Code, tt.CpRegs, tt.PcRegs, Array.Empty<LinkedElement>(), compute: true);
+                    var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, ds.Code, dsc.OutputRegisters, new TranslationOptions { IndexedInput = true });
+                    var link = DxbcTranslator.LinkageOf(ps?.Code);
+                    var pass = DxbcTranslator.PassThrough(gs.Code, link);
+                    if (pass.SelectsLayer || pass.SelectsViewport) D3DLog.Once("tsgslayer", "array slices and viewports picked by a geometry shader after tessellation: drawn to slice and viewport 0");
+                    t.SelectsAny = pass.SelectsLayer || pass.SelectsViewport;
+                    t.DsRegs = dsc.OutputRegisters;
+                    t.GsRegs = g.OutputRegisters;
+                    t.DsBindings = dsc.Bindings;
+                    t.GsBindings = g.Bindings;
+                    t.DsLayout = BindGroupLayout(dsc.Bindings, WGPUShaderStage_Compute);
+                    var de = stackalloc WGPUBindGroupLayoutEntry[4];
+                    for (int i = 0; i < 4; i++)
+                        de[i] = new WGPUBindGroupLayoutEntry { binding = (uint)i, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = i == DxbcTranslator.DomainOut ? WGPUBufferBindingType.Storage : WGPUBufferBindingType.ReadOnlyStorage } };
+                    var dld = new WGPUBindGroupLayoutDescriptor { entryCount = 4, entries = de };
+                    t.DsPlumbing = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &dld);
+                    t.DsPipeline = ComputePipeline(dsc.Wgsl, "ds-cs", t.DsLayout, t.DsPlumbing, ds.Code, out string? err);
+                    if (t.DsPipeline == IntPtr.Zero) { t.Error = "domain shader as compute: " + err; }
+                    else
+                    {
+                        t.GsLayout = BindGroupLayout(g.Bindings, WGPUShaderStage_Compute);
+                        var entries = new List<WGPUBindGroupLayoutEntry>
+                        {
+                            new() { binding = DxbcTranslator.PlumbingParams, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Uniform, minBindingSize = DxbcTranslator.ParamVec4s * 16 } },
+                            new() { binding = DxbcTranslator.PlumbingVsOut, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } },
+                            new() { binding = DxbcTranslator.PlumbingGsOut, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } },
+                            new() { binding = DxbcTranslator.PlumbingGsIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Storage } },
+                            new() { binding = DxbcTranslator.PlumbingInputIndices, visibility = WGPUShaderStage_Compute, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } },
+                        };
+                        var arr = entries.ToArray();
+                        fixed (WGPUBindGroupLayoutEntry* pe = arr)
+                        {
+                            var ld = new WGPUBindGroupLayoutDescriptor { entryCount = (nuint)arr.Length, entries = pe };
+                            t.GsPlumbing = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &ld);
+                        }
+                        t.GsPipeline = ComputePipeline(g.Wgsl, "gs", t.GsLayout, t.GsPlumbing, gs.Code, out err);
+                        if (t.GsPipeline == IntPtr.Zero) t.Error = "geometry shader as compute: " + err;
+                    }
+                    if (t.Error == null)
+                    {
+                        var d = t.Draw;
+                        d.Vs = CreateModule(pass.Wgsl, "gs-pass", out err);
+                        if (ps != null)
+                        {
+                            var p = DxbcTranslator.Translate(ps.Code, 1, link);
+                            d.PsBindings = p.Bindings;
+                            d.Ps = CreateModule(p.Wgsl, "ps", out err);
+                        }
+                        if (d.Vs == IntPtr.Zero || (ps != null && d.Ps == IntPtr.Zero)) t.Error = "pass-through or pixel shader: " + err;
+                        var entry = stackalloc WGPUBindGroupLayoutEntry[2];
+                        entry[0] = new WGPUBindGroupLayoutEntry { binding = 0, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } };
+                        entry[1] = new WGPUBindGroupLayoutEntry { binding = 1, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Uniform, minBindingSize = 16 } };
+                        var vld = new WGPUBindGroupLayoutDescriptor { entryCount = pass.SelectsLayer || pass.SelectsViewport ? 2u : 1u, entries = entry };
+                        d.VsLayout = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &vld);
+                        d.PsLayout = BindGroupLayout(d.PsBindings ?? new ShaderBindings(), WGPUShaderStage_Fragment);
+                        IntPtr* layouts = stackalloc IntPtr[2] { d.VsLayout, d.PsLayout };
+                        var pl = new WGPUPipelineLayoutDescriptor { bindGroupLayoutCount = 2, bindGroupLayouts = layouts };
+                        d.PipelineLayout = wgpuDeviceCreatePipelineLayout(Device.Gpu.Device, &pl);
+                        t.Pipeline.Topology = t.Info.OutputTopology switch { 1 => WGPUPrimitiveTopology.PointList, 3 => WGPUPrimitiveTopology.LineStrip, _ => WGPUPrimitiveTopology.TriangleStrip };
+                    }
+                }
+                catch (NotSupportedException e) { t.Error = e.Message; D3DLog.Once("tr:" + e.Message, $"geometry shader after tessellation not translated: {e.Message}"); }
+                catch (Exception e) { t.Error = e.Message; D3DLog.Error("translate tessellated geometry", e); }
+            }
+            if (t.Error != null) { DrawsSkipped++; return; }
+
+            ulong prims = indexCount / (ulong)t.Info.InputVertices;
+            if (prims == 0) { DrawsIssued++; return; }
+            ulong gsTotal = prims * (ulong)t.Info.Instances;
+            uint per = (uint)t.Info.IndicesPerInvocation, max = (uint)Math.Max(1, t.Info.MaxVertices);
+            ulong dsBytes = pointCount * (ulong)t.DsRegs * 16, gsBytes = gsTotal * max * (ulong)t.GsRegs * 16, idxBytes = gsTotal * per * 4;
+            if (dsBytes > MaxScratch || gsBytes > MaxScratch || idxBytes > MaxScratch) { D3DLog.Once("tsgsbig", "a geometry shader draw after tessellation too large for its scratch buffers was skipped"); DrawsSkipped++; return; }
+            IntPtr dsOut = Scratch(ref _gsVsOut, ref _gsVsOutSize, dsBytes, 0);
+            IntPtr gsOut = Scratch(ref _gsOut, ref _gsOutSize, gsBytes, 0);
+            IntPtr gsIdx = Scratch(ref _gsIdx, ref _gsIdxSize, idxBytes, WGPUBufferUsage.Index);
+            var p32 = new uint[DxbcTranslator.ParamVec4s * 4];
+            p32[9] = (uint)prims; p32[12] = (uint)gsTotal;          // count 0: no draw instances to step over
+            var bytes = new byte[p32.Length * 4];
+            Buffer.BlockCopy(p32, 0, bytes, 0, bytes.Length);
+            ulong at = ArenaWrite(bytes);
+            IntPtr arena = _arenas[_arenaIndex];
+            var groups = new List<IntPtr>();
+            try
+            {
+                groups.Add(BindGroup(t.DsLayout, t.DsBindings!, _ds));
+                groups.Add(MakeGroup(t.DsPlumbing, new List<WGPUBindGroupEntry>
+                {
+                    new() { binding = DxbcTranslator.DomainPoints, buffer = points, offset = 0, size = pointCount * 16 },
+                    new() { binding = DxbcTranslator.DomainCps, buffer = cpOut, offset = 0, size = Math.Max(16, cpBytes) },
+                    new() { binding = DxbcTranslator.DomainPcs, buffer = pcOut, offset = 0, size = Math.Max(16, pcBytes) },
+                    new() { binding = DxbcTranslator.DomainOut, buffer = dsOut, offset = 0, size = Math.Max(16, dsBytes) },
+                }));
+                groups.Add(BindGroup(t.GsLayout, t.GsBindings!, _gs));
+                groups.Add(MakeGroup(t.GsPlumbing, new List<WGPUBindGroupEntry>
+                {
+                    new() { binding = DxbcTranslator.PlumbingParams, buffer = arena, offset = at, size = DxbcTranslator.ParamVec4s * 16 },
+                    new() { binding = DxbcTranslator.PlumbingVsOut, buffer = dsOut, offset = 0, size = Math.Max(16, dsBytes) },
+                    new() { binding = DxbcTranslator.PlumbingGsOut, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) },
+                    new() { binding = DxbcTranslator.PlumbingGsIndices, buffer = gsIdx, offset = 0, size = Math.Max(16, idxBytes) },
+                    new() { binding = DxbcTranslator.PlumbingInputIndices, buffer = indices, offset = 0, size = Math.Max(4, indexCount * 4) },
+                }));
+                var g4 = new List<WGPUBindGroupEntry> { new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) } };
+                if (t.Draw.VsLayout != IntPtr.Zero && DrawSelects(t)) g4.Add(new() { binding = 1, buffer = arena, offset = at, size = 16 });
+                groups.Add(MakeGroup(t.Draw.VsLayout, g4));
+                groups.Add(BindGroup(t.Draw.PsLayout, t.Draw.PsBindings ?? new ShaderBindings(), _ps));
+            }
+            catch (InvalidOperationException e)
+            {
+                foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
+                D3DLog.Once("tsgsbind:" + e.Message, "geometry shader draw after tessellation skipped: " + e.Message);
+                DrawsSkipped++;
+                return;
+            }
+            IntPtr pipeline = Pipeline(t.Draw, ds, _ps.Shader, out _, t.Pipeline);
+            if (pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
+            EndPass();
+            _storageWritten = true;
+            IntPtr cpass = wgpuCommandEncoderBeginComputePass(Encoder(), null);
+            wgpuComputePassEncoderSetPipeline(cpass, t.DsPipeline);
+            wgpuComputePassEncoderSetBindGroup(cpass, 0, groups[0], 0, null);
+            wgpuComputePassEncoderSetBindGroup(cpass, 1, groups[1], 0, null);
+            Dispatch1D(cpass, pointCount);
+            wgpuComputePassEncoderSetPipeline(cpass, t.GsPipeline);
+            wgpuComputePassEncoderSetBindGroup(cpass, 0, groups[2], 0, null);
+            wgpuComputePassEncoderSetBindGroup(cpass, 1, groups[3], 0, null);
+            Dispatch1D(cpass, gsTotal);
+            wgpuComputePassEncoderEnd(cpass);
+            wgpuComputePassEncoderRelease(cpass);
+            if (!EnsurePass() || !ApplyRasterState()) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
+            wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
+            wgpuRenderPassEncoderSetBindGroup(_pass, 0, groups[4], 0, null);
+            wgpuRenderPassEncoderSetBindGroup(_pass, 1, groups[5], 0, null);
+            wgpuRenderPassEncoderSetIndexBuffer(_pass, gsIdx, WGPUIndexFormat.Uint32, 0, Math.Max(16, idxBytes));
+            wgpuRenderPassEncoderDrawIndexed(_pass, (uint)(gsTotal * per), 1, 0, 0, 0);
+            foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
+            DrawsIssued++;
+            for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
+        }
+
+        private static bool DrawSelects(TessellatedGeometry t) => t.Draw.VsLayout != IntPtr.Zero && t.SelectsAny;
     }
 }

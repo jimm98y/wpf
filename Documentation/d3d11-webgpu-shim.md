@@ -459,6 +459,14 @@ green throughout.
     through the compute paths read their counts back; a native indirect draw stays on the GPU, except
     on an adapter without indirect-first-instance (this one), which reads back too. Measured on
     WARP and followed: a non-indexed draw's SV_VertexID counts from 0, not from the start vertex.
-  - Not yet: stream output from a domain shader or from GS streams above 0, strip-cut indices into
-    a GS, layered (array-index) rendering past layer 0, a GS after tessellation, doubles, class
-    linkage, DXIL, managed D3DReflect.
+  - Strip-cut indices into a GS (an ia_scan table of the strips' primitives); layered and
+    viewport-array rendering from a GS (a pass per slice and viewport; a slice past the array is
+    slice 0, a viewport past the viewports draws nothing, as WARP does); a GS after tessellation
+    (the domain shader as compute over the tessellator's points, the GS over its primitives).
+  - Texture uploads on GL: wgpu-hal's GL queue leaves a storage buffer bound to
+    GL_PIXEL_UNPACK_BUFFER after a storage-to-copy barrier, and every writeTexture after it reads
+    that buffer instead of its data. The context clears the binding after each submission that
+    wrote storage (D3DContext.ResetGlUnpackBinding); D3DTextureUploadTests and the
+    WriteTextureProbeTests repro hold it.
+  - Not yet: stream output from a domain shader or from GS streams above 0, layered rendering
+    after tessellation, doubles, class linkage, DXIL, managed D3DReflect.
