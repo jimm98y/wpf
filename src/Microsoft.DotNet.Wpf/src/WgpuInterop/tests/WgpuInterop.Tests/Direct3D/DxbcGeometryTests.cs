@@ -96,6 +96,139 @@ O main(V v, bool face : SV_IsFrontFace)
             }
         }
 
+        private const string LayeredGs = @"
+struct V { float4 pos : SV_Position; float4 a : TEXCOORD0; float4 b : TEXCOORD1; float4 c : TEXCOORD2; float4 d : TEXCOORD3; nointerpolation uint4 e : TEXCOORD4; };
+struct L { float4 pos : SV_Position; float4 a : TEXCOORD0; uint layer : SV_RenderTargetArrayIndex; uint vp : SV_ViewportArrayIndex; };
+[maxvertexcount(3)]
+void main(triangle V v[3], uint prim : SV_PrimitiveID, inout TriangleStream<L> s)
+{
+    // a slice of three (and one past them: slice 0) and a viewport of two, by primitive
+    [unroll] for (int k = 0; k < 3; k++) { L o; o.pos = v[k].pos; o.a = v[k].a; o.layer = prim % 4; o.vp = prim % 3; s.Append(o); }
+}";
+
+        private const string LayeredPs = "struct L { float4 pos : SV_Position; float4 a : TEXCOORD0; };\nfloat4 main(L l) : SV_Target { return l.a; }\n";
+
+        /// <summary>SV_RenderTargetArrayIndex and SV_ViewportArrayIndex from a geometry shader into a
+        /// three-slice array target and two viewports (a slice past them is slice 0, a viewport past them
+        /// draws nothing): every slice as WARP
+        /// draws it.</summary>
+        [Fact]
+        public void LayeredAndViewportArrays_DrawAsWarpDraws()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "real Direct3D 11 (WARP) and the HLSL compiler exist on Windows only");
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            byte[] vs = Compile(Vs, "vs_5_0", out _), gs = Compile(LayeredGs, "gs_5_0", out string? gerr), ps = Compile(LayeredPs, "ps_5_0", out string? perr);
+            Assert.True(gs.Length > 0 && ps.Length > 0, gerr + perr);
+            IntPtr wDev, wCtx, sDev, sCtx;
+            uint level, want = 0xb000;
+            Assert.True(RealCreateDevice(IntPtr.Zero, 5, IntPtr.Zero, 0, &want, 1, 7, &wDev, &level, &wCtx) >= 0, "WARP");
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &sDev, &level, &sCtx) >= 0, "shim");
+            try
+            {
+                var warp = DrawLayered(wDev, wCtx, vs, gs, ps);
+                var shim = DrawLayered(sDev, sCtx, vs, gs, ps);
+                for (int l = 0; l < 3; l++)
+                {
+                    var w = new List<float[]> { warp[l] };
+                    var s = new List<float[]> { shim[l] };
+                    var (count, first) = Compare(w, s);
+                    Assert.True(Covered(w) > 0, $"slice {l}: WARP draws nothing");
+                    Assert.True(count == 0 || OnlyCoverageDiffers(w, s, 3) > 0, $"slice {l}: {count} components differ (WARP covers {Covered(w)}, the shim {Covered(s)}); {first}");
+                }
+                Assert.Equal(0, Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject.From<D3DContext>(sCtx)!.DrawsSkipped);
+            }
+            finally { foreach (IntPtr p in new[] { sCtx, sDev, wCtx, wDev }) Release(p); }
+        }
+
+        private static List<float[]> DrawLayered(IntPtr dev, IntPtr ctx, byte[] vsBlob, byte[] gsBlob, byte[] psBlob)
+        {
+            var made = new List<IntPtr>();
+            IntPtr Keep(IntPtr p) { made.Add(p); return p; }
+            var handles = new List<GCHandle>();
+            byte* Name(string s) { var h = GCHandle.Alloc(Encoding.ASCII.GetBytes(s + "\0"), GCHandleType.Pinned); handles.Add(h); return (byte*)h.AddrOfPinnedObject(); }
+            try
+            {
+                IntPtr vs, gs, psh, layout, vb0, vb1, tex, rtv, rs;
+                fixed (byte* v = vsBlob) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateVertexShader))(dev, v, (nuint)vsBlob.Length, IntPtr.Zero, &vs), "vs"); Keep(vs);
+                fixed (byte* g = gsBlob) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateGeometryShader))(dev, g, (nuint)gsBlob.Length, IntPtr.Zero, &gs), "gs"); Keep(gs);
+                fixed (byte* p = psBlob) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreatePixelShader))(dev, p, (nuint)psBlob.Length, IntPtr.Zero, &psh), "ps"); Keep(psh);
+                var el = new D3D11_INPUT_ELEMENT_DESC[]
+                {
+                    new() { SemanticName = Name("POSITION"), Format = DXGI_FORMAT.R32G32B32_FLOAT },
+                    new() { SemanticName = Name("COLOR"), SemanticIndex = 0, Format = DXGI_FORMAT.R8G8B8A8_UNORM, AlignedByteOffset = 12 },
+                    new() { SemanticName = Name("COLOR"), SemanticIndex = 1, Format = DXGI_FORMAT.B8G8R8A8_UNORM, AlignedByteOffset = 16 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 0, Format = DXGI_FORMAT.R16G16_FLOAT, AlignedByteOffset = 20 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 1, Format = DXGI_FORMAT.R16G16_SNORM, AlignedByteOffset = 24 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 2, Format = DXGI_FORMAT.R10G10B10A2_UNORM, AlignedByteOffset = 28 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 3, Format = DXGI_FORMAT.R8G8B8A8_UINT, AlignedByteOffset = 32 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 4, Format = DXGI_FORMAT.R16G16_SINT, AlignedByteOffset = 36 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 5, Format = DXGI_FORMAT.R8G8_UNORM, AlignedByteOffset = 40 },
+                    new() { SemanticName = Name("TEXCOORD"), SemanticIndex = 6, Format = DXGI_FORMAT.R32G32B32A32_FLOAT, InputSlot = 1, InputSlotClass = 1, InstanceDataStepRate = 1 },
+                };
+                const int Stride = 44, Vertices = 24;
+                var data = new byte[Stride * Vertices];
+                new Random(5).NextBytes(data);
+                for (int v = 0; v < Vertices; v++)
+                {
+                    float cx = (v / 3 % 4) * 0.4f - 0.6f, cy = (v / 12) * 0.8f - 0.4f;
+                    float[] off = { -0.5f, -0.5f, 0.0f, 0.6f, 0.5f, -0.4f };
+                    BitConverter.TryWriteBytes(data.AsSpan(v * Stride), cx + off[v % 3 * 2]);
+                    BitConverter.TryWriteBytes(data.AsSpan(v * Stride + 4), cy + off[v % 3 * 2 + 1]);
+                    BitConverter.TryWriteBytes(data.AsSpan(v * Stride + 8), 0.5f);
+                    BitConverter.TryWriteBytes(data.AsSpan(v * Stride + 20), (Half)0.5f);
+                    BitConverter.TryWriteBytes(data.AsSpan(v * Stride + 22), (Half)0.25f);
+                }
+                fixed (D3D11_INPUT_ELEMENT_DESC* ep = el) fixed (byte* code = vsBlob)
+                    Check(((delegate* unmanaged<IntPtr, D3D11_INPUT_ELEMENT_DESC*, uint, byte*, nuint, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateInputLayout))(dev, ep, (uint)el.Length, code, (nuint)vsBlob.Length, &layout), "il");
+                Keep(layout);
+                IntPtr Buf(byte[] bytes)
+                {
+                    IntPtr b;
+                    fixed (byte* p = bytes)
+                    {
+                        var bd = new D3D11_BUFFER_DESC { ByteWidth = (uint)bytes.Length, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.VERTEX_BUFFER };
+                        var init = new D3D11_SUBRESOURCE_DATA { pSysMem = p };
+                        Check(((delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateBuffer))(dev, &bd, &init, &b), "vb");
+                    }
+                    return Keep(b);
+                }
+                vb0 = Buf(data);
+                vb1 = Buf(new byte[16]);
+                var td = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 3, Format = DXGI_FORMAT.R16G16B16A16_FLOAT, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET };
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &td, null, &tex), "tex"); Keep(tex);
+                Check(((delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRenderTargetView))(dev, tex, null, &rtv), "rtv"); Keep(rtv);
+                float* clear = stackalloc float[] { 0.25f, 0.5f, 0.75f, 1f };
+                ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
+                var rd = D3D11_RASTERIZER_DESC.Default(); rd.CullMode = 1;
+                Check(((delegate* unmanaged<IntPtr, D3D11_RASTERIZER_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRasterizerState))(dev, &rd, &rs), "rs"); Keep(rs);
+                ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetState))(ctx, rs);
+                IntPtr* bufs = stackalloc IntPtr[2] { vb0, vb1 };
+                uint* strides = stackalloc uint[2] { Stride, 16 };
+                uint* offsets = stackalloc uint[2] { 0, 0 };
+                ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, uint*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetVertexBuffers))(ctx, 0, 2, bufs, strides, offsets);
+                ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetInputLayout))(ctx, layout);
+                ((delegate* unmanaged<IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetPrimitiveTopology))(ctx, 4);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.VSSetShader))(ctx, vs, null, 0);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.GSSetShader))(ctx, gs, null, 0);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, psh, null, 0);
+                ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 1, &rtv, IntPtr.Zero);
+                var vp = stackalloc D3D11_VIEWPORT[2];
+                vp[0] = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
+                vp[1] = new D3D11_VIEWPORT { TopLeftX = 8, TopLeftY = 4, Width = 16, Height = 20, MaxDepth = 1 };
+                ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 2, vp);
+                ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, Vertices, 0);
+                var slices = new List<float[]>();
+                for (uint l = 0; l < 3; l++) slices.Add(ReadTarget(dev, ctx, tex, Keep, l));
+                return slices;
+            }
+            finally
+            {
+                ((delegate* unmanaged<IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearState))(ctx);
+                foreach (IntPtr p in made) Release(p);
+                foreach (var h in handles) h.Free();
+            }
+        }
+
         /// <summary>Two instances of an indexed 16-bit triangle strip of five vertices (three
         /// triangles), from a base vertex, through the pass-through geometry shader.</summary>
         private static List<float[]> Draw(IntPtr dev, IntPtr ctx, byte[] vsBlob, byte[]? gsBlob, byte[] psBlob, int Stride)

@@ -580,10 +580,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         // ---- the pass ---------------------------------------------------------------------------------
 
+        /// <summary>The slice of array render targets the pass draws to (a geometry shader's
+        /// SV_RenderTargetArrayIndex: one pass per slice).</summary>
+        private uint _passLayer;
+
         private bool EnsurePass()
         {
-            bool same = _pass != IntPtr.Zero && (_dsv?.View ?? IntPtr.Zero) == _passDepth;
-            for (int i = 0; same && i < MaxTargets; i++) same = (_rtv[i]?.View ?? IntPtr.Zero) == _passColor[i];
+            bool same = _pass != IntPtr.Zero && (_dsv != null ? _dsv.ViewForLayer(_passLayer) : IntPtr.Zero) == _passDepth;
+            for (int i = 0; same && i < MaxTargets; i++) same = (_rtv[i] != null ? _rtv[i]!.ViewForLayer(_passLayer) : IntPtr.Zero) == _passColor[i];
             if (same) return true;
             EndPass();
             int count = 0;
@@ -595,19 +599,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var rt = _rtv[i];
                 atts[i] = new WGPURenderPassColorAttachment { depthSlice = 0xFFFFFFFF };
                 if (rt == null) continue;
-                atts[i].view = rt.View;
+                atts[i].view = rt.ViewForLayer(_passLayer);
                 atts[i].storeOp = WGPUStoreOp.Store;
-                if (_pendingColorClears.Remove(rt.View, out var color)) { atts[i].loadOp = WGPULoadOp.Clear; atts[i].clearValue = color; }
+                if (_pendingColorClears.Remove(rt.ViewForLayer(_passLayer), out var color)) { atts[i].loadOp = WGPULoadOp.Clear; atts[i].clearValue = color; }
                 else atts[i].loadOp = WGPULoadOp.Load;
-                _passColor[i] = rt.View;
+                _passColor[i] = rt.ViewForLayer(_passLayer);
             }
             WGPURenderPassDepthStencilAttachment ds = default;
             if (_dsv != null)
             {
-                _pendingDepthClears.Remove(_dsv.View, out var clear);
+                _pendingDepthClears.Remove(_dsv.ViewForLayer(_passLayer), out var clear);
                 clear.HasStencil = Formats.HasStencil(_dsv.Texture.Format);
-                ds = DepthAttachment(_dsv.View, clear, readOnly: false);
-                _passDepth = _dsv.View;
+                ds = DepthAttachment(_dsv.ViewForLayer(_passLayer), clear, readOnly: false);
+                _passDepth = _dsv.ViewForLayer(_passLayer);
             }
             var desc = new WGPURenderPassDescriptor
             {
@@ -709,19 +713,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>The open pass's viewport, scissor, blend constant and stencil reference; false when
         /// the viewport has no area on the targets.</summary>
-        private bool ApplyRasterState()
+        private bool ApplyRasterState(int viewport = 0)
         {
             var (tw, th) = TargetSize();
-            var vp = _viewportCount > 0 ? _viewports[0] : new D3D11_VIEWPORT { Width = tw, Height = th, MaxDepth = 1 };
+            var vp = _viewportCount > viewport ? _viewports[viewport] : new D3D11_VIEWPORT { Width = tw, Height = th, MaxDepth = 1 };
             float x = Math.Max(0, vp.TopLeftX), y = Math.Max(0, vp.TopLeftY);
             float w = Math.Min(vp.Width, tw - x), h = Math.Min(vp.Height, th - y);
             if (w <= 0 || h <= 0) return false;
             if (x != vp.TopLeftX || y != vp.TopLeftY || w != vp.Width || h != vp.Height) D3DLog.Once("vpclip", "a viewport past its target was cut to it");
             wgpuRenderPassEncoderSetViewport(_pass, x, y, w, h, Math.Clamp(vp.MinDepth, 0, 1), Math.Clamp(vp.MaxDepth, 0, 1));
             var raster = _raster?.Desc ?? D3D11_RASTERIZER_DESC.Default();
-            if (raster.ScissorEnable != 0 && _scissorCount > 0)
+            if (raster.ScissorEnable != 0 && _scissorCount > viewport)
             {
-                var r = _scissors[0];
+                var r = _scissors[viewport];
                 int l = Math.Clamp(r.left, 0, (int)tw), tp = Math.Clamp(r.top, 0, (int)th), rr = Math.Clamp(r.right, l, (int)tw), b = Math.Clamp(r.bottom, tp, (int)th);
                 wgpuRenderPassEncoderSetScissorRect(_pass, (uint)l, (uint)tp, (uint)(rr - l), (uint)(b - tp));
             }

@@ -388,10 +388,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         // ---- the pass-through vertex shader of the draw ---------------------------------------------------
 
+        /// <summary>The geometry shader writes SV_RenderTargetArrayIndex / SV_ViewportArrayIndex: the
+        /// draw runs once per slice and viewport, the pass-through keeping the primitives of each.</summary>
+        public bool SelectsLayer => SelectElement(SvRenderTargetArrayIndex) != null;
+        public bool SelectsViewport => SelectElement(SvViewportArrayIndex) != null;
+
+        private SignatureElement? SelectElement(int sv) => _s.Outputs.FirstOrDefault(e => e.Stream == 0 && e.SystemValue == sv && _outputRegs.Contains(e.Register));
+
         private void AssemblePassThrough(StringBuilder w)
         {
             int regs = OutputRegisters;
             w.Append("@group(0) @binding(0) var<storage, read> dx_gsout: array<vec4<f32>>;\n\n");
+            var layer = SelectElement(SvRenderTargetArrayIndex);
+            var viewport = SelectElement(SvViewportArrayIndex);
+            // this pass's slice and viewport, and how many there are: a slice past them is slice 0, a
+            // viewport past them draws nothing (both measured on WARP)
+            if (layer != null || viewport != null) w.Append("@group(0) @binding(1) var<uniform> dx_sel: vec4<u32>;\n\n");
             foreach (int o in _outputRegs) w.Append($"var<private> o{o}: vec4<f32>;\n");
             w.Append('\n');
             AppendVertexOutput(w);
@@ -399,6 +411,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             // an unused index of a point list: a vertex outside the clip volume
             w.Append("    if (vid == 0xFFFFFFFFu) { var dead: VsOut; dead.pos = vec4<f32>(2.0f, 2.0f, 2.0f, 1.0f); return dead; }\n");
             foreach (int r in _outputRegs.OrderBy(r => r)) w.Append($"    o{r} = dx_gsout[vid * {regs}u + {r}u];\n");
+            static int First(int mask) { int c = 0; while (c < 3 && (mask & (1 << c)) == 0) c++; return c; }
+            if (layer != null)
+                w.Append($"    {{ let l = bitcast<u32>(o{layer.Register}.{"xyzw"[First(layer.Mask)]}); if (select(0u, l, l < dx_sel.y) != dx_sel.x) {{ var dead: VsOut; dead.pos = vec4<f32>(2.0f, 2.0f, 2.0f, 1.0f); return dead; }} }}\n");
+            if (viewport != null)
+                w.Append($"    {{ let v = bitcast<u32>(o{viewport.Register}.{"xyzw"[First(viewport.Mask)]}); if (v != dx_sel.z) {{ var dead: VsOut; dead.pos = vec4<f32>(2.0f, 2.0f, 2.0f, 1.0f); return dead; }} }}\n");
             w.Append("    return shader_out();\n}\n");
         }
     }

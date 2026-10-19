@@ -40,6 +40,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             /// <summary>The draw: the pass-through vertex shader (group 0, the GS's registers) and the pixel shader.</summary>
             public readonly Translation Draw = new();
             public GeometryDraw Pipeline = new();
+            public bool SelectsLayer, SelectsViewport;
         }
 
         private readonly Dictionary<string, GeometryTranslation> _geometries = new();
@@ -111,8 +112,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     d.Ps = CreateModule(p.Wgsl, "ps", out err);
                     if (d.Ps == IntPtr.Zero) { t.Error = "pixel shader: " + err; Dump(ps.Code, p.Wgsl, t.Error); return t; }
                 }
-                var entry = new WGPUBindGroupLayoutEntry { binding = 0, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } };
-                var ld = new WGPUBindGroupLayoutDescriptor { entryCount = 1, entries = &entry };
+                t.SelectsLayer = pass.SelectsLayer;
+                t.SelectsViewport = pass.SelectsViewport;
+                var entry = stackalloc WGPUBindGroupLayoutEntry[2];
+                entry[0] = new WGPUBindGroupLayoutEntry { binding = 0, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.ReadOnlyStorage } };
+                entry[1] = new WGPUBindGroupLayoutEntry { binding = 1, visibility = WGPUShaderStage_Vertex, buffer = new WGPUBufferBindingLayout { type = WGPUBufferBindingType.Uniform, minBindingSize = 16 } };
+                var ld = new WGPUBindGroupLayoutDescriptor { entryCount = t.SelectsLayer || t.SelectsViewport ? 2u : 1u, entries = entry };
                 d.VsLayout = wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &ld);
                 d.PsLayout = BindGroupLayout(d.PsBindings ?? new ShaderBindings(), WGPUShaderStage_Fragment);
                 IntPtr* layouts = stackalloc IntPtr[2] { d.VsLayout, d.PsLayout };
@@ -291,7 +296,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     soEntries.Add(new() { binding = DxbcTranslator.PlumbingPrimitiveTable, buffer = table, offset = 0, size = (2UL * a.Count + 1) * 4 });
                 }
                 groups.Add(MakeGroup(t.GsPlumbing, soEntries));
-                groups.Add(MakeGroup(t.Draw.VsLayout, new List<WGPUBindGroupEntry> { new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) } }));
+                var g4 = new List<WGPUBindGroupEntry> { new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) } };
+                if (t.SelectsLayer || t.SelectsViewport) g4.Add(new() { binding = 1, buffer = arena, offset = at, size = 16 });
+                groups.Add(MakeGroup(t.Draw.VsLayout, g4));
                 groups.Add(BindGroup(t.Draw.PsLayout, t.Draw.PsBindings ?? new ShaderBindings(), _ps));
             }
             catch (InvalidOperationException e)
@@ -338,7 +345,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuComputePassEncoderRelease(pass);
             if (!render) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsIssued++; return; }
 
-            // 3: the indexed draw
+            // 3: the indexed draw -- once per array slice and viewport the GS can pick, each keeping
+            // the primitives that picked it
+            if (t.SelectsLayer || t.SelectsViewport)
+            {
+                uint layers = 1;
+                if (t.SelectsLayer)
+                {
+                    for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) layers = Math.Max(layers, _rtv[i]!.Layers);
+                    if (_dsv != null) layers = Math.Max(layers, _dsv.Layers);
+                }
+                uint viewports = t.SelectsViewport ? (uint)Math.Max(1, _viewportCount) : 1;
+                bool drew = false;
+                for (uint l = 0; l < layers; l++)
+                    for (uint v = 0; v < viewports; v++)
+                    {
+                        _passLayer = l;
+                        var sel = new byte[16];
+                        Buffer.BlockCopy(new uint[] { l, layers, v, viewports }, 0, sel, 0, 16);
+                        ulong selAt = ArenaWrite(sel);
+                        IntPtr g0 = MakeGroup(t.Draw.VsLayout, new List<WGPUBindGroupEntry>
+                        {
+                            new() { binding = 0, buffer = gsOut, offset = 0, size = Math.Max(16, gsBytes) },
+                            new() { binding = 1, buffer = _arenas[_arenaIndex], offset = selAt, size = 16 },
+                        });
+                        if (EnsurePass() && ApplyRasterState((int)v))
+                        {
+                            wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
+                            wgpuRenderPassEncoderSetBindGroup(_pass, 0, g0, 0, null);
+                            wgpuRenderPassEncoderSetBindGroup(_pass, 1, groups[5], 0, null);
+                            wgpuRenderPassEncoderSetIndexBuffer(_pass, gsIdx, WGPUIndexFormat.Uint32, 0, Math.Max(16, idxBytes));
+                            wgpuRenderPassEncoderDrawIndexed(_pass, (uint)(gsTotal * per), 1, 0, 0, 0);
+                            drew = true;
+                        }
+                        wgpuBindGroupRelease(g0);
+                    }
+                EndPass();
+                _passLayer = 0;
+                foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
+                if (!drew) { DrawsSkipped++; return; }
+                DrawsIssued++;
+                for (int i = 0; i < MaxTargets; i++) if (_rtv[i] != null) _rtv[i]!.Texture.Version++;
+                return;
+            }
             if (!EnsurePass() || !ApplyRasterState()) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
             wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
             wgpuRenderPassEncoderSetBindGroup(_pass, 0, groups[4], 0, null);

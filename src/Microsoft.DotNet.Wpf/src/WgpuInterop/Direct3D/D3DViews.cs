@@ -85,13 +85,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             switch (d.ViewDimension)
             {
                 case 4: Mip = d.U0; break;
-                case 5: Mip = d.U0; Layer = d.U1; break;
+                case 5: Mip = d.U0; Layer = d.U1; Layers = Math.Max(1, d.U2); break;
                 case 6: break;
-                case 7: Layer = d.U0; break;
+                case 7: Layer = d.U0; Layers = Math.Max(1, d.U1); break;
                 default: throw new NotSupportedException($"render target view dimension {d.ViewDimension}");
             }
+            Layers = Math.Max(1, Math.Min(Layers, texture.Desc.ArraySize - Math.Min(Layer, texture.Desc.ArraySize - 1)));
             var fmt = Formats.Texture(d.Format);
             View = CreateTextureView(texture.Gpu, fmt, WGPUTextureViewDimension._2D, Mip, 1, Layer, 1);
+        }
+
+        /// <summary>The slices an array view covers (1 otherwise); a geometry shader's
+        /// SV_RenderTargetArrayIndex picks one.</summary>
+        public readonly uint Layers = 1;
+        private IntPtr[]? _layerViews;
+
+        /// <summary>The view of slice <paramref name="l"/> of the view's range (0: <see cref="View"/>).</summary>
+        public IntPtr ViewForLayer(uint l)
+        {
+            if (l == 0 || l >= Layers) return View;
+            _layerViews ??= new IntPtr[Layers];
+            if (_layerViews[l] == IntPtr.Zero) _layerViews[l] = CreateTextureView(Texture.Gpu, Formats.Texture(Desc.Format), WGPUTextureViewDimension._2D, Mip, 1, Layer + l, 1);
+            return _layerViews[l];
         }
 
         public WGPUTextureFormat Format => Formats.Texture(Desc.Format);
@@ -107,6 +122,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (View != IntPtr.Zero) wgpuTextureViewRelease(View);
             View = IntPtr.Zero;
+            if (_layerViews != null) foreach (IntPtr v in _layerViews) if (v != IntPtr.Zero) wgpuTextureViewRelease(v);
+            _layerViews = null;
             base.OnFinalRelease();
         }
     }
@@ -143,16 +160,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             switch (d.ViewDimension)
             {
                 case 3: Mip = d.U0; break;
-                case 4: Mip = d.U0; Layer = d.U1; break;
+                case 4: Mip = d.U0; Layer = d.U1; Layers = Math.Max(1, d.U2); break;
                 case 5: break;
-                case 6: Layer = d.U0; break;
+                case 6: Layer = d.U0; Layers = Math.Max(1, d.U1); break;
                 default: throw new NotSupportedException($"depth-stencil view dimension {d.ViewDimension}");
             }
+            Layers = Math.Max(1, Math.Min(Layers, texture.Desc.ArraySize - Math.Min(Layer, texture.Desc.ArraySize - 1)));
             View = CreateTextureView(texture.Gpu, texture.Format, WGPUTextureViewDimension._2D, Mip, 1, Layer, 1);
         }
 
         public bool ReadOnlyDepth => (Desc.Flags & 1) != 0;
         public bool ReadOnlyStencil => (Desc.Flags & 2) != 0;
+
+        /// <summary>The slices an array view covers (1 otherwise).</summary>
+        public readonly uint Layers = 1;
+        private IntPtr[]? _layerViews;
+
+        public IntPtr ViewForLayer(uint l)
+        {
+            if (l == 0 || l >= Layers) return View;
+            _layerViews ??= new IntPtr[Layers];
+            if (_layerViews[l] == IntPtr.Zero) _layerViews[l] = CreateTextureView(Texture.Gpu, Texture.Format, WGPUTextureViewDimension._2D, Mip, 1, Layer + l, 1);
+            return _layerViews[l];
+        }
 
         [UnmanagedCallersOnly]
         private static void GetDesc(IntPtr self, D3D11_DEPTH_STENCIL_VIEW_DESC* desc)
@@ -165,6 +195,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (View != IntPtr.Zero) wgpuTextureViewRelease(View);
             View = IntPtr.Zero;
+            if (_layerViews != null) foreach (IntPtr v in _layerViews) if (v != IntPtr.Zero) wgpuTextureViewRelease(v);
+            _layerViews = null;
             base.OnFinalRelease();
         }
     }

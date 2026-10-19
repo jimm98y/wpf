@@ -122,7 +122,7 @@ namespace WgpuInterop.Tests.Direct3D
                     catch (Exception e) { differ++; lines.Add($"FAIL {name}: shim: {e.Message}"); continue; }
                     var (count, first) = DxbcPixelParity.Compare(warp, shim);
                     if (count == 0 && warp.Count == shim.Count) { same++; lines.Add($"OK   {name}"); }
-                    else { differ++; lines.Add($"FAIL {name}: {count} components differ; {first}"); }
+                    else { differ++; var sc = Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject.From<D3DContext>(sCtx); lines.Add($"FAIL {name}: {count} components differ; {first} (shim draws issued {sc?.DrawsIssued}, skipped {sc?.DrawsSkipped})"); }
                 }
             }
             finally

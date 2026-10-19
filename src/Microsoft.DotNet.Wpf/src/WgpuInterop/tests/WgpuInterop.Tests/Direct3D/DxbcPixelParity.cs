@@ -501,7 +501,7 @@ namespace WgpuInterop.Tests.Direct3D
             return keep(srv);
         }
 
-        internal static float[] ReadTarget(IntPtr dev, IntPtr ctx, IntPtr tex, Func<IntPtr, IntPtr> keep)
+        internal static float[] ReadTarget(IntPtr dev, IntPtr ctx, IntPtr tex, Func<IntPtr, IntPtr> keep, uint subresource = 0)
         {
             D3D11_TEXTURE2D_DESC d;
             ((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, void>)Fn(tex, Vtbl.ID3D11Texture2D.GetDesc))(tex, &d);
@@ -511,7 +511,7 @@ namespace WgpuInterop.Tests.Direct3D
             keep(st);
             ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, st, tex);
             D3D11_MAPPED_SUBRESOURCE m;
-            Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, st, 0, D3D11_MAP.READ, 0, &m), "Map");
+            Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, st, subresource, D3D11_MAP.READ, 0, &m), "Map");
             bool half = d.Format == DXGI_FORMAT.R16G16B16A16_FLOAT;
             var px = new float[W * H * 4];
             for (int y = 0; y < H; y++)
@@ -520,7 +520,7 @@ namespace WgpuInterop.Tests.Direct3D
                     byte* row = (byte*)m.pData + y * m.RowPitch;
                     px[y * W * 4 + i] = half ? (float)((Half*)row)[i] : ((float*)row)[i];
                 }
-            ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, st, 0);
+            ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, st, subresource);
             return px;
         }
 
