@@ -60,7 +60,14 @@ void cs_atomics(uint3 dt : SV_DispatchThreadID, uint gi : SV_GroupIndex)
     raw.InterlockedExchange(36, dt.x, old);
     raw.InterlockedCompareExchange(40, 5, dt.x, old);
     raw.InterlockedCompareStore(44, 7, dt.x);
-    InterlockedAdd(ub[1], 1); InterlockedMax(u3[uint3(0, 0, 0)], dt.x);
+    InterlockedAdd(ub[1], 1);
+    // the immediate forms: every atomic with the value it replaced
+    uint o1, o2, o3, o4, o5, o6, o7, o8;
+    raw.InterlockedAnd(48, dt.x, o1); raw.InterlockedOr(52, dt.x, o2); raw.InterlockedXor(56, dt.x, o3);
+    raw.InterlockedMin(60, dt.x, o4); raw.InterlockedMax(64, dt.x, o5);
+    raw.InterlockedMin(68, (int)dt.x - 32, o6); raw.InterlockedMax(72, (int)dt.x - 32, o7);
+    InterlockedAdd(ub[2], 1, o8);
+    raw.Store(76 + dt.x * 4, o1 + o2 + o3 + o4 + o5 + o6 + o7 + o8);
     if (gi == 0) sharedCounter = 0;
     GroupMemoryBarrierWithGroupSync();
     InterlockedAdd(sharedCounter, 1, old);
@@ -100,3 +107,10 @@ void cs_double_ext(uint3 dt : SV_DispatchThreadID)
     raw.Store(0, (uint)c + (uint)(int)c);
 }
 #endif
+
+// an atomic on a typed UAV texture (WGSL has none: needs the texture-atomic feature)
+[numthreads(8, 1, 1)]
+void cs_texture_atomic(uint3 dt : SV_DispatchThreadID)
+{
+    InterlockedMax(u3[uint3(dt.x, 0, 0)], dt.x);
+}

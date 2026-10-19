@@ -11,6 +11,7 @@ alu.hlsl      ps_index         ps_4_0 ps_5_0
 flow.hlsl     ps_loops         ps_4_0 ps_5_0
 flow.hlsl     ps_switch        ps_4_0 ps_5_0
 flow.hlsl     ps_discard       ps_4_0 ps_5_0
+flow.hlsl     ps_branches      ps_4_0 ps_5_0
 texture.hlsl  ps_sample        ps_4_0 ps_4_1 ps_5_0
 texture.hlsl  ps_compare       ps_4_0 ps_5_0
 texture.hlsl  ps_load          ps_4_0 ps_4_1 ps_5_0
@@ -18,6 +19,7 @@ texture.hlsl  ps_gather        ps_4_1 ps_5_0
 compute.hlsl  cs_uav           cs_5_0
 compute.hlsl  cs_atomics       cs_5_0
 compute.hlsl  cs_counter_down  cs_5_0
+compute.hlsl  cs_texture_atomic cs_5_0
 compute.hlsl  cs_double        cs_5_0
 compute.hlsl  cs_double_ext    cs_5_0:DOUBLE_EXT
 stages.hlsl   vs_main          vs_4_0 vs_4_1 vs_5_0

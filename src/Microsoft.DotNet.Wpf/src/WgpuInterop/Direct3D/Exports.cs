@@ -96,7 +96,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var gpu = D3DDevice.SharedGpu;
                 var d = new D3DDevice(gpu, ownsGpu: false, chosen, flags & ~D3D11_CREATE_DEVICE_DEBUG, a);
                 if ((flags & D3D11_CREATE_DEVICE_DEBUG) != 0) D3DLog.Once("debugdev", "a debug device was asked for; it is an ordinary one");
-                D3DLog.Once("created", $"D3D11 device at feature level {chosen} over {gpu.AdapterDescription}");
+                D3DLog.Once("created", $"D3D11 device at feature level {chosen} over {gpu.AdapterDescription}; optional features 0x{string.Join(" 0x", System.Linq.Enumerable.Select(D3DDevice.Features, f => f.ToString("x")))}");
                 if (context != null) *context = d.Immediate.AddRefPointer();
                 if (device != null) *device = d.Pointer;
                 else d.Release();

@@ -55,3 +55,17 @@ float4 ps_discard(float4 pos : SV_Position, float4 a : TEXCOORD0) : SV_Target
     [call] if (a.w > 0.5) return helper(a);
     return a;
 }
+
+// else, continuec and retc kept as branches ([branch] stops fxc turning them into selects)
+float4 ps_branches(float4 pos : SV_Position, float4 a : TEXCOORD0) : SV_Target
+{
+    float4 r = a;
+    [branch] if (a.x > f4.x) { r = sqrt(abs(a)) * f4; } else { r = a.wzyx * f4.y; }
+    [loop] for (uint i = 0; i < count; i++)
+    {
+        [branch] if (r.x > (float)i) continue;
+        r += i;
+    }
+    [branch] if (r.y < 0) return r;
+    return r * 2;
+}
