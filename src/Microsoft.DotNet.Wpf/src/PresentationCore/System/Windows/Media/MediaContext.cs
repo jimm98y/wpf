@@ -212,6 +212,27 @@ namespace System.Windows.Media
                 _isConnected = MediaSystem.ConnectChannels(this);
             }
 
+            // The managed (WebGPU) backend has no render thread to report the display's caps, so
+            // RenderCapability.Tier read 0 -- "no hardware acceleration" -- and applications that
+            // pick their 3D or effect path by tier took the software one. It composes on the GPU,
+            // with pixel shaders 2.0 and 3.0 (translated): tier 2, as stock on a WDDM GPU.
+            if (MS.Win32.PresentationCore.UnsafeNativeMethods.InteropDeviceBitmap.UseManaged)
+            {
+                NotifySetCaps(new MilGraphicsAccelerationCaps
+                {
+                    TierValue = 0x00020000,
+                    HasWDDMSupport = 1,
+                    PixelShaderVersion = 0xFFFF0300,     // D3DPS_VERSION(3, 0)
+                    VertexShaderVersion = 0xFFFE0300,    // D3DVS_VERSION(3, 0)
+                    MaxTextureWidth = 8192,
+                    MaxTextureHeight = 8192,
+                    WindowCompatibleMode = 0,
+                    BitsPerPixel = 32,
+                    HasSSE2Support = 1,
+                    MaxPixelShader30InstructionSlots = 512,
+                });
+            }
+
             // Subscribe to the OnDestroyContext event so that we can cleanup our state.
             _destroyHandler = new EventHandler(this.OnDestroyContext);
             Dispatcher.ShutdownFinished += _destroyHandler;
