@@ -84,7 +84,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         private readonly DxbcShader _s;
         private readonly int _group;
         private readonly IReadOnlyList<LinkedElement> _link;
-        private readonly StringBuilder _body = new();
+        private StringBuilder _body = new();          // a hull shader moves it to each phase's own
         private readonly ShaderBindings _bindings = new();
         private int _indent = 1;
         private int _temps;
@@ -167,6 +167,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         private void Declare(Instruction ins)
         {
+            if (!DeclareTessellation(ins))
             switch (ins.Op)
             {
                 case Opcode.DclTemps: _temps = (int)ins.Extra[0]; break;
@@ -275,6 +276,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>The register an operand names, as a vec4&lt;f32&gt; lvalue/rvalue (no swizzle).</summary>
         private string Register(Operand o)
         {
+            if (_s.Stage is ShaderStage.Hull or ShaderStage.Domain && TessellationRegister(o) is { } tess) return tess;
             switch (o.Type)
             {
                 case OperandType.Temp: return $"r{o.Index0}";
@@ -396,6 +398,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         private void Emit(Instruction ins)
         {
+            if (EmitPhase(ins)) return;
             BeforeInstruction(ins);
             var info = DxbcOpcodes.Info(ins.Op);
             if (info.Class == OpClass.Declaration || ins.Op is Opcode.Nop or Opcode.Label or Opcode.CustomData) return;
@@ -480,6 +483,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             switch (_s.Stage)
             {
                 case ShaderStage.Vertex when _form == StageForm.VertexCompute: AssembleVertexCompute(w); break;
+                case ShaderStage.Hull when _form == StageForm.HullCompute: AssembleHull(w); break;
+                case ShaderStage.Domain when _form == StageForm.DomainVertex: AssembleDomain(w); break;
                 case ShaderStage.Geometry when _form == StageForm.GeometryCompute: AssembleGeometryCompute(w); break;
                 case ShaderStage.Vertex: AssembleVertex(w); break;
                 case ShaderStage.Pixel: AssemblePixel(w); break;

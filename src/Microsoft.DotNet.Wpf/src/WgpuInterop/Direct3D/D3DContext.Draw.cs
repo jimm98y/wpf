@@ -625,6 +625,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (a.Count == 0 || a.Instances == 0) return;
             var vs = _vs.Shader;
             if (vs == null) { DrawsSkipped++; return; }
+            if (_hs.Shader != null || _ds.Shader != null) { DrawTessellated(a, vs); return; }
             if (_gs.Shader != null) { DrawGeometry(a, vs, _gs.Shader); return; }
             var t = Translate(vs, _ps.Shader);
             if (t.Error != null) { DrawsSkipped++; return; }

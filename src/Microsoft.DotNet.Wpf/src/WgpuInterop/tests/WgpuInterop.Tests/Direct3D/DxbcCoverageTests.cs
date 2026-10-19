@@ -205,9 +205,14 @@ namespace WgpuInterop.Tests.Direct3D
                     {
                         var link = s.Stage == ShaderStage.Vertex ? DxbcTranslator.LinkageOf(null) : DxbcTranslator.LinkageOf(s.Stage == ShaderStage.Pixel ? s : null);
                         // a geometry shader: its compute form and the pass-through vertex shader after it
-                        var modules = s.Stage == ShaderStage.Geometry
-                            ? new[] { DxbcTranslator.TranslateGeometryCompute(s, null, 0).Wgsl, DxbcTranslator.PassThrough(s, link).Wgsl }
-                            : new[] { DxbcTranslator.Translate(s, s.Stage == ShaderStage.Pixel ? 1 : 0, link).Wgsl };
+                        // hull: its two kernels; domain: the vertex shader of the tessellated draw
+                        var modules = s.Stage switch
+                        {
+                            ShaderStage.Geometry => new[] { DxbcTranslator.TranslateGeometryCompute(s, null, 0).Wgsl, DxbcTranslator.PassThrough(s, link).Wgsl },
+                            ShaderStage.Hull => new[] { DxbcTranslator.TranslateHull(s, null, 0).Wgsl },
+                            ShaderStage.Domain => new[] { DxbcTranslator.TranslateDomain(s, null, 8, 8, link).Wgsl },
+                            _ => new[] { DxbcTranslator.Translate(s, s.Stage == ShaderStage.Pixel ? 1 : 0, link).Wgsl },
+                        };
                         foreach (string wgsl in modules)
                         {
                             IntPtr module = device.Immediate.CreateModule(wgsl, name, out string? werr);

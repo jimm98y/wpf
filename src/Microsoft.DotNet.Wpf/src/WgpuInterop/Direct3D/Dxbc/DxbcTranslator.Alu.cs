@@ -321,7 +321,7 @@ fn dx_msad(r: u32, s: u32, acc: u32) -> u32 {
             }
         }
 
-        private string ReturnStatement => _s.Stage == ShaderStage.Compute || _form != StageForm.Native ? "return;" : "return shader_out();";
+        private string ReturnStatement => _s.Stage == ShaderStage.Compute || _form is not (StageForm.Native or StageForm.DomainVertex) ? "return;" : "return shader_out();";
 
         private bool EmitFlow(Instruction ins)
         {
