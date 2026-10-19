@@ -964,12 +964,18 @@ namespace System.Windows.Forms {
 			
 			SuspendLayout ();
 
-			hscrollbar.SetBounds (hscroll_bounds.X, hscroll_bounds.Y, hscroll_bounds.Width, hscroll_bounds.Height, BoundsSpecified.All);
+			// A bar that is hidden and stays hidden is not moved: it is a child control here (in .NET
+			// it is part of the window), so moving it asked this container for a second layout on
+			// every resize -- every docked container of an application laid out twice per step. Its
+			// bounds are set whenever it is shown, and nothing reads them while it is hidden.
+			if (hscroll_visible || hscrollbar.VisibleInternal)
+				hscrollbar.SetBounds (hscroll_bounds.X, hscroll_bounds.Y, hscroll_bounds.Width, hscroll_bounds.Height, BoundsSpecified.All);
 			hscrollbar.Visible = hscroll_visible;
 			if (hscrollbar.Visible)
 				XplatUI.SetZOrder (hscrollbar.Handle, IntPtr.Zero, true, false);
 
-			vscrollbar.SetBounds (vscroll_bounds.X, vscroll_bounds.Y, vscroll_bounds.Width, vscroll_bounds.Height, BoundsSpecified.All);
+			if (vscroll_visible || vscrollbar.VisibleInternal)
+				vscrollbar.SetBounds (vscroll_bounds.X, vscroll_bounds.Y, vscroll_bounds.Width, vscroll_bounds.Height, BoundsSpecified.All);
 			vscrollbar.Visible = vscroll_visible;
 			if (vscrollbar.Visible)
 				XplatUI.SetZOrder (vscrollbar.Handle, IntPtr.Zero, true, false);
