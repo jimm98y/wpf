@@ -226,7 +226,26 @@ internal sealed class CocoaHost : IWinFormsHost
     private NSRect ContentScreenRect()
         => SendRectRect(_window, Sel("contentRectForFrameRect:"), SendRectRet(_window, Sel("frame")));
 
-    private void PresentPopups(System.Collections.Generic.List<(object, int, int)> popups)
+    /// <summary>The popup layer's frame: the display the window is on, so a popup that hangs past the
+    /// window's edge (a drop-down at its foot, a menu near its side) is seen, as on Windows.</summary>
+    private NSRect PopupLayerFrame()
+    {
+        IntPtr screen = Send(_window, Sel("screen"));
+        return screen != IntPtr.Zero ? SendRectRet(screen, Sel("frame")) : ContentScreenRect();
+    }
+
+    /// <summary>A mouse event's point in the window's content (Cocoa: bottom-left origin), also for
+    /// one that came through the popup layer, whose frame is the display's.</summary>
+    private NSPoint LocationInContent(IntPtr evt, out bool viaLayer)
+    {
+        NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+        viaLayer = _popupWindow != IntPtr.Zero && Send(evt, Sel("window")) == _popupWindow;
+        if (!viaLayer) return loc;
+        NSRect layer = SendRectRet(_popupWindow, Sel("frame")), content = ContentScreenRect();
+        return new NSPoint { x = loc.x + layer.x - content.x, y = loc.y + layer.y - content.y };
+    }
+
+    private void PresentPopups(System.Collections.Generic.List<(object, int, int)> popups, int ox, int oy)
     {
         if (popups.Count == 0 || _window == IntPtr.Zero || !UseWebGpu)
         {
@@ -236,7 +255,12 @@ internal sealed class CocoaHost : IWinFormsHost
         try
         {
             ShowPopupLayer();
-            if (_popupWgpu != null) _popupWgpu.PresentScenes(popups, null, _form.Width, _form.Height);
+            // The popups are placed against the form; the layer is the display, in Win32 coordinates
+            // its origin is (layer.x, primary height - top).
+            int lx = (int)Math.Round(_popupFrame.x), ly = (int)Math.Round(PrimaryScreenHeight() - _popupFrame.y - _popupFrame.h);
+            var placed = new System.Collections.Generic.List<(object, int, int)>(popups.Count);
+            foreach (var (scene, x, y) in popups) placed.Add((scene, x + ox - lx, y + oy - ly));
+            if (_popupWgpu != null) _popupWgpu.PresentScenes(placed, null, (int)_popupFrame.w, (int)_popupFrame.h);
         }
         catch (Exception e)
         {
@@ -247,7 +271,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private void ShowPopupLayer()
     {
-        NSRect content = ContentScreenRect();
+        NSRect content = PopupLayerFrame();
         if (_popupWindow == IntPtr.Zero)
         {
             _popupWindow = SendInitWindow(Send(Cls("NSWindow"), Sel("alloc")), Sel("initWithContentRect:styleMask:backing:defer:"),
@@ -261,7 +285,7 @@ internal sealed class CocoaHost : IWinFormsHost
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _popupView);
             SendVoidBool(Send(_popupView, Sel("layer")), Sel("setOpaque:"), false);
             double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_popupView);
-            _popupWgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster, threadDevice: true);
+            _popupWgpu = new WgpuPresenter(ctx, surface, (int)content.w, (int)content.h, scale, srgb: _gpuRaster, threadDevice: true);
             _popupWgpu.SetTransparent(true);
             _popupWgpu.Tag = " popups";
             _popupFrame = content;
@@ -295,7 +319,7 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         if (!_popupShown) return;
         _popupShown = false;
-        try { _popupWgpu?.PresentScenes(new System.Collections.Generic.List<(object, int, int)>(), null, _form.Width, _form.Height); }
+        try { _popupWgpu?.PresentScenes(new System.Collections.Generic.List<(object, int, int)>(), null, (int)_popupFrame.w, (int)_popupFrame.h); }
         catch { }
         SendVoidDouble(_popupWindow, Sel("setAlphaValue:"), 0.0);
         SendVoidBool(_popupWindow, Sel("setIgnoresMouseEvents:"), true);
@@ -500,7 +524,6 @@ internal sealed class CocoaHost : IWinFormsHost
             // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
             // its backing scale now that both exist. Inert when nothing is embedded.
             EmbeddedScenes.PublishHostWindow(_imageView, (float)scale, _form);
-            ReportScreen();
         }
 
         Present();
@@ -539,7 +562,7 @@ internal sealed class CocoaHost : IWinFormsHost
             Rectangle? caret = GetCaretRect(ox, oy);
             _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
             if (!_lastPresentOk && _offMain) _lastPresentOk = PresentAsLayerContents(scenes, caret);
-            if (popups != null) PresentPopups(popups);
+            if (popups != null) PresentPopups(popups, ox, oy);
             _lastVer = ver; _lastCaretOn = caretOn;
             if (Environment.GetEnvironmentVariable("WF_TRACE") != null) Console.Error.WriteLine("[present]");
             if (wantSave)
@@ -786,16 +809,101 @@ internal sealed class CocoaHost : IWinFormsHost
 
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendObserver(IntPtr r, IntPtr s, IntPtr name, IntPtr obj, IntPtr queue, IntPtr block);
 
-    // What this window can show is what the driver calls the screen: menus and drop-downs are drawn
-    // in it (the popup layer covers the same area), and one placed past its edge is not seen at all.
-    // WinForms asks before it puts a popup up -- a combo box at the foot of the window opens its list
-    // upwards when the list would cross the bottom -- and was told of a 2560x1440 desktop, so the
-    // status bar's zoom box opened its list below the window. The driver's coordinates are the
-    // screen's here, so the area ends at the window's right and bottom edges. A popup's own host
-    // does not speak for it.
-    private void ReportScreen()
+    // ---- activation ---------------------------------------------------------------------
+    //
+    // The form is the active window while its window is AppKit's key window, or while the key window
+    // is one of its own (an ElementHost's WPF window, which on Windows is a child window of the form
+    // and takes nothing from it). The driver hears of it as Windows tells a form, WM_ACTIVATE, and
+    // knows the active form from it. It never heard: Form.ActiveForm was always null, and a dialog
+    // shown with ShowDialog() and no owner -- which takes the active window for its owner on
+    // Windows -- had none, so one centred on its parent (GraphWorX's About box) stayed at 0,0.
+
+    private bool _reportedActive;
+    private static MethodInfo s_hostActivate;
+
+    private void ReportActivation()
     {
-        if (_form.Owner == null && !_offMain) XplatUIWebGpu.SetScreenSize(_form.Right, _form.Bottom);
+        if (_window == IntPtr.Zero || !_form.IsHandleCreated) return;
+        IntPtr key = Send(App(), Sel("keyWindow"));
+        bool active = key != IntPtr.Zero && (key == _window || Send(key, Sel("parentWindow")) == _window);
+        if (active == _reportedActive) return;
+        _reportedActive = active;
+        s_hostActivate ??= _driver.GetType().GetMethod("HostActivate", BindingFlags.NonPublic | BindingFlags.Instance);
+        s_hostActivate?.Invoke(_driver, new object[] { _form.Handle.ToInt64(), active });
+    }
+
+    // ---- the screens ----------------------------------------------------------------------
+    //
+    // The screens WinForms knows are the Mac's displays, as the Windows host's are the monitors:
+    // bounds from each NSScreen's frame, the working area from its visible frame (without the menu
+    // bar and the Dock), in Win32's coordinates. They were the main window's area, so that a popup,
+    // drawn inside the window, would not be placed past its edge; but a form is a window of its own,
+    // and a splash screen or a dialog centred on that "screen" opened off centre -- before the main
+    // window existed, on an imaginary 2560x1440 desktop. Popups now have a layer the size of the
+    // display (the popup layer), so one past the window's edge is seen, as on Windows.
+
+    private static Screen[] s_screens = Array.Empty<Screen>();
+    private static long s_screensAt;
+
+    /// <summary>Called by the driver when it starts: the screens are known before any form places
+    /// itself (a splash screen, on a thread of its own, before any window exists).</summary>
+    internal static void InstallScreens() => XplatUIWebGpu.ScreensProvider ??= MacScreens;
+
+    private static Screen[] MacScreens()
+    {
+        if (pthread_main_np() != 0 && s_screens.Length == 0) RefreshScreens(rescan: false);
+        return s_screens.Length > 0 ? s_screens : DisplayScreens();
+    }
+
+    /// <summary>Off the main thread, before it has read them: CoreGraphics' displays (its global
+    /// coordinates are Win32's), the menu bar taken off the main display's working area.</summary>
+    private static unsafe Screen[] DisplayScreens()
+    {
+        uint* ids = stackalloc uint[16];
+        if (CGGetActiveDisplayList(16, ids, out uint count) != 0 || count == 0) return Array.Empty<Screen>();
+        uint main = CGMainDisplayID();
+        var list = new System.Collections.Generic.List<Screen>();
+        NSRect b = CGDisplayBounds(main);
+        var bounds = new Rectangle((int)b.x, (int)b.y, (int)b.w, (int)b.h);
+        list.Add(new Screen(true, "DISPLAY1", bounds, Rectangle.FromLTRB(bounds.Left, bounds.Top + 25, bounds.Right, bounds.Bottom)));
+        for (int i = 0; i < count; i++)
+        {
+            if (ids[i] == main) continue;
+            b = CGDisplayBounds(ids[i]);
+            bounds = new Rectangle((int)b.x, (int)b.y, (int)b.w, (int)b.h);
+            list.Add(new Screen(false, $"DISPLAY{list.Count + 1}", bounds, bounds));
+        }
+        return list.ToArray();
+    }
+
+    private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+    [DllImport(CoreGraphics)] private static extern unsafe int CGGetActiveDisplayList(uint max, uint* displays, out uint count);
+    [DllImport(CoreGraphics)] private static extern uint CGMainDisplayID();
+    [DllImport(CoreGraphics)] private static extern NSRect CGDisplayBounds(uint display);
+
+    /// <summary>Re-reads the displays from NSScreen (main thread): at start, then at most once a
+    /// second from the pump, which is when a display can have been added, removed or rearranged.</summary>
+    private static void RefreshScreens(bool rescan)
+    {
+        s_screensAt = Environment.TickCount64;
+        IntPtr screens = Send(Cls("NSScreen"), Sel("screens"));
+        int n = screens == IntPtr.Zero ? 0 : (int)(nint)Send(screens, Sel("count"));
+        if (n == 0) return;
+        double primaryHeight = SendRectRet(SendPtrNUInt(screens, Sel("objectAtIndex:"), 0), Sel("frame")).h;
+        Rectangle Win32(NSRect r) => Rectangle.FromLTRB((int)Math.Round(r.x), (int)Math.Round(primaryHeight - r.y - r.h),
+                                                       (int)Math.Round(r.x + r.w), (int)Math.Round(primaryHeight - r.y));
+        var list = new Screen[n];
+        for (int i = 0; i < n; i++)
+        {
+            IntPtr screen = SendPtrNUInt(screens, Sel("objectAtIndex:"), (nuint)i);
+            list[i] = new Screen(i == 0, $"DISPLAY{i + 1}", Win32(SendRectRet(screen, Sel("frame"))), Win32(SendRectRet(screen, Sel("visibleFrame"))));
+        }
+        bool same = list.Length == s_screens.Length;
+        for (int i = 0; same && i < list.Length; i++)
+            same = list[i].Bounds == s_screens[i].Bounds && list[i].WorkingArea == s_screens[i].WorkingArea;
+        if (same) return;
+        s_screens = list;
+        if (rescan) Screen.Rescan();
     }
 
     private void SyncFrame()
@@ -811,7 +919,6 @@ internal sealed class CocoaHost : IWinFormsHost
             // Moved or resized by the user (or by AppKit placing it): the form follows.
             _knownBounds = native;
             if (_form.Bounds != native) _form.Bounds = native;
-            ReportScreen();
             return;
         }
 
@@ -823,7 +930,6 @@ internal sealed class CocoaHost : IWinFormsHost
             NSRect content = CocoaRect(managed.Left, managed.Top, managed.Width, managed.Height);
             NSRect frame = SendRectRect(_window, Sel("frameRectForContentRect:"), content);
             SendVoidRectBool(_window, Sel("setFrame:display:"), frame, true);
-            ReportScreen();
         }
     }
 
@@ -1021,7 +1127,9 @@ internal sealed class CocoaHost : IWinFormsHost
         if (_offMain) return !_closed && _form.Visible && !_form.IsDisposed;
 
         HookWpfIfLoaded();
+        if (Environment.TickCount64 - s_screensAt > 1000) RefreshScreens(rescan: true);
         SyncFrame();
+        ReportActivation();
 
         // Inside a resize callback (an app's Resize handler calling DoEvents) the queue is AppKit's
         // tracking loop's: see CocoaWindow.PumpEventsCore.
@@ -1167,7 +1275,7 @@ internal sealed class CocoaHost : IWinFormsHost
         if (notches == 0) return;
         _wheelUnits -= notches * 120;
 
-        NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+        NSPoint loc = LocationInContent(evt, out _);
         int cx = (int)loc.x + _form.Left;
         int cy = (int)(_form.Height - loc.y) + _form.Top;
         _wheelInject ??= _driver.GetType().GetMethod("InjectWheel", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1263,12 +1371,12 @@ internal sealed class CocoaHost : IWinFormsHost
         // MouseMoved=5, LeftMouseDragged=6.
         if (type >= 1 && type <= 6)
         {
-            NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+            NSPoint loc = LocationInContent(evt, out bool viaLayer);
             if (_sizingHit != 0 && ContinueSizing(type, loc)) return;
             // A press on a sizing border the form draws itself sizes the window, as Windows' default
             // handling of HTLEFT..HTBOTTOMRIGHT does. AppKit sizes only from its own frame: its title
             // bar zone at the top, nothing along the other edges, which the content covers.
-            if (type == 1 && _ownCaption && !_formHasMouse && IsResizable())
+            if (type == 1 && _ownCaption && !_formHasMouse && !viaLayer && IsResizable())
             {
                 int sizing = HitTest((int)loc.x + _form.Left, (int)(_form.Height - loc.y) + _form.Top);
                 if (sizing >= HTLEFT && sizing <= HTBOTTOMRIGHT)
@@ -1285,7 +1393,9 @@ internal sealed class CocoaHost : IWinFormsHost
             const double EdgeBand = 4;
             bool inContent = loc.y >= 0 && loc.y < _form.Height && loc.x >= 0 && loc.x < _form.Width;
             bool atEdge = loc.x < EdgeBand || loc.x >= _form.Width - EdgeBand || loc.y < EdgeBand;
-            if (type != 5 && (!inContent || atEdge) && !_formHasMouse)
+            // Through the popup layer it is a popup's, wherever it is: the layer lets the pointer
+            // through where it shows nothing.
+            if (type != 5 && (!inContent || atEdge) && !_formHasMouse && !viaLayer)
             {
                 Send(App(), Sel("sendEvent:"), evt);
                 return;

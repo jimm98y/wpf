@@ -1372,8 +1372,10 @@ namespace System.Windows.Forms {
 							cp.X = Math.Max ((MdiParent.mdi_container.ClientSize.Width - Width) / 2, 0);
 							cp.Y = Math.Max ((MdiParent.mdi_container.ClientSize.Height - Height) / 2, 0);
 						} else {
-							cp.X = Math.Max ((Screen.PrimaryScreen.WorkingArea.Width - Width) / 2, 0);
-							cp.Y = Math.Max ((Screen.PrimaryScreen.WorkingArea.Height - Height) / 2, 0);
+							// The working area's own origin too: below the menu bar, on a display not at 0,0.
+							Rectangle area = Screen.PrimaryScreen.WorkingArea;
+							cp.X = Math.Max (area.X + (area.Width - Width) / 2, area.X);
+							cp.Y = Math.Max (area.Y + (area.Height - Height) / 2, area.Y);
 						}
 						break;
 					case FormStartPosition.CenterParent:
@@ -1887,6 +1889,11 @@ namespace System.Windows.Forms {
 
 			if (owner != null) {
 				this.Location = new Point(ctl.Left + ctl.Width / 2 - w /2, ctl.Top + ctl.Height / 2 - h / 2);
+			} else {
+				// No owner: centred on the screen under the pointer, as .NET's CenterToParent does.
+				// Left where it was, the form opened at 0,0.
+				Rectangle area = Screen.FromPoint (MousePosition).WorkingArea;
+				this.Location = new Point (Math.Max (area.X, area.X + (area.Width - w) / 2), Math.Max (area.Y, area.Y + (area.Height - h) / 2));
 			}
 		}
 

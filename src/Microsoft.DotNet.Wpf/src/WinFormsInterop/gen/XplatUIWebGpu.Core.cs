@@ -39,6 +39,9 @@ namespace System.Windows.Forms
 			// Windows: the system clipboard is user32's, whether or not a WPF host lends its own.
 			if (OperatingSystem.IsWindows ())
 				ClipboardBridge ??= new Win32ClipboardBridge ();
+			// macOS: the screens are the Mac's displays, known before any form places itself.
+			if (OperatingSystem.IsMacOS ())
+				CocoaHost.InstallScreens ();
 		}
 
 		/// <summary>The next window handle. On Windows a handle is skipped while it names a real
