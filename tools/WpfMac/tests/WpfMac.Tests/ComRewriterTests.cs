@@ -1094,7 +1094,7 @@ public sealed unsafe class ComRewriterTests
         Assert.Equal(2, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
         Assert.Contains("Arrays", u);
-        Assert.Equal(1, r.Delegates);
+        Assert.Equal(2, r.Delegates);
     }
 
     [Fact]
@@ -1394,6 +1394,12 @@ public sealed unsafe class ComRewriterTests
         Assert.SkipUnless(OperatingSystem.IsWindows(), "ole32's CreateBindCtx");
         Assert.Equal("2|True|notimpl|0|True", (string)Run("BclBindCtx")!);
     }
+
+    [Fact]
+    public void ADelegateWithMarshalAsInterface_IsRetypedCleanly()
+        // the interface parameter becomes a pointer: its old [MarshalAs(Interface)] must not survive (Cecil wrote the
+        // original FieldMarshal row again), or GetDelegateForFunctionPointer refuses the delegate (Telerik's WMI)
+        => Assert.Equal(1000 + 21, WithCalc(21, p => (int)Run("ThroughMarshalAsDelegate", p)!));
 
     [Fact]
     public void ADelegateCall_ThroughAVtableSlot_AsDXEngineMakesIt()

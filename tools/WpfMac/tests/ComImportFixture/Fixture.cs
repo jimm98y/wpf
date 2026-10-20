@@ -68,6 +68,10 @@ namespace ComImportFixture
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate int GetOtherFn(ICalc self, out IOther other);
 
+    /// <summary>A delegate whose interface parameter says [MarshalAs(Interface)], as WMI's BlessIWbemServices does.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    internal delegate int ValueOfFn(IntPtr self, [MarshalAs(UnmanagedType.Interface)] IOther other, out int r);
+
     /// <summary>IBindCtx, declared by the app (Windows' ole32 makes one).</summary>
     [ComImport, Guid("0000000e-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IAppBindCtx
@@ -753,6 +757,21 @@ namespace ComImportFixture
         public static bool CastsToMissing(IntPtr p) => Wrap(p) is INotThere;
         public static bool SameObject(IntPtr p) => ReferenceEquals(Marshal.GetObjectForIUnknown(p), Marshal.GetObjectForIUnknown(p));
         public static int Release(IntPtr p) { var c = Wrap(p); c.Add(1, 1); return Marshal.ReleaseComObject(c); }
+
+        /// <summary>A delegate for slot 7 (ValueOf) whose interface parameter is [MarshalAs(Interface)].</summary>
+        public static int ThroughMarshalAsDelegate(IntPtr p)
+        {
+            ICalc c = Wrap(p);
+            IntPtr itf = Marshal.GetComInterfaceForObject(c, typeof(ICalc));
+            try
+            {
+                var d = Marshal.GetDelegateForFunctionPointer<ValueOfFn>(Marshal.ReadIntPtr(Marshal.ReadIntPtr(itf), 7 * IntPtr.Size));
+                c.GetOther(out IOther other);
+                int hr = d(itf, other, out int r);
+                return hr < 0 ? hr : r;
+            }
+            finally { Marshal.Release(itf); }
+        }
 
         /// <summary>DXEngine's way: the slot through GetComInterfaceForObject, the call through a delegate.</summary>
         public static int ThroughDelegate(IntPtr p)
