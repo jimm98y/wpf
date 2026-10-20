@@ -42,6 +42,10 @@ internal static class ComImportStep
         ["Telerik.Windows.Controls"] = "GraphWorX and Workbench smoke runs with it rewritten, and a Telerik dialog",
         ["MediaFoundation"] = "a GraphWorX display playing a video through Telerik's media player (MF.Net, not SharpMediaFoundationInterop)",
         ["Telerik.Windows.MediaFoundation"] = "with MediaFoundation: a GraphWorX display playing a video",
+        ["Microsoft.WindowsAPICodePack"] = "GraphWorX smoke runs with it rewritten, and a Code Pack shell file dialog or property store",
+        ["Microsoft.WindowsAPICodePack.Shell"] = "GraphWorX smoke runs with it rewritten, and a Code Pack shell file dialog or property store",
+        ["Telerik.Windows.Controls.RibbonView"] = "GraphWorX and Workbench smoke runs with it rewritten (the ribbon), and a ribbon drag and drop",
+        ["IcoServices"] = "Workbench with it rewritten, and its Active Directory picker",
     };
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>

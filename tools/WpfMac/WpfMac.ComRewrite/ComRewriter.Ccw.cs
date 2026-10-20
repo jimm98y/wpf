@@ -40,20 +40,25 @@ public static partial class ComRewriter
         /// <summary>I.ComCcw for <paramref name="iface"/>, whose methods (declaration order) start at slot
         /// <paramref name="first"/>.</summary>
         private void EmitCcw(TypeDefinition iface, int first, List<MethodDefinition> methods)
+            => EmitCcw(iface, iface, iface, first, methods.Select(m => (m, (MethodReference)m)).ToList());
+
+        /// <summary>The CCW of <paramref name="iface"/>, nested in <paramref name="nestIn"/> (a BCL interface's in its
+        /// generated ComImpl); each stub classifies by the first of the pair and calls the second.</summary>
+        private TypeDefinition EmitCcw(TypeReference iface, TypeDefinition nestIn, TypeDefinition key, int first, List<(MethodDefinition Decl, MethodReference Call)> methods)
         {
             ImportCcw();
             var ccw = new TypeDefinition("", "ComCcw", TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, _object);
-            iface.NestedTypes.Add(ccw);
+            nestIn.NestedTypes.Add(ccw);
             var refused = new List<string>();
             var stubs = new List<MethodDefinition>();
-            foreach (var md in methods)
+            foreach (var (md, call) in methods)
             {
-                var stub = Stub(iface, md, out string? why);
+                var stub = Stub(iface, md, out string? why, call);
                 if (why != null) refused.Add($"{md.Name}: {why}");
                 ccw.Methods.Add(stub);
                 stubs.Add(stub);
             }
-            _ccwRefused[iface] = refused;
+            _ccwRefused[key] = refused;
 
             // static IntPtr Vtable(): made once
             var field = new FieldDefinition("s_vtable", FieldAttributes.Private | FieldAttributes.Static, _intPtr);
@@ -84,11 +89,12 @@ public static partial class ComRewriter
             il.Emit(OpCodes.Stsfld, field);
             il.Append(done);
             il.Emit(OpCodes.Ret);
+            return ccw;
         }
 
         /// <summary>The stub for <paramref name="md"/>: native arguments in, I's method called, HRESULT out.
         /// <paramref name="why"/>: what it could not convert (the stub then returns E_NOTIMPL).</summary>
-        private MethodDefinition Stub(TypeDefinition iface, MethodDefinition md, out string? why)
+        private MethodDefinition Stub(TypeReference iface, MethodDefinition md, out string? why, MethodReference? call = null)
         {
             why = null;
             bool preserve = md.IsPreserveSig;
@@ -106,7 +112,7 @@ public static partial class ComRewriter
             if (why == null && !isVoid)
             {
                 ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
-                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue || (preserve && ret.Kind == Kind.Variant))
+                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue or Kind.Enumerable || (preserve && ret.Kind == Kind.Variant))
                     why = $"return {w ?? md.ReturnType.Name}";
             }
 
@@ -180,7 +186,7 @@ public static partial class ComRewriter
                             il.Emit(OpCodes.Ldarg, a.SizeParam + 1); il.Emit(OpCodes.Conv_I4);
                             if (a.SizeConst > 0) { il.Emit(OpCodes.Ldc_I4, a.SizeConst); il.Emit(OpCodes.Add); }
                         }
-                        else il.Emit(OpCodes.Ldc_I4, a.SizeConst);
+                        else il.Emit(OpCodes.Ldc_I4, a.SizeConst >= 0 ? a.SizeConst : 1);
                         il.Emit(OpCodes.Stloc, len);
                         var l = Local(stub, t);
                         il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldloc, len);
@@ -331,7 +337,7 @@ public static partial class ComRewriter
             }
             il.Emit(OpCodes.Ldloc, target);
             foreach (var l in loads) l();
-            il.Emit(OpCodes.Callvirt, md);
+            il.Emit(OpCodes.Callvirt, call ?? md);
             if (ret != null)
             {
                 var managed = Local(stub, md.ReturnType);
