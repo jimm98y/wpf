@@ -225,9 +225,9 @@ adapter.
   - a struct in a dispinterface member (it would travel in a VARIANT as VT_RECORD); type information
     (IDispatch::GetTypeInfo answers E_NOTIMPL, as a built-in CCW without a type library);
   - `ref` interfaces;
-  - a custom marshaler, a StringBuilder, or an array of unknown length given to a CCW (its stub
-    answers E_NOTIMPL and names it); arrays of strings or interfaces as C arrays; a formatted class
-    with a field of class type;
+  - a custom marshaler given to a CCW, an array given to a CCW with no SizeParamIndex/SizeConst, an
+    [Out] StringBuilder given to a CCW with no size parameter after it (each stub answers E_NOTIMPL
+    and names it); a formatted type with a field of class, interface or non-fixed array type;
   - the BCL's other `ComTypes`: in GraphWorX, ITypeInfo (WebView2.Core) and IDataObject (RibbonView,
     WindowsAPICodePack.Shell).
   - Two more cases are left alone on Windows, because a built-in RCW could reach them and would not
@@ -300,6 +300,22 @@ adapter.
       "used by other assemblies"), WindowsAPICodePack.Shell 69 -> 29, RibbonView 18 -> 3,
       Telerik.Windows.Controls 22 -> 9, WebView2.Wpf 1 -> 0 (it stays with WebView2.Core).
       Telerik.Windows.Controls.FileDialogs becomes rewritable and is held for its gate.
+  - **C arrays of strings, interfaces and VARIANTs** (`CArrays.cs`), `LPArray` with an
+    `ArraySubType`.
+    - Strings: LPWStr, LPStr or BSTR (BSTR by default in a COM method). Interfaces go as their IID,
+      `object` as IUnknown, VARIANT or IDispatch.
+    - Elements are converted in, unless `[Out]` alone; read back for `[Out]`; and freed after the
+      call (CoTaskMem, SysFreeString, Release, VariantClear).
+  - **A CCW's arrays and StringBuilders.**
+    - Native code's arrays are given their length by `SizeParamIndex` (that argument, plus
+      `SizeConst`) or by `SizeConst` alone. This covers blittable, formatted-struct and element
+      arrays: copied in unless `[Out]` alone, written back for `[Out]`, the old elements freed.
+    - A StringBuilder's room is the next by-value integer parameter (the cch convention), or else
+      the string the buffer holds. Built-in reverse interop cannot know the size either. This choice
+      never writes past the caller's buffer, and an `[Out]`-only one never reads it.
+  - **Fix:** IsCom of an array, pointer or generic instance resolved to its element. An array of
+    COM interfaces would have been passed as one interface. None of the gated assemblies had one in
+    a COM signature.
   - **COM events** (`ConnectionPoints.cs`).
     - The BCL's IConnectionPointContainer, IConnectionPoint, IEnumConnectionPoints and
       IEnumConnections are written by hand both ways, as IStream is.

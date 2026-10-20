@@ -705,6 +705,74 @@ public sealed unsafe class ComRewriterTests
         finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_fmtVt[2])(o); }
     }
 
+    // ---- C arrays: ICArrays, native ---------------------------------------------------------------
+
+    private static readonly Guid IID_ICArrays = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0F");
+    private static readonly IntPtr* s_carrVt = BuildCArrays();
+
+    private static IntPtr* BuildCArrays()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(8, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&CArrQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int, int>)&CArrJoin;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int, int>)&CArrFill;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, WpfMac.ComInterop.ComVariant*, int, int>)&CArrValues;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int, int>)&CArrOthers;
+        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&CArrUseSink;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int CArrQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        if (*iid == IID_IUnknown || *iid == IID_ICArrays) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    [UnmanagedCallersOnly] private static int CArrJoin(Obj* self, IntPtr* s, int n) { int r = 100 * n; for (int i = 0; i < n; i++) r += Marshal.PtrToStringUni(s[i])!.Length; return r; }
+    [UnmanagedCallersOnly] private static int CArrFill(Obj* self, IntPtr* s, int n) { for (int i = 0; i < n; i++) s[i] = Marshal.StringToBSTR("b" + i); return 0; }
+    [UnmanagedCallersOnly] private static int CArrValues(Obj* self, WpfMac.ComInterop.ComVariant* v, int n) { int r = 100 * n; for (int i = 0; i < n; i++) r += v[i].Vt; return r; }
+    [UnmanagedCallersOnly] private static int CArrOthers(Obj* self, IntPtr* o, int n) { int r = 0; for (int i = 0; i < n; i++) r += ((delegate* unmanaged<IntPtr, int>)(*(IntPtr**)o[i])[3])(o[i]); return r; }
+
+    /// <summary>Native code giving a managed object arrays sized by another parameter, and a StringBuilder buffer.</summary>
+    [UnmanagedCallersOnly]
+    private static int CArrUseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        IntPtr* vt = *(IntPtr**)sink;
+        var parts = new List<string>();
+        int* ints = stackalloc int[3] { 1, 2, 3 };
+        parts.Add(((delegate* unmanaged<IntPtr, int*, int, int>)vt[3])(sink, ints, 3).ToString());
+        int* sq = stackalloc int[4];
+        int hr = ((delegate* unmanaged<IntPtr, int*, int, int>)vt[4])(sink, sq, 4);
+        parts.Add(hr != 0 ? $"hr {hr:x8}" : $"{sq[0]}/{sq[1]}/{sq[2]}/{sq[3]}");
+        IntPtr* names = stackalloc IntPtr[2] { IntPtr.Zero, IntPtr.Zero };
+        hr = ((delegate* unmanaged<IntPtr, IntPtr*, int, int>)vt[5])(sink, names, 2);
+        parts.Add(hr != 0 ? $"hr {hr:x8}" : $"{Marshal.PtrToStringUni(names[0])}/{Marshal.PtrToStringUni(names[1])}");
+        Marshal.FreeCoTaskMem(names[0]); Marshal.FreeCoTaskMem(names[1]);
+        char* buf = stackalloc char[8];
+        for (int i = 0; i < 8; i++) buf[i] = 'X';                   // garbage the managed side must not read
+        hr = ((delegate* unmanaged<IntPtr, char*, int, int>)vt[6])(sink, buf, 8);
+        parts.Add(hr != 0 ? $"hr {hr:x8}" : new string(buf));
+        var tags = stackalloc NTag[2];
+        tags[0] = new NTag { Text = Marshal.StringToCoTaskMemUni("a"), N = 1 };
+        tags[1] = new NTag { Text = Marshal.StringToCoTaskMemUni("bb"), N = 2 };
+        int sum = ((delegate* unmanaged<IntPtr, NTag*, int, int>)vt[7])(sink, tags, 2);
+        parts.Add($"{sum}:{tags[0].N}/{tags[1].N}:{Marshal.PtrToStringUni(tags[1].Text)}");
+        Marshal.FreeCoTaskMem(tags[0].Text); Marshal.FreeCoTaskMem(tags[1].Text);
+        *r = Marshal.StringToBSTR(string.Join("|", parts));
+        return 0;
+    }
+
+    private static T WithCArrays<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_carrVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_carrVt[2])(o); }
+    }
+
     private static T WithStreams<T>(Func<IntPtr, T> body)
     {
         var o = New(s_streamsVt, 0);
@@ -765,7 +833,7 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(15, r.Interfaces);
+        Assert.Equal(17, r.Interfaces);
         Assert.Equal(1, r.EventInterfaces);
         Assert.Equal(2, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
@@ -904,6 +972,17 @@ public sealed unsafe class ComRewriterTests
     [Fact]
     public void FormattedTypes_ToAManagedObject_ThroughItsCcw()
         => Assert.Equal("42:5|n?:11|42|6:Bo Sr.:71", WithFormatted(p => (string)Run("FormattedSink", p)!));
+
+    [Fact]
+    public void CArrays_OfStringsVariantsAndInterfaces()
+        // LPWStr in (5 + 200), BSTR [Out] (the callee's), VARIANTs (VT_I4 3 + VT_R8 5 + VT_BSTR 8 + 300),
+        // interfaces (two managed objects' CCWs, 77 each)
+        => Assert.Equal("205|b0,b1|316|154", WithCArrays(p => (string)Run("CArrays", p)!));
+
+    [Fact]
+    public void CArrays_ToAManagedObject_SizedByAnotherParameter()
+        // in, [Out], [Out] LPWStr, an [Out] StringBuilder cut to the buffer's size (the next parameter), [In, Out] structs
+        => Assert.Equal("6|0/1/4/9|s0/s1|managed|3:2/4:bb", WithCArrays(p => (string)Run("CArraysSink", p)!));
 
     [Fact]
     public void ComEvents_ProviderConnectionPointAndSource()
