@@ -1889,9 +1889,15 @@ public static partial class ComRewriter
                 foreach (var prm in m.Parameters)
                 {
                     prm.ParameterType = NativeOf(prm.ParameterType, out bool ch);
-                    if (ch) { prm.MarshalInfo = null; prm.Attributes &= ~ParameterAttributes.HasFieldMarshal; }
+                    // the old [MarshalAs(Interface)] must go: null is not enough (Cecil writes the original
+                    // FieldMarshal row of a lazily read module again), so the pointer says SysInt, valid for IntPtr
+                    if (ch) prm.MarshalInfo = new MarshalInfo(NativeType.Int);
                 }
-                if (m.Name != "BeginInvoke") m.ReturnType = NativeOf(m.ReturnType, out _);
+                if (m.Name != "BeginInvoke")
+                {
+                    m.ReturnType = NativeOf(m.ReturnType, out bool rch);
+                    if (rch) m.MethodReturnType.MarshalInfo = new MarshalInfo(NativeType.Int);
+                }
             }
             Shims.Methods.Add(shim);
             EmitForward(shim, 0, invoke, oldParams, oldRet, isStatic: false, firstArg: 1);
