@@ -100,9 +100,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             _ => $"({src}).xy",
         };
 
+        /// <summary>GL: a Texture2DMS is read through its resolved copy, a texture_2d (D3DDevice.MsReadsResolved).</summary>
+        private static bool MsResolved => D3DDevice.MsReadsResolved;
+
         private static string TextureType(int dim, char kind, bool depth)
         {
             if (dim == DimBuffer) return "array<u32>";
+            if (dim == Dim2DMS && MsResolved && !depth) dim = Dim2D;
             string k = kind switch { 'i' => "i32", 'u' => "u32", _ => "f32" };
             if (depth)
                 return dim switch
@@ -175,7 +179,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (ins.Op == Opcode.LdMs)
             {
                 if (dim != Dim2DMS) throw new NotSupportedException($"ld2dms on dimension {dim}");
-                call = $"textureLoad(t{t}, {coord}, ({ISource(o[3])}).x)";
+                call = MsResolved && !_comparisonResources.Contains(t) ? $"textureLoad(t{t}, {coord}, 0)" : $"textureLoad(t{t}, {coord}, ({ISource(o[3])}).x)";
             }
             else call = layer == null ? $"textureLoad(t{t}, {coord}, {level})" : $"textureLoad(t{t}, {coord}, {layer}, {level})";
             Store(o[0], $"({AsRegister(call, t, false)}){Swz(o[2])}", ins.Saturate);
@@ -320,7 +324,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 int t = o[1].Index0;
                 UseResource(t, false);
                 if (ResourceDim(t) != Dim2DMS) throw new NotSupportedException("sampleinfo on a resource that is not a Texture2DMS");
-                n = $"textureNumSamples(t{t})";
+                n = MsResolved ? "4u" : $"textureNumSamples(t{t})";
             }
             string v = uint_ ? $"bitcast<vec4<f32>>(vec4<u32>({n}, 0u, 0u, 0u))" : $"vec4<f32>(f32({n}), 0.0f, 0.0f, 0.0f)";
             Store(o[0], $"({v}){Swz(o[1])}", ins.Saturate);
@@ -337,7 +341,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             {
                 int t = o[1].Index0;
                 UseResource(t, false);
-                n = $"textureNumSamples(t{t})";
+                n = MsResolved ? "4u" : $"textureNumSamples(t{t})";
             }
             _usesSamplePositions = true;
             Store(o[0], $"(dx_sample_pos({n}, bitcast<u32>(({Source(o[2])}).x))){Swz(o[1])}", ins.Saturate);

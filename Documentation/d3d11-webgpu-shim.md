@@ -545,6 +545,13 @@ green throughout.
       nothing drawn into it. It is now sampleable only when the app made it a shader resource.
       One that is still resolves empty on GL; the `D3DMultisampleTests` case is skipped there, and the
       gap and a possible emulation are in `Direct3D/Corpus/known-gaps.txt`.
+    - Now emulated on GL (2026-10-20): the cause is wgpu-hal attaching a sampleable GL multisample
+      texture through glFramebufferTexture2DMultisampleEXT, so nothing reaches it. Such a texture is
+      made a renderbuffer, which draws and resolves exactly, and shaders read its resolved copy. The
+      copy is resolved again before a bind when the texture was drawn or cleared since.
+      D3DMultisampleReadTests (a shader averaging a 4-sample target's samples) matches WARP pixel for
+      pixel, edges included, and D3DMultisampleTests' sampled case now runs on GL. A single sample of
+      an edge pixel reads the resolved value. Why that cannot be exact here is in known-gaps.txt.
     - A clear of a view the app releases at once (the clear still applies) left a freed view in
       the pending clears. The context now holds the view until the clear is encoded.
   - **`PreferredRendering=Compatible`** (WPF's own 3D) against real D3D11 differs in 2,650 pixels,

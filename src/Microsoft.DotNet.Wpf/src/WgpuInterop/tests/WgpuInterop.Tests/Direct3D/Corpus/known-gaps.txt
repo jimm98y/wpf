@@ -3,8 +3,13 @@
 # (then take it off). Each step of Documentation/d3d11-webgpu-shim.md section 9 shortens this list.
 stages.ps_interface.ps_5_0.dxbc: class linkage (interfaces): each call site is specialized at bind time from the bound class instances -- not implemented yet
 # Device gaps (not shaders, comments only: the coverage test reads the lines above):
-# - GL backend: a multisampled texture the app also samples (D3D11_BIND_SHADER_RESOURCE) keeps nothing drawn
-#   into it, so neither its resolve nor Texture2DMS loads see it (D3DMultisampleTests, skipped on GL). A possible
-#   emulation, not built: render into a render-target-only MS texture (a renderbuffer on GL, which resolves), resolve
-#   for SRV reads that sample, and for per-sample Load keep a single-sample shadow of N layers drawn in N passes
-#   (each pass with sample mask 1<<i); app does not hit it.
+# - GL backend, a multisampled texture the app also reads (D3D11_BIND_SHADER_RESOURCE): emulated, not exact for one
+#   case. wgpu-hal attaches a sampleable GL multisample texture through glFramebufferTexture2DMultisampleEXT (the
+#   EXT_multisampled_render_to_texture entry, for single-sample textures), so nothing drawn or cleared reaches it,
+#   and no copy can write it. Such a texture is a renderbuffer now (it draws and resolves exactly) and a shader's
+#   Texture2DMS reads its resolved copy (D3DDevice.MsReadsResolved; D3DMultisampleReadTests matches WARP for a
+#   shader that averages the samples). Left: Load(sample i) of an edge pixel reads the pixel's resolved value, not
+#   that sample's. Exact per-sample reads cannot be had on this backend: a renderbuffer's samples reach nothing but
+#   a resolve (an average), and a second rasterization per sample (viewport shifted to sample i) shades at the
+#   sample position where D3D shades at the pixel centre. The fix is in wgpu-hal (glFramebufferTexture2D for a
+#   TEXTURE_2D_MULTISAMPLE target). Depth multisampled textures are not emulated (WebGPU resolves no depth).

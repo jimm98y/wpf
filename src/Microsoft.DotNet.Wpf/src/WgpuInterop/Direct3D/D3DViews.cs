@@ -277,7 +277,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var fmt = Formats.Texture(Desc.Format);
                 var aspect = Formats.IsDepth(t.Format) ? WGPUTextureAspect.DepthOnly : WGPUTextureAspect.All;
                 if (Formats.IsDepth(t.Format)) fmt = t.Format;
-                v = CreateTextureView(t.Gpu, fmt, dim, mip, Math.Max(1, mips), layer, Math.Max(1, layers), aspect);
+                // GL: a multisampled texture's reads are of its resolved copy (D3DDevice.MsReadsResolved)
+                v = CreateTextureView(t.MsShadowed ? t.MsShadow : t.Gpu, fmt, dim, mip, Math.Max(1, mips), layer, Math.Max(1, layers), aspect);
                 _views[shaderDim] = v;
                 return v;
             }

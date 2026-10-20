@@ -541,6 +541,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 c._pendingColorClears[v] = color;
             }
             c.HoldForClear(view);
+            if (view.Texture.MsShadowed) view.Texture.Version++;     // its resolved copy is out of date
         }, view);
 
         public void ClearDsv(D3DDepthStencilView view, uint flags, float depth, byte stencil) => Run(c =>

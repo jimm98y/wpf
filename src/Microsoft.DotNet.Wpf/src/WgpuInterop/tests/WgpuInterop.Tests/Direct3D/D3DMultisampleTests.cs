@@ -54,10 +54,9 @@ namespace WgpuInterop.Tests.Direct3D
         [InlineData(true, true)]
         public void ATwoSampleTarget_ClearsAndResolves(bool intoRenderTarget, bool sampled)
         {
-            // wgpu's GL backend: a multisampled texture that can be sampled (a GL texture, not a
-            // renderbuffer) keeps nothing drawn into it -- neither its resolve nor a shader's reads of
-            // its samples see the clear
-            Assert.SkipWhen(sampled && D3DDevice.SharedGpu.IsOpenGL, "a sampled multisampled texture holds nothing on wgpu's GL backend");
+            // wgpu's GL backend: a multisampled texture that can be sampled (a GL texture) keeps nothing
+            // drawn into it, so a shader resource is made a renderbuffer there and read through its
+            // resolved copy (D3DDevice.MsReadsResolved): this resolves on every backend
             IntPtr dev, ctx; uint level;
             Check(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx), "D3D11CreateDevice");
             IntPtr ms = 0, resolved = 0, staging = 0, rtv = 0;

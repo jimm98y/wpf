@@ -275,6 +275,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// stops at the first count refused, as Ab3d.DXEngine does, would otherwise get no MSAA at all).
         /// Desc keeps the count the app asked for.</summary>
         public uint SampleCount => Desc.SampleDesc.Count > 1 ? 4u : 1u;
+
+        /// <summary>GL: a multisampled shader resource drawn as a renderbuffer; shaders read <see cref="MsShadow"/>,
+        /// its resolved copy, brought up to date before a draw or dispatch binds it (D3DDevice.MsReadsResolved).</summary>
+        public readonly bool MsShadowed;
+        public IntPtr MsShadow;
+        /// <summary>The <see cref="D3DResource.Version"/> the shadow was resolved at.</summary>
+        public int MsShadowVersion = -1;
         public uint DepthAt(uint mip) => Kind == 3 ? Math.Max(1, Depth >> (int)mip) : 1;
 
         /// <summary>A planar 4:2:0 texture (NV12, P010, P016): stored as its bytes lie in memory.</summary>
@@ -361,6 +368,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             // empty -- one that cannot is a renderbuffer, which resolves (D3DMultisampleTests).
             if (SampleCount > 1)
                 usage = WGPUTextureUsage.RenderAttachment | ((desc.BindFlags & D3D11_BIND.SHADER_RESOURCE) != 0 ? WGPUTextureUsage.TextureBinding : 0);
+            // GL: drawn as a renderbuffer, read through its resolved copy (D3DDevice.MsReadsResolved)
+            MsShadowed = SampleCount > 1 && (desc.BindFlags & D3D11_BIND.SHADER_RESOURCE) != 0 && Device.Gpu.IsOpenGL && !Formats.IsDepth(Format) && desc.ArraySize == 1;
+            if (MsShadowed) usage = WGPUTextureUsage.RenderAttachment;
             GpuUsage = usage;
             var tdesc = new WGPUTextureDescriptor
             {
@@ -377,6 +387,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             wgpuDevicePushErrorScope(Device.Gpu.Device, WGPUErrorFilter.Validation);
             Gpu = D3DContext.PopScope(Device.Gpu, wgpuDeviceCreateTexture(Device.Gpu.Device, &tdesc), out string? error);
             if (Gpu == IntPtr.Zero) throw new NotSupportedException($"texture {desc.Format} {desc.Width}x{desc.Height} (bind {desc.BindFlags}) on this adapter: {error}");
+            if (MsShadowed)
+            {
+                var sdesc = tdesc;
+                sdesc.usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding;
+                sdesc.sampleCount = 1;
+                MsShadow = wgpuDeviceCreateTexture(Device.Gpu.Device, &sdesc);
+            }
 
             if (init != null)
             {
@@ -507,7 +524,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (SharedHandle != IntPtr.Zero) SharedHandles.Remove(SharedHandle);
             if (Gpu != IntPtr.Zero) wgpuTextureRelease(Gpu);
             if (Staging != IntPtr.Zero) wgpuBufferRelease(Staging);
-            Gpu = Staging = IntPtr.Zero;
+            if (MsShadow != IntPtr.Zero) wgpuTextureRelease(MsShadow);
+            Gpu = Staging = MsShadow = IntPtr.Zero;
             base.OnFinalRelease();
         }
 
