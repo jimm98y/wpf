@@ -1,0 +1,366 @@
+// uxtheme: visual styles on, drawn by the stack's own Windows 11 theme.
+//
+// WinForms draws its themed parts with a managed renderer of Windows 11's aero.msstyles on every head
+// (VisualStylesWin11). An application that calls uxtheme itself -- DotNetBar's themed parts, a control
+// that asks for a theme part on the HDC of its paint Graphics -- comes here, and is answered from that
+// same renderer (System.Windows.Forms.VisualStyles.UxThemeBridge, reached by name), so both ways a part
+// is asked for look the same. They were answered "no visual styles" (IsThemeActive FALSE, no theme
+// data), so such code drew its classic look beside WinForms' Windows 11 one.
+//
+// As on Windows, a class the theme does not have opens no theme (OpenThemeData answers NULL), and the
+// caller draws that part classically; a property it does not define answers E_PROP_ID_UNSUPPORTED.
+// Drawing goes to the DC's surface as a blit does (DestinationGraphics): a window's, a memory DC's DIB,
+// or the Graphics a GetHdc came from.
+
+using System.Drawing;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using Forms = System.Windows.Forms;
+
+namespace WpfMac.Win32;
+
+public static unsafe partial class Exports
+{
+    private const int E_PROP_ID_UNSUPPORTED = unchecked((int)0x80070490);
+
+    private static void RegisterUxTheme()
+    {
+        R((delegate* unmanaged<int>)&IsThemeActive, "IsThemeActive", "IsAppThemed", "IsCompositionActive");
+        R((delegate* unmanaged<nint, char*, char*, int>)&SetWindowTheme, "SetWindowTheme");
+        R((delegate* unmanaged<nint, char*, nint>)&OpenThemeData, "OpenThemeData");
+        R((delegate* unmanaged<nint, char*, uint, nint>)&OpenThemeDataEx, "OpenThemeDataEx", "OpenThemeDataForDpi");
+        R((delegate* unmanaged<nint, nint>)&GetWindowTheme, "GetWindowTheme");
+        R((delegate* unmanaged<nint, int>)&CloseThemeData, "CloseThemeData");
+        R((delegate* unmanaged<uint>)&GetThemeAppProperties, "GetThemeAppProperties");
+        R((delegate* unmanaged<uint, void>)&SetThemeAppProperties, "SetThemeAppProperties");
+        R((delegate* unmanaged<nint, uint, int>)&EnableThemeDialogTexture, "EnableThemeDialogTexture");
+        R((delegate* unmanaged<int, int>)&EnableTheming, "EnableTheming");
+        R((delegate* unmanaged<char*, int, char*, int, char*, int, int>)&GetCurrentThemeName, "GetCurrentThemeName");
+
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, RECT*, int>)&DrawThemeBackground, "DrawThemeBackground");
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, uint*, int>)&DrawThemeBackgroundEx, "DrawThemeBackgroundEx");
+        R((delegate* unmanaged<nint, nint, int, int, char*, int, uint, uint, RECT*, int>)&DrawThemeText, "DrawThemeText");
+        R((delegate* unmanaged<nint, nint, int, int, char*, int, uint, RECT*, uint*, int>)&DrawThemeTextEx, "DrawThemeTextEx");
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, uint, uint, RECT*, int>)&DrawThemeEdge, "DrawThemeEdge");
+        R((delegate* unmanaged<nint, nint, RECT*, int>)&DrawThemeParentBackground, "DrawThemeParentBackground");
+        R((delegate* unmanaged<nint, nint, uint, RECT*, int>)&DrawThemeParentBackgroundEx, "DrawThemeParentBackgroundEx");
+
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, int, SIZE*, int>)&GetThemePartSize, "GetThemePartSize");
+        R((delegate* unmanaged<nint, nint, int, int, int, RECT*, int*, int>)&GetThemeMargins, "GetThemeMargins");
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, RECT*, int>)&GetThemeBackgroundContentRect, "GetThemeBackgroundContentRect");
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, RECT*, int>)&GetThemeBackgroundExtent, "GetThemeBackgroundExtent");
+        R((delegate* unmanaged<nint, nint, int, int, RECT*, nint*, int>)&GetThemeBackgroundRegion, "GetThemeBackgroundRegion");
+        R((delegate* unmanaged<nint, nint, int, int, char*, int, uint, RECT*, RECT*, int>)&GetThemeTextExtent, "GetThemeTextExtent");
+        R((delegate* unmanaged<nint, int, int, int, uint*, int>)&GetThemeColor, "GetThemeColor");
+        R((delegate* unmanaged<nint, int, int, int, int*, int>)&GetThemeInt, "GetThemeInt", "GetThemeEnumValue", "GetThemeBool");
+        R((delegate* unmanaged<nint, int, int, int, char*, int, int>)&GetThemeFilename, "GetThemeFilename", "GetThemeString");
+        R((delegate* unmanaged<nint, int, uint>)&GetThemeSysColor, "GetThemeSysColor");
+        R((delegate* unmanaged<nint, int, int, int>)&IsThemePartDefined, "IsThemePartDefined");
+        R((delegate* unmanaged<nint, int, int, int>)&IsThemeBackgroundPartiallyTransparent, "IsThemeBackgroundPartiallyTransparent");
+    }
+
+    [StructLayout(LayoutKind.Sequential)] internal struct SIZE { public int cx, cy; }
+
+    // ---- the bridge ------------------------------------------------------------------------------
+
+    private delegate nint OpenFn(string classList);
+    private delegate bool PartDefinedFn(nint theme, int part);
+    private delegate bool TransparentFn(nint theme, int part, int state);
+    private delegate int DrawBackgroundFn(nint theme, Graphics g, int part, int state, Rectangle bounds, Rectangle clip, bool clipped);
+    private delegate int DrawTextFn(nint theme, Graphics g, int part, int state, string text, int flags, Rectangle bounds, Font? font, int argb, bool hasColor, bool grayed);
+    private delegate Size MeasureTextFn(Graphics g, string text, int flags, Rectangle bounds, Font? font);
+    private delegate int DrawEdgeFn(nint theme, Graphics g, int part, int state, Rectangle bounds, int edge, int flags, out Rectangle content);
+    private delegate int ParentBackgroundFn(Graphics g, Rectangle bounds, Forms.Control child);
+    private delegate int PartSizeFn(nint theme, Graphics? g, int part, int state, Rectangle bounds, bool hasBounds, int type, out Size size);
+    private delegate int MarginsFn(nint theme, Graphics? g, int part, int state, int property, out Forms.Padding margins);
+    private delegate int RectFn(nint theme, Graphics? g, int part, int state, Rectangle input, out Rectangle output);
+    private delegate int ColorFn(nint theme, int part, int state, int property, out int argb);
+
+    private sealed class Bridge
+    {
+        public required OpenFn Open;
+        public required PartDefinedFn IsPartDefined;
+        public required TransparentFn IsPartiallyTransparent;
+        public required DrawBackgroundFn DrawBackground;
+        public required DrawTextFn DrawText;
+        public required MeasureTextFn MeasureText;
+        public required DrawEdgeFn DrawEdge;
+        public required ParentBackgroundFn DrawParentBackground;
+        public required PartSizeFn PartSize;
+        public required MarginsFn Margins;
+        public required RectFn ContentRect, Extent;
+        public required ColorFn ThemeColor;
+    }
+
+    private static Bridge? s_bridge;
+    private static bool s_bridgeLooked;
+
+    /// <summary>The stack's renderer, or null on a System.Windows.Forms without it (then visual styles
+    /// are reported off, as before).</summary>
+    private static Bridge? Themes
+    {
+        get
+        {
+            if (s_bridgeLooked) return s_bridge;
+            s_bridgeLooked = true;
+            try
+            {
+                Type? t = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.VisualStyles.UxThemeBridge");
+                if (t == null) return null;
+                T D<T>(string name) where T : Delegate => t.GetMethod(name, BindingFlags.Public | BindingFlags.Static)!.CreateDelegate<T>();
+                s_bridge = new Bridge
+                {
+                    Open = D<OpenFn>("Open"), IsPartDefined = D<PartDefinedFn>("IsPartDefined"),
+                    IsPartiallyTransparent = D<TransparentFn>("IsPartiallyTransparent"),
+                    DrawBackground = D<DrawBackgroundFn>("DrawBackground"), DrawText = D<DrawTextFn>("DrawText"),
+                    MeasureText = D<MeasureTextFn>("MeasureText"), DrawEdge = D<DrawEdgeFn>("DrawEdge"),
+                    DrawParentBackground = D<ParentBackgroundFn>("DrawParentBackground"), PartSize = D<PartSizeFn>("PartSize"),
+                    Margins = D<MarginsFn>("Margins"), ContentRect = D<RectFn>("ContentRect"), Extent = D<RectFn>("Extent"),
+                    ThemeColor = D<ColorFn>("ThemeColor"),
+                };
+            }
+            catch (Exception e)
+            {
+                LogOnce("uxtheme:bridge", $"win32 shim: uxtheme has no renderer ({e.GetBaseException().Message}); visual styles are reported off");
+                s_bridge = null;
+            }
+            return s_bridge;
+        }
+    }
+
+    private static Rectangle Rect(RECT* r) => r == null ? Rectangle.Empty : Rectangle.FromLTRB(r->Left, r->Top, r->Right, r->Bottom);
+    private static void Put(RECT* r, Rectangle v) { if (r != null) *r = new RECT { Left = v.Left, Top = v.Top, Right = v.Right, Bottom = v.Bottom }; }
+
+    /// <summary>Draws into a DC's surface, as a blit does, and lets the drawing land there.</summary>
+    private static int OnDc(nint hdc, Func<Graphics, int> draw)
+    {
+        Graphics? g = DestinationGraphics(hdc);
+        if (g == null) return E_INVALIDARG;
+        try { return draw(g); }
+        catch (Exception e)
+        {
+            LogOnce("uxtheme:draw", $"win32 shim: a uxtheme drawing failed: {e.GetType().Name}: {e.Message}");
+            return E_FAIL;
+        }
+        finally { g.Dispose(); }
+    }
+
+    /// <summary>The font selected into one of the shim's DCs, as GDI draws theme text in it; null for
+    /// a DC System.Drawing handed out (the renderer's default font then).</summary>
+    private static Font? DcFont(nint hdc)
+    {
+        if (!s_dcs.TryGetValue(hdc, out var dc) || !s_gdi.TryGetValue(dc.Font, out var font) || font.Stock) return null;
+        try { return new Font(font.FontFace, Math.Max(1, Math.Abs(font.FontHeight)), GraphicsUnit.Pixel); }
+        catch { return null; }
+    }
+
+    // These imports have no A/W pair (they are Unicode only), so an application's own declaration of
+    // them reaches the bare name, and its strings are UTF-16 (CharSet.Unicode) or, for CharSet.Auto --
+    // UTF-16 on Windows -- UTF-8 on macOS. DotNetBar's are CharSet.Auto: its class "WINDOW" came here
+    // as "䥗䑎坏" and opened no theme. Read as either (ReadEither).
+    private static string Text(char* text, int count)
+    {
+        if (text == null) return "";
+        if (count < 0) return ReadEither((byte*)text) ?? "";
+        byte* b = (byte*)text;
+        return count > 0 && b[0] != 0 && b[1] == 0 ? new string(text, 0, count) : System.Text.Encoding.UTF8.GetString(b, count);
+    }
+
+    // ---- themes ----------------------------------------------------------------------------------
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, nint> s_windowThemes = new();
+    private static uint s_themeAppProperties = 7;   // STAP_ALLOW_NONCLIENT | STAP_ALLOW_CONTROLS | STAP_ALLOW_WEBCONTENT
+
+    [UnmanagedCallersOnly] private static int IsThemeActive() => Themes != null ? TRUE : FALSE;
+    [UnmanagedCallersOnly] private static int SetWindowTheme(nint hwnd, char* app, char* idList) => S_OK;
+    [UnmanagedCallersOnly] private static int CloseThemeData(nint theme) => S_OK;
+    [UnmanagedCallersOnly] private static uint GetThemeAppProperties() => s_themeAppProperties;
+    [UnmanagedCallersOnly] private static void SetThemeAppProperties(uint flags) => s_themeAppProperties = flags;
+    [UnmanagedCallersOnly] private static int EnableThemeDialogTexture(nint hwnd, uint flags) => S_OK;
+    [UnmanagedCallersOnly] private static int EnableTheming(int enable) => S_OK;
+
+    private static nint Open(nint hwnd, char* classList)
+    {
+        string list = Text(classList, -1);
+        nint theme = list.Length == 0 ? 0 : Themes?.Open(list) ?? 0;
+        LogOnce("uxtheme:open:" + list, $"win32 shim: uxtheme {list}: {(theme != 0 ? "themed" : "no theme (drawn classically)")}");
+        if (theme == 0) { SetLastError(unchecked((int)0x80070490)); return 0; }
+        if (hwnd != 0) s_windowThemes[hwnd] = theme;
+        return theme;
+    }
+
+    [UnmanagedCallersOnly] private static nint OpenThemeData(nint hwnd, char* classList) => Open(hwnd, classList);
+    [UnmanagedCallersOnly] private static nint OpenThemeDataEx(nint hwnd, char* classList, uint flagsOrDpi) => Open(hwnd, classList);
+    [UnmanagedCallersOnly] private static nint GetWindowTheme(nint hwnd) => s_windowThemes.TryGetValue(hwnd, out nint t) ? t : 0;
+
+    [UnmanagedCallersOnly]
+    private static int GetCurrentThemeName(char* file, int fileMax, char* color, int colorMax, char* size, int sizeMax)
+    {
+        if (Themes == null) return E_FAIL;
+        if (file != null) WriteUtf16(file, fileMax, @"C:\Windows\resources\Themes\Aero\Aero.msstyles");
+        if (color != null) WriteUtf16(color, colorMax, "NormalColor");
+        if (size != null) WriteUtf16(size, sizeMax, "NormalSize");
+        return S_OK;
+    }
+
+    // ---- drawing ---------------------------------------------------------------------------------
+
+    [UnmanagedCallersOnly]
+    private static int DrawThemeBackground(nint theme, nint hdc, int part, int state, RECT* rect, RECT* clip)
+        => Themes is not { } b || theme == 0 ? E_FAIL
+         : OnDc(hdc, g => b.DrawBackground(theme, g, part, state, Rect(rect), Rect(clip), clip != null));
+
+    // DTBGOPTS: dwSize, dwFlags, RECT rcClip. DTBG_CLIPRECT = 1.
+    [UnmanagedCallersOnly]
+    private static int DrawThemeBackgroundEx(nint theme, nint hdc, int part, int state, RECT* rect, uint* options)
+    {
+        bool clipped = options != null && (options[1] & 1) != 0;
+        Rectangle clip = clipped ? Rect((RECT*)(options + 2)) : Rectangle.Empty;
+        return Themes is not { } b || theme == 0 ? E_FAIL : OnDc(hdc, g => b.DrawBackground(theme, g, part, state, Rect(rect), clip, clipped));
+    }
+
+    // DT_CALCRECT (0x400) is the caller's question, not a drawing flag.
+    private const uint DT_CALCRECT = 0x400;
+
+    [UnmanagedCallersOnly]
+    private static int DrawThemeText(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, uint flags2, RECT* rect)
+    {
+        if (Themes is not { } b || theme == 0) return E_FAIL;
+        string s = Text(text, count);
+        Font? font = DcFont(hdc);
+        return OnDc(hdc, g => b.DrawText(theme, g, part, state, s, (int)(flags & ~DT_CALCRECT), Rect(rect), font, 0, false, (flags2 & 1) != 0));   // DTT_GRAYED
+    }
+
+    // DTTOPTS: dwSize, dwFlags, crText, ... DTT_TEXTCOLOR = 1, DTT_CALCRECT = 0x200.
+    [UnmanagedCallersOnly]
+    private static int DrawThemeTextEx(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* rect, uint* options)
+    {
+        if (Themes is not { } b || theme == 0) return E_FAIL;
+        string s = Text(text, count);
+        Font? font = DcFont(hdc);
+        uint opts = options != null ? options[1] : 0;
+        if ((opts & 0x200) != 0 || (flags & DT_CALCRECT) != 0)
+        {
+            Rectangle r = Rect(rect);
+            int hr = OnDc(hdc, g =>
+            {
+                Size size = b.MeasureText(g, s, (int)(flags & ~DT_CALCRECT), r, font);
+                Put(rect, new Rectangle(r.Location, size));
+                return S_OK;
+            });
+            return hr;
+        }
+        bool hasColor = (opts & 1) != 0;
+        uint bgr = hasColor ? options[2] : 0;
+        int argb = unchecked((int)(0xFF000000 | ((bgr & 0xFF) << 16) | (bgr & 0xFF00) | ((bgr >> 16) & 0xFF)));
+        return OnDc(hdc, g => b.DrawText(theme, g, part, state, s, (int)flags, Rect(rect), font, argb, hasColor, false));
+    }
+
+    [UnmanagedCallersOnly]
+    private static int DrawThemeEdge(nint theme, nint hdc, int part, int state, RECT* rect, uint edge, uint flags, RECT* content)
+    {
+        if (Themes is not { } b || theme == 0) return E_FAIL;
+        return OnDc(hdc, g =>
+        {
+            int hr = b.DrawEdge(theme, g, part, state, Rect(rect), (int)edge, (int)flags, out Rectangle inner);
+            Put(content, inner);
+            return hr;
+        });
+    }
+
+    private static int ParentBackground(nint hwnd, nint hdc, RECT* rect)
+    {
+        if (Themes is not { } b || Resolve(hwnd) is not Forms.Control child) return S_OK;
+        Rectangle r = rect != null ? Rect(rect) : new Rectangle(Point.Empty, child.Size);
+        return OnDc(hdc, g => b.DrawParentBackground(g, r, child));
+    }
+
+    [UnmanagedCallersOnly] private static int DrawThemeParentBackground(nint hwnd, nint hdc, RECT* rect) => ParentBackground(hwnd, hdc, rect);
+    [UnmanagedCallersOnly] private static int DrawThemeParentBackgroundEx(nint hwnd, nint hdc, uint flags, RECT* rect) => ParentBackground(hwnd, hdc, rect);
+
+    // ---- metrics and properties -----------------------------------------------------------------
+
+    [UnmanagedCallersOnly]
+    private static int GetThemePartSize(nint theme, nint hdc, int part, int state, RECT* rect, int type, SIZE* size)
+    {
+        if (Themes is not { } b || theme == 0 || size == null) return E_INVALIDARG;
+        int hr = b.PartSize(theme, null, part, state, Rect(rect), rect != null, type, out Size s);
+        *size = new SIZE { cx = s.Width, cy = s.Height };
+        return hr;
+    }
+
+    // MARGINS: cxLeftWidth, cxRightWidth, cyTopHeight, cyBottomHeight.
+    [UnmanagedCallersOnly]
+    private static int GetThemeMargins(nint theme, nint hdc, int part, int state, int property, RECT* rect, int* margins)
+    {
+        if (Themes is not { } b || theme == 0 || margins == null) return E_INVALIDARG;
+        int hr = b.Margins(theme, null, part, state, property, out Forms.Padding m);
+        margins[0] = m.Left; margins[1] = m.Right; margins[2] = m.Top; margins[3] = m.Bottom;
+        return hr;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int GetThemeBackgroundContentRect(nint theme, nint hdc, int part, int state, RECT* bounds, RECT* content)
+    {
+        if (Themes is not { } b || theme == 0 || bounds == null || content == null) return E_INVALIDARG;
+        int hr = b.ContentRect(theme, null, part, state, Rect(bounds), out Rectangle r);
+        Put(content, r);
+        return hr;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int GetThemeBackgroundExtent(nint theme, nint hdc, int part, int state, RECT* content, RECT* extent)
+    {
+        if (Themes is not { } b || theme == 0 || content == null || extent == null) return E_INVALIDARG;
+        int hr = b.Extent(theme, null, part, state, Rect(content), out Rectangle r);
+        Put(extent, r);
+        return hr;
+    }
+
+    // The renderer's parts are rectangles: the region is the part's rectangle.
+    [UnmanagedCallersOnly]
+    private static int GetThemeBackgroundRegion(nint theme, nint hdc, int part, int state, RECT* rect, nint* region)
+    {
+        if (theme == 0 || rect == null || region == null) return E_INVALIDARG;
+        *region = NewGdi(new GdiObject { Kind = GdiKind.Region, Region = *rect });
+        return S_OK;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int GetThemeTextExtent(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* bounds, RECT* extent)
+    {
+        if (Themes is not { } b || theme == 0 || extent == null) return E_INVALIDARG;
+        string s = Text(text, count);
+        Font? font = DcFont(hdc);
+        Rectangle r = Rect(bounds);
+        return OnDc(hdc, g =>
+        {
+            Size size = b.MeasureText(g, s, (int)(flags & ~DT_CALCRECT), r, font);
+            Put(extent, new Rectangle(r.Location, size));
+            return S_OK;
+        });
+    }
+
+    [UnmanagedCallersOnly]
+    private static int GetThemeColor(nint theme, int part, int state, int property, uint* color)
+    {
+        if (Themes is not { } b || theme == 0 || color == null) return E_INVALIDARG;
+        int hr = b.ThemeColor(theme, part, state, property, out int argb);
+        if (hr != S_OK) return E_PROP_ID_UNSUPPORTED;
+        uint c = (uint)argb;
+        *color = ((c >> 16) & 0xFF) | (c & 0xFF00) | ((c & 0xFF) << 16);   // COLORREF 0x00BBGGRR
+        return S_OK;
+    }
+
+    // Properties the renderer does not model: not defined, as Windows answers for a property a part lacks.
+    [UnmanagedCallersOnly] private static int GetThemeInt(nint theme, int part, int state, int property, int* value) => E_PROP_ID_UNSUPPORTED;
+    [UnmanagedCallersOnly] private static int GetThemeFilename(nint theme, int part, int state, int property, char* buffer, int max) => E_PROP_ID_UNSUPPORTED;
+
+    [UnmanagedCallersOnly] private static uint GetThemeSysColor(nint theme, int index) => SysColor(index);
+
+    [UnmanagedCallersOnly] private static int IsThemePartDefined(nint theme, int part, int state) => theme != 0 && Themes is { } b && b.IsPartDefined(theme, part) ? TRUE : FALSE;
+
+    [UnmanagedCallersOnly]
+    private static int IsThemeBackgroundPartiallyTransparent(nint theme, int part, int state)
+        => theme != 0 && Themes is { } b && b.IsPartiallyTransparent(theme, part, state) ? TRUE : FALSE;
+}
