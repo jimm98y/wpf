@@ -81,8 +81,6 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - An entry leaves the list in its own commit once its gate passes.
      - `WPF_COMIMPORT_FORCE` overrides it.
      - Now listed:
-       - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a app display playing a
-         video through Telerik's media player. SharpMediaFoundationInterop is a different library.
        - IcoServices (Workbench): its Active Directory picker. An IL scan finds nothing that uses its
          two COM interfaces (0 call sites), but a plain Workbench session never loads it (the picker
          does), so it has not yet run rewritten.
@@ -127,6 +125,22 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          IcoFwxServer restart), Telerik's RadOpenFileDialog opened over C:\Windows\Media, browsed
          its folder tree, and was cancelled. No exceptions beyond app's usual ones and the
          tree's access-denied probes of protected folders; no settings change.
+       - **MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: gated and released
+         (2026-10-20).** app has no MF video control: its video control is WPF's MediaElement
+         (the port's media backend), and MF.Net's only user is Telerik's RadWebCam. So the gate ran
+         a test app on app's own MF.Net and Telerik DLLs, stock and under the port with both
+         rewritten:
+         - RadWebCam's capture devices and their formats, enumerated only (no camera opened):
+           identical. It first failed rewritten: the device names were empty and
+           MFCreateDeviceSource returned 0x8007007B. The cause was P/Invokes with C arrays of
+           interfaces, which were left to built-in interop (66e97c73c).
+         - A local mp4 decoded to RGB32 through IMFSourceReader, both synchronously and with a
+           managed IMFSourceReaderCallback (a CCW): all 60 frames identical, by hash and raw dump.
+           This first failed because the app's own Marshal.ReleaseComObject threw on a rewritten
+           object. Such callers are now group members, and the entry assembly is never rewritten
+           (db43c67cc).
+         - app bench smoke with both rewritten (cr29, 08:12): 17 assemblies rewritten,
+           536 move / 102 resize steps, no exceptions, no settings change.
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
