@@ -159,6 +159,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Gpu = gpu;
             OwnsGpu = ownsGpu;
             FeatureLevel = level;
+            if (gpu.IsOpenGL) MsReadsResolved = true;
             CreationFlags = flags;
             if (adapter != null) { Adapter = adapter; adapter.AddRef(); }
             else
@@ -200,6 +201,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static readonly HashSet<uint> s_granted = new();
 
         public static bool HasFeature(uint feature) { _ = SharedGpu; return s_granted.Contains(feature); }
+
+        /// <summary>wgpu's GL backend: a multisampled texture that can be bound for sampling is a GL
+        /// multisample texture, and wgpu-hal attaches one to its framebuffers through
+        /// glFramebufferTexture2DMultisampleEXT (EXT_multisampled_render_to_texture, meant for single-sample
+        /// textures), so nothing drawn or cleared reaches it; nor can anything copy into it. Such a texture is
+        /// therefore made a renderbuffer (which draws and resolves), and a shader's Texture2DMS reads its
+        /// resolved copy (D3DTexture2D.MsShadow): every sample reads the pixel's resolved value.</summary>
+        public static bool MsReadsResolved;
 
         public const uint FeatureIndirectFirstInstance = 0xA, FeatureClipDistances = 0x10, FeaturePrimitiveIndex = 0x15, FeatureShaderF64 = 0x3001D, FeatureTextureAtomic = 0x30028, FeatureDualSource = 0x11;
 

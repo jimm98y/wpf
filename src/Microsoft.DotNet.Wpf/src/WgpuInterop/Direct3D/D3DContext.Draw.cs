@@ -226,7 +226,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     {
                         sampleType = r.Depth ? WGPUTextureSampleType.Depth : r.Kind switch { 'i' => WGPUTextureSampleType.Sint, 'u' => WGPUTextureSampleType.Uint, _ => WGPUTextureSampleType.Float },
                         viewDimension = r.Dim switch { 6 => WGPUTextureViewDimension.Cube, 10 => WGPUTextureViewDimension.CubeArray, 5 => WGPUTextureViewDimension._3D, 7 or 8 => WGPUTextureViewDimension._2DArray, 2 => WGPUTextureViewDimension._1D, _ => WGPUTextureViewDimension._2D },
-                        multisampled = r.Dim is 4 or 9 ? 1u : 0u,
+                        multisampled = r.Dim is 4 or 9 && !(D3DDevice.MsReadsResolved && !r.Depth) ? 1u : 0u,
                     },
                 });
             var arr = entries.ToArray();
@@ -490,6 +490,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return v;
         }
 
+        /// <summary>GL: a multisampled texture read by a shader is read through its resolved copy, resolved
+        /// again when it was drawn or cleared since (D3DDevice.MsReadsResolved). Ends the pass.</summary>
+        private void RefreshMsShadow(D3DTexture2D t)
+        {
+            if (t.MsShadowVersion == t.Version || t.MsShadow == IntPtr.Zero) return;
+            ResolvePendingClears();
+            var fmt = t.Format;
+            IntPtr sv = D3DView.CreateTextureView(t.Gpu, fmt, WGPUTextureViewDimension._2D, 0, 1, 0, 1);
+            IntPtr dv = D3DView.CreateTextureView(t.MsShadow, fmt, WGPUTextureViewDimension._2D, 0, 1, 0, 1);
+            var att = new WGPURenderPassColorAttachment { view = sv, depthSlice = 0xFFFFFFFF, resolveTarget = dv, loadOp = WGPULoadOp.Load, storeOp = WGPUStoreOp.Store };
+            var desc = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &att };
+            IntPtr p = wgpuCommandEncoderBeginRenderPass(Encoder(), &desc);
+            wgpuRenderPassEncoderEnd(p);
+            wgpuRenderPassEncoderRelease(p);
+            wgpuTextureViewRelease(sv);
+            wgpuTextureViewRelease(dv);
+            t.MsShadowVersion = t.Version;
+            D3DLog.Once("msshadow", "GL: a multisampled texture read by a shader reads its resolved copy (every sample the pixel's resolved value)");
+        }
+
         private IntPtr BindGroup(IntPtr layout, ShaderBindings b, StageState s, D3DUnorderedAccessView?[]? uavs = null)
         {
             var entries = new List<WGPUBindGroupEntry>();
@@ -577,6 +597,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     else entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), buffer = DummyStorage(), offset = 0, size = 16 });
                     continue;
                 }
+                if (srv?.Resource is D3DTexture2D { MsShadowed: true } ms) RefreshMsShadow(ms);
                 IntPtr view = srv != null && srv.Resource is D3DTexture2D ? srv.ViewFor(r.Dim) : DummyView(r.Dim, r.Kind);
                 if (srv == null || srv.Resource is not D3DTexture2D) UnboundTextureReads++;
                 else if (view == IntPtr.Zero) NullTextureViews++;
