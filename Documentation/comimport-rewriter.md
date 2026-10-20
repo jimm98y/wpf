@@ -66,13 +66,67 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - app: MediaFoundation's 162 such verdicts are gone (Telerik.Windows.MediaFoundation is
        trusted, Telerik.Windows.Controls.Media is clean). Its 12 remaining reasons are fields of
        class, interface or array type, a System.Drawing.Color by value, and interface or Guid arrays.
+   - **Group members that declare no COM types.** An assembly that uses candidates' COM types and can
+     make RCWs of its own counts as a referrer that is not clean. It is judged as a forced candidate and
+     rewritten with them: its Marshal calls and its P/Invokes with their types become the rewrite's.
+     - It is chosen only with a chosen group it uses. If it is left, so is the group.
+     - SharpMediaFoundationInterop.WPF is one: GetObjectForIUnknown and a D3D9 P/Invoke.
+   - **Built-in interop cannot either.** A member that built-in COM interop cannot marshal either
+     (`System.Drawing.Color` by value: "Invalid managed/unmanaged type combination") throws when
+     called, as it does there, and does not keep its assembly on built-in COM. Verdicts list such
+     members separately.
    - **Awaiting a gate.** `ComImportStep.AwaitingGate` lists assemblies that are rewritable but whose
      first rewrite on Windows waits for an app run that exercises them; the smoke runs do not.
      - They stay on built-in COM, and the verdict says "rewritable, awaiting its gate: ...".
      - An entry leaves the list in its own commit once its gate passes.
      - `WPF_COMIMPORT_FORCE` overrides it.
-     - Now listed: Telerik.Windows.Controls.FileDialogs (a Telerik file dialog opened and cancelled,
-       app File > Open).
+     - Now listed:
+       - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a app display playing a
+         video through Telerik's media player. SharpMediaFoundationInterop is a different library.
+       - IcoServices (Workbench): its Active Directory picker. An IL scan finds nothing that uses its
+         two COM interfaces (0 call sites), but a plain Workbench session never loads it (the picker
+         does), so it has not yet run rewritten.
+     - The released set, run together (cr26, 04:38-04:42, 14 assemblies rewritten in app): bench
+       smoke 470 move / 53 resize steps, no settings change; 3D frame 0 px against 15c92fc6e.
+     - Progress on them (2026-10-20, 02:59-03:12, after a fresh IcoFwxServer restart; no settings change
+       in any run):
+       - app bench smoke with Telerik.Windows.Controls forced in, and the Code Pack and RibbonView
+         rewritten: Telerik.Windows.Controls and both Code Pack assemblies loaded and rewritten; 437
+         move / 77 resize steps.
+       - Workbench smoke, the same: Telerik.Windows.Controls and RibbonView (the ribbon) rewritten, clean.
+       - 3D frame 0 px against 15c92fc6e with the current rewriter.
+       - The smoke parts of their gates have passed; the specific exercises have not.
+       - **Telerik.Windows.Controls.RibbonView: gated and released (2026-10-20).** Its COM types are the
+         copied WPF Shell-integration ones: ITaskbarList*, ICustomDestinationList, IShellLinkW,
+         IObjectCollection, IPropertyStore, and so on. No method uses them except a SHAddToRecentDocs
+         wrapper that nothing calls (an IL scan of every body for their members, and for calls whose
+         signatures carry them). So its gate is the load and the ribbon: Workbench smoke with it
+         rewritten, the ribbon drawn, no exceptions.
+       - **Microsoft.WindowsAPICodePack and .Shell: gated and released (2026-10-20).** Besides the
+         smoke, a test app on app's own Code Pack DLLs, run stock and under the port with both
+         rewritten, gave identical output:
+         - a ShellObject's properties through IShellItem2, IPropertyStore and PropVariant (size, type
+           text, duration, kind, date modified);
+         - a ShellContainer enumerated, and a known folder;
+         - NetworkListManager: the coclass methods, and GetNetworks' IEnumerable of INetwork.
+       - The Telerik file dialog can't be opened under the port at all. It fails the same way on built-in
+         COM: `Window.ShowDialog` -> HwndSource -> `CreateWindowEx` "Invalid window handle", from Telerik's
+         chromeless window host. That is a WPF-over-WinForms owner bug of the port, not the rewriter.
+         FileDialogs stays held until that is fixed and the dialog has been opened.
+       - **Telerik.Windows.Controls: gated and released (2026-10-20).** Its COM is a private copy of
+         System.Management (WMI), reached by Telerik's licensing machine id.
+         - A test app computing that id (BIOS, disk, processor) failed rewritten, twice:
+           - a retyped delegate kept `[MarshalAs(Interface)]` (fa6f0763d);
+           - `Activator.CreateInstance` of a rewritten COM class made a plain object (769f3ef97).
+         - Now it gives the same result as stock.
+         - The app and Workbench smoke runs passed with it rewritten. Telerik's file dialog
+           opened and cancelled over app with it and FileDialogs rewritten.
+       - **Telerik.Windows.Controls.FileDialogs: gated and released (2026-10-20).** The owner bug was
+         fixed (ca27b227e: a WPF window owned by a WinForms driver handle is owned by the form's
+         native host window). Then, in app with FileDialogs rewritten (04:27, after a fresh
+         IcoFwxServer restart), Telerik's RadOpenFileDialog opened over C:\Windows\Media, browsed
+         its folder tree, and was cancelled. No exceptions beyond app's usual ones and the
+         tree's access-denied probes of protected folders; no settings change.
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
@@ -228,8 +282,7 @@ adapter.
   - a custom marshaler given to a CCW, an array given to a CCW with no SizeParamIndex/SizeConst, an
     [Out] StringBuilder given to a CCW with no size parameter after it (each stub answers E_NOTIMPL
     and names it); a formatted type with a field of class, interface or non-fixed array type;
-  - the BCL's other `ComTypes`: in app, ITypeInfo (WebView2.Core) and IDataObject (RibbonView,
-    WindowsAPICodePack.Shell).
+  - an IEnumerable or IEnumerator passed in (returned is supported), and given to a CCW.
   - Two more cases are left alone on Windows, because a built-in RCW could reach them and would not
     convert:
     - a cast to a rewritten interface of an object of unknown origin;
@@ -300,6 +353,82 @@ adapter.
       "used by other assemblies"), WindowsAPICodePack.Shell 69 -> 29, RibbonView 18 -> 3,
       Telerik.Windows.Controls 22 -> 9, WebView2.Wpf 1 -> 0 (it stays with WebView2.Core).
       Telerik.Windows.Controls.FileDialogs becomes rewritable and is held for its gate.
+  - **The BCL's other COM interfaces, generated.** Every BCL COM interface a module uses, beyond the
+    hand-written ones, is covered, together with those their signatures reach (IDataObject reaches
+    IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker and IEnumMoniker; ITypeInfo reaches ITypeComp
+    and ITypeLib).
+    - Each gets a ComImpl and a ComCcw generated in the rewritten module (`WpfMac.BclComImpl.*Impl`),
+      through the same marshalling as the app's own interfaces. Its signature is imported into the
+      module, keeping its marshalling.
+    - They are registered with `Com.RegisterGenerated` from the module initializer. ComObject casts
+      and the ComWrappers find them there.
+    - IDataObject's FORMATETC is blittable. STGMEDIUM's `pUnkForRelease` is an interface field, which
+      Com.StructToNative passes itself.
+    - A CCW array with no SizeParamIndex or SizeConst is one element, as built-in reverse interop marshals
+      it (IEnumFORMATETC.Next's `pceltFetched`).
+    - Tests: a native IDataObject (QueryGetData, GetData's STGMEDIUM, EnumFormatEtc -> a native
+      IEnumFORMATETC), and a managed IDataObject and IEnumFORMATETC called by native code through the
+      generated CCWs.
+  - **IEnumerable / IEnumerator returns** (`Enumerable.cs`), as built-in interop's
+    EnumerableToDispatchMarshaler and EnumeratorToEnumVariantMarshaler give them. An IEnumerable is the
+    object's IEnumVARIANT, asked for directly or through IDispatch's DISPID_NEWENUM. Its elements are
+    the VARIANTs it hands out, with ComObjects for interfaces. Both routes are tested.
+  - A struct field of type `object` without `[MarshalAs]` is a VARIANT, as built-in struct
+    marshalling makes it.
+  - **PROPVARIANT housekeeping off Windows** (`PropVariant.cs`). The Win32 shim exports ole32's
+    PropVariantClear and PropVariantCopy, and oleaut32's VariantClear, VariantCopy and VariantInit,
+    implemented as Windows does them:
+    - BSTR, LPSTR/LPWSTR, CLSID, BLOB, CF and VERSIONEDSTREAM are freed or deep-copied; interfaces are
+      released or AddRef'd; vectors are handled element by element; arrays through SafeArray.cs.
+    - An unknown type gets DISP_E_BADVARTYPE and is left alone. VariantClear refuses the
+      PROPVARIANT-only types.
+    - The old export only zeroed 16 bytes, which is wrong on 64-bit and freed nothing.
+    - The apps' own PropVariant types call these from Dispose (MediaFoundation, the Code Pack).
+  - **WebView2:** the overlay replaces the app's Microsoft.Web.WebView2.Core/.Wpf/.WinForms with the
+    fork's own port ("replaced ... by the overlay" in merge-report.txt). The vendor assembly is never
+    loaded and never judged, and nothing of WebView2 is rewritten.
+  - **Structs by value, struct retvals, `ref` classes, interface fields.**
+    - A non-blittable struct by value is passed as a generated blittable shadow
+      (`WpfMac.Shadows.*`).
+      - The shadow has the struct's native size and alignment, computed from the metadata as built-in
+        struct marshalling lays it out. Its fields are integers of the alignment's width, so the ABI
+        classifies it as the native aggregate.
+      - The runtime checks the size against Marshal.SizeOf before every use, so a wrong layout throws
+        rather than passing the wrong bytes.
+      - A floating-point aggregate (FP registers) is refused.
+    - A struct retval goes into the shadow and is converted.
+    - A formatted class:
+      - by reference (`ref Box`) is T**, as built-in passes it;
+      - as a PreserveSig return is a T* that stays the callee's;
+      - as an [out, retval] is a caller-allocated T*.
+    - `ref StringBuilder` is char**.
+    - `out T[]` with SizeParamIndex is the callee's CoTaskMem array. Its length is read after the call
+      from the size parameter (by reference or not).
+    - A formatted type may contain:
+      - an embedded class with layout;
+      - an array that is not ByValArray (built-in makes it a SAFEARRAY, as StructureToPtr does);
+      - a delegate (a function pointer);
+      - an interface, or an object as IUnknown/IDispatch. Com.StructToNative writes and reads these
+        itself, through Borrow and Wrap, so StructureToPtr never makes built-in CCWs or RCWs of them.
+    - `in` parameters' modreq(InAttribute) is stripped before classifying and emitting.
+  - **Other assemblies' COM interfaces** are COM here too (IsCom). Their assembly is rewritten with
+    this one (the fixpoint), so their objects are ComObjects:
+    - parameters of those types convert;
+    - P/Invokes with them are stubbed;
+    - casts to them adopt built-in RCWs;
+    - a class implementing one uses that assembly's CCW.
+  - **A tlbimp coclass's own methods** (NetworkListManagerClass.GetConnectivity, ...) are called as
+    the interface method each one implements.
+  - **A managed delegate with COM interface parameters** is refused only when it can reach native code:
+    the module calls Marshal.GetFunctionPointerForDelegate, or a P/Invoke or COM method takes its type.
+    Telerik's WMI delegates, made to throw PlatformNotSupported, never reach native code.
+  - Tests: ComUserFixture (no COM types; it casts its own `Marshal.GetObjectForIUnknown` to
+    ComImportFixture's ICalc) is judged as a group member and works rewritten with it. On Windows it is
+    left with the group.
+  - **Gate: SharpMediaFoundationInterop + .WPF** (CsWin32's 155 interfaces, 152 P/Invokes) are
+    rewritten as a group. SharpMediaPlayer (big_buck_bunny_480p) and SharpSpatialVideoGUI
+    (IMG_7881.MOV) played at full rate (24.1 and 30.0 fps). Paused at the same position, their frames
+    are identical (0 px) to the runs with built-in COM.
   - **C arrays of strings, interfaces and VARIANTs** (`CArrays.cs`), `LPArray` with an
     `ArraySubType`.
     - Strings: LPWStr, LPStr or BSTR (BSTR by default in a COM method). Interfaces go as their IID,

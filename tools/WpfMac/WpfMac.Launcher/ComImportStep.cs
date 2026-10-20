@@ -38,7 +38,9 @@ internal static class ComImportStep
     /// An entry leaves this list, in its own commit, when its gate passes. WPF_COMIMPORT_FORCE overrides it.</summary>
     internal static readonly IReadOnlyDictionary<string, string> AwaitingGate = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        ["Telerik.Windows.Controls.FileDialogs"] = "a Telerik file dialog opened and cancelled (app File > Open)",
+        ["MediaFoundation"] = "a app display playing a video through Telerik's media player (MF.Net, not SharpMediaFoundationInterop)",
+        ["Telerik.Windows.MediaFoundation"] = "with MediaFoundation: a app display playing a video",
+        ["IcoServices"] = "Workbench with it rewritten, and its Active Directory picker",
     };
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
@@ -63,6 +65,9 @@ internal static class ComImportStep
         /// P/Invokes' signatures name.</summary>
         public bool RcwApis, PInvokeDelegates;
         public HashSet<string> PInvokeScopes = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>It declares no COM types but makes RCWs and references COM-declaring assemblies: judged (forced)
+        /// as a member of their group, rewritten only with them.</summary>
+        public bool Forced;
         /// <summary>Its entries in the deps (an assembly can be listed by more than one library).</summary>
         public List<(JsonObject Runtime, string Asset)> Entries = new();
         public string Hash = "";
@@ -134,6 +139,16 @@ internal static class ComImportStep
         if (candidates.Count == 0) return;
         foreach (var c in candidates.Where(c => !inScope(c.Name))) notes.Add($"comimport {c.Name}: left (WPF_COMIMPORT_REWRITE)");
         candidates = candidates.Where(c => inScope(c.Name)).ToList();
+        // the group's other members: assemblies that use the candidates' types and can make RCWs of their own (a
+        // Marshal RCW maker, GetTypeFromCLSID, a P/Invoke with COM types): rewritten with them, so that what they
+        // make are ComObjects too
+        {
+            var comNames0 = candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var f in files)
+                if (!f.DeclaresCom && inScope(f.Name) && f.References.Any(comNames0.Contains)
+                    && (f.RcwApis || f.PInvokeDelegates || f.PInvokeScopes.Overlaps(comNames0)))
+                { f.Forced = true; candidates.Add(f); }
+        }
 
         // the cached verdicts
         string? cachePath = appCache == null ? null : Path.Combine(appCache, VerdictFile);
@@ -155,12 +170,12 @@ internal static class ComImportStep
         int judged = 0;
         void Judge(AppFile c, HashSet<string> refs)
         {
-            string key = $"{c.Hash}|{HashText(string.Join("\n", refs.Order(StringComparer.Ordinal)))}|{(partial ? "p" : "w")}";
+            string key = $"{c.Hash}|{HashText(string.Join("\n", refs.Order(StringComparer.Ordinal)))}|{(partial ? "p" : "w")}{(c.Forced ? "f" : "")}";
             if (cache.Verdicts.TryGetValue(key, out var v)) { c.Verdict = v; return; }
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var res = ComRewriter.Analyze(c.File, searchDirs, refs);
+                var res = ComRewriter.Analyze(c.File, searchDirs, refs, c.Forced);
                 c.Verdict = new Verdict { Unsupported = res.Unsupported.Count, UsesComTypesOf = res.UsesComTypesOf.ToList(), Summary = res.ToString() };
             }
             catch (Exception e) { c.Verdict = new Verdict { Unsupported = 1, Summary = $"the rewriter failed: {e.GetType().Name}: {e.Message}" }; }
@@ -186,14 +201,15 @@ internal static class ComImportStep
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
         bool Held(AppFile c) => !partial && !force(c.Name) && AwaitingGate.ContainsKey(c.Name);
-        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c) && !(c.Forced && c.Verdict!.UsesComTypesOf.Count == 0)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
         {
             for (bool changed = true; changed;)
             {
                 changed = false;
                 foreach (var c in chosen.Values.ToList())
-                    if (!force(c.Name) && (c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u)) || c.Trusts.Any(u => !chosen.ContainsKey(u))))
+                    if (!force(c.Name) && (c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u)) || c.Trusts.Any(u => !chosen.ContainsKey(u))
+                        || (c.Forced && c.Verdict.UsesComTypesOf.Count == 0)))
                     { chosen.Remove(c.Name); changed = true; }
             }
         }
