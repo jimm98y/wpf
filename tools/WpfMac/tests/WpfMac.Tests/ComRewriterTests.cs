@@ -1280,6 +1280,74 @@ public sealed unsafe class ComRewriterTests
     }
 
     [Fact]
+    public void PropVariantClearAndCopy_AsOle32()
+    {
+        // the shim's ole32/oleaut32 exports off Windows: what a PROPVARIANT owns is copied deeply and freed
+        var a = stackalloc WpfMac.ComInterop.ComVariant[1];
+        var b = stackalloc WpfMac.ComInterop.ComVariant[1];
+        IntPtr pa = (IntPtr)a, pb = (IntPtr)b;
+        string Str(WpfMac.ComInterop.ComVariant* v) => Marshal.PtrToStringUni(v->Data1)!;
+
+        // VT_LPWSTR: copied, not shared
+        *a = default; a->Vt = 31; a->Data1 = Marshal.StringToCoTaskMemUni("lpwstr");
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantCopy(pb, pa));
+        Assert.NotEqual(a->Data1, b->Data1);
+        Assert.Equal("lpwstr", Str(b));
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pa));
+        Assert.Equal(0, a->Vt);
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pb));
+
+        // VT_BSTR
+        *a = default; a->Vt = 8; a->Data1 = Marshal.StringToBSTR("bstr");
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal("bstr", Marshal.PtrToStringBSTR(b->Data1));
+        WpfMac.ComInterop.Com.PropVariantClear(pa); WpfMac.ComInterop.Com.PropVariantClear(pb);
+
+        // VT_VECTOR | VT_LPWSTR: { cElems, pElems }
+        var elems = (IntPtr*)Marshal.AllocCoTaskMem(2 * IntPtr.Size);
+        elems[0] = Marshal.StringToCoTaskMemUni("x"); elems[1] = Marshal.StringToCoTaskMemUni("yy");
+        *a = default; a->Vt = 0x1000 | 31; *(uint*)&a->Data1 = 2; a->Data2 = (IntPtr)elems;
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        var copied = (IntPtr*)b->Data2;
+        Assert.Equal(2u, *(uint*)&b->Data1);
+        Assert.Equal("yy", Marshal.PtrToStringUni(copied[1]));
+        Assert.NotEqual(elems[1], copied[1]);
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pa));
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pb));
+
+        // VT_UNKNOWN: a copy AddRefs, a clear Releases
+        var o = New(s_otherVt, 3);
+        *a = default; a->Vt = 13; a->Data1 = (IntPtr)o;
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal(2, o->Refs);
+        WpfMac.ComInterop.Com.PropVariantClear(pb);
+        Assert.Equal(1, o->Refs);
+        WpfMac.ComInterop.Com.PropVariantClear(pa);           // the last reference: the object is gone
+
+        // VT_BLOB: { cbSize, pBlobData }
+        var blob = (byte*)Marshal.AllocCoTaskMem(3); blob[0] = 1; blob[1] = 2; blob[2] = 3;
+        *a = default; a->Vt = 65; *(uint*)&a->Data1 = 3; a->Data2 = (IntPtr)blob;
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal(3, ((byte*)b->Data2)[2]);
+        Assert.NotEqual(a->Data2, b->Data2);
+        WpfMac.ComInterop.Com.PropVariantClear(pa); WpfMac.ComInterop.Com.PropVariantClear(pb);
+
+        // VT_ARRAY | VT_I4
+        *a = default; a->Vt = 0x2000 | 3; a->Data1 = WpfMac.ComInterop.Com.ToSafeArray(new[] { 4, 5 }, 0);
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal(new[] { 4, 5 }, (int[])WpfMac.ComInterop.Com.FromSafeArray(b->Data1, typeof(int[]).TypeHandle)!);
+        Assert.NotEqual(a->Data1, b->Data1);
+        WpfMac.ComInterop.Com.PropVariantClear(pa); WpfMac.ComInterop.Com.PropVariantClear(pb);
+
+        // VariantClear refuses what only a PROPVARIANT holds; an unknown type is left as it is
+        *a = default; a->Vt = 31;
+        Assert.Equal(unchecked((int)0x80020008), WpfMac.ComInterop.Com.VariantClear(pa));
+        *a = default; a->Vt = 0x0FFF;
+        Assert.Equal(unchecked((int)0x80020008), WpfMac.ComInterop.Com.PropVariantClear(pa));
+        Assert.Equal(0x0FFF, a->Vt);
+    }
+
+    [Fact]
     public void ComEvents_ProviderConnectionPointAndSource()
         // the client side (event interface -> tlbimp's provider -> IConnectionPointContainer/IConnectionPoint ->
         // a sink helper's IDispatch) and the server side ([ComSourceInterfaces]: its .NET events call the

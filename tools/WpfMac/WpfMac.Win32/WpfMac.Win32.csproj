@@ -21,6 +21,11 @@
     <NoWarn>$(NoWarn);CA1416;CS8500</NoWarn>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- PROPVARIANT/VARIANT housekeeping (PropVariantClear and kin) is WpfMac.ComInterop's -->
+    <ProjectReference Include="../WpfMac.ComInterop/WpfMac.ComInterop.csproj" />
+  </ItemGroup>
+
   <!-- A library: the GPU backend is the app's (the payload's, for its RID) to deploy. Built without a
        RID, the SDK would copy the BUILD machine's native backend in here, and from here into every
        overlay: a macOS dylib inside the Windows one. -->
