@@ -71,6 +71,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
     internal static unsafe partial class Wgpu
     {
+        /// <summary>The largest 2D texture a target may be: WebGPU's default limit, as the native backend's (Wgpu.Native.cs).</summary>
+        internal const uint MaxTextureDimension2D = 8192;
+
         // The instance is a pure fiction on the browser (navigator.gpu is global);
         // use a sentinel outside the JS handle-id range (ids count up from 1).
         private static readonly IntPtr s_instanceSentinel = (IntPtr)int.MaxValue;

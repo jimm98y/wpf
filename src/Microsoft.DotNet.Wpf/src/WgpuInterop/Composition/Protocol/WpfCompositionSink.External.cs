@@ -28,7 +28,9 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
+#if !WGPU_BROWSER
 using Microsoft.Wpf.Interop.WebGpu.Direct3D;
+#endif
 using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
@@ -58,9 +60,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// thread's WinForms windows and the Direct3D shim devices made on it.</summary>
         private WgpuContext CreateOrShareContext()
         {
+#if WGPU_BROWSER
+            // the browser: one device of its own, and no Direct3D shim to share it with
+            return WgpuContext.Create();
+#else
             SharesShimDevice = !ThreadGpu.Unshared;
             // the UI thread's, though this may run on the render thread
             return ThreadGpu.Acquire(_ownerThreadId, wpfSink: true);
+#endif
         }
 
         /// <summary>The back buffer <paramref name="key"/>'s front buffer at this size, made, kept or replaced
@@ -177,6 +184,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         public bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh)
         {
+#if WGPU_BROWSER
+            return false;   // no Direct3D shim surfaces in the browser: the caller sends the pixels
+#else
             var ctx = _ctx;
             if (s_trace && (_tracedSend++ < 3 || _tracedSend % 100 == 0))
                 Log($"d3dimage: send h{handle} shares={SharesShimDevice} hosted={HostedWpfContent.Any} shim surface={(ComObject.From(surface) is Direct3DSurface9 s9 ? (ReferenceEquals(s9.Gpu?.Device.Gpu, ctx) ? "this device" : "another device") : "no")} foreign={ForeignRenderer} thread {Environment.CurrentManagedThreadId} {ThreadGpu.Describe()}");
@@ -199,6 +209,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             ZeroCopyPresents++;
             Publish(front);
             return true;
+#endif
         }
 
         /// <summary>
@@ -234,7 +245,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// WPF scene is drawn by its WinForms window, with that window's thread's device. While a WinForms
         /// window draws with another device than this compositor's (another UI thread's: a splash screen),
         /// the frame goes as pixels, which any device can upload.</summary>
+#if WGPU_BROWSER
+        private bool ForeignRenderer => false;   // one device for everything
+#else
         private bool ForeignRenderer => HostedWpfContent.Any && _ctx is { } c && ThreadGpu.HostWindowsOffDevice(c);
+#endif
 
         private static void Clip(ref int x, ref int y, ref int w, ref int h, int width, int height)
         {
@@ -244,6 +259,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             w = r - x; h = b - y;
         }
 
+#if !WGPU_BROWSER
         // ---- the GPU copy -------------------------------------------------------------------------------
 
         private IntPtr _unpremultiply, _opaque, _unpremultiplyLayout;
@@ -367,5 +383,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 return wgpuDeviceCreateRenderPipeline(ctx.Device, &desc);
             }
         }
+#endif
     }
 }

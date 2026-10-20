@@ -1553,7 +1553,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _surfaces.Clear();
             _renderer?.Dispose();
             _renderer = null;
+#if WGPU_BROWSER
+            _ctx?.Dispose();
+#else
             if (_ctx != null) ThreadGpu.Release(_ctx);      // the thread's device: the last of its users disposes it
+#endif
             _ctx = null;
             ForgetExternals();     // the renderer, gone, had them
             // Never bring a device back up for a disposed sink (EnsureGpu skips a headless one).
