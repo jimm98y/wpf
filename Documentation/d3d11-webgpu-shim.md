@@ -621,5 +621,14 @@ green throughout.
   - Command lists keep and carry the whole state: every stage, both UAV sets and the
     stream-output targets, with ExecuteCommandList(restore) and FinishCommandList(restore)
     (D3DCommandListTests).
-  - Not yet: GS streams above 0, class linkage, DXIL. Managed D3DReflect is done (see Runtime
+  - Geometry-shader streams above 0 (`emit_stream`, SM5's PointStream outputs): with stream output,
+    each stream keeps its own index segments in the GS kernel (stream-major lanes) and writes its own
+    slots with its own count, prefix and fit, so a stream that overflows its buffers stops only
+    itself. The rasterized stream (D3D11_SO_RASTERIZED_STREAM, any of 0-3) is the one drawn: the
+    pass-through reads that stream's signature, and the draw reads its lane. Without stream output
+    every stream's vertices are still rasterized together, as WARP draws them.
+    StreamOutput_WritesWhatWarpWrites matches WARP word for word (two streams with overlapping
+    registers, stream 1 alone, stream 1 overflowing while appending) and pixel for pixel (stream 1
+    rasterized).
+  - Not yet: class linkage, DXIL. Managed D3DReflect is done (see Runtime
     compilation).

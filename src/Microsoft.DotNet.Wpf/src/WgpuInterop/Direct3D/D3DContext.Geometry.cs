@@ -65,8 +65,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 t.So = gs.StreamOutput;
                 t.StripCut = stripCut;
                 var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, vs.Code, v.OutputRegisters, new TranslationOptions { StreamOutput = t.So, StripCut = stripCut });
-                var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code);
-                var pass = DxbcTranslator.PassThrough(gs.Code, link);
+                // the pixel shader sees the rasterized stream (stream output names it; 0 otherwise)
+                int rs = Math.Max(0, t.So?.RasterizedStream ?? 0);
+                var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code, rs);
+                var pass = DxbcTranslator.PassThrough(gs.Code, link, new TranslationOptions { RasterizedStream = rs });
                 foreach (string a in v.Approximations.Concat(g.Approximations).Concat(pass.Approximations)) D3DLog.Once("approx:" + a, "shader approximation: " + a);
                 t.Info = GeometryInfo.Of(gs.Code);
                 t.VsRegs = v.OutputRegisters;
@@ -233,9 +235,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
             ulong vsTotal = (ulong)a.Count * a.Instances;
             ulong gsTotal = (ulong)count * a.Instances * (ulong)t.Info.Instances;
-            uint per = (uint)t.Info.IndicesPerInvocation, max = (uint)Math.Max(1, t.Info.MaxVertices);
-            ulong vsBytes = vsTotal * (ulong)t.VsRegs * 16, gsBytes = gsTotal * max * (ulong)t.GsRegs * 16, idxBytes = gsTotal * per * 4;
-            if (vsBytes > MaxScratch || gsBytes > MaxScratch || idxBytes > MaxScratch || gsTotal * per > uint.MaxValue - 1)
+            uint per = (uint)t.Info.IndicesPerInvocation, max = (uint)Math.Max(1, t.Info.MaxVertices), lanes = (uint)t.Info.Lanes(t.So);
+            ulong vsBytes = vsTotal * (ulong)t.VsRegs * 16, gsBytes = gsTotal * max * (ulong)t.GsRegs * 16, idxBytes = gsTotal * per * lanes * 4;
+            if (vsBytes > MaxScratch || gsBytes > MaxScratch || idxBytes > MaxScratch || gsTotal * per * lanes > uint.MaxValue - 1)
             {
                 D3DLog.Once("gsbig", "a geometry shader draw too large for its scratch buffers was skipped");
                 DrawsSkipped++;
@@ -249,7 +251,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             p[8] = (uint)vsTotal; p[9] = count; p[10] = mode; p[11] = step;
             p[12] = (uint)gsTotal;
             var soEntries = new List<WGPUBindGroupEntry>();
-            if (t.So != null) p[13] = AddStreamOutGroup(soEntries, t.So, Scratch(ref _soCounts, ref _soCountsSize, gsTotal * 4, 0), gsTotal * 4);
+            if (t.So != null) p[13] = AddStreamOutGroup(soEntries, t.So, Scratch(ref _soCounts, ref _soCountsSize, gsTotal * lanes * 4, 0), gsTotal * lanes * 4);
             foreach (int s in t.Slots) { p[(4 + s) * 4] = _vbOffset[s]; p[(4 + s) * 4 + 1] = _vbStride[s]; }
             var bytes = new byte[p.Length * 4];
             Buffer.BlockCopy(p, 0, bytes, 0, bytes.Length);
@@ -307,7 +309,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             // stream output alone (no rasterized stream, or nothing to rasterize to) draws nothing
             bool targets = _dsv != null || _rtv.Any(r => r != null);
-            bool render = (t.So == null || t.So.RasterizedStream == 0) && (targets || t.So == null);
+            bool render = (t.So == null || (t.So.RasterizedStream >= 0 && t.So.RasterizedStream < lanes)) && (targets || t.So == null);
             IntPtr pipeline = render ? Pipeline(t.Draw, vs, _ps.Shader, out _, t.Pipeline) : IntPtr.Zero;
             if (render && pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
 
@@ -341,7 +343,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             wgpuComputePassEncoderEnd(pass);
             wgpuComputePassEncoderRelease(pass);
-            bool drew = !render || DrawExpanded(pipeline, t.Draw.VsLayout, groups[4], gsOut, gsBytes, gsIdx, idxBytes, (uint)(gsTotal * per), t.SelectsLayer, t.SelectsViewport);
+            // the rasterized stream's segments (GeometryInfo.Lanes)
+            ulong lane = t.So == null ? 0 : (ulong)t.So.RasterizedStream * gsTotal * per * 4;
+            bool drew = !render || DrawExpanded(pipeline, t.Draw.VsLayout, groups[4], gsOut, gsBytes, gsIdx, idxBytes, (uint)(gsTotal * per), t.SelectsLayer, t.SelectsViewport, lane);
             foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
             if (!drew) { DrawsSkipped++; return; }
             DrawsIssued++;
@@ -351,7 +355,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// (<paramref name="gsOut"/>) by its strips' indices -- once per array slice and viewport the GS
         /// can pick, each keeping the primitives that picked it. False when nothing was drawn.</summary>
         private bool DrawExpanded(IntPtr pipeline, IntPtr vsLayout, IntPtr psGroup, IntPtr gsOut, ulong gsBytes, IntPtr gsIdx, ulong idxBytes, uint indices,
-                                  bool selectsLayer, bool selectsViewport)
+                                  bool selectsLayer, bool selectsViewport, ulong idxOffset = 0)
         {
             uint layers = 1;
             if (selectsLayer)
@@ -379,7 +383,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         wgpuRenderPassEncoderSetPipeline(_pass, pipeline);
                         wgpuRenderPassEncoderSetBindGroup(_pass, 0, g0, 0, null);
                         wgpuRenderPassEncoderSetBindGroup(_pass, 1, psGroup, 0, null);
-                        wgpuRenderPassEncoderSetIndexBuffer(_pass, gsIdx, WGPUIndexFormat.Uint32, 0, Math.Max(16, idxBytes));
+                        wgpuRenderPassEncoderSetIndexBuffer(_pass, gsIdx, WGPUIndexFormat.Uint32, idxOffset, Math.Max(4, (ulong)indices * 4));
                         wgpuRenderPassEncoderDrawIndexed(_pass, indices, 1, 0, 0, 0);
                         drew = true;
                     }
