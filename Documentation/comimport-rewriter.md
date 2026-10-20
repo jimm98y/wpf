@@ -81,8 +81,6 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - An entry leaves the list in its own commit once its gate passes.
      - `WPF_COMIMPORT_FORCE` overrides it.
      - Now listed:
-       - Telerik.Windows.Controls: app and Workbench smoke runs with it rewritten, and a Telerik
-         dialog;
        - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a app display playing a
          video through Telerik's media player. SharpMediaFoundationInterop is a different library.
        - IcoServices (Workbench): its Active Directory picker.
@@ -111,6 +109,14 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          COM: `Window.ShowDialog` -> HwndSource -> `CreateWindowEx` "Invalid window handle", from Telerik's
          chromeless window host. That is a WPF-over-WinForms owner bug of the port, not the rewriter.
          FileDialogs stays held until that is fixed and the dialog has been opened.
+       - **Telerik.Windows.Controls: gated and released (2026-10-20).** Its COM is a private copy of
+         System.Management (WMI), reached by Telerik's licensing machine id.
+         - A test app computing that id (BIOS, disk, processor) failed rewritten, twice:
+           - a retyped delegate kept `[MarshalAs(Interface)]` (fa6f0763d);
+           - `Activator.CreateInstance` of a rewritten COM class made a plain object (769f3ef97).
+         - Now it gives the same result as stock.
+         - The app and Workbench smoke runs passed with it rewritten. Telerik's file dialog
+           opened and cancelled over app with it and FileDialogs rewritten.
        - **Telerik.Windows.Controls.FileDialogs: gated and released (2026-10-20).** The owner bug was
          fixed (ca27b227e: a WPF window owned by a WinForms driver handle is owned by the form's
          native host window). Then, in app with FileDialogs rewritten (04:27, after a fresh
