@@ -328,6 +328,46 @@ namespace ComImportFixture
         public int Tags(Tag[] t, int n) { int s = 0; for (int i = 0; i < t.Length; i++) { s += t[i].N; t[i].N *= 2; } return s; }
     }
 
+    // ---- structs by value (shadows), struct retvals, ref classes, interface fields ----
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ThumbId { [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] Key; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Named { [MarshalAs(UnmanagedType.LPWStr)] public string S; public int N; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Holder { public IOther O; public int N; }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A11"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShapes
+    {
+        [PreserveSig] int Thumb(ThumbId id);                                    // slot 3: 16 bytes by value
+        [PreserveSig] int Named2(Named n);                                     // slot 4: a struct with a string by value
+        Named Make(int n);                                                     // slot 5: a struct retval
+        void Grow(ref Box b);                                                  // slot 6: a formatted class by reference (Box**)
+        void Icon([MarshalAs(UnmanagedType.LPWStr)] ref System.Text.StringBuilder sb);   // slot 7: StringBuilder by reference (char**)
+        [PreserveSig] int Hold(ref Holder h);                                  // slot 8: a struct with an interface field
+        [PreserveSig] int Paint(System.Drawing.Color c);                       // slot 9: built-in interop refuses it too
+        string UseSink(IShapesSink sink);                                      // slot 10
+        void Modes(out int n, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] out Guid[] modes);   // slot 11: the callee's array
+        [PreserveSig] Box Peek();                                              // slot 12: a returned T* (the callee's)
+        Box Fetch();                                                           // slot 13: [out, retval] T* (the caller's buffer)
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A12"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShapesSink
+    {
+        [PreserveSig] int Take(ThumbId id);                                     // slot 3
+        [PreserveSig] int TakeNamed(Named n);                                  // slot 4
+    }
+
+    internal sealed class ManagedShapesSink : IShapesSink
+    {
+        public int Take(ThumbId id) { int s = 0; foreach (byte b in id.Key) s += b; return s; }
+        public int TakeNamed(Named n) => n.S.Length * 100 + n.N;
+    }
+
     /// <summary>A managed IStream over bytes, handed to native code.</summary>
     internal sealed class ManagedStream : IStream
     {
@@ -473,6 +513,43 @@ namespace ComImportFixture
             return $"{c.Join(new[] { "ab", "cde" }, 2)}|{string.Join(",", filled)}|{c.Values(new object[] { 1, 2.5, "x" }, 3)}|{c.Others(new IOther[] { new ManagedOther(), new ManagedOther() }, 2)}";
         }
         public static string CArraysSink(IntPtr p) => CArr(p).UseSink(new ManagedArrayCcwSink());
+
+        // ---- shapes ----
+        private static IShapes Shapes(IntPtr p) => (IShapes)Marshal.GetObjectForIUnknown(p);
+        public static string ShapesAll(IntPtr p)
+        {
+            var s = Shapes(p);
+            var key = new byte[16]; for (int i = 0; i < 16; i++) key[i] = (byte)(i + 1);
+            var parts = new System.Collections.Generic.List<string>();
+            parts.Add(s.Thumb(new ThumbId { Key = key }).ToString());
+            parts.Add(s.Named2(new Named { S = "four", N = 4 }).ToString());
+            var made = s.Make(3);
+            parts.Add($"{made.S}:{made.N}");
+            var box = new Box { A = 2, B = 3 };
+            var same = box;
+            s.Grow(ref box);
+            parts.Add($"{box.A},{box.B},{ReferenceEquals(box, same)}");
+            var sb = new System.Text.StringBuilder("old", 16);
+            s.Icon(ref sb);
+            parts.Add(sb.ToString());
+            var h = new Holder { O = new ManagedOther(), N = 1 };
+            int v = s.Hold(ref h);
+            parts.Add($"{v}:{h.N}:{h.O.Value()}");
+            string paint;
+            try { s.Paint(System.Drawing.Color.Red); paint = "no exception"; }
+            catch (NotSupportedException) { paint = "refused"; }
+            parts.Add(paint);
+            return string.Join("|", parts);
+        }
+        public static string ShapesSink(IntPtr p) => Shapes(p).UseSink(new ManagedShapesSink());
+        public static string ShapesReturns(IntPtr p)
+        {
+            var s = Shapes(p);
+            s.Modes(out int n, out Guid[] modes);
+            var peek = s.Peek();
+            var fetch = s.Fetch();
+            return $"{n}:{modes.Length}:{modes[1].ToByteArray()[0]}|{peek.A},{peek.B}|{fetch.A},{fetch.B}";
+        }
 
         // ---- events ----
         /// <summary>A managed event source seen as a COM object (its CCW, wrapped back): subscribed through the

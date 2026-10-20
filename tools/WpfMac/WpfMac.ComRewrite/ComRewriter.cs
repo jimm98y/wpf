@@ -28,6 +28,9 @@ public sealed class RewriteResult
     public bool UsesComImport;
     /// <summary>What the rewriter cannot do in it, one line each (empty: all of it is supported).</summary>
     public List<string> Unsupported { get; } = new();
+    /// <summary>Members built-in COM interop cannot marshal either: they throw when called, as with built-in
+    /// interop, and do not keep the assembly on built-in COM.</summary>
+    public List<string> BuiltInCannot { get; } = new();
     /// <summary>Assemblies whose COM types this one uses: it may be rewritten only together with them
     /// (their objects must be ComObjects too). The caller decides over the whole app.</summary>
     public SortedSet<string> UsesComTypesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -38,6 +41,7 @@ public sealed class RewriteResult
     public override string ToString() => !UsesComImport ? "no ComImport"
         : $"{Interfaces} interfaces ({Methods} methods), {PInvokes} P/Invokes, {Delegates} delegates, {CallSites} call sites" + (EventInterfaces > 0 ? $", {EventInterfaces} event interfaces" : "") +
           (UsesComTypesOf.Count == 0 ? "" : $"; uses the COM types of {string.Join(", ", UsesComTypesOf)}") +
+          (BuiltInCannot.Count == 0 ? "" : $"; {BuiltInCannot.Count} that built-in interop cannot marshal either (they throw as there)") +
           (Unsupported.Count == 0 ? "" : $"; unsupported: {string.Join("; ", Unsupported.Take(8))}{(Unsupported.Count > 8 ? $" (+{Unsupported.Count - 8} more)" : "")}");
 }
 
@@ -72,13 +76,18 @@ public static partial class ComRewriter
     /// and IL -- no code is generated (that happens when the assembly loads, ComImportLoader).
     /// </summary>
     public static RewriteResult Analyze(string input, IEnumerable<string> searchDirs, ISet<string>? externallyReferenced)
+        => Analyze(input, searchDirs, externallyReferenced, force: false);
+
+    /// <param name="force">judge it even when it declares no COM types: an assembly that uses other assemblies'
+    /// COM types and makes RCWs of its own, rewritten together with them (ComImportStep's group)</param>
+    public static RewriteResult Analyze(string input, IEnumerable<string> searchDirs, ISet<string>? externallyReferenced, bool force)
     {
         var result = new RewriteResult();
         var resolver = new DefaultAssemblyResolver();
         foreach (string d in searchDirs) if (Directory.Exists(d)) resolver.AddSearchDirectory(d);
         resolver.AddSearchDirectory(Path.GetDirectoryName(Path.GetFullPath(input))!);
         using var module = ModuleDefinition.ReadModule(input, new ReaderParameters { AssemblyResolver = resolver, ReadingMode = ReadingMode.Deferred, InMemory = true });
-        if (!module.Types.SelectMany(AllTypes).Any(t => t.IsImport)) return result;
+        if (!force && !module.Types.SelectMany(AllTypes).Any(t => t.IsImport)) return result;
         result.UsesComImport = true;
         if (!module.IsILOnly()) { result.Unsupported.Add("mixed-mode (not IL-only) assembly"); return result; }
         try { new Work(module, result, externallyReferenced) { AnalyzeOnly = true }.Run(); }
@@ -200,7 +209,7 @@ public static partial class ComRewriter
         private readonly MethodReference _structToNative, _newStruct, _structFromNative, _freeStruct, _structBack, _structArrayToNative, _structArrayFromNative,
             _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem,
             _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack,
-            _sbOfNative, _sbBack, _nativeRoom;
+            _sbOfNative, _sbBack, _nativeRoom, _structToShadow, _freeStructAt, _structFromShadow;
         private readonly TypeReference _variant;
         private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
         private readonly MethodReference _this, _borrow, _borrowUnknown, _release, _take, _check, _unsupported, _createInstance, _keepAlive;
@@ -266,6 +275,9 @@ public static partial class ComRewriter
             _sbOfNative = Imp(nameof(Com.StringBuilderOfNative), typeof(IntPtr), typeof(bool));
             _sbBack = Imp(nameof(Com.StringBuilderBackToNative), typeof(System.Text.StringBuilder), typeof(IntPtr), typeof(bool), typeof(int));
             _nativeRoom = Imp(nameof(Com.NativeStringRoom), typeof(IntPtr), typeof(bool));
+            _structToShadow = Imp(nameof(Com.StructToShadow), typeof(object), typeof(IntPtr), typeof(int), typeof(RuntimeTypeHandle));
+            _freeStructAt = Imp(nameof(Com.FreeStructAt), typeof(IntPtr), typeof(RuntimeTypeHandle));
+            _structFromShadow = Imp(nameof(Com.StructFromShadow), typeof(IntPtr), typeof(int), typeof(RuntimeTypeHandle));
             _variant = m.ImportReference(typeof(ComVariant));
             _freeBstr = Imp(nameof(Com.FreeBstr), typeof(IntPtr));
             _takeBstr = Imp(nameof(Com.TakeBstr), typeof(IntPtr));
@@ -345,8 +357,9 @@ public static partial class ComRewriter
             {
                 var d = Safe(it);
                 if (d != null && IsBclCom(d)) continue;            // its CCW is WpfMac.ComInterop's
+                if (d != null && IsForeignCom(d)) continue;         // its CCW is its own assembly's (rewritten with this one)
                 if (d == null || !_ccwRefused.TryGetValue(d, out var refused)) { _r.Unsupported.Add($"managed class {cls.FullName} implements COM interface {it.Name} (no CCW)"); continue; }
-                foreach (var why in refused) _r.Unsupported.Add($"managed class {cls.FullName} implements {it.Name}, whose CCW cannot convert {why}");
+                foreach (var why in refused) Reason($"managed class {cls.FullName}", $"implements {it.Name}, whose CCW cannot convert {why}");
             }
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList()) if (IsDelegate(t) && !t.IsImport) MaybeRewriteDelegate(t);
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
@@ -375,8 +388,14 @@ public static partial class ComRewriter
             if (t is ArrayType or PointerType or GenericInstanceType or PinnedType or RequiredModifierType or OptionalModifierType) return false;
             TypeDefinition? d = t.Module == _m || t.Scope == _m ? Safe(t) : null;
             if (d != null && _comTypes.Contains(d)) return true;
+            // another app assembly's COM interface: rewritten with this one (the judge's fixpoint), so its objects are
+            // ComObjects here too
+            if (d != null && IsForeignCom(d)) return true;
             return t is not GenericParameter && t.Namespace == "System.Runtime.InteropServices.ComTypes" && (d ?? Safe(t)) is { } b && IsBclCom(b);
         }
+
+        /// <summary>A ComImport interface of another app assembly (not the BCL's).</summary>
+        private bool IsForeignCom(TypeDefinition d) => d.IsImport && d.IsInterface && d.Module != _m && !IsBcl(d);
 
         private static bool IsBcl(TypeDefinition d) => d.Module.Assembly.Name.Name is "System.Private.CoreLib" or "System.Runtime" or "System.Runtime.InteropServices" or "mscorlib" or "netstandard";
 
@@ -396,7 +415,17 @@ public static partial class ComRewriter
         // ---- marshalling ------------------------------------------------------------------------
 
         private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant, SafeArray, RefSafeArray,
-            LPStructBlit, FormattedClass, RefStruct, Custom, RefCustom, StringBuilder, StructArray, ElemArray }
+            LPStructBlit, FormattedClass, RefStruct, Custom, RefCustom, StringBuilder, StructArray, ElemArray,
+            StructByValue, RefFormattedClass, RefStringBuilder, RefArray }
+
+        /// <summary>A refusal's prefix when built-in interop cannot marshal it either.</summary>
+        private const string BuiltInCannotPrefix = "[built-in cannot] ";
+
+        private void Reason(string member, string why)
+        {
+            if (why.Contains(BuiltInCannotPrefix, StringComparison.Ordinal)) _r.BuiltInCannot.Add($"{member}: {why.Replace(BuiltInCannotPrefix, "")}");
+            else _r.Unsupported.Add($"{member}: {why}");
+        }
 
         // Arg.Vt's bits for the formatted kinds: copy back after the call (an [Out], or a blittable class,
         // which built-in interop pins), out only (nothing copied in), ANSI (a StringBuilder)
@@ -404,11 +433,11 @@ public static partial class ComRewriter
 
         /// <summary>Kinds a forward call cannot return (a retval of these is refused).</summary>
         private static bool BadReturn(Kind k) => k is Kind.ByRefBlit or Kind.OutIface or Kind.StrA or Kind.BlitArray or Kind.RefBool1 or Kind.RefBool2
-            or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW or Kind.LPStructBlit or Kind.FormattedClass or Kind.RefStruct or Kind.Custom
-            or Kind.RefCustom or Kind.StringBuilder or Kind.StructArray;
+            or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW or Kind.LPStructBlit or Kind.RefStruct or Kind.Custom or Kind.RefArray
+            or Kind.RefCustom or Kind.StringBuilder or Kind.StructArray or Kind.ElemArray or Kind.RefFormattedClass or Kind.RefStringBuilder;
 
         /// <summary>Kinds a CCW stub cannot take from native code (it does not know their extent or owner).</summary>
-        private static bool BadReverseParam(Kind k) => k is Kind.Custom or Kind.RefCustom;
+        private static bool BadReverseParam(Kind k) => k is Kind.Custom or Kind.RefCustom or Kind.RefFormattedClass or Kind.RefStringBuilder or Kind.RefArray;
 
         /// <summary>Why a CCW stub cannot take argument <paramref name="i"/> of <paramref name="md"/> (null: it can): an
         /// array needs its length (SizeParamIndex/SizeConst), an [Out]-only StringBuilder its buffer's size (the next
@@ -489,12 +518,133 @@ public static partial class ComRewriter
             {
                 if (f.IsStatic) continue;
                 var ft = f.FieldType;
-                if (IsBlittable(ft) || ft.FullName is "System.Boolean" or "System.Char" or "System.String" or "System.Decimal") continue;
+                if (IsBlittable(ft) || ft.FullName is "System.Boolean" or "System.Char" or "System.String" or "System.Decimal" or "System.DateTime") continue;
                 if (ft is ArrayType fa && f.MarshalInfo is FixedArrayMarshalInfo && (IsBlittable(fa.ElementType) || fa.ElementType.FullName is "System.Boolean" or "System.Char")) continue;
-                if (ft.IsValueType && IsFormatted(ft, out _, depth + 1)) continue;
+                // an array that is not ByValArray: built-in struct marshalling makes it a SAFEARRAY (Marshal.StructureToPtr
+                // does the same)
+                if (ft is ArrayType) continue;
+                // an interface (or object as IUnknown/IDispatch): Com.StructToNative passes its pointer itself
+                if (IsComInterface(ft) || (ft.FullName == "System.Object" && f.MarshalInfo?.NativeType is NativeType.IUnknown or NativeType.IntF or NativeType.IDispatch)) continue;
+                // an embedded struct or class with layout
+                if (Safe(ft) is { IsInterface: false, IsEnum: false } fd && (fd.IsValueType || fd.FullName != "System.Object") && !IsDelegate(fd) && IsFormatted(ft, out _, depth + 1)) continue;
+                if (Safe(ft) is { } dd && IsDelegate(dd)) continue;           // a function pointer
                 why = $"field {f.Name} ({ft.Name}) of {d.Name}"; return false;
             }
             return true;
+        }
+
+        private readonly Dictionary<TypeDefinition, TypeDefinition> _shadows = new();
+
+        /// <summary>A blittable struct with <paramref name="t"/>'s native size and alignment (made once per type, in
+        /// the rewritten module): what a by-value <paramref name="t"/> is passed as. Its fields are integers of the
+        /// alignment's width, so it is classified as the integer aggregate the native one is.</summary>
+        private TypeReference? Shadow(TypeReference t, out string? why)
+        {
+            why = null;
+            var d = Safe(t)!;
+            if (_shadows.TryGetValue(d, out var known)) return known;
+            if (NativeLayout(t, 0) is not var (size, align))
+            { why = $"{t.Name} by value: its native layout is not one the rewriter can compute"; return null; }
+            if (AllFloat(d, 0)) { why = $"{t.Name} by value: a floating-point aggregate (passed in FP registers)"; return null; }
+            if (AnalyzeOnly) return _m.TypeSystem.IntPtr;          // the verdict needs no type
+            var sh = new TypeDefinition("WpfMac.Shadows", $"{d.Name}Native{_shadows.Count}",
+                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.SequentialLayout | TypeAttributes.BeforeFieldInit,
+                _m.ImportReference(typeof(ValueType))) { PackingSize = (short)align, ClassSize = size };
+            var unit = align switch { 8 => _m.TypeSystem.Int64, 4 => _m.TypeSystem.Int32, 2 => _m.TypeSystem.Int16, _ => _m.TypeSystem.Byte };
+            int n = Math.Max(1, size / Math.Max(1, align));
+            for (int i = 0; i < n; i++) sh.Fields.Add(new FieldDefinition($"f{i}", FieldAttributes.Public, unit));
+            for (int r = n * align; r < size; r++) sh.Fields.Add(new FieldDefinition($"b{r}", FieldAttributes.Public, _m.TypeSystem.Byte));
+            _m.Types.Add(sh);
+            _shadows[d] = sh;
+            _shadowSizes[sh] = size;
+            return sh;
+        }
+
+        private readonly Dictionary<TypeReference, int> _shadowSizes = new();
+
+        private bool AllFloat(TypeDefinition d, int depth)
+        {
+            bool any = false;
+            foreach (var f in d.Fields.Where(f => !f.IsStatic))
+            {
+                if (f.FieldType.FullName is "System.Single" or "System.Double") { any = true; continue; }
+                if (depth < 4 && f.FieldType.IsValueType && Safe(f.FieldType) is { IsEnum: false } fd && AllFloat(fd, depth + 1)) { any = true; continue; }
+                return false;
+            }
+            return any;
+        }
+
+        /// <summary>The native size and alignment of <paramref name="t"/> as built-in struct marshalling lays it out
+        /// (checked against Marshal.SizeOf at run time before use); null when it is not one computed here.</summary>
+        private (int Size, int Align)? NativeLayout(TypeReference t, int depth)
+        {
+            int ptr = IntPtr.Size;
+            if (depth > 8) return null;
+            if (t.IsPointer || t.IsFunctionPointer) return (ptr, ptr);
+            switch (t.FullName)
+            {
+                case "System.Byte": case "System.SByte": return (1, 1);
+                case "System.Int16": case "System.UInt16": return (2, 2);
+                case "System.Int32": case "System.UInt32": case "System.Single": case "System.Boolean": return (4, 4);
+                case "System.Int64": case "System.UInt64": case "System.Double": case "System.DateTime": return (8, 8);
+                case "System.IntPtr": case "System.UIntPtr": return (ptr, ptr);
+                case "System.Guid": return (16, 4);
+                case "System.Decimal": return (16, 8);
+            }
+            var d = Safe(t);
+            if (d == null) return null;
+            if (d.IsEnum) return NativeLayout(d.Fields.First(f => !f.IsStatic).FieldType, depth + 1);
+            if (!(d.IsSequentialLayout || d.IsExplicitLayout)) return null;
+            bool unicode = (d.Attributes & TypeAttributes.StringFormatMask) == TypeAttributes.UnicodeClass;
+            int pack = d.PackingSize > 0 ? d.PackingSize : 8;
+            int offset = 0, size = 0, align = 1;
+            if (!d.IsValueType && d.BaseType != null && d.BaseType.FullName != "System.Object")
+            {
+                if (NativeLayout(d.BaseType, depth + 1) is not var (bs, ba)) return null;
+                offset = size = bs; align = ba;
+            }
+            foreach (var f in d.Fields.Where(f => !f.IsStatic))
+            {
+                if (FieldLayout(f, unicode, depth) is not var (fs, fa)) return null;
+                fa = Math.Min(fa, pack);
+                int start = d.IsExplicitLayout ? f.Offset : (offset + fa - 1) / fa * fa;
+                offset = start + fs;
+                size = Math.Max(size, offset);
+                align = Math.Max(align, fa);
+            }
+            size = (size + align - 1) / align * align;
+            if (d.ClassSize > 0) size = Math.Max(size, d.ClassSize);
+            return (Math.Max(size, 1), align);
+        }
+
+        private (int Size, int Align)? FieldLayout(FieldDefinition f, bool unicode, int depth)
+        {
+            int ptr = IntPtr.Size;
+            var mi = f.MarshalInfo;
+            var nt = mi?.NativeType ?? NativeType.None;
+            var ft = f.FieldType;
+            switch (ft.FullName)
+            {
+                case "System.Boolean": return nt switch { NativeType.U1 or NativeType.I1 => (1, 1), NativeType.VariantBool => (2, 2), _ => (4, 4) };
+                case "System.Char": return unicode || nt is NativeType.U2 or NativeType.I2 ? (2, 2) : (1, 1);
+                case "System.String":
+                    if (mi is FixedSysStringMarshalInfo fss) { int cs = unicode || nt == NativeType.FixedSysString && unicode ? 2 : (unicode ? 2 : 1); return (fss.Size * cs, cs); }
+                    return (ptr, ptr);
+                case "System.Object": return nt is NativeType.IUnknown or NativeType.IntF or NativeType.IDispatch ? (ptr, ptr) : (ptr == 8 ? 24 : 16, 8);
+            }
+            if (ft is ArrayType at)
+            {
+                if (mi is FixedArrayMarshalInfo fam)
+                {
+                    var el = at.ElementType.FullName == "System.Boolean" ? (4, 4) : at.ElementType.FullName == "System.Char" ? (unicode ? (2, 2) : (1, 1)) : NativeLayout(at.ElementType, depth + 1);
+                    if (el is not var (es, ea)) return null;
+                    return (es * Math.Max(1, fam.Size), ea);
+                }
+                return (ptr, ptr);
+            }
+            if (IsComInterface(ft)) return (ptr, ptr);
+            if (Safe(ft) is { } fd && IsDelegate(fd)) return (ptr, ptr);
+            return NativeLayout(ft, depth + 1);
         }
 
         /// <summary>A formatted class whose fields (and its bases') are all blittable: built-in interop pins it.</summary>
@@ -512,6 +662,14 @@ public static partial class ComRewriter
         {
             why = null;
             var nt = mi?.NativeType ?? NativeType.None;
+            // modifiers (an `in` parameter's modreq(InAttribute)) do not change the marshalling
+            while (type is RequiredModifierType or OptionalModifierType) type = ((TypeSpecification)type).ElementType;
+            if (type is ByReferenceType mbr && mbr.ElementType is RequiredModifierType or OptionalModifierType)
+            {
+                var inner = mbr.ElementType;
+                while (inner is RequiredModifierType or OptionalModifierType) inner = ((TypeSpecification)inner).ElementType;
+                type = new ByReferenceType(inner);
+            }
             if (mi is CustomMarshalInfo cmi)
                 return new Arg(type is ByReferenceType ? Kind.RefCustom : Kind.Custom, _intPtr, cmi.ManagedType, 0, cmi.Cookie);
             if (type is ByReferenceType br)
@@ -523,6 +681,13 @@ public static partial class ComRewriter
                 if (IsBlittable(e) && e.FullName != "System.Boolean") return new Arg(Kind.ByRefBlit, _intPtr);
                 string? fw = null;
                 if (e.IsValueType && IsFormatted(e, out fw)) return new Arg(Kind.RefStruct, _intPtr, e);
+                // a formatted class by reference, and a StringBuilder by reference: built-in interop passes a pointer
+                // to the pointer to its native form
+                if (!e.IsValueType && Safe(e) is { IsClass: true } rc && rc.FullName is not ("System.String" or "System.Object" or "System.Text.StringBuilder")
+                    && e is not ArrayType && IsFormatted(e, out _))
+                    return new Arg(Kind.RefFormattedClass, _intPtr, e);
+                if (e.FullName == "System.Text.StringBuilder" && (nt is NativeType.LPWStr or NativeType.LPTStr or NativeType.LPStr || (nt == NativeType.None && comDefaults)))
+                    return new Arg(Kind.RefStringBuilder, _intPtr, null, nt == NativeType.LPStr ? Ansi : 0);
                 if (e.IsValueType && Safe(e) is { IsEnum: false, IsPrimitive: false } && e.FullName is not ("System.Boolean" or "System.Decimal" or "System.DateTime"))
                 { why = $"by-reference {e.Name}: {fw ?? "not convertible"}"; return null; }
                 if (e.FullName == "System.Object" && (nt is NativeType.Struct || (nt == NativeType.None && comDefaults)))
@@ -540,6 +705,16 @@ public static partial class ComRewriter
                 }
                 if (IsSafeArray(e, nt, comDefaults))
                     return SafeArrayVt(e, mi, out why) is int rvt ? new Arg(Kind.RefSafeArray, _intPtr, null, rvt) : null;
+                // a C array by reference (out T[] with SizeParamIndex): the callee's CoTaskMem array, its length read
+                // after the call
+                if (e is ArrayType rat && rat.IsVector && (nt is NativeType.Array || (nt == NativeType.None && !comDefaults)))
+                {
+                    var rami = mi as ArrayMarshalInfo;
+                    int rsp = rami?.SizeParameterIndex ?? -1, rsc = rami?.Size ?? -1;
+                    if (rsp < 0 && rsc < 0) { why = $"by-reference {e.Name}: an array of unknown length"; return null; }
+                    if (IsBlittable(rat.ElementType)) return new Arg(Kind.RefArray, _intPtr, rat.ElementType, 0, null, 0, rsp, rsc);
+                    if (IsFormatted(rat.ElementType, out _)) return new Arg(Kind.RefArray, _intPtr, rat.ElementType, 1, null, 0, rsp, rsc);
+                }
                 why = $"by-reference {e.Name}"; return null;
             }
             if (IsComInterface(type)) return new Arg(Kind.Iface, _intPtr, type);
@@ -565,6 +740,17 @@ public static partial class ComRewriter
             // [MarshalAs(LPStruct)] on a blittable value type (a Guid, mostly): a pointer to a copy
             if (IsBlittable(type) && nt == NativeType.LPStruct) return new Arg(Kind.LPStructBlit, _intPtr, type);
             if (IsBlittable(type)) return new Arg(Kind.Blit, type);
+            // a non-blittable struct by value: its native layout in a blittable shadow of the same size, passed as
+            // that; a BCL one built-in interop refuses (System.Drawing.Color: "Invalid managed/unmanaged type
+            // combination")
+            if (type.IsValueType && type is not ArrayType && Safe(type) is { IsEnum: false } sv && type.FullName is not ("System.Boolean" or "System.Decimal" or "System.DateTime" or "System.Char"))
+            {
+                if (IsBcl(sv) || sv.Module.Assembly.Name.Name.StartsWith("System.", StringComparison.Ordinal))
+                { why = $"{BuiltInCannotPrefix}{type.Name} by value"; return null; }
+                if (!IsFormatted(type, out string? fw2)) { why = $"{type.Name} by value: {fw2}"; return null; }
+                if (Shadow(type, out why) is not { } shadow) return null;
+                return new Arg(Kind.StructByValue, shadow, type, 0);
+            }
             if (type.FullName == "System.Text.StringBuilder")
             {
                 if (nt is NativeType.LPWStr or NativeType.LPTStr || (nt == NativeType.None && comDefaults)) return new Arg(Kind.StringBuilder, _intPtr);
@@ -667,7 +853,7 @@ public static partial class ComRewriter
                 foreach (var md in t.Methods.Where(x => !x.IsStatic))
                 {
                     _r.Methods++;
-                    if (ForwardWhy(md) is { } f) _r.Unsupported.Add($"{t.FullName}.{md.Name}: {f}");
+                    if (ForwardWhy(md) is { } f) Reason($"{t.FullName}.{md.Name}", f);
                     if (ReverseWhy(md) is { } rv) refused.Add($"{md.Name}: {rv}");
                 }
                 _ccwRefused[t] = refused;
@@ -861,6 +1047,7 @@ public static partial class ComRewriter
             if (decl.ReturnType.FullName == "System.Void") return null;
             var ret = Classify(decl.ReturnType, decl.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
             if (ret != null && ret.Kind == Kind.Variant && decl.IsPreserveSig) return "a VARIANT returned by value";
+            if (ret != null && ret.Kind == Kind.StructByValue && decl.IsPreserveSig) return "a non-blittable struct returned by value";
             if (ret == null || BadReturn(ret.Kind))
                 return $"return {w ?? decl.ReturnType.Name}";
             return null;
@@ -878,7 +1065,7 @@ public static partial class ComRewriter
             }
             if (md.ReturnType.FullName == "System.Void") return null;
             var ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w2);
-            if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant || (md.IsPreserveSig && ret.Kind == Kind.Variant))
+            if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue || (md.IsPreserveSig && ret.Kind == Kind.Variant))
                 return $"return {w2 ?? md.ReturnType.Name}";
             return null;
         }
@@ -903,6 +1090,7 @@ public static partial class ComRewriter
             {
                 ret = Classify(decl.ReturnType, decl.MethodReturnType.MarshalInfo, comDefaults: true, out string? why);
                 if (ret != null && ret.Kind == Kind.Variant && preserve) { Refuse(il, member, "a VARIANT returned by value"); return; }
+                if (ret != null && ret.Kind == Kind.StructByValue && preserve) { Refuse(il, member, "a non-blittable struct returned by value"); return; }
                 if (ret == null || BadReturn(ret.Kind))
                 { Refuse(il, member, $"return {why ?? decl.ReturnType.Name}"); return; }
             }
@@ -931,7 +1119,13 @@ public static partial class ComRewriter
             {
                 retLocal = Local(body, ret.Native);
                 site.Parameters.Add(new ParameterDefinition(_intPtr));
-                pushes.Add(() => { il.Emit(OpCodes.Ldloca, retLocal); il.Emit(OpCodes.Conv_U); });
+                if (ret.Kind == Kind.FormattedClass)
+                {
+                    // [out, retval] T*: a buffer of the caller's (as built-in interop allocates it)
+                    il.Emit(OpCodes.Ldtoken, ret.Iface!); il.Emit(OpCodes.Call, _newStruct); il.Emit(OpCodes.Stloc, retLocal);
+                    pushes.Add(() => il.Emit(OpCodes.Ldloc, retLocal));
+                }
+                else pushes.Add(() => { il.Emit(OpCodes.Ldloca, retLocal); il.Emit(OpCodes.Conv_U); });
             }
 
             Instruction? tryStart = cleanup.Count > 0 ? il.Create(OpCodes.Nop) : null;
@@ -970,7 +1164,23 @@ public static partial class ComRewriter
                 });
             }
 
-            if (ret != null && ret.Kind == Kind.Variant && !preserve)
+            if (ret != null && ret.Kind == Kind.FormattedClass && !preserve)
+            {
+                il.Emit(OpCodes.Ldloc, retLocal!); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ldtoken, ret.Iface!);
+                il.Emit(OpCodes.Call, _structFromNative); il.Emit(OpCodes.Castclass, ret.Iface!);
+                il.Emit(OpCodes.Ldloc, retLocal!); il.Emit(OpCodes.Ldtoken, ret.Iface!); il.Emit(OpCodes.Call, _freeStruct);
+            }
+            else if (ret != null && ret.Kind == Kind.StructByValue && !preserve)
+            {
+                // [out, retval] T*: the shadow local the callee filled -> T; what it holds is freed
+                il.Emit(OpCodes.Ldloca, retLocal!); il.Emit(OpCodes.Conv_U);
+                il.Emit(OpCodes.Ldc_I4, ShadowSize(ret.Native));
+                il.Emit(OpCodes.Ldtoken, ret.Iface!);
+                il.Emit(OpCodes.Call, _structFromShadow);
+                il.Emit(OpCodes.Unbox_Any, ret.Iface!);
+                il.Emit(OpCodes.Ldloca, retLocal!); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Ldtoken, ret.Iface!); il.Emit(OpCodes.Call, _freeStructAt);
+            }
+            else if (ret != null && ret.Kind == Kind.Variant && !preserve)
             {
                 il.Emit(OpCodes.Ldloca, retLocal!); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _fromVariant);
                 il.Emit(OpCodes.Ldloca, retLocal!); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _clearVariant);
@@ -986,8 +1196,17 @@ public static partial class ComRewriter
 
         /// <summary>Emits what argument <paramref name="argIndex"/> needs before the call (into
         /// <paramref name="pushes"/>: loading it), after it and in the finally.</summary>
+        /// <summary><paramref name="t"/> without its modifiers (an `in` parameter's modreq), by reference or not.</summary>
+        internal static TypeReference StripMods(TypeReference t)
+        {
+            while (t is RequiredModifierType or OptionalModifierType) t = ((TypeSpecification)t).ElementType;
+            if (t is ByReferenceType br && br.ElementType is RequiredModifierType or OptionalModifierType) return new ByReferenceType(StripMods(br.ElementType));
+            return t;
+        }
+
         private void Prepare(MethodDefinition body, ILProcessor il, Arg a, int argIndex, TypeReference managed, List<Action> pushes, List<Action> cleanup, List<Action> after)
         {
+            managed = StripMods(managed);
             switch (a.Kind)
             {
                 case Kind.Blit:
@@ -1113,6 +1332,97 @@ public static partial class ComRewriter
                         il.Emit(OpCodes.Stind_Ref);
                     });
                     cleanup.Add(() => { il.Emit(OpCodes.Ldloca, v); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _clearVariant); });
+                    break;
+                }
+                case Kind.RefArray:
+                {
+                    var arrType = ((ByReferenceType)managed).ElementType;
+                    var slot = Local(body, _intPtr);
+                    pushes.Add(() => { il.Emit(OpCodes.Ldloca, slot); il.Emit(OpCodes.Conv_U); });
+                    var len = Local(body, _int32);
+                    after.Add(() =>
+                    {
+                        if (a.SizeParam >= 0)
+                        {
+                            il.Emit(OpCodes.Ldarg, a.SizeParam + 1);
+                            if (body.Parameters[a.SizeParam].ParameterType is ByReferenceType) il.Emit(OpCodes.Ldind_I4);
+                            il.Emit(OpCodes.Conv_I4);
+                            if (a.SizeConst > 0) { il.Emit(OpCodes.Ldc_I4, a.SizeConst); il.Emit(OpCodes.Add); }
+                        }
+                        else il.Emit(OpCodes.Ldc_I4, a.SizeConst);
+                        il.Emit(OpCodes.Stloc, len);
+                        il.Emit(OpCodes.Ldarg, argIndex);
+                        il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Ldloc, len); il.Emit(OpCodes.Ldtoken, arrType);
+                        if (a.Vt == 0) il.Emit(OpCodes.Call, _blitFromNativeN);
+                        else { il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _structFromNativeN); }
+                        il.Emit(OpCodes.Castclass, arrType);
+                        il.Emit(OpCodes.Stind_Ref);
+                    });
+                    cleanup.Add(() =>
+                    {
+                        if (a.Vt == 0) { il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Call, _freeCoTaskMem); }
+                        else { il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Ldloc, len); il.Emit(OpCodes.Ldtoken, a.Iface!); il.Emit(OpCodes.Call, _freeStructArray); }
+                    });
+                    break;
+                }
+                case Kind.StructByValue:
+                {
+                    // the struct's native layout in the shadow local, passed by value; freed after the call
+                    var sh = Local(body, a.Native);
+                    il.Emit(OpCodes.Ldloca, sh); il.Emit(OpCodes.Initobj, a.Native);
+                    il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Box, a.Iface!);
+                    il.Emit(OpCodes.Ldloca, sh); il.Emit(OpCodes.Conv_U);
+                    il.Emit(OpCodes.Ldc_I4, ShadowSize(a.Native));
+                    il.Emit(OpCodes.Ldtoken, a.Iface!);
+                    il.Emit(OpCodes.Call, _structToShadow);
+                    pushes.Add(() => il.Emit(OpCodes.Ldloc, sh));
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloca, sh); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Ldtoken, a.Iface!); il.Emit(OpCodes.Call, _freeStructAt); });
+                    break;
+                }
+                case Kind.RefFormattedClass:
+                {
+                    // a pointer to the pointer to its native form; the callee may hand back another (CoTaskMem)
+                    var t = a.Iface!;
+                    var mine = Local(body, _intPtr);
+                    var slot = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Ldind_Ref); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _structToNative);
+                    il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, mine); il.Emit(OpCodes.Stloc, slot);
+                    pushes.Add(() => { il.Emit(OpCodes.Ldloca, slot); il.Emit(OpCodes.Conv_U); });
+                    after.Add(() =>
+                    {
+                        il.Emit(OpCodes.Ldarg, argIndex);
+                        il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Ldind_Ref); il.Emit(OpCodes.Ldtoken, t);
+                        il.Emit(OpCodes.Call, _structFromNative); il.Emit(OpCodes.Castclass, t);
+                        il.Emit(OpCodes.Stind_Ref);
+                    });
+                    cleanup.Add(() =>
+                    {
+                        il.Emit(OpCodes.Ldloc, mine); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _freeStruct);
+                        var same = il.Create(OpCodes.Nop);
+                        il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Ldloc, mine); il.Emit(OpCodes.Beq, same);
+                        il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _freeStruct);
+                        il.Append(same);
+                    });
+                    break;
+                }
+                case Kind.RefStringBuilder:
+                {
+                    bool ansi = (a.Vt & Ansi) != 0;
+                    var mine = Local(body, _intPtr);
+                    var slot = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Ldind_Ref); il.Emit(ansi ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldc_I4_0);
+                    il.Emit(OpCodes.Call, _sbToNative);
+                    il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, mine); il.Emit(OpCodes.Stloc, slot);
+                    pushes.Add(() => { il.Emit(OpCodes.Ldloca, slot); il.Emit(OpCodes.Conv_U); });
+                    after.Add(() => { il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Ldind_Ref); il.Emit(OpCodes.Ldloc, slot); il.Emit(ansi ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _sbFromNative); });
+                    cleanup.Add(() =>
+                    {
+                        il.Emit(OpCodes.Ldloc, mine); il.Emit(OpCodes.Call, _freeCoTaskMem);
+                        var same = il.Create(OpCodes.Nop);
+                        il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Ldloc, mine); il.Emit(OpCodes.Beq, same);
+                        il.Emit(OpCodes.Ldloc, slot); il.Emit(OpCodes.Call, _freeCoTaskMem);
+                        il.Append(same);
+                    });
                     break;
                 }
                 case Kind.LPStructBlit:
@@ -1346,6 +1656,11 @@ public static partial class ComRewriter
                     il.Emit(OpCodes.Call, _takeSafeArray);
                     il.Emit(OpCodes.Castclass, managed);
                     break;
+                case Kind.FormattedClass:
+                    // a PreserveSig T*: copied into a new object; the memory stays the callee's
+                    il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ldtoken, managed);
+                    il.Emit(OpCodes.Call, _structFromNative); il.Emit(OpCodes.Castclass, managed);
+                    break;
                 case Kind.StrW:
                     il.Emit(OpCodes.Call, _takeCoTaskUni);
                     break;
@@ -1354,7 +1669,8 @@ public static partial class ComRewriter
 
         private void Refuse(ILProcessor il, string member, string why)
         {
-            _r.Unsupported.Add($"{member}: {why}");
+            Reason(member, why);
+            why = why.Replace(BuiltInCannotPrefix, "");
             il.Body.ExceptionHandlers.Clear();
             il.Body.Instructions.Clear();
             il.Emit(OpCodes.Ldstr, member);
@@ -1494,6 +1810,45 @@ public static partial class ComRewriter
             "GetComInterfaceForObject", "ReleaseComObject", "FinalReleaseComObject", "IsComObject",
         };
 
+        /// <summary>The interface method a COM class's method implements (an explicit override, or the same name and
+        /// signature on one of its interfaces).</summary>
+        private MethodDefinition? InterfaceMethodOf(MethodDefinition def)
+        {
+            foreach (var o in def.Overrides) if (SafeM(o) is { } d && d.DeclaringType.IsInterface) return d;
+            string Sig(MethodReference m) => m.ReturnType.FullName + "(" + string.Join(",", m.Parameters.Select(p => p.ParameterType.FullName)) + ")";
+            string want = Sig(def);
+            var seen = new HashSet<TypeDefinition>();
+            var queue = new Queue<TypeReference>(def.DeclaringType.Interfaces.Select(i => i.InterfaceType));
+            while (queue.Count > 0)
+            {
+                var i = Safe(queue.Dequeue());
+                if (i == null || !seen.Add(i)) continue;
+                foreach (var m in i.Methods) if (m.Name == def.Name && Sig(m) == want) return m;
+                foreach (var b in i.Interfaces) queue.Enqueue(b.InterfaceType);
+            }
+            return null;
+        }
+
+        private HashSet<TypeDefinition>? _nativeDelegates;
+        private bool _fnPtrForDelegate;
+
+        /// <summary>Whether a managed delegate of <paramref name="t"/> can be handed to native code here: the module
+        /// calls Marshal.GetFunctionPointerForDelegate, or a P/Invoke or COM method takes that delegate type.</summary>
+        private bool DelegateReachesNative(TypeDefinition t)
+        {
+            if (_nativeDelegates == null)
+            {
+                _nativeDelegates = new HashSet<TypeDefinition>();
+                _fnPtrForDelegate = _m.GetMemberReferences().Any(r => r.Name == "GetFunctionPointerForDelegate" && r.DeclaringType.FullName == "System.Runtime.InteropServices.Marshal");
+                foreach (var ty in _m.Types.SelectMany(AllTypes))
+                    foreach (var m in ty.Methods)
+                        if (m.IsPInvokeImpl || (ty.IsInterface && (ty.IsImport || _comTypes.Contains(ty))))
+                            foreach (var pt in m.Parameters.Select(p => p.ParameterType).Append(m.ReturnType))
+                                if (Safe(pt is ByReferenceType br ? br.ElementType : pt) is { } d && IsDelegate(d)) _nativeDelegates.Add(d);
+            }
+            return _fnPtrForDelegate || _nativeDelegates.Contains(t);
+        }
+
         private void RewriteCallSites(MethodDefinition md)
         {
             if (md.DeclaringType == _shims) return;
@@ -1523,7 +1878,11 @@ public static partial class ComRewriter
                         continue;
                     }
                     if (def != null && !def.DeclaringType.IsInterface && _comTypes.Contains(def.DeclaringType) && !def.IsConstructor)
-                        _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: calls {def.DeclaringType.Name}.{def.Name} on a COM class");
+                    {
+                        // a tlbimp coclass's own method: the interface method it implements, on the same object
+                        if (InterfaceMethodOf(def) is { } im) { ins.OpCode = OpCodes.Callvirt; ins.Operand = _m.ImportReference(im); _r.CallSites++; }
+                        else _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: calls {def.DeclaringType.Name}.{def.Name} on a COM class");
+                    }
                 }
                 else if (ins.OpCode == OpCodes.Newobj && ins.Operand is MethodReference ctor)
                 {
@@ -1542,7 +1901,7 @@ public static partial class ComRewriter
                         il.InsertAfter(guid, call);
                         _r.CallSites++;
                     }
-                    else if (_rewrittenDelegates.Contains(t))
+                    else if (_rewrittenDelegates.Contains(t) && DelegateReachesNative(t))
                         _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: makes a managed {t.Name} delegate (native code calling back with COM interfaces)");
                 }
                 else if ((ins.OpCode == OpCodes.Castclass || ins.OpCode == OpCodes.Isinst) && ins.Operand is TypeReference tr)
@@ -1553,7 +1912,7 @@ public static partial class ComRewriter
                     // An object of unknown origin cast to a rewritten interface may be a built-in RCW (from
                     // another assembly, an ActiveX control, the BCL), which would no longer convert: it is
                     // adopted first (Com.Adopt: the same native object, as a ComObject).
-                    else if (t != null && _comTypes.Contains(t) && !FromComWrapper(ins.Previous) && !IsCom(StackType(md, ins.Previous)))
+                    else if (t != null && (_comTypes.Contains(t) || IsForeignCom(t)) && !FromComWrapper(ins.Previous) && !IsCom(StackType(md, ins.Previous)))
                     {
                         // in place (a branch to the cast reaches the adoption), then the cast again
                         var cast = il.Create(ins.OpCode, (TypeReference)ins.Operand);

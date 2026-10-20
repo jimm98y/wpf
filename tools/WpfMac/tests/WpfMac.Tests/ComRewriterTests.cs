@@ -773,6 +773,105 @@ public sealed unsafe class ComRewriterTests
         finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_carrVt[2])(o); }
     }
 
+    // ---- shapes: IShapes, native -------------------------------------------------------------------
+
+    private static readonly Guid IID_IShapes = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A11");
+    private static readonly IntPtr* s_shapesVt = BuildShapes();
+
+    [StructLayout(LayoutKind.Sequential)] private struct NThumb { public fixed byte Key[16]; }
+    [StructLayout(LayoutKind.Sequential)] private struct NNamed { public IntPtr S; public int N; }
+    [StructLayout(LayoutKind.Sequential)] private struct NHolder { public IntPtr O; public int N; }
+
+    private static IntPtr* BuildShapes()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(14, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&ShapesQueryInterface;
+        vt[11] = (IntPtr)(delegate* unmanaged<Obj*, int*, Guid**, int>)&ShapesModes;
+        vt[12] = (IntPtr)(delegate* unmanaged<Obj*, int*>)&ShapesPeek;
+        vt[13] = (IntPtr)(delegate* unmanaged<Obj*, int*, int>)&ShapesFetch;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, NThumb, int>)&ShapesThumb;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, NNamed, int>)&ShapesNamed;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, int, NNamed*, int>)&ShapesMake;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, int**, int>)&ShapesGrow;
+        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, char**, int>)&ShapesIcon;
+        vt[8] = (IntPtr)(delegate* unmanaged<Obj*, NHolder*, int>)&ShapesHold;
+        vt[9] = (IntPtr)(delegate* unmanaged<IntPtr, int>)&NotImpl;
+        vt[10] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&ShapesUseSink;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int ShapesQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        if (*iid == IID_IUnknown || *iid == IID_IShapes) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    [UnmanagedCallersOnly]
+    private static int ShapesModes(Obj* self, int* n, Guid** modes)
+    {
+        *n = 2;
+        *modes = (Guid*)Marshal.AllocCoTaskMem(2 * sizeof(Guid));
+        (*modes)[0] = new Guid("00000001-0000-0000-0000-000000000000");
+        (*modes)[1] = new Guid("00000007-0000-0000-0000-000000000000");
+        return 0;
+    }
+
+    private static readonly int* s_peek = Peeked();
+    private static int* Peeked() { var p = (int*)NativeMemory.Alloc(8); p[0] = 7; p[1] = 8; return p; }
+    [UnmanagedCallersOnly] private static int* ShapesPeek(Obj* self) => s_peek;
+    [UnmanagedCallersOnly] private static int ShapesFetch(Obj* self, int* box) { box[0] = 5; box[1] = 6; return 0; }
+
+    [UnmanagedCallersOnly] private static int ShapesThumb(Obj* self, NThumb t) { int s = 0; for (int i = 0; i < 16; i++) s += t.Key[i]; return s; }
+    [UnmanagedCallersOnly] private static int ShapesNamed(Obj* self, NNamed n) => Marshal.PtrToStringUni(n.S)!.Length * 100 + n.N;
+    [UnmanagedCallersOnly] private static int ShapesMake(Obj* self, int n, NNamed* r) { r->S = Marshal.StringToCoTaskMemUni("made" + n); r->N = n; return 0; }
+    [UnmanagedCallersOnly] private static int ShapesGrow(Obj* self, int** box) { (*box)[0] *= 10; (*box)[1] = 99; return 0; }
+
+    /// <summary>char**: the callee writes into the buffer it points at.</summary>
+    [UnmanagedCallersOnly]
+    private static int ShapesIcon(Obj* self, char** s)
+    {
+        string v = "ico:" + new string(*s);
+        for (int i = 0; i < v.Length; i++) (*s)[i] = v[i];
+        (*s)[v.Length] = '\0';
+        return 0;
+    }
+
+    /// <summary>A struct with an interface: its Value, then the interface replaced by a native one (the old released).</summary>
+    [UnmanagedCallersOnly]
+    private static int ShapesHold(Obj* self, NHolder* h)
+    {
+        int v = ((delegate* unmanaged<IntPtr, int>)(*(IntPtr**)h->O)[3])(h->O);
+        ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)h->O)[2])(h->O);
+        h->O = (IntPtr)New(s_otherVt, 5);
+        h->N = 9;
+        return v;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int ShapesUseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        IntPtr* vt = *(IntPtr**)sink;
+        NThumb t;
+        for (int i = 0; i < 16; i++) t.Key[i] = 2;
+        int a = ((delegate* unmanaged<IntPtr, NThumb, int>)vt[3])(sink, t);
+        var n = new NNamed { S = Marshal.StringToCoTaskMemUni("abc"), N = 7 };
+        int b = ((delegate* unmanaged<IntPtr, NNamed, int>)vt[4])(sink, n);
+        Marshal.FreeCoTaskMem(n.S);
+        *r = Marshal.StringToBSTR($"{a}|{b}");
+        return 0;
+    }
+
+    private static T WithShapes<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_shapesVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_shapesVt[2])(o); }
+    }
+
     private static T WithStreams<T>(Func<IntPtr, T> body)
     {
         var o = New(s_streamsVt, 0);
@@ -833,7 +932,8 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(17, r.Interfaces);
+        Assert.Equal(19, r.Interfaces);
+        Assert.True(r.BuiltInCannot.Any(x => x.Contains("IShapes.Paint") && x.Contains("Color")), r.ToString() + " | " + string.Join("; ", r.Unsupported) + " | " + string.Join("; ", r.BuiltInCannot));
         Assert.Equal(1, r.EventInterfaces);
         Assert.Equal(2, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
@@ -983,6 +1083,21 @@ public sealed unsafe class ComRewriterTests
     public void CArrays_ToAManagedObject_SizedByAnotherParameter()
         // in, [Out], [Out] LPWStr, an [Out] StringBuilder cut to the buffer's size (the next parameter), [In, Out] structs
         => Assert.Equal("6|0/1/4/9|s0/s1|managed|3:2/4:bb", WithCArrays(p => (string)Run("CArraysSink", p)!));
+
+    [Fact]
+    public void Shapes_StructsByValue_Retvals_RefClasses_InterfaceFields()
+        // 1+..+16; a string struct by value (4*100+4); a struct retval; Box** (the same object, written in place);
+        // char** written in place; a struct's interface field used and replaced; Color refused as built-in interop does
+        => Assert.Equal("136|404|made3:3|20,99,True|ico:old|77:9:5|refused", WithShapes(p => (string)Run("ShapesAll", p)!));
+
+    [Fact]
+    public void Shapes_CalleeArrays_AndClassReturns()
+        // out T[] sized by an out parameter (the callee's CoTaskMem); a PreserveSig T*; an [out, retval] T*
+        => Assert.Equal("2:2:7|7,8|5,6", WithShapes(p => (string)Run("ShapesReturns", p)!));
+
+    [Fact]
+    public void Shapes_ByValueStructs_ToAManagedObject()
+        => Assert.Equal("32|307", WithShapes(p => (string)Run("ShapesSink", p)!));
 
     [Fact]
     public void ComEvents_ProviderConnectionPointAndSource()
