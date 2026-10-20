@@ -213,6 +213,11 @@ namespace System.Windows.Forms
 					if (window != null) {
 						return window.owner;
 					}
+					// A window of another framework that a control hosts (an ElementHost's WPF window): a
+					// child window of that control on Windows, so it answers for it as such.
+					Control host = ForeignChildOwner (handle);
+					if (host != null)
+						return host;
 					handle = XplatUI.GetParent(handle, false);
 				}
 
@@ -3630,6 +3635,30 @@ namespace System.Windows.Forms
 
 		#region Public Static Methods
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
+		// Windows of other frameworks that controls host (an ElementHost's WPF window), by handle: on Windows
+		// each is a child window of its control, so FromChildHandle finds the control from it -- an
+		// application finding the form a hosted WPF element is in does exactly that (app's editor
+		// dialogs: their owner, and so where they are centred). Here such a window is the other
+		// framework's own and no window of the driver's, so nothing led from it to the control.
+		private static readonly System.Collections.Generic.Dictionary<IntPtr, WeakReference<Control>> s_foreignChildren = new ();
+
+		internal static void RegisterForeignChild (IntPtr child, Control owner)
+		{
+			if (child == IntPtr.Zero) return;
+			lock (s_foreignChildren) s_foreignChildren[child] = new WeakReference<Control> (owner);
+		}
+
+		internal static void UnregisterForeignChild (IntPtr child)
+		{
+			lock (s_foreignChildren) s_foreignChildren.Remove (child);
+		}
+
+		internal static Control ForeignChildOwner (IntPtr child)
+		{
+			lock (s_foreignChildren)
+				return s_foreignChildren.TryGetValue (child, out var w) && w.TryGetTarget (out Control c) && !c.IsDisposed ? c : null;
+		}
+
 		public static Control FromChildHandle(IntPtr handle) {
 			return Control.ControlNativeWindow.ControlFromChildHandle (handle);
 		}

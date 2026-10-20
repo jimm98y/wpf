@@ -195,6 +195,15 @@ namespace MS.Internal.Interop
         void SetResizeMode(bool canResize, bool canMinimize) { }
 
         /// <summary>
+        /// Whether the window draws its own caption over the whole frame, with no platform title bar --
+        /// what WindowChrome asks for at run time (on Windows it removes the non-client area through
+        /// WM_NCCALCSIZE, which a platform window never sees). The window stays a real, focusable,
+        /// resizable window; only the title bar goes. Creation's "chromeless" (WindowStyle=None) is the
+        /// same state.
+        /// </summary>
+        void SetChromeless(bool chromeless) { }
+
+        /// <summary>
         /// The chrome this window HAS, the counterpart of <see cref="SetResizeMode"/>.
         /// </summary>
         /// <remarks>

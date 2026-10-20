@@ -116,8 +116,14 @@ namespace MS.Win32
 
 
 #if BASE_NATIVEMETHODS
-        [DllImport(ExternDll.User32, CharSet = CharSet.Auto)]
-        internal static extern IntPtr GetMessageExtraInfo();
+        [DllImport(ExternDll.User32, CharSet = CharSet.Auto, EntryPoint = "GetMessageExtraInfo")]
+        private static extern IntPtr GetMessageExtraInfoNative();
+
+        // The extra information of the input message being handled: off Windows there is no Win32 message
+        // behind an input report, so there is none (zero, what Windows answers for a message without it).
+        // It used to throw DllNotFoundException out of the keyboard provider's WM_SETFOCUS handling the
+        // first time a child window (an ElementHost's WPF content) took the keyboard.
+        internal static IntPtr GetMessageExtraInfo() => OperatingSystem.IsWindows() ? GetMessageExtraInfoNative() : IntPtr.Zero;
 
         [DllImport(ExternDll.User32, CharSet = CharSet.Auto)]
         internal static extern IntPtr SetMessageExtraInfo(IntPtr lParam);
@@ -765,13 +771,20 @@ namespace MS.Win32
             {
                 MS.Internal.Interop.IPlatformWindow window =
                     MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle);
-                if (window is null)
+                int x, y, w, h;
+                if (window is not null)
+                {
+                    window.GetRestoreBoundsPixels(out x, out y, out w, out h);
+                    placement.showCmd = window.GetWindowState();
+                }
+                else if (!ForeignWindowRectPixels(hWnd.Handle, out x, out y, out w, out h))
                 {
                     return;
                 }
-
-                window.GetRestoreBoundsPixels(out int x, out int y, out int w, out int h);
-                placement.showCmd = window.GetWindowState();
+                else
+                {
+                    placement.showCmd = 1;   // SW_SHOWNORMAL
+                }
 
                 // rcNormalPosition is in WORKSPACE coordinates for a window without WS_EX_TOOLWINDOW,
                 // and Window.GetNormalRectDeviceUnits converts back by adding the work area's offset
@@ -795,6 +808,28 @@ namespace MS.Win32
             if (!IntGetWindowPlacement(hWnd, ref placement))
             {
                 throw new Win32Exception();
+            }
+        }
+
+        /// <summary>
+        /// The screen rect of a window WPF did not make: a WinForms form, whose Control.Handle on this
+        /// stack is the WinForms driver's handle (a WPF dialog owned by the form -- WindowInteropHelper.Owner
+        /// = form.Handle -- centres on it). WinForms publishes the handle -> native host window map in
+        /// AppContext (see ForeignOwnerWindow); macOS reads that window's frame.
+        /// </summary>
+        private static bool ForeignWindowRectPixels(IntPtr handle, out int x, out int y, out int w, out int h)
+        {
+            x = 0; y = 0; w = 0; h = 0;
+            if (!System.OperatingSystem.IsMacOS() || handle == IntPtr.Zero) return false;
+            if (AppContext.GetData("WinFormsWebGpu.HostWindowOf") is not Func<IntPtr, IntPtr> hostWindowOf) return false;
+            try
+            {
+                IntPtr host = hostWindowOf(handle);
+                return host != IntPtr.Zero && MS.Internal.Interop.CocoaWindow.TryGetForeignOuterRectPixels(host, out x, out y, out w, out h);
+            }
+            catch
+            {
+                return false;   // a failing resolver: no window, as before
             }
         }
 
