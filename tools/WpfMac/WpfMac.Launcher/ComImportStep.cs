@@ -38,7 +38,6 @@ internal static class ComImportStep
     /// An entry leaves this list, in its own commit, when its gate passes. WPF_COMIMPORT_FORCE overrides it.</summary>
     internal static readonly IReadOnlyDictionary<string, string> AwaitingGate = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        ["Telerik.Windows.Controls.FileDialogs"] = "a Telerik file dialog opened and cancelled (app File > Open)",
         ["Telerik.Windows.Controls"] = "app and Workbench smoke runs with it rewritten, and a Telerik dialog",
         ["MediaFoundation"] = "a app display playing a video through Telerik's media player (MF.Net, not SharpMediaFoundationInterop)",
         ["Telerik.Windows.MediaFoundation"] = "with MediaFoundation: a app display playing a video",
