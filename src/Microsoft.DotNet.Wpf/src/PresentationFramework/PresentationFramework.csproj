@@ -1157,6 +1157,7 @@
     <Compile Include="System\Windows\Interop\DynamicScriptObject.cs" />
     <Compile Include="System\Windows\Interop\HwndHost.cs" />
     <Compile Include="System\Windows\Interop\HwndHostForeignContent.cs" />
+    <Compile Include="System\Windows\Interop\ForeignOwnerWindow.cs" />
     <Compile Include="System\Windows\Interop\IErrorPage.cs" />
     <Compile Include="System\Windows\Interop\IProgressPage.cs" />
     <Compile Include="System\Windows\Interop\WindowInteropHelper.cs" />

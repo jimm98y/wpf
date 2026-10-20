@@ -46,6 +46,9 @@ namespace System.Windows.Forms
 
         internal static void PublishHostWindow(IntPtr window, float scale, Control topLevel)
         {
+            // WPF windows owned by a form (WindowInteropHelper.Owner = form.Handle, a dialog given the
+            // active window) are owned by its native host window: the driver's handle is no OS window
+            if (AppContext.GetData(HostWindowOfKey) == null) AppContext.SetData(HostWindowOfKey, (Func<IntPtr, IntPtr>)HostWindowOf);
             HostWindow = window;
             HostScale = scale;
             if (topLevel != null) lock (s_lock) s_hosts.AddOrUpdate(topLevel, new HostInfo(window, scale));
@@ -53,6 +56,18 @@ namespace System.Windows.Forms
         }
 
         private sealed record HostInfo(IntPtr Window, float Scale);
+
+        /// <summary>The AppContext key under which the driver-handle -> native-host-window map is published
+        /// (read by WPF's ForeignOwnerWindow and HwndWrapper).</summary>
+        internal const string HostWindowOfKey = "WinFormsWebGpu.HostWindowOf";
+
+        /// <summary>The native window the control with driver handle <paramref name="handle"/> is presented in
+        /// (its top-level form's host window); zero when there is none.</summary>
+        internal static IntPtr HostWindowOf(IntPtr handle)
+        {
+            Control control = Control.FromHandle(handle) ?? Control.FromChildHandle(handle);
+            return control != null && TryGetHostWindow(control, out IntPtr window, out _) ? window : IntPtr.Zero;
+        }
 
         // Each top-level control's own host window. HostWindow is whichever host published LAST -- a
         // tooltip or drop-down form that opens later takes it over -- so content embedded in one form
