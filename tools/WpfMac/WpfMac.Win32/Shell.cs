@@ -1,8 +1,8 @@
 // The smaller DLLs: dwmapi, uxtheme, wtsapi32, ole32, comctl32, secur32/advapi32 identity.
 //
-// The desktop window manager is always composing (as on every Windows since 8); visual styles are
-// reported as off, so code that would paint with a theme part it cannot open paints classically; the
-// session is the console, local, not remote; COM is initialised and has no classes registered.
+// The desktop window manager is always composing (as on every Windows since 8); visual styles are on
+// and drawn by the stack's own theme (UxTheme.cs); the session is the console, local, not remote; COM
+// is initialised and has no classes registered.
 
 using System.Runtime.InteropServices;
 
@@ -23,15 +23,7 @@ public static unsafe partial class Exports
         R((delegate* unmanaged<int>)&DwmFlush, "DwmFlush");
 
         // uxtheme
-        R((delegate* unmanaged<int>)&IsThemeActive, "IsThemeActive", "IsAppThemed", "IsCompositionActive");
-        R((delegate* unmanaged<nint, char*, char*, int>)&SetWindowTheme, "SetWindowTheme");
-        R((delegate* unmanaged<nint, char*, nint>)&OpenThemeData, "OpenThemeData");
-        R((delegate* unmanaged<nint, char*, uint, nint>)&OpenThemeDataEx, "OpenThemeDataEx");
-        R((delegate* unmanaged<nint, int>)&CloseThemeData, "CloseThemeData");
-        R((delegate* unmanaged<uint>)&GetThemeAppProperties, "GetThemeAppProperties");
-        R((delegate* unmanaged<uint, void>)&SetThemeAppProperties, "SetThemeAppProperties");
-        R((delegate* unmanaged<nint, uint, int>)&EnableThemeDialogTexture, "EnableThemeDialogTexture");
-        R((delegate* unmanaged<int, int>)&EnableTheming, "EnableTheming");
+        RegisterUxTheme();
 
         // wtsapi32: the console session, local
         R((delegate* unmanaged<nint, uint, int, char**, uint*, int>)&WTSQuerySessionInformationW, "WTSQuerySessionInformationW", "WTSQuerySessionInformation");
@@ -94,15 +86,6 @@ public static unsafe partial class Exports
     [UnmanagedCallersOnly] private static int DwmDefWindowProc(nint hwnd, uint msg, nint w, nint l, nint* result) { *result = 0; return FALSE; }
     [UnmanagedCallersOnly] private static int DwmFlush() => S_OK;
 
-    [UnmanagedCallersOnly] private static int IsThemeActive() => FALSE;
-    [UnmanagedCallersOnly] private static int SetWindowTheme(nint hwnd, char* app, char* idList) => S_OK;
-    [UnmanagedCallersOnly] private static nint OpenThemeData(nint hwnd, char* classList) { SetLastError(unchecked((int)0x80070490)); return 0; }   // E_PROP_ID_UNSUPPORTED-ish: no theme
-    [UnmanagedCallersOnly] private static nint OpenThemeDataEx(nint hwnd, char* classList, uint flags) => 0;
-    [UnmanagedCallersOnly] private static int CloseThemeData(nint theme) => S_OK;
-    [UnmanagedCallersOnly] private static uint GetThemeAppProperties() => 0;
-    [UnmanagedCallersOnly] private static void SetThemeAppProperties(uint flags) { }
-    [UnmanagedCallersOnly] private static int EnableThemeDialogTexture(nint hwnd, uint flags) => S_OK;
-    [UnmanagedCallersOnly] private static int EnableTheming(int enable) => S_OK;
 
     // WTS_INFO_CLASS: 4 WTSConnectState? no: 1 WTSInitialProgram ... 5 WTSUserName, 7 WTSDomainName,
     // 10 WTSClientName, 16 WTSClientProtocolType. The answers of a local console session.
