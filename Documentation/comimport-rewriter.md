@@ -83,7 +83,11 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - Now listed:
        - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a GraphWorX display playing a
          video through Telerik's media player. SharpMediaFoundationInterop is a different library.
-       - IcoServices (Workbench): its Active Directory picker.
+       - IcoServices (Workbench): its Active Directory picker. An IL scan finds nothing that uses its
+         two COM interfaces (0 call sites), but a plain Workbench session never loads it (the picker
+         does), so it has not yet run rewritten.
+     - The released set, run together (cr26, 04:38-04:42, 14 assemblies rewritten in GraphWorX): bench
+       smoke 470 move / 53 resize steps, no settings change; 3D frame 0 px against 15c92fc6e.
      - Progress on them (2026-10-20, 02:59-03:12, after a fresh IcoFwxServer restart; no settings change
        in any run):
        - GraphWorX bench smoke with Telerik.Windows.Controls forced in, and the Code Pack and RibbonView
