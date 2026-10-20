@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An app-like assembly that declares no COM types and makes no RCWs, but uses ComImportFixture's and calls
+       the Marshal APIs that only work on COM objects (ReleaseComObject, IsComObject): the launcher's judge makes it
+       a forced member of ComImportFixture's group, so those calls see the rewritten objects (ComRewriterTests). -->
+  <PropertyGroup>
+    <AssemblyName>ComReleaserFixture</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ComImportFixture/ComImportFixture.csproj" />
+  </ItemGroup>
+</Project>

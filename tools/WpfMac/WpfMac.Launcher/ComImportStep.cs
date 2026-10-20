@@ -64,6 +64,9 @@ internal static class ComImportStep
         /// Type.GetTypeFromCLSID/ProgID, a P/Invoke passing a delegate; and the assemblies whose types its
         /// P/Invokes' signatures name.</summary>
         public bool RcwApis, PInvokeDelegates;
+        /// <summary>Calls Marshal APIs that only work on built-in RCWs (ReleaseComObject, IsComObject, ...): on a
+        /// rewritten assembly's objects they throw or answer wrongly unless its call sites are rewritten too.</summary>
+        public bool ComObjectApis;
         public HashSet<string> PInvokeScopes = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>It declares no COM types but makes RCWs and references COM-declaring assemblies: judged (forced)
         /// as a member of their group, rewritten only with them.</summary>
@@ -103,7 +106,7 @@ internal static class ComImportStep
     /// of it, and lists them ("name|original path") in <paramref name="list"/>. One line per assembly judged
     /// goes to <paramref name="notes"/>. <paramref name="appCache"/>: the app's cache folder (the verdicts).
     /// </summary>
-    public static void Apply(JsonObject deps, string appDir, string overlayDir, string cacheRoot, string? appCache, bool windows, string? setting, List<string> notes, List<string> list)
+    public static void Apply(JsonObject deps, string appDir, string overlayDir, string cacheRoot, string? appCache, bool windows, string? setting, List<string> notes, List<string> list, string? entry = null)
     {
         var total = System.Diagnostics.Stopwatch.StartNew();
         // what an earlier wpfmac wrote: rewritten copies on disk (now made in memory, at load)
@@ -146,7 +149,7 @@ internal static class ComImportStep
             var comNames0 = candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var f in files)
                 if (!f.DeclaresCom && inScope(f.Name) && f.References.Any(comNames0.Contains)
-                    && (f.RcwApis || f.PInvokeDelegates || f.PInvokeScopes.Overlaps(comNames0)))
+                    && (f.RcwApis || f.ComObjectApis || f.PInvokeDelegates || f.PInvokeScopes.Overlaps(comNames0)))
                 { f.Forced = true; candidates.Add(f); }
         }
 
@@ -161,7 +164,7 @@ internal static class ComImportStep
         // rewritten assemblies' own objects: its references do not count against them
         var byName = files.GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
         var comNames = candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        bool Clean(string referrer) => byName.TryGetValue(referrer, out var r) && !r.DeclaresCom && !r.RcwApis && !r.PInvokeDelegates && !r.PInvokeScopes.Overlaps(comNames);
+        bool Clean(string referrer) => byName.TryGetValue(referrer, out var r) && !r.DeclaresCom && !r.RcwApis && !r.ComObjectApis && !r.PInvokeDelegates && !r.PInvokeScopes.Overlaps(comNames);
         HashSet<string> RefsOf(AppFile c, ICollection<string>? except) =>
             !external.TryGetValue(c.Name, out var byReferrer) ? new HashSet<string>(StringComparer.Ordinal)
             : byReferrer.Where(kv => (except == null || !except.Contains(kv.Key)) && (partial || !Clean(kv.Key))).SelectMany(kv => kv.Value).ToHashSet(StringComparer.Ordinal);
@@ -201,7 +204,10 @@ internal static class ComImportStep
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
         bool Held(AppFile c) => !partial && !force(c.Name) && AwaitingGate.ContainsKey(c.Name);
-        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c) && !(c.Forced && c.Verdict!.UsesComTypesOf.Count == 0)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        // the entry assembly is the host's to load (dotnet exec), before the startup hook: never rewritten
+        bool IsEntry(AppFile c) => entry != null && string.Equals(c.Name, entry, StringComparison.OrdinalIgnoreCase);
+        var entryFile = candidates.FirstOrDefault(IsEntry);
+        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c) && !IsEntry(c) && !(c.Forced && c.Verdict!.UsesComTypesOf.Count == 0)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
         {
             for (bool changed = true; changed;)
@@ -209,7 +215,9 @@ internal static class ComImportStep
                 changed = false;
                 foreach (var c in chosen.Values.ToList())
                     if (!force(c.Name) && (c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u)) || c.Trusts.Any(u => !chosen.ContainsKey(u))
-                        || (c.Forced && c.Verdict.UsesComTypesOf.Count == 0)))
+                        || (c.Forced && c.Verdict.UsesComTypesOf.Count == 0)
+                        // the entry uses its COM types with built-in interop (its RCWs, ReleaseComObject): left with it
+                        || (entryFile != null && entryFile.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase))))
                     { chosen.Remove(c.Name); changed = true; }
             }
         }
@@ -233,7 +241,7 @@ internal static class ComImportStep
                 grew = false;
                 foreach (var x in askers)
                 {
-                    if (rewritten.Contains(x.Name)) continue;
+                    if (rewritten.Contains(x.Name) || (entry != null && string.Equals(x.Name, entry, StringComparison.OrdinalIgnoreCase))) continue;
                     // x can be asked to tell where a rewritten R is when R calls it, or when x enumerates all
                     var reachedBy = files.Where(rf => rewritten.Contains(rf.Name) && rf.References.Contains(x.Name, StringComparer.OrdinalIgnoreCase)).Select(rf => rf.Name).ToList();
                     if (reachedBy.Count == 0 && !x.Asks!.EnumeratesAll) continue;
@@ -249,7 +257,10 @@ internal static class ComImportStep
         foreach (var c in candidates)
         {
             bool rewrite = chosen.ContainsKey(c.Name);
-            string why = c.Verdict!.Summary + (c.Trusts.Count > 0 ? $" (its interfaces' users {string.Join(", ", c.Trusts)} go with it)" : "") + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
+            string why = (IsEntry(c) ? "the entry assembly, which the host loads before the startup hook (never rewritten); " : "")
+                + (!rewrite && !IsEntry(c) && !partial && !force(c.Name) && entryFile != null && entryFile.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase)
+                    ? $"its COM types are used by the entry assembly {entryFile.Name} (left with it); " : "")
+                + c.Verdict!.Summary + (c.Trusts.Count > 0 ? $" (its interfaces' users {string.Join(", ", c.Trusts)} go with it)" : "") + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
                 : !rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
             if (rewrite) Take(c, list);
             notes.Add($"comimport {c.Name}: {(rewrite ? "rewritten in memory at load" : "left on built-in COM")} -- {why}");
@@ -303,6 +314,11 @@ internal static class ComImportStep
         "GetFunctionPointerForDelegate",
     };
 
+    private static readonly HashSet<string> s_comObjectMarshal = new(StringComparer.Ordinal)
+    {
+        "ReleaseComObject", "FinalReleaseComObject", "IsComObject", "GetIUnknownForObject", "GetComInterfaceForObject",
+    };
+
     /// <summary>How <paramref name="f"/> could make built-in RCWs without declaring COM types (AppFile.RcwApis, ...).</summary>
     private static void ScanRcwMakers(MetadataReader md, AppFile f)
     {
@@ -314,7 +330,9 @@ internal static class ComImportStep
             string type = md.GetString(tr.Namespace) + "." + md.GetString(tr.Name), name = md.GetString(mr.Name);
             if ((type == "System.Runtime.InteropServices.Marshal" && s_rcwMarshal.Contains(name))
                 || (type == "System.Type" && name is "GetTypeFromCLSID" or "GetTypeFromProgID"))
-            { f.RcwApis = true; break; }
+                f.RcwApis = true;
+            else if (type == "System.Runtime.InteropServices.Marshal" && s_comObjectMarshal.Contains(name))
+                f.ComObjectApis = true;
         }
         var provider = new ScopeCollector(md);
         foreach (var h in md.MethodDefinitions)

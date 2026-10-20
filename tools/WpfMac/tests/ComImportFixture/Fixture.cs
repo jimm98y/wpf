@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ComUserFixture")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ComReleaserFixture")]
 
 namespace ComImportFixture
 {
@@ -695,6 +696,8 @@ namespace ComImportFixture
         }
 
         internal static ICalc Wrap(IntPtr p) => (ICalc)Marshal.GetObjectForIUnknown(p);
+        /// <summary>An ICalc for another assembly to use.</summary>
+        public static object Calc(IntPtr p) => Wrap(p);
 
         // ---- the BCL's ComTypes ----
         private static IStreams Streams(IntPtr p) => (IStreams)Marshal.GetObjectForIUnknown(p);

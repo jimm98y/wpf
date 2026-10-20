@@ -51,7 +51,7 @@ internal sealed class Runner
         var comNotes = new List<string>();
         var comList = new List<string>();
         ComImportStep.Apply(deps, App.Directory, OverlayDir, Locations.CacheRoot, cacheDir, HostInfo.IsWindows,
-            Environment.GetEnvironmentVariable("WPF_COMIMPORT_REWRITE"), comNotes, comList);
+            Environment.GetEnvironmentVariable("WPF_COMIMPORT_REWRITE"), comNotes, comList, entry: App.Name);
 
         var props = new Dictionary<string, string>
         {

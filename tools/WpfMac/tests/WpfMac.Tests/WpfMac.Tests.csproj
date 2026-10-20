@@ -21,6 +21,7 @@
     <!-- rewritten by ComRewriterTests, which load the result on their own -->
     <ProjectReference Include="../ComImportFixture/ComImportFixture.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../ComUserFixture/ComUserFixture.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../ComReleaserFixture/ComReleaserFixture.csproj" ReferenceOutputAssembly="false" />
     <AssemblyMetadata Include="ComImportFixture" Value="$(MSBuildThisFileDirectory)../ComImportFixture/bin/$(Configuration)/net10.0/ComImportFixture.dll" />
     <!-- The generated stand-in DLL for user32 (Windows), tested by loading what it writes. -->
     <Compile Include="../../WpfMac.Bootstrap/Win32/ShimImage.cs" Link="Bootstrap/ShimImage.cs" />
