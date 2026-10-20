@@ -93,7 +93,7 @@ public static unsafe partial class Exports
     [Win32Export("GetSystemMetrics")] public static int GetSystemMetrics(int index) => SystemMetric(index);
     [Win32Export("GetSystemMetricsForDpi")] public static int GetSystemMetricsForDpi(int index, uint dpi) => SystemMetric(index);
 
-    private static int SystemParameter(uint action, uint param, void* pv)
+    private static int SystemParameter(uint action, uint param, void* pv, bool wide = true)
     {
         switch (action)
         {
@@ -101,10 +101,10 @@ public static unsafe partial class Exports
                 *(RECT*)pv = Screens.All()[0].Work;
                 return TRUE;
             case 0x0029:    // SPI_GETNONCLIENTMETRICS
-                WriteNonClientMetrics((byte*)pv);
+                WriteNonClientMetrics((byte*)pv, wide);
                 return TRUE;
             case 0x001F:    // SPI_GETICONTITLELOGFONT
-                WriteLogFont((byte*)pv, -12, "Segoe UI");
+                WriteLogFont((byte*)pv, -12, "Segoe UI", wide);
                 return TRUE;
             case 0x0068:    // SPI_GETWHEELSCROLLLINES
                 *(uint*)pv = 3;
@@ -168,32 +168,39 @@ public static unsafe partial class Exports
     // NONCLIENTMETRICSW: cbSize, iBorderWidth, iScrollWidth, iScrollHeight, iCaptionWidth, iCaptionHeight,
     // LOGFONTW lfCaptionFont, iSmCaptionWidth, iSmCaptionHeight, LOGFONTW lfSmCaptionFont, iMenuWidth,
     // iMenuHeight, LOGFONTW lfMenuFont, lfStatusFont, lfMessageFont, iPaddedBorderWidth. LOGFONTW is 92 bytes.
-    private static void WriteNonClientMetrics(byte* p)
+    /// <summary>NONCLIENTMETRICSW, or NONCLIENTMETRICSA (<paramref name="wide"/> false: its five fonts are
+    /// LOGFONTA, 60 bytes rather than 92).</summary>
+    private static void WriteNonClientMetrics(byte* p, bool wide = true)
     {
         uint size = *(uint*)p;
+        int lf = wide ? 92 : 60;
         int* i = (int*)p;
         i[1] = 1; i[2] = 17; i[3] = 17; i[4] = 36; i[5] = 23;
-        WriteLogFont(p + 24, -12, "Segoe UI");
-        *(int*)(p + 116) = 22; *(int*)(p + 120) = 22;
-        WriteLogFont(p + 124, -12, "Segoe UI");
-        *(int*)(p + 216) = 19; *(int*)(p + 220) = 19;
-        WriteLogFont(p + 224, -12, "Segoe UI");
-        WriteLogFont(p + 316, -12, "Segoe UI");
-        WriteLogFont(p + 408, -12, "Segoe UI");
-        if (size >= 504) *(int*)(p + 500) = 4;
+        byte* q = p + 24;
+        WriteLogFont(q, -12, "Segoe UI", wide); q += lf;               // lfCaptionFont
+        *(int*)q = 22; *(int*)(q + 4) = 22; q += 8;                    // iSmCaptionWidth, iSmCaptionHeight
+        WriteLogFont(q, -12, "Segoe UI", wide); q += lf;               // lfSmCaptionFont
+        *(int*)q = 19; *(int*)(q + 4) = 19; q += 8;                    // iMenuWidth, iMenuHeight
+        WriteLogFont(q, -12, "Segoe UI", wide); q += lf;               // lfMenuFont
+        WriteLogFont(q, -12, "Segoe UI", wide); q += lf;               // lfStatusFont
+        WriteLogFont(q, -12, "Segoe UI", wide); q += lf;               // lfMessageFont
+        if (size >= (uint)(q - p) + 4) *(int*)q = 4;                   // iPaddedBorderWidth
     }
 
-    private static void WriteLogFont(byte* lf, int height, string face)
+    /// <summary>LOGFONTW, or LOGFONTA (<paramref name="wide"/> false: the face name in 32 ANSI bytes).</summary>
+    private static void WriteLogFont(byte* lf, int height, string face, bool wide = true)
     {
-        NativeMemory.Clear(lf, 92);
+        NativeMemory.Clear(lf, wide ? 92u : 60u);
         *(int*)lf = height;
         *(int*)(lf + 16) = 400;     // FW_NORMAL
         lf[23] = 1;                 // DEFAULT_CHARSET
         lf[26] = 5;                 // CLEARTYPE_QUALITY
-        WriteUtf16((char*)(lf + 28), 32, face);
+        if (wide) WriteUtf16((char*)(lf + 28), 32, face);
+        else WriteUtf8(lf + 28, 32, face);
     }
 
     [Win32Export("SystemParametersInfoW", "SystemParametersInfo")] public static int SystemParametersInfoW(uint action, uint param, void* pv, uint winIni) => SystemParameter(action, param, pv);
+    [Win32Export("SystemParametersInfoA")] public static int SystemParametersInfoA(uint action, uint param, void* pv, uint winIni) => SystemParameter(action, param, pv, wide: false);
     [Win32Export("SystemParametersInfoForDpi")] public static int SystemParametersInfoForDpi(uint action, uint param, void* pv, uint winIni, uint dpi) => SystemParameter(action, param, pv);
     [Win32Export("GetDoubleClickTime")] public static uint GetDoubleClickTime() => 500;
     [Win32Export("GetCaretBlinkTime")] public static uint GetCaretBlinkTime() => 530;
@@ -401,7 +408,7 @@ public static unsafe partial class Exports
     [Win32Export("GetProcessWindowStation")] public static nint GetProcessWindowStation() => s_windowStation;
     [Win32Export("GetThreadDesktop")] public static nint GetThreadDesktop(uint thread) => s_desktop;
 
-    [Win32Export("GetUserObjectInformationW", "GetUserObjectInformation")]
+    [Win32Export("GetUserObjectInformationW", "GetUserObjectInformation", "GetUserObjectInformationA")]   // only UOI_FLAGS, no text: one for both
     public static int GetUserObjectInformationW(nint obj, int index, void* info, uint length, uint* needed)
     {
         // UOI_FLAGS on the window station: WSF_VISIBLE, i.e. an interactive session. .NET's own

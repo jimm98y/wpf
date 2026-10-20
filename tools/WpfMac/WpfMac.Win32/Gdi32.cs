@@ -186,6 +186,8 @@ public static unsafe partial class Exports
 
     [Win32Export("EndPaint")] public static int EndPaint(nint hwnd, byte* ps) { s_dcs.TryRemove(*(nint*)ps, out _); return TRUE; }
     [Win32Export("CreateDCW", "CreateDC", "CreateICW", "CreateIC")] public static nint CreateDCW(char* driver, char* device, char* output, void* mode) => NewDC(new DeviceContext());
+    // the names are not read: every DC here is the display's
+    [Win32Export("CreateDCA", "CreateICA")] public static nint CreateDCA(byte* driver, byte* device, byte* output, void* mode) => NewDC(new DeviceContext());
     [Win32Export("CreateCompatibleDC")] public static nint CreateCompatibleDC(nint hdc) => NewDC(new DeviceContext { Memory = true });
     [Win32Export("DeleteDC")] public static int DeleteDC(nint hdc) => s_dcs.TryRemove(hdc, out _) ? TRUE : FALSE;
 
@@ -285,16 +287,23 @@ public static unsafe partial class Exports
         return s_gdi.TryGetValue(obj, out var o) ? (uint)o.Kind : 0;
     }
 
-    [Win32Export("GetObjectW", "GetObject", "GetObjectA")]
-    public static int GetObjectW(nint obj, int size, void* buffer)
+    [Win32Export("GetObjectW", "GetObject")]
+    public static int GetObjectW(nint obj, int size, void* buffer) => GetObjectCore(obj, size, buffer, wide: true);
+
+    /// <summary>The ANSI one: a font is a LOGFONTA (60 bytes); everything else is the same.</summary>
+    [Win32Export("GetObjectA")]
+    public static int GetObjectA(nint obj, int size, void* buffer) => GetObjectCore(obj, size, buffer, wide: false);
+
+    private static int GetObjectCore(nint obj, int size, void* buffer, bool wide)
     {
         if (!s_gdi.TryGetValue(obj, out var o)) return 0;
         switch (o.Kind)
         {
             case GdiKind.Font:
-                if (buffer == null) return 92;
-                WriteLogFont((byte*)buffer, o.FontHeight, o.FontFace);
-                return 92;
+                int lf = wide ? 92 : 60;
+                if (buffer == null) return lf;
+                WriteLogFont((byte*)buffer, o.FontHeight, o.FontFace, wide);
+                return lf;
             case GdiKind.Bitmap:
                 // BITMAP: bmType, bmWidth, bmHeight, bmWidthBytes, bmPlanes(2), bmBitsPixel(2), bmBits.
                 if (buffer == null) return 32;

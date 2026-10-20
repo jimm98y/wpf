@@ -302,6 +302,12 @@ public static unsafe partial class Exports
 
     private static nint ActiveWindowHandle()
     {
+        // macOS: as Windows answers it, from the window manager -- the top-level window whose native
+        // window is AppKit's key window, or the key window's parent (a form whose ElementHost's WPF
+        // window has the keyboard). WinForms' own bookkeeping (Form.ActiveForm) lags a key change by a
+        // poll: a double-click that moved the keyboard into a form's WPF content asked in that gap,
+        // got no window, and the dialog it opened had no owner to centre on.
+        if (OperatingSystem.IsMacOS() && KeyTopLevel() is nint key && key != 0) return key;
         foreach (object o in TopLevels())
         {
             bool active = Ui(o, () => o switch
@@ -311,6 +317,26 @@ public static unsafe partial class Exports
                 _ => false,
             });
             if (active) return HandleOf(o);
+        }
+        return 0;
+    }
+
+    private static nint KeyTopLevel()
+    {
+        IntPtr app = MacNative.Send(MacNative.Class("NSApplication"), MacNative.Sel("sharedApplication"));
+        IntPtr keyWin = app == IntPtr.Zero ? IntPtr.Zero : MacNative.Send(app, MacNative.Sel("keyWindow"));
+        if (keyWin == IntPtr.Zero) return 0;
+        IntPtr parent = MacNative.Send(keyWin, MacNative.Sel("parentWindow"));
+        var hostWindowOf = AppContext.GetData("WinFormsWebGpu.HostWindowOf") as Func<IntPtr, IntPtr>;
+        foreach (object o in TopLevels())
+        {
+            nint h = HandleOf(o);
+            if (h == 0) continue;
+            // the native window behind it: a WPF window's handle is its content view; a form's is the
+            // driver's, whose host view WinForms publishes
+            IntPtr view = o is Forms.Control ? (hostWindowOf?.Invoke(h) ?? IntPtr.Zero) : h;
+            IntPtr win = view == IntPtr.Zero ? IntPtr.Zero : MacNative.Send(view, MacNative.Sel("window"));
+            if (win != IntPtr.Zero && (win == keyWin || win == parent)) return h;
         }
         return 0;
     }
@@ -770,7 +796,7 @@ public static unsafe partial class Exports
     }
 
     [Win32Export("GetClassLongPtrW", "GetClassLongPtr", "GetClassLongW", "GetClassLong")] [Win32ExportOnWindows(A0, "GetClassLongPtrW", "GetClassLongW")] public static nint GetClassLongPtr(nint hwnd, int index) => 0;
-    [Win32Export("SetClassLongPtrW", "SetClassLongPtr", "SetClassLongW", "SetClassLong")] [Win32ExportOnWindows(A0, "SetClassLongPtrW", "SetClassLongW")] public static nint SetClassLongPtr(nint hwnd, int index, nint value) => 0;
+    [Win32Export("SetClassLongPtrW", "SetClassLongPtr", "SetClassLongPtrA", "SetClassLongW", "SetClassLong", "SetClassLongA")] [Win32ExportOnWindows(A0, "SetClassLongPtrW", "SetClassLongW")] public static nint SetClassLongPtr(nint hwnd, int index, nint value) => 0;
 
     // ---- names and text --------------------------------------------------------------------------
 
@@ -1214,6 +1240,13 @@ public static unsafe partial class Exports
     [Win32Export("SetPropW", "SetProp")] [Win32ExportOnWindows(A0, "SetPropW")] public static int SetPropW(nint hwnd, char* name, nint value) { s_props[(hwnd, PropKey(name))] = value; return TRUE; }
     [Win32Export("GetPropW", "GetProp")] [Win32ExportOnWindows(A0, "GetPropW")] public static nint GetPropW(nint hwnd, char* name) => s_props.TryGetValue((hwnd, PropKey(name)), out nint v) ? v : 0;
     [Win32Export("RemovePropW", "RemoveProp")] [Win32ExportOnWindows(A0, "RemovePropW")] public static nint RemovePropW(nint hwnd, char* name) => s_props.TryRemove((hwnd, PropKey(name)), out nint v) ? v : 0;
+
+    // The ANSI ones: the same properties (Windows keeps one atom per name, whichever way it was given),
+    // the name in the ANSI code page, which .NET off Windows marshals as UTF-8.
+    private static string PropKeyA(byte* name) => (nuint)name < 0x10000 ? "#" + (nuint)name : Marshal.PtrToStringUTF8((IntPtr)name) ?? "";
+    [Win32Export("SetPropA")] public static int SetPropA(nint hwnd, byte* name, nint value) { s_props[(hwnd, PropKeyA(name))] = value; return TRUE; }
+    [Win32Export("GetPropA")] public static nint GetPropA(nint hwnd, byte* name) => s_props.TryGetValue((hwnd, PropKeyA(name)), out nint v) ? v : 0;
+    [Win32Export("RemovePropA")] public static nint RemovePropA(nint hwnd, byte* name) => s_props.TryRemove((hwnd, PropKeyA(name)), out nint v) ? v : 0;
 }
 
 /// <summary>
