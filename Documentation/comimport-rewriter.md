@@ -87,6 +87,10 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          dialog;
        - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a app display playing a
          video through Telerik's media player. SharpMediaFoundationInterop is a different library.
+       - Microsoft.WindowsAPICodePack and .Shell: app smoke runs, and a Code Pack shell file
+         dialog or property store;
+       - Telerik.Windows.Controls.RibbonView: smoke runs (the ribbon), and a ribbon drag and drop;
+       - IcoServices (Workbench): its Active Directory picker.
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
@@ -242,8 +246,7 @@ adapter.
   - a custom marshaler given to a CCW, an array given to a CCW with no SizeParamIndex/SizeConst, an
     [Out] StringBuilder given to a CCW with no size parameter after it (each stub answers E_NOTIMPL
     and names it); a formatted type with a field of class, interface or non-fixed array type;
-  - the BCL's other `ComTypes`: in app, ITypeInfo (WebView2.Core) and IDataObject (RibbonView,
-    WindowsAPICodePack.Shell).
+  - an IEnumerable or IEnumerator passed in (returned is supported), and given to a CCW.
   - Two more cases are left alone on Windows, because a built-in RCW could reach them and would not
     convert:
     - a cast to a rewritten interface of an object of unknown origin;
@@ -314,6 +317,31 @@ adapter.
       "used by other assemblies"), WindowsAPICodePack.Shell 69 -> 29, RibbonView 18 -> 3,
       Telerik.Windows.Controls 22 -> 9, WebView2.Wpf 1 -> 0 (it stays with WebView2.Core).
       Telerik.Windows.Controls.FileDialogs becomes rewritable and is held for its gate.
+  - **The BCL's other COM interfaces, generated.** Every BCL COM interface a module uses, beyond the
+    hand-written ones, is covered, together with those their signatures reach (IDataObject reaches
+    IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker and IEnumMoniker; ITypeInfo reaches ITypeComp
+    and ITypeLib).
+    - Each gets a ComImpl and a ComCcw generated in the rewritten module (`WpfMac.BclComImpl.*Impl`),
+      through the same marshalling as the app's own interfaces. Its signature is imported into the
+      module, keeping its marshalling.
+    - They are registered with `Com.RegisterGenerated` from the module initializer. ComObject casts
+      and the ComWrappers find them there.
+    - IDataObject's FORMATETC is blittable. STGMEDIUM's `pUnkForRelease` is an interface field, which
+      Com.StructToNative passes itself.
+    - A CCW array with no SizeParamIndex or SizeConst is one element, as built-in reverse interop marshals
+      it (IEnumFORMATETC.Next's `pceltFetched`).
+    - Tests: a native IDataObject (QueryGetData, GetData's STGMEDIUM, EnumFormatEtc -> a native
+      IEnumFORMATETC), and a managed IDataObject and IEnumFORMATETC called by native code through the
+      generated CCWs.
+  - **IEnumerable / IEnumerator returns** (`Enumerable.cs`), as built-in interop's
+    EnumerableToDispatchMarshaler and EnumeratorToEnumVariantMarshaler give them. An IEnumerable is the
+    object's IEnumVARIANT, asked for directly or through IDispatch's DISPID_NEWENUM. Its elements are
+    the VARIANTs it hands out, with ComObjects for interfaces. Both routes are tested.
+  - A struct field of type `object` without `[MarshalAs]` is a VARIANT, as built-in struct
+    marshalling makes it.
+  - **WebView2:** the overlay replaces the app's Microsoft.Web.WebView2.Core/.Wpf/.WinForms with the
+    fork's own port ("replaced ... by the overlay" in merge-report.txt). The vendor assembly is never
+    loaded and never judged, and nothing of WebView2 is rewritten.
   - **Structs by value, struct retvals, `ref` classes, interface fields.**
     - A non-blittable struct by value is passed as a generated blittable shadow
       (`WpfMac.Shadows.*`).

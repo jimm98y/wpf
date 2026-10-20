@@ -205,7 +205,7 @@ public static partial class ComRewriter
         // imported references
         private readonly MethodReference _toVariant, _fromVariant, _clearVariant;
         private readonly MethodReference _toSafeArray, _fromSafeArray, _takeSafeArray, _destroySafeArray;
-        private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider;
+        private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider, _registerGenerated, _takeEnumerable, _takeEnumerator;
         private readonly MethodReference _structToNative, _newStruct, _structFromNative, _freeStruct, _structBack, _structArrayToNative, _structArrayFromNative,
             _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem,
             _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack,
@@ -247,6 +247,9 @@ public static partial class ComRewriter
             _dispatchResult = Imp(nameof(Com.DispatchResult), typeof(object), typeof(RuntimeTypeHandle));
             _borrowDispatch = Imp(nameof(Com.BorrowDispatch), typeof(object));
             _eventProvider = Imp(nameof(Com.EventProvider), typeof(object), typeof(RuntimeTypeHandle));
+            _takeEnumerable = Imp(nameof(Com.TakeEnumerable), typeof(IntPtr));
+            _takeEnumerator = Imp(nameof(Com.TakeEnumerator), typeof(IntPtr));
+            _registerGenerated = Imp(nameof(Com.RegisterGenerated), typeof(RuntimeTypeHandle), typeof(RuntimeTypeHandle), typeof(RuntimeTypeHandle));
             _structToNative = Imp(nameof(Com.StructToNative), typeof(object), typeof(RuntimeTypeHandle));
             _newStruct = Imp(nameof(Com.NewStruct), typeof(RuntimeTypeHandle));
             _structFromNative = Imp(nameof(Com.StructFromNative), typeof(IntPtr), typeof(object), typeof(RuntimeTypeHandle));
@@ -318,6 +321,7 @@ public static partial class ComRewriter
         public void Run()
         {
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList()) if (t.IsImport) _comTypes.Add(t);
+            CollectBclInterfaces();
 
             // constructs left as they were
             foreach (var t in _m.Types.SelectMany(AllTypes))
@@ -336,7 +340,7 @@ public static partial class ComRewriter
                 {
                     // the BCL's ComTypes are built-in COM's own, and never rewritten; WpfMac.ComInterop supports
                     // some of them by hand (SupportedBclComTypes)
-                    if (IsBclCom(d)) continue;
+                    if (IsBclCom(d) || IsBclGen(d)) continue;
                     if (IsBcl(d))
                         _r.Unsupported.Add($"uses COM type {d.FullName} of {d.Module.Assembly.Name.Name}");
                     else _r.UsesComTypesOf.Add(d.Module.Assembly.Name.Name);
@@ -352,11 +356,17 @@ public static partial class ComRewriter
                 if (_external == null || _external.Contains(t.IsNested ? t.Name : t.FullName))
                     _r.Unsupported.Add($"{t.FullName} is {(_external == null ? "visible to" : "used by")} other assemblies (they may hand it built-in RCWs)");
             foreach (var t in _comTypes.Where(t => t.IsInterface).ToList()) RewriteInterface(t);
+            foreach (var b in _bclGen.ToList()) GenerateBcl(b);
             // a managed class implementing a COM interface: its CCW must cover every method
             foreach (var (cls, it) in _ccwUsers)
             {
                 var d = Safe(it);
                 if (d != null && IsBclCom(d)) continue;            // its CCW is WpfMac.ComInterop's
+                if (d != null && IsBclGen(d))
+                {
+                    if (_ccwRefused.FirstOrDefault(kv => kv.Key.FullName == d.FullName).Value is { } bref) foreach (var why in bref) Reason($"managed class {cls.FullName}", $"implements {it.Name}, whose CCW cannot convert {why}");
+                    continue;
+                }
                 if (d != null && IsForeignCom(d)) continue;         // its CCW is its own assembly's (rewritten with this one)
                 if (d == null || !_ccwRefused.TryGetValue(d, out var refused)) { _r.Unsupported.Add($"managed class {cls.FullName} implements COM interface {it.Name} (no CCW)"); continue; }
                 foreach (var why in refused) Reason($"managed class {cls.FullName}", $"implements {it.Name}, whose CCW cannot convert {why}");
@@ -391,7 +401,7 @@ public static partial class ComRewriter
             // another app assembly's COM interface: rewritten with this one (the judge's fixpoint), so its objects are
             // ComObjects here too
             if (d != null && IsForeignCom(d)) return true;
-            return t is not GenericParameter && t.Namespace == "System.Runtime.InteropServices.ComTypes" && (d ?? Safe(t)) is { } b && IsBclCom(b);
+            return t is not GenericParameter && t.Namespace == "System.Runtime.InteropServices.ComTypes" && (d ?? Safe(t)) is { } b && (IsBclCom(b) || IsBclGen(b));
         }
 
         /// <summary>A ComImport interface of another app assembly (not the BCL's).</summary>
@@ -416,7 +426,7 @@ public static partial class ComRewriter
 
         private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant, SafeArray, RefSafeArray,
             LPStructBlit, FormattedClass, RefStruct, Custom, RefCustom, StringBuilder, StructArray, ElemArray,
-            StructByValue, RefFormattedClass, RefStringBuilder, RefArray }
+            StructByValue, RefFormattedClass, RefStringBuilder, RefArray, Enumerable }
 
         /// <summary>A refusal's prefix when built-in interop cannot marshal it either.</summary>
         private const string BuiltInCannotPrefix = "[built-in cannot] ";
@@ -437,7 +447,7 @@ public static partial class ComRewriter
             or Kind.RefCustom or Kind.StringBuilder or Kind.StructArray or Kind.ElemArray or Kind.RefFormattedClass or Kind.RefStringBuilder;
 
         /// <summary>Kinds a CCW stub cannot take from native code (it does not know their extent or owner).</summary>
-        private static bool BadReverseParam(Kind k) => k is Kind.Custom or Kind.RefCustom or Kind.RefFormattedClass or Kind.RefStringBuilder or Kind.RefArray;
+        private static bool BadReverseParam(Kind k) => k is Kind.Custom or Kind.RefCustom or Kind.RefFormattedClass or Kind.RefStringBuilder or Kind.RefArray or Kind.Enumerable;
 
         /// <summary>Why a CCW stub cannot take argument <paramref name="i"/> of <paramref name="md"/> (null: it can): an
         /// array needs its length (SizeParamIndex/SizeConst), an [Out]-only StringBuilder its buffer's size (the next
@@ -446,7 +456,8 @@ public static partial class ComRewriter
         {
             if (a.Kind is Kind.BlitArray or Kind.StructArray or Kind.ElemArray)
             {
-                if (a.SizeParam < 0 && a.SizeConst < 0) return "an array of unknown length";
+                // no SizeParamIndex or SizeConst: one element, as built-in reverse interop marshals it (the BCL's
+                // IEnumFORMATETC.Next pceltFetched)
                 if (a.SizeParam >= md.Parameters.Count || (a.SizeParam >= 0 && !IsCount(md.Parameters[a.SizeParam].ParameterType))) return "an array whose length parameter is not a by-value integer";
             }
             if (a.Kind == Kind.StringBuilder && (a.Vt & OutOnly) != 0 && SizeOfBuffer(md, i) < 0) return "an [Out] StringBuilder whose buffer's size is unknown";
@@ -525,6 +536,8 @@ public static partial class ComRewriter
                 if (ft is ArrayType) continue;
                 // an interface (or object as IUnknown/IDispatch): Com.StructToNative passes its pointer itself
                 if (IsComInterface(ft) || (ft.FullName == "System.Object" && f.MarshalInfo?.NativeType is NativeType.IUnknown or NativeType.IntF or NativeType.IDispatch)) continue;
+                // object without [MarshalAs]: a VARIANT, as built-in struct marshalling (and StructureToPtr) makes it
+                if (ft.FullName == "System.Object" && f.MarshalInfo == null) continue;
                 // an embedded struct or class with layout
                 if (Safe(ft) is { IsInterface: false, IsEnum: false } fd && (fd.IsValueType || fd.FullName != "System.Object") && !IsDelegate(fd) && IsFormatted(ft, out _, depth + 1)) continue;
                 if (Safe(ft) is { } dd && IsDelegate(dd)) continue;           // a function pointer
@@ -718,6 +731,10 @@ public static partial class ComRewriter
                 why = $"by-reference {e.Name}"; return null;
             }
             if (IsComInterface(type)) return new Arg(Kind.Iface, _intPtr, type);
+            // IEnumerable/IEnumerator from a COM method: IEnumVARIANT underneath (built-in interop's marshalers);
+            // returned only (FromNative)
+            if (type.FullName is "System.Collections.IEnumerable" or "System.Collections.IEnumerator" && comDefaults && nt is NativeType.None or NativeType.IntF or NativeType.IUnknown)
+                return new Arg(Kind.Enumerable, _intPtr, type);
             switch (type.FullName)
             {
                 case "System.Boolean":
@@ -883,6 +900,118 @@ public static partial class ComRewriter
             }
         }
 
+        // ---- the BCL's other COM interfaces: generated here ---------------------------------------------
+
+        /// <summary>The BCL COM interfaces (System.Runtime.InteropServices.ComTypes) this module uses that WpfMac.ComInterop
+        /// does not write by hand, and those their signatures reach (IDataObject: IEnumFORMATETC, IAdviseSink, ...).
+        /// Each gets a ComImpl and a ComCcw generated in this module, as its own interfaces do.</summary>
+        private readonly HashSet<TypeDefinition> _bclGen = new();
+        /// <summary>The same, by full name (a BCL type may resolve to more than one TypeDefinition instance).</summary>
+        private readonly HashSet<string> _bclGenNames = new(StringComparer.Ordinal);
+        private bool IsBclGen(TypeDefinition d) => _bclGenNames.Contains(d.FullName) && IsBcl(d);
+
+        private void CollectBclInterfaces()
+        {
+            var queue = new Queue<TypeDefinition>();
+            void Consider(TypeReference? t)
+            {
+                if (t == null) return;
+                t = StripMods(t);
+                while (t is ByReferenceType or ArrayType or PointerType) t = ((TypeSpecification)t).ElementType;
+                t = StripMods(t);
+                if (t is GenericParameter) return;
+                var d = Safe(t);
+                if (d != null && d.IsImport && d.IsInterface && IsBcl(d) && !IsBclCom(d) && _bclGenNames.Add(d.FullName)) { _bclGen.Add(d); queue.Enqueue(d); }
+            }
+            foreach (var tr in _m.GetTypeReferences()) Consider(tr);
+            while (queue.Count > 0)
+                foreach (var m in queue.Dequeue().Methods)
+                {
+                    Consider(m.ReturnType);
+                    foreach (var p in m.Parameters) Consider(p.ParameterType);
+                }
+        }
+
+        /// <summary><paramref name="md"/> (a BCL method) as a method of this module's, for classifying and emitting:
+        /// its types imported, its marshalling and attributes kept. Not added to any type.</summary>
+        private MethodDefinition ImportedSignature(MethodDefinition md)
+        {
+            var c = new MethodDefinition(md.Name, md.Attributes, _m.ImportReference(md.ReturnType)) { ImplAttributes = md.ImplAttributes };
+            c.MethodReturnType.MarshalInfo = ImportMarshal(md.MethodReturnType.MarshalInfo);
+            foreach (var p in md.Parameters)
+                c.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes, _m.ImportReference(p.ParameterType)) { MarshalInfo = ImportMarshal(p.MarshalInfo) });
+            return c;
+        }
+
+        private MarshalInfo? ImportMarshal(MarshalInfo? mi) =>
+            mi is CustomMarshalInfo cm ? new CustomMarshalInfo { ManagedType = _m.ImportReference(cm.ManagedType), Cookie = cm.Cookie, Guid = cm.Guid, UnmanagedType = cm.UnmanagedType } : mi;
+
+        private MethodDefinition? _moduleInit;
+
+        /// <summary>The module initializer's body, made when first needed: registrations run before anything of the
+        /// module is used.</summary>
+        private ILProcessor ModuleInit()
+        {
+            if (_moduleInit == null)
+            {
+                var module = _m.Types.First(t => t.Name == "<Module>");
+                _moduleInit = module.Methods.FirstOrDefault(m => m.IsConstructor && m.IsStatic);
+                if (_moduleInit == null)
+                {
+                    _moduleInit = new MethodDefinition(".cctor", MethodAttributes.Private | MethodAttributes.Static | MethodAttributes.HideBySig
+                        | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName, _void);
+                    _moduleInit.Body.GetILProcessor().Emit(OpCodes.Ret);
+                    module.Methods.Add(_moduleInit);
+                }
+            }
+            return _moduleInit.Body.GetILProcessor();
+        }
+
+        private void GenerateBcl(TypeDefinition bcl)
+        {
+            int ifaceType = 1;
+            var ita = bcl.CustomAttributes.FirstOrDefault(a => a.AttributeType.FullName == "System.Runtime.InteropServices.InterfaceTypeAttribute");
+            if (ita != null && ita.ConstructorArguments.Count == 1) ifaceType = Convert.ToInt32(ita.ConstructorArguments[0].Value);
+            int first = ifaceType == 1 ? 3 : 7;
+            var methods = bcl.Methods.Where(x => !x.IsStatic).ToList();
+            var sigs = methods.Select(ImportedSignature).ToList();
+            if (AnalyzeOnly)
+            {
+                var refused = new List<string>();
+                foreach (var (md, sig) in methods.Zip(sigs))
+                {
+                    if (ForwardWhy(sig) is { } f) Reason($"{bcl.FullName}.{md.Name}", f);
+                    if (ReverseWhy(sig) is { } rv) refused.Add($"{md.Name}: {rv}");
+                }
+                _ccwRefused[bcl] = refused;
+                return;
+            }
+            var iface = _m.ImportReference(bcl);
+            var impl = new TypeDefinition("WpfMac.BclComImpl", bcl.Name + "Impl", TypeAttributes.Public | TypeAttributes.Interface | TypeAttributes.Abstract);
+            impl.Interfaces.Add(new InterfaceImplementation(iface));
+            impl.CustomAttributes.Add(new CustomAttribute(_m.ImportReference(typeof(System.Runtime.InteropServices.DynamicInterfaceCastableImplementationAttribute).GetConstructor(Type.EmptyTypes)!)));
+            _m.Types.Add(impl);
+            int slot = first;
+            foreach (var (md, sig) in methods.Zip(sigs))
+            {
+                var body = new MethodDefinition($"{bcl.FullName}.{md.Name}", MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final, sig.ReturnType);
+                foreach (var p in sig.Parameters) body.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes & ~ParameterAttributes.HasFieldMarshal, p.ParameterType));
+                body.Overrides.Add(_m.ImportReference(md));
+                impl.Methods.Add(body);
+                EmitVtableCall(iface, sig, body, slot++);
+                _r.Methods++;
+            }
+            _r.Interfaces++;
+            var ccw = EmitCcw(iface, impl, bcl, first, sigs.Zip(methods, (s, m) => (s, (MethodReference)_m.ImportReference(m))).ToList());
+            // registered with WpfMac.ComInterop when the module is first used
+            var il = ModuleInit();
+            var at = il.Body.Instructions[0];
+            il.InsertBefore(at, il.Create(OpCodes.Ldtoken, iface));
+            il.InsertBefore(at, il.Create(OpCodes.Ldtoken, impl));
+            il.InsertBefore(at, il.Create(OpCodes.Ldtoken, ccw));
+            il.InsertBefore(at, il.Create(OpCodes.Call, _registerGenerated));
+        }
+
         // ---- event interfaces ([ComEventInterface(typeof(Source), typeof(Provider))]) -------------------
 
         /// <summary>I.ComImpl forwards each member to Com.EventProvider(this, Provider), the provider tlbimp
@@ -1043,7 +1172,11 @@ public static partial class ComRewriter
         private string? ForwardWhy(MethodDefinition decl)
         {
             foreach (var p in decl.Parameters)
-                if (Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? why) == null) return $"parameter {p.Name}: {why}";
+            {
+                var pa = Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? why);
+                if (pa == null) return $"parameter {p.Name}: {why}";
+                if (pa.Kind == Kind.Enumerable) return $"parameter {p.Name}: an IEnumerable passed in";
+            }
             if (decl.ReturnType.FullName == "System.Void") return null;
             var ret = Classify(decl.ReturnType, decl.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
             if (ret != null && ret.Kind == Kind.Variant && decl.IsPreserveSig) return "a VARIANT returned by value";
@@ -1065,12 +1198,12 @@ public static partial class ComRewriter
             }
             if (md.ReturnType.FullName == "System.Void") return null;
             var ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w2);
-            if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue || (md.IsPreserveSig && ret.Kind == Kind.Variant))
+            if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue or Kind.Enumerable || (md.IsPreserveSig && ret.Kind == Kind.Variant))
                 return $"return {w2 ?? md.ReturnType.Name}";
             return null;
         }
 
-        private void EmitVtableCall(TypeDefinition iface, MethodDefinition decl, MethodDefinition body, int slot)
+        private void EmitVtableCall(TypeReference iface, MethodDefinition decl, MethodDefinition body, int slot)
         {
             body.Body.InitLocals = true;
             var il = body.Body.GetILProcessor();
@@ -1082,6 +1215,7 @@ public static partial class ComRewriter
             {
                 var a = Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? why);
                 if (a == null) { Refuse(il, member, $"parameter {p.Name}: {why}"); return; }
+                if (a.Kind == Kind.Enumerable) { Refuse(il, member, $"parameter {p.Name}: an IEnumerable passed in"); return; }
                 args.Add(WithDirection(a, p));
             }
             bool isVoid = decl.ReturnType.FullName == "System.Void";
@@ -1654,6 +1788,10 @@ public static partial class ComRewriter
                 case Kind.SafeArray:
                     il.Emit(OpCodes.Ldtoken, managed);
                     il.Emit(OpCodes.Call, _takeSafeArray);
+                    il.Emit(OpCodes.Castclass, managed);
+                    break;
+                case Kind.Enumerable:
+                    il.Emit(OpCodes.Call, managed.FullName == "System.Collections.IEnumerator" ? _takeEnumerator : _takeEnumerable);
                     il.Emit(OpCodes.Castclass, managed);
                     break;
                 case Kind.FormattedClass:

@@ -170,7 +170,7 @@ public sealed unsafe class ComRewriterTests
 
     /// <summary>A native stream or enumerator: { vtable, refs, length, position } (Obj's first fields).</summary>
     [StructLayout(LayoutKind.Sequential)]
-    private struct Cursor { public IntPtr* Vtbl; public int Refs; public int Len; public int Pos; }
+    private struct Cursor { public IntPtr* Vtbl; public int Refs; public int Len; public int Pos; public int Value0() => 0; }
 
     /// <summary>STATSTG as native code lays it out.</summary>
     [StructLayout(LayoutKind.Sequential)]
@@ -872,6 +872,153 @@ public sealed unsafe class ComRewriterTests
         finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_shapesVt[2])(o); }
     }
 
+    // ---- IData: a native IDataObject, IEnumFORMATETC, IEnumVARIANT, an IDispatch enumerable ----------
+
+    private static readonly Dictionary<IntPtr, Guid> s_iids = new();
+    private static readonly IntPtr* s_dataVt = BuildData();
+    private static readonly IntPtr* s_dataObjVt = BuildDataObj();
+    private static readonly IntPtr* s_fmtEnumVt = BuildFmtEnum();
+    private static readonly IntPtr* s_varEnumVt = BuildVarEnum();
+    private static readonly IntPtr* s_newEnumVt = BuildNewEnum();
+
+    [StructLayout(LayoutKind.Sequential)] private struct NFormat { public short Cf; public IntPtr Ptd; public int Aspect, Lindex, Tymed; }
+    [StructLayout(LayoutKind.Sequential)] private struct NStg { public int Tymed; public IntPtr Union; public IntPtr Unk; }
+
+    private static IntPtr* Vt(int n, Guid iid)
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed((nuint)n, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&KeyedQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        for (int k = 3; k < n; k++) vt[k] = (IntPtr)(delegate* unmanaged<IntPtr, int>)&NotImpl;
+        lock (s_iids) s_iids[(IntPtr)vt] = iid;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int KeyedQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        Guid own; lock (s_iids) own = s_iids[(IntPtr)self->Vtbl];
+        if (*iid == IID_IUnknown || *iid == own) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    private static IntPtr* BuildData()
+    {
+        var vt = Vt(7, new Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A13"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DataMake;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&DataUse;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DataItems;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DataItems2;
+        return vt;
+    }
+
+    private static IntPtr* BuildDataObj()
+    {
+        var vt = Vt(12, new Guid("0000010e-0000-0000-C000-000000000046"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, NFormat*, NStg*, int>)&DoGetData;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, NFormat*, int>)&DoQueryGetData;
+        vt[8] = (IntPtr)(delegate* unmanaged<Obj*, int, IntPtr*, int>)&DoEnumFormatEtc;
+        return vt;
+    }
+
+    private static IntPtr* BuildFmtEnum()
+    {
+        var vt = Vt(7, new Guid("00000103-0000-0000-C000-000000000046"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Cursor*, int, NFormat*, int*, int>)&FmtNext;
+        return vt;
+    }
+
+    private static IntPtr* BuildVarEnum()
+    {
+        var vt = Vt(7, new Guid("00020404-0000-0000-C000-000000000046"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Cursor*, uint, WpfMac.ComInterop.ComVariant*, uint*, int>)&VarNext;
+        return vt;
+    }
+
+    private static IntPtr* BuildNewEnum()
+    {
+        var vt = Vt(7, IID_IDispatch);
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, int, Guid*, int, ushort, WpfMac.ComInterop.ComDispParams*, WpfMac.ComInterop.ComVariant*, WpfMac.ComInterop.ComExcepInfo*, uint*, int>)&NewEnumInvoke;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly] private static int DataMake(Obj* self, IntPtr* r) { *r = (IntPtr)New(s_dataObjVt, 0); return 0; }
+    [UnmanagedCallersOnly] private static int DataItems(Obj* self, IntPtr* r) { *r = (IntPtr)NewCursor(s_varEnumVt, 3, 0); return 0; }
+    [UnmanagedCallersOnly] private static int DataItems2(Obj* self, IntPtr* r) { *r = (IntPtr)New(s_newEnumVt, 0); return 0; }
+
+    [UnmanagedCallersOnly]
+    private static int DoGetData(Obj* self, NFormat* f, NStg* m)
+    {
+        if (f->Cf != 13) return unchecked((int)0x80040064);
+        *m = new NStg { Tymed = 1, Union = Marshal.StringToCoTaskMemUni("native data") };
+        return 0;
+    }
+
+    [UnmanagedCallersOnly] private static int DoQueryGetData(Obj* self, NFormat* f) => f->Cf == 13 ? 0 : unchecked((int)0x80040064);
+    [UnmanagedCallersOnly] private static int DoEnumFormatEtc(Obj* self, int dir, IntPtr* r) { *r = (IntPtr)NewCursor(s_fmtEnumVt, 1, 0); return 0; }
+
+    [UnmanagedCallersOnly]
+    private static int FmtNext(Cursor* c, int celt, NFormat* f, int* fetched)
+    {
+        int n = 0;
+        for (; n < celt && c->Pos < c->Len; n++, c->Pos++) f[n] = new NFormat { Cf = 13, Aspect = 1, Lindex = -1, Tymed = 1 };
+        if (fetched != null) *fetched = n;
+        return n == celt ? 0 : 1;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int VarNext(Cursor* c, uint celt, WpfMac.ComInterop.ComVariant* v, uint* fetched)
+    {
+        uint n = 0;
+        for (; n < celt && c->Pos < c->Len; n++) WpfMac.ComInterop.Com.ToVariant(++c->Pos + c->Value0(), (IntPtr)(&v[n]));
+        if (fetched != null) *fetched = n;
+        return n == celt ? 0 : 1;
+    }
+
+    /// <summary>IDispatch only: DISPID_NEWENUM gives an IEnumVARIANT of 4, 5.</summary>
+    [UnmanagedCallersOnly]
+    private static int NewEnumInvoke(Obj* self, int id, Guid* riid, int lcid, ushort flags, WpfMac.ComInterop.ComDispParams* dp, WpfMac.ComInterop.ComVariant* res, WpfMac.ComInterop.ComExcepInfo* ex, uint* argErr)
+    {
+        if (id != -4) return unchecked((int)0x80020003);
+        var e = NewCursor(s_varEnumVt, 5, 3);
+        *res = default;
+        res->Vt = 13;
+        res->Data1 = (IntPtr)e;
+        return 0;
+    }
+
+    /// <summary>Native code calling a managed IDataObject (the generated CCW): QueryGetData, GetData, EnumFormatEtc -> Next.</summary>
+    [UnmanagedCallersOnly]
+    private static int DataUse(Obj* self, IntPtr d)
+    {
+        IntPtr* vt = *(IntPtr**)d;
+        var f = new NFormat { Cf = 13, Aspect = 1, Lindex = -1, Tymed = 1 };
+        int q = ((delegate* unmanaged<IntPtr, NFormat*, int>)vt[5])(d, &f);
+        NStg m;
+        int hr = ((delegate* unmanaged<IntPtr, NFormat*, NStg*, int>)vt[3])(d, &f, &m);
+        if (hr != 0) return hr;
+        int len = Marshal.PtrToStringUni(m.Union)!.Length;
+        Marshal.FreeCoTaskMem(m.Union);
+        IntPtr e;
+        hr = ((delegate* unmanaged<IntPtr, int, IntPtr*, int>)vt[8])(d, 1, &e);
+        if (hr != 0) return hr;
+        var got = stackalloc NFormat[1];
+        int fetched = 0;
+        int nhr = ((delegate* unmanaged<IntPtr, int, NFormat*, int*, int>)(*(IntPtr**)e)[3])(e, 1, got, &fetched);
+        if (nhr < 0) return nhr;
+        ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)e)[2])(e);
+        return len + 100 * fetched + (q == 0 ? 1000 : 0) + (got[0].Cf == 13 ? 10000 : 0);
+    }
+
+    private static T WithData<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_dataVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_dataVt[2])(o); }
+    }
+
     private static T WithStreams<T>(Func<IntPtr, T> body)
     {
         var o = New(s_streamsVt, 0);
@@ -932,7 +1079,7 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(19, r.Interfaces);
+        Assert.Equal(20 + 6, r.Interfaces);     // 20 of the fixture's, 6 generated BCL ones (IDataObject, IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker, IEnumMoniker)
         Assert.True(r.BuiltInCannot.Any(x => x.Contains("IShapes.Paint") && x.Contains("Color")), r.ToString() + " | " + string.Join("; ", r.Unsupported) + " | " + string.Join("; ", r.BuiltInCannot));
         Assert.Equal(1, r.EventInterfaces);
         Assert.Equal(2, r.PInvokes);
@@ -1098,6 +1245,20 @@ public sealed unsafe class ComRewriterTests
     [Fact]
     public void Shapes_ByValueStructs_ToAManagedObject()
         => Assert.Equal("32|307", WithShapes(p => (string)Run("ShapesSink", p)!));
+
+    [Fact]
+    public void GeneratedBclInterfaces_IDataObject_BothWays()
+    {
+        // a native IDataObject: QueryGetData, GetData (STGMEDIUM out), EnumFormatEtc -> a native IEnumFORMATETC
+        Assert.Equal("0|native data|1:13", WithData(p => (string)Run("DataNative", p)!));
+        // a managed IDataObject called by native code through the generated CCWs (and its IEnumFORMATETC's)
+        Assert.Equal(12 + 100 + 1000 + 10000, WithData(p => (int)Run("DataManaged", p)!));
+    }
+
+    [Fact]
+    public void IEnumerableReturns_AreIEnumVARIANT()
+        // straight from IEnumVARIANT; through IDispatch's DISPID_NEWENUM
+        => Assert.Equal("1,2,3|4,5", WithData(p => (string)Run("DataItems", p)!));
 
     [Fact]
     public void ComEvents_ProviderConnectionPointAndSource()

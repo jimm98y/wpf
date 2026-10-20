@@ -368,6 +368,46 @@ namespace ComImportFixture
         public int TakeNamed(Named n) => n.S.Length * 100 + n.N;
     }
 
+    // ---- generated BCL interfaces (IDataObject, IEnumFORMATETC) and IEnumerable returns ----
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A13"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IData
+    {
+        System.Runtime.InteropServices.ComTypes.IDataObject Make();                          // slot 3: a native IDataObject
+        [PreserveSig] int Use(System.Runtime.InteropServices.ComTypes.IDataObject d);        // slot 4: native code calls a managed one
+        [return: MarshalAs(UnmanagedType.Interface)] System.Collections.IEnumerable Items(); // slot 5: an IEnumVARIANT
+        [return: MarshalAs(UnmanagedType.Interface)] System.Collections.IEnumerable Items2();// slot 6: IDispatch, DISPID_NEWENUM
+    }
+
+    internal sealed class ManagedData : System.Runtime.InteropServices.ComTypes.IDataObject
+    {
+        public void GetData(ref FORMATETC format, out STGMEDIUM medium)
+            => medium = new STGMEDIUM { tymed = TYMED.TYMED_HGLOBAL, unionmember = Marshal.StringToCoTaskMemUni("managed data") };
+        public void GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) => throw new NotImplementedException();
+        public int QueryGetData(ref FORMATETC format) => format.cfFormat == 13 ? 0 : unchecked((int)0x80040064);
+        public int GetCanonicalFormatEtc(ref FORMATETC formatIn, out FORMATETC formatOut) { formatOut = formatIn; return 0; }
+        public void SetData(ref FORMATETC formatIn, ref STGMEDIUM medium, bool release) => throw new NotImplementedException();
+        public IEnumFORMATETC EnumFormatEtc(DATADIR direction) => new ManagedFormats();
+        public int DAdvise(ref FORMATETC pFormatetc, ADVF advf, IAdviseSink adviseSink, out int connection) { connection = 0; return unchecked((int)0x80040003); }
+        public void DUnadvise(int connection) => throw new NotImplementedException();
+        public int EnumDAdvise(out IEnumSTATDATA enumAdvise) { enumAdvise = null!; return unchecked((int)0x80040003); }
+    }
+
+    internal sealed class ManagedFormats : IEnumFORMATETC
+    {
+        private int _at;
+        public int Next(int celt, FORMATETC[] rgelt, int[] pceltFetched)
+        {
+            int n = 0;
+            if (_at == 0 && celt > 0) { rgelt[0] = new FORMATETC { cfFormat = 13, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = -1, tymed = TYMED.TYMED_HGLOBAL }; n = 1; _at = 1; }
+            if (pceltFetched != null && pceltFetched.Length > 0) pceltFetched[0] = n;
+            return n == celt ? 0 : 1;
+        }
+        public int Skip(int celt) { _at += celt; return 0; }
+        public int Reset() { _at = 0; return 0; }
+        public void Clone(out IEnumFORMATETC newEnum) => newEnum = new ManagedFormats { _at = _at };
+    }
+
     /// <summary>A managed IStream over bytes, handed to native code.</summary>
     internal sealed class ManagedStream : IStream
     {
@@ -549,6 +589,32 @@ namespace ComImportFixture
             var peek = s.Peek();
             var fetch = s.Fetch();
             return $"{n}:{modes.Length}:{modes[1].ToByteArray()[0]}|{peek.A},{peek.B}|{fetch.A},{fetch.B}";
+        }
+
+        // ---- data ----
+        private static IData DataOf(IntPtr p) => (IData)Marshal.GetObjectForIUnknown(p);
+        public static string DataNative(IntPtr p)
+        {
+            var d = DataOf(p).Make();
+            var f = new FORMATETC { cfFormat = 13, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = -1, tymed = TYMED.TYMED_HGLOBAL };
+            int q = d.QueryGetData(ref f);
+            d.GetData(ref f, out STGMEDIUM m);
+            string s = Marshal.PtrToStringUni(m.unionmember)!;
+            Marshal.FreeCoTaskMem(m.unionmember);
+            var e = d.EnumFormatEtc(DATADIR.DATADIR_GET);
+            var arr = new FORMATETC[2];
+            var fetched = new int[1];
+            e.Next(2, arr, fetched);
+            return $"{q}|{s}|{fetched[0]}:{arr[0].cfFormat}";
+        }
+        public static int DataManaged(IntPtr p) => DataOf(p).Use(new ManagedData());
+        public static string DataItems(IntPtr p)
+        {
+            var a = new System.Collections.Generic.List<string>();
+            foreach (object o in DataOf(p).Items()) a.Add(o.ToString()!);
+            var b = new System.Collections.Generic.List<string>();
+            foreach (object o in DataOf(p).Items2()) b.Add(o.ToString()!);
+            return string.Join(",", a) + "|" + string.Join(",", b);
         }
 
         // ---- events ----
