@@ -91,6 +91,18 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          dialog or property store;
        - Telerik.Windows.Controls.RibbonView: smoke runs (the ribbon), and a ribbon drag and drop;
        - IcoServices (Workbench): its Active Directory picker.
+     - Progress on them (2026-10-20, 02:59-03:12, after a fresh IcoFwxServer restart; no settings change
+       in any run):
+       - app bench smoke with Telerik.Windows.Controls forced in, and the Code Pack and RibbonView
+         rewritten: Telerik.Windows.Controls and both Code Pack assemblies loaded and rewritten; 437
+         move / 77 resize steps.
+       - Workbench smoke, the same: Telerik.Windows.Controls and RibbonView (the ribbon) rewritten, clean.
+       - 3D frame 0 px against 15c92fc6e with the current rewriter.
+       - The smoke parts of their gates have passed; the specific exercises have not.
+       - The Telerik file dialog can't be opened under the port at all. It fails the same way on built-in
+         COM: `Window.ShowDialog` -> HwndSource -> `CreateWindowEx` "Invalid window handle", from Telerik's
+         chromeless window host. That is a WPF-over-WinForms owner bug of the port, not the rewriter.
+         FileDialogs stays held until that is fixed and the dialog has been opened.
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
@@ -377,6 +389,9 @@ adapter.
   - **A managed delegate with COM interface parameters** is refused only when it can reach native code:
     the module calls Marshal.GetFunctionPointerForDelegate, or a P/Invoke or COM method takes its type.
     Telerik's WMI delegates, made to throw PlatformNotSupported, never reach native code.
+  - Tests: ComUserFixture (no COM types; it casts its own `Marshal.GetObjectForIUnknown` to
+    ComImportFixture's ICalc) is judged as a group member and works rewritten with it. On Windows it is
+    left with the group.
   - **Gate: SharpMediaFoundationInterop + .WPF** (CsWin32's 155 interfaces, 152 P/Invokes) are
     rewritten as a group. SharpMediaPlayer (big_buck_bunny_480p) and SharpSpatialVideoGUI
     (IMG_7881.MOV) played at full rate (24.1 and 30.0 fps). Paused at the same position, their frames
