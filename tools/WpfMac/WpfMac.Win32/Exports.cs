@@ -26,6 +26,8 @@ public static unsafe partial class Exports
         RegisterUser32Windows();
         RegisterShell();
         RegisterGdi();
+        RegisterScrollAndFrame();
+        RegisterWinTrust();
         return s_count;
     }
 
