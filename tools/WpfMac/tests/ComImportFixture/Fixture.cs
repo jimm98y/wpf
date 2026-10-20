@@ -72,6 +72,158 @@ namespace ComImportFixture
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate int ValueOfFn(IntPtr self, [MarshalAs(UnmanagedType.Interface)] IOther other, out int r);
 
+    // Media Foundation's interfaces, as MF.Net declares them: P/Invokes that take and return C arrays of them.
+    // Only the methods the scenario calls have their real signatures; the IMFAttributes slots before them are placeholders.
+    [ComImport, Guid("7FEE9E9A-4A89-47a6-899C-B6A53A70FB67"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMFActivate
+    {
+        void GetItem_();
+        void GetItemType_();
+        void CompareItem_();
+        void Compare_();
+        void GetUINT32_();
+        void GetUINT64_();
+        void GetDouble_();
+        void GetGUID_();
+        void GetStringLength_();
+        void GetString_();
+        void GetAllocatedString_();
+        void GetBlobSize_();
+        void GetBlob_();
+        void GetAllocatedBlob_();
+        void GetUnknown_();
+        void SetItem_();
+        void DeleteItem_();
+        void DeleteAllItems_();
+        void SetUINT32_();
+        void SetUINT64_();
+        void SetDouble_();
+        void SetGUID_();
+        void SetString_();
+        void SetBlob_();
+        void SetUnknown_();
+        void LockStore_();
+        void UnlockStore_();
+        void GetCount(out int count);
+        void GetItemByIndex_();
+        void CopyAllItems_();
+    }
+
+    [ComImport, Guid("44ae0fa8-ea31-4109-8d2e-4cae4997c555"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMFMediaType
+    {
+        void GetItem_();
+        void GetItemType_();
+        void CompareItem_();
+        void Compare_();
+        void GetUINT32_();
+        void GetUINT64_();
+        void GetDouble_();
+        void GetGUID_();
+        void GetStringLength_();
+        void GetString_();
+        void GetAllocatedString_();
+        void GetBlobSize_();
+        void GetBlob_();
+        void GetAllocatedBlob_();
+        void GetUnknown_();
+        void SetItem_();
+        void DeleteItem_();
+        void DeleteAllItems_();
+        void SetUINT32_();
+        void SetUINT64_();
+        void SetDouble_();
+        void SetGUID_();
+        void SetString_();
+        void SetBlob_();
+        void SetUnknown_();
+        void LockStore_();
+        void UnlockStore_();
+        void GetCount(out int count);
+        void GetItemByIndex_();
+        void CopyAllItems_();
+    }
+
+    [ComImport, Guid("e93dcf6c-4b07-4e1e-8123-aa16ed6eadf5"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMFMediaTypeHandler
+    {
+        void IsMediaTypeSupported_();
+        void GetMediaTypeCount(out int count);
+    }
+
+    [ComImport, Guid("56c03d9c-9dbb-45f5-ab4b-d80f47c05938"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMFStreamDescriptor
+    {
+        void GetItem_();
+        void GetItemType_();
+        void CompareItem_();
+        void Compare_();
+        void GetUINT32_();
+        void GetUINT64_();
+        void GetDouble_();
+        void GetGUID_();
+        void GetStringLength_();
+        void GetString_();
+        void GetAllocatedString_();
+        void GetBlobSize_();
+        void GetBlob_();
+        void GetAllocatedBlob_();
+        void GetUnknown_();
+        void SetItem_();
+        void DeleteItem_();
+        void DeleteAllItems_();
+        void SetUINT32_();
+        void SetUINT64_();
+        void SetDouble_();
+        void SetGUID_();
+        void SetString_();
+        void SetBlob_();
+        void SetUnknown_();
+        void LockStore_();
+        void UnlockStore_();
+        void GetCount(out int count);
+        void GetItemByIndex_();
+        void CopyAllItems_();
+        void GetStreamIdentifier(out int id);
+        void GetMediaTypeHandler(out IMFMediaTypeHandler handler);
+    }
+
+    [ComImport, Guid("03cb2711-24d7-4db6-a17f-f3a7a479a536"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IMFPresentationDescriptor
+    {
+        void GetItem_();
+        void GetItemType_();
+        void CompareItem_();
+        void Compare_();
+        void GetUINT32_();
+        void GetUINT64_();
+        void GetDouble_();
+        void GetGUID_();
+        void GetStringLength_();
+        void GetString_();
+        void GetAllocatedString_();
+        void GetBlobSize_();
+        void GetBlob_();
+        void GetAllocatedBlob_();
+        void GetUnknown_();
+        void SetItem_();
+        void DeleteItem_();
+        void DeleteAllItems_();
+        void SetUINT32_();
+        void SetUINT64_();
+        void SetDouble_();
+        void SetGUID_();
+        void SetString_();
+        void SetBlob_();
+        void SetUnknown_();
+        void LockStore_();
+        void UnlockStore_();
+        void GetCount(out int count);
+        void GetItemByIndex_();
+        void CopyAllItems_();
+        void GetStreamDescriptorCount(out int count);
+    }
+
     /// <summary>IBindCtx, declared by the app (Windows' ole32 makes one).</summary>
     [ComImport, Guid("0000000e-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IAppBindCtx
@@ -500,6 +652,46 @@ namespace ComImportFixture
             int hr = CreateBindCtx(0, out IAppBindCtx ctx);
             if (hr < 0 || ctx == null) return "failed " + hr.ToString("x8");
             return Marshal.ReleaseComObject(ctx) == 0 ? "ok" : "still referenced";
+        }
+
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        private static extern int MFStartup(int version, int flags);
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        private static extern int MFShutdown();
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        private static extern int MFCreateMediaType(out IMFMediaType type);
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        private static extern int MFTEnumEx(Guid category, int flags, IntPtr input, IntPtr output,
+            [Out, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.IUnknown, SizeParamIndex = 5)] out IMFActivate[] activates, out int count);
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        private static extern int MFCreateStreamDescriptor(int id, int count, [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] IMFMediaType[] types, out IMFStreamDescriptor descriptor);
+        [DllImport("mfplat.dll", ExactSpelling = true)]
+        private static extern int MFCreatePresentationDescriptor(int count, [In, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] IMFStreamDescriptor[] streams, out IMFPresentationDescriptor descriptor);
+
+        /// <summary>P/Invokes with C arrays of interfaces (Windows' Media Foundation, as MF.Net calls it): the video
+        /// decoders as an out array the callee allocates, and media types and stream descriptors passed in.</summary>
+        public static string MfArrays()
+        {
+            int hr = MFStartup(0x20070, 0);
+            if (hr < 0) return "startup " + hr.ToString("x8");
+            try
+            {
+                var decoders = new Guid("d6c02d4b-6833-45b4-971a-05a4b04bab91");      // MFT_CATEGORY_VIDEO_DECODER
+                hr = MFTEnumEx(decoders, 0x3f, IntPtr.Zero, IntPtr.Zero, out IMFActivate[] mfts, out int n);
+                if (hr < 0) return "enum " + hr.ToString("x8");
+                bool attrs = mfts.Length == n && n > 0 && Array.TrueForAll(mfts, m => { m.GetCount(out int c); return c > 0; });
+                foreach (var m in mfts) Marshal.ReleaseComObject(m);
+                var types = new IMFMediaType[3];
+                for (int i = 0; i < types.Length; i++) if ((hr = MFCreateMediaType(out types[i])) < 0) return "type " + hr.ToString("x8");
+                if ((hr = MFCreateStreamDescriptor(7, types.Length, types, out IMFStreamDescriptor sd)) < 0) return "stream " + hr.ToString("x8");
+                sd.GetStreamIdentifier(out int id);
+                sd.GetMediaTypeHandler(out IMFMediaTypeHandler h);
+                h.GetMediaTypeCount(out int typeCount);
+                if ((hr = MFCreatePresentationDescriptor(1, new[] { sd }, out IMFPresentationDescriptor pd)) < 0) return "presentation " + hr.ToString("x8");
+                pd.GetStreamDescriptorCount(out int streams);
+                return $"{attrs}|{id}|{typeCount}|{streams}";
+            }
+            finally { MFShutdown(); }
         }
 
         internal static ICalc Wrap(IntPtr p) => (ICalc)Marshal.GetObjectForIUnknown(p);

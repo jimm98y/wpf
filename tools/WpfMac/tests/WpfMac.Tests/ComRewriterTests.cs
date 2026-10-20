@@ -1088,10 +1088,10 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(20 + 6, r.Interfaces);     // 20 of the fixture's, 6 generated BCL ones (IDataObject, IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker, IEnumMoniker)
+        Assert.Equal(25 + 6, r.Interfaces);     // 25 of the fixture's, 6 generated BCL ones (IDataObject, IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker, IEnumMoniker)
         Assert.True(r.BuiltInCannot.Any(x => x.Contains("IShapes.Paint") && x.Contains("Color")), r.ToString() + " | " + string.Join("; ", r.Unsupported) + " | " + string.Join("; ", r.BuiltInCannot));
         Assert.Equal(1, r.EventInterfaces);
-        Assert.Equal(2, r.PInvokes);
+        Assert.Equal(6, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
         Assert.Contains("Arrays", u);
         Assert.Equal(2, r.Delegates);
@@ -1417,6 +1417,16 @@ public sealed unsafe class ComRewriterTests
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "ole32's CreateBindCtx");
         Assert.Equal("ok", (string)Run("BindCtx")!);
+    }
+
+    [Fact]
+    public void APInvoke_WithCArraysOfInterfaces_ConvertsThemBothWays()
+    {
+        // MF.Net's MFTEnumEx/MFEnumDeviceSources (an out array the callee allocates, its length in another
+        // parameter) and MFCreateStreamDescriptor/MFCreatePresentationDescriptor (arrays passed in): built-in
+        // interop cannot marshal elements whose interfaces are no longer ComImport (RadWebCam's device names)
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Media Foundation");
+        Assert.Equal("True|7|3|1", (string)Run("MfArrays")!);
     }
 
     [Fact]
