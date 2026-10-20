@@ -603,6 +603,108 @@ public sealed unsafe class ComRewriterTests
         finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_dispUserVt[2])(o); }
     }
 
+    // ---- formatted types: IFormatted, native -------------------------------------------------------
+
+    private static readonly Guid IID_IFormatted = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0D");
+    private static readonly IntPtr* s_fmtVt = BuildFormatted();
+
+    [StructLayout(LayoutKind.Sequential)] private struct NTag { public IntPtr Text; public int N; }
+    [StructLayout(LayoutKind.Sequential)] private struct NPerson { public IntPtr Name; public int Age; }
+
+    private static IntPtr* BuildFormatted()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(12, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&FmtQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, int>)&FmtGuidSum;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, int*, int>)&FmtFill;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, NPerson*, int>)&FmtNamed;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, NTag*, int>)&FmtRename;
+        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, char*, int, int>)&FmtText;
+        vt[8] = (IntPtr)(delegate* unmanaged<Obj*, int*, int>)&FmtCustom;
+        vt[9] = (IntPtr)(delegate* unmanaged<Obj*, NTag*, int, int>)&FmtTags;
+        vt[10] = (IntPtr)(delegate* unmanaged<Obj*, char*, int, int>)&FmtChars;
+        vt[11] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&FmtUseSink;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int FmtQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        if (*iid == IID_IUnknown || *iid == IID_IFormatted) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    [UnmanagedCallersOnly] private static int FmtGuidSum(Obj* self, Guid* g) { int s = 0; foreach (byte b in g->ToByteArray()) s += b; return s; }
+    [UnmanagedCallersOnly] private static int FmtFill(Obj* self, int* box) { box[0] = box[1] * 2; return box[1]; }
+    [UnmanagedCallersOnly] private static int FmtNamed(Obj* self, NPerson* p) { int r = Marshal.PtrToStringUni(p->Name)!.Length * 100 + p->Age; p->Age = 99; return r; }
+
+    /// <summary>[in, out] by reference: the callee frees the caller's string and hands back its own.</summary>
+    [UnmanagedCallersOnly]
+    private static int FmtRename(Obj* self, NTag* t)
+    {
+        string old = Marshal.PtrToStringUni(t->Text)!;
+        Marshal.FreeCoTaskMem(t->Text);
+        t->Text = Marshal.StringToCoTaskMemUni(old.ToUpperInvariant() + "!");
+        t->N++;
+        return 0;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int FmtText(Obj* self, char* buf, int cch)
+    {
+        string s = "native text";
+        int n = Math.Min(s.Length, cch - 1);
+        for (int i = 0; i < n; i++) buf[i] = s[i];
+        buf[n] = '\0';
+        return 0;
+    }
+
+    [UnmanagedCallersOnly] private static int FmtCustom(Obj* self, int* p) { int r = p[0] + p[1]; p[0] *= 10; p[1] *= 10; return r; }
+
+    [UnmanagedCallersOnly]
+    private static int FmtTags(Obj* self, NTag* tags, int n)
+    {
+        int r = 0;
+        for (int i = 0; i < n; i++) { r += tags[i].N * 10 + Marshal.PtrToStringUni(tags[i].Text)!.Length; tags[i].N = 7 + i; }
+        return r;
+    }
+
+    [UnmanagedCallersOnly] private static int FmtChars(Obj* self, char* c, int n) { int r = 0; for (int i = 0; i < n; i++) r += c[i]; return r; }
+
+    /// <summary>Native code calling a managed IFormattedSink: a blittable class (written back), a struct by
+    /// reference with a string, an LPStruct Guid, a formatted class with a string [In, Out].</summary>
+    [UnmanagedCallersOnly]
+    private static int FmtUseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        IntPtr* vt = *(IntPtr**)sink;
+        var parts = new List<string>();
+        int* box = stackalloc int[2] { 6, 7 };
+        int area = ((delegate* unmanaged<IntPtr, int*, int>)vt[3])(sink, box);
+        parts.Add($"{area}:{box[0]}");
+        var tag = new NTag { Text = Marshal.StringToCoTaskMemUni("n"), N = 1 };
+        int hr = ((delegate* unmanaged<IntPtr, NTag*, int>)vt[4])(sink, &tag);
+        parts.Add(hr != 0 ? $"hr {hr:x8}" : $"{Marshal.PtrToStringUni(tag.Text)}:{tag.N}");
+        Marshal.FreeCoTaskMem(tag.Text);
+        Guid g = new("0000002a-0000-0000-0000-000000000000");
+        parts.Add(((delegate* unmanaged<IntPtr, Guid*, int>)vt[5])(sink, &g).ToString());
+        var person = new NPerson { Name = Marshal.StringToCoTaskMemUni("Bo"), Age = 70 };
+        int len = ((delegate* unmanaged<IntPtr, NPerson*, int>)vt[6])(sink, &person);
+        parts.Add($"{len}:{Marshal.PtrToStringUni(person.Name)}:{person.Age}");
+        Marshal.FreeCoTaskMem(person.Name);
+        *r = Marshal.StringToBSTR(string.Join("|", parts));
+        return 0;
+    }
+
+    private static T WithFormatted<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_fmtVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_fmtVt[2])(o); }
+    }
+
     private static T WithStreams<T>(Func<IntPtr, T> body)
     {
         var o = New(s_streamsVt, 0);
@@ -663,7 +765,7 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(13, r.Interfaces);
+        Assert.Equal(15, r.Interfaces);
         Assert.Equal(1, r.EventInterfaces);
         Assert.Equal(2, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
@@ -791,6 +893,17 @@ public sealed unsafe class ComRewriterTests
     [Fact]
     public void SafeArrays_ToAManagedObject_ThroughItsCcw()
         => Assert.Equal("18,m/mm/mmm,1/2/1/2", WithSafe(p => (string)Run("SafeSink", p)!));
+
+    [Fact]
+    public void FormattedTypes_CustomMarshalers_AndStringBuilders()
+        // LPStruct Guid (1+..+16 = 136); a blittable class pinned (A written back); a class with a string [In]
+        // (not written back); a struct by reference with its string replaced by the callee; StringBuilder [Out];
+        // a custom marshaler [In, Out]; a C array of structs [In, Out]; a char array as UTF-16
+        => Assert.Equal("136|21:42|336:36|ABC!:2|native |7:30,40|33:7,8|131", WithFormatted(p => (string)Run("Formatted", p)!));
+
+    [Fact]
+    public void FormattedTypes_ToAManagedObject_ThroughItsCcw()
+        => Assert.Equal("42:5|n?:11|42|6:Bo Sr.:71", WithFormatted(p => (string)Run("FormattedSink", p)!));
 
     [Fact]
     public void ComEvents_ProviderConnectionPointAndSource()
