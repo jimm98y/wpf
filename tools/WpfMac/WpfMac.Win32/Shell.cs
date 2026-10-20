@@ -47,7 +47,12 @@ public static unsafe partial class Exports
         R((delegate* unmanaged<void>)&CoUninitialize, "CoUninitialize", "OleUninitialize");
         R((delegate* unmanaged<void*, int, void*, void*, uint, uint, void*, uint, void*, int>)&CoInitializeSecurity, "CoInitializeSecurity");
         R((delegate* unmanaged<Guid*, void*, uint, Guid*, void**, int>)&CoCreateInstance, "CoCreateInstance");
-        R((delegate* unmanaged<void*, int>)&PropVariantClear, "PropVariantClear", "VariantClear");
+        // PROPVARIANT/VARIANT housekeeping, as ole32/oleaut32 do it (WpfMac.ComInterop's Com.PropVariantClear and kin)
+        R((delegate* unmanaged<void*, int>)&PropVariantClear, "PropVariantClear");
+        R((delegate* unmanaged<void*, void*, int>)&PropVariantCopy, "PropVariantCopy");
+        R((delegate* unmanaged<void*, int>)&VariantClear, "VariantClear");
+        R((delegate* unmanaged<void*, void*, int>)&VariantCopy, "VariantCopy");
+        R((delegate* unmanaged<void*, void>)&VariantInit, "VariantInit");
 
         // comctl32
         R((delegate* unmanaged<void>)&InitCommonControls, "InitCommonControls");
@@ -151,7 +156,11 @@ public static unsafe partial class Exports
         return unchecked((int)0x80040154);   // REGDB_E_CLASSNOTREG
     }
 
-    [UnmanagedCallersOnly] private static int PropVariantClear(void* pv) { NativeMemory.Clear(pv, 16); return S_OK; }
+    [UnmanagedCallersOnly] private static int PropVariantClear(void* pv) => WpfMac.ComInterop.Com.PropVariantClear((nint)pv);
+    [UnmanagedCallersOnly] private static int PropVariantCopy(void* dst, void* src) => WpfMac.ComInterop.Com.PropVariantCopy((nint)dst, (nint)src);
+    [UnmanagedCallersOnly] private static int VariantClear(void* pv) => WpfMac.ComInterop.Com.VariantClear((nint)pv);
+    [UnmanagedCallersOnly] private static int VariantCopy(void* dst, void* src) => WpfMac.ComInterop.Com.VariantCopy((nint)dst, (nint)src);
+    [UnmanagedCallersOnly] private static void VariantInit(void* pv) => WpfMac.ComInterop.Com.VariantInit((nint)pv);
     [UnmanagedCallersOnly] private static void InitCommonControls() { }
     [UnmanagedCallersOnly] private static int InitCommonControlsEx(void* icc) => TRUE;
 

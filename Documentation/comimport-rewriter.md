@@ -351,6 +351,15 @@ adapter.
     the VARIANTs it hands out, with ComObjects for interfaces. Both routes are tested.
   - A struct field of type `object` without `[MarshalAs]` is a VARIANT, as built-in struct
     marshalling makes it.
+  - **PROPVARIANT housekeeping off Windows** (`PropVariant.cs`). The Win32 shim exports ole32's
+    PropVariantClear and PropVariantCopy, and oleaut32's VariantClear, VariantCopy and VariantInit,
+    implemented as Windows does them:
+    - BSTR, LPSTR/LPWSTR, CLSID, BLOB, CF and VERSIONEDSTREAM are freed or deep-copied; interfaces are
+      released or AddRef'd; vectors are handled element by element; arrays through SafeArray.cs.
+    - An unknown type gets DISP_E_BADVARTYPE and is left alone. VariantClear refuses the
+      PROPVARIANT-only types.
+    - The old export only zeroed 16 bytes, which is wrong on 64-bit and freed nothing.
+    - The apps' own PropVariant types call these from Dispose (MediaFoundation, the Code Pack).
   - **WebView2:** the overlay replaces the app's Microsoft.Web.WebView2.Core/.Wpf/.WinForms with the
     fork's own port ("replaced ... by the overlay" in merge-report.txt). The vendor assembly is never
     loaded and never judged, and nothing of WebView2 is rewritten.
