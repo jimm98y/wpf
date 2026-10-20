@@ -253,7 +253,11 @@ public static unsafe partial class Exports
         0xFFFFFF, 0x696969, 0xE3E3E3, 0x000000, 0xE1FFFF, 0x000000, 0xCC6600, 0xEAD1B9, 0xF2E4D7, 0xFF9933, 0xF0F0F0,
     };
 
-    [UnmanagedCallersOnly] private static uint GetSysColor(int index) => (uint)index < (uint)s_sysColors.Length ? s_sysColors[index] : 0;
+    [UnmanagedCallersOnly] private static uint GetSysColor(int index) => SysColor(index);
+
+    /// <summary>GetSysColor's answer, for the stack's own code (the SystemColors detour), whose
+    /// imports do not reach this library.</summary>
+    public static uint SysColor(int index) => (uint)index < (uint)s_sysColors.Length ? s_sysColors[index] : 0;
     [UnmanagedCallersOnly] private static nint GetSysColorBrush(int index) => (uint)index < (uint)s_sysColors.Length ? 0x1000 + index : 0;
 
     // ---- monitors ------------------------------------------------------------------------------

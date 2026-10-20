@@ -10,9 +10,13 @@
 //                                   is the same thing on macOS, shared by every process that opens it.
 //   GetFolderPath(Common*)          the machine-wide folders (ProgramData and friends) are /usr/share
 //                                   or empty on macOS, and not writable. They map into wpfmac's state.
+//   SystemColors                    off Windows System.Drawing.Primitives answers a palette compiled
+//                                   into it, Windows XP's (a beige #ECE9D8 Control). On Windows it asks
+//                                   GetSysColor, and so does this, of the stack's user32.
 //
 // Only installed where needed (macOS); the bootstrap logs which ones are active.
 
+using System.Drawing;
 using System.IO.MemoryMappedFiles;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -35,6 +39,7 @@ public static class Detours
         Try(installed, "apartment state", InstallApartmentState);
         Try(installed, "named memory-mapped files", InstallMemoryMappedFiles);
         Try(installed, "machine-wide folders", InstallSpecialFolders);
+        Try(installed, "system colours", InstallSystemColors);
         return installed.ToArray();
     }
 
@@ -76,6 +81,46 @@ public static class Detours
         Add(typeof(Thread).GetMethod(nameof(Thread.GetApartmentState), Type.EmptyTypes)!,
             (Func<Thread, ApartmentState> orig, Thread self) =>
                 s_apartments.TryGetValue(self, out var box) ? box.Value : orig(self));
+    }
+
+    // ---- system colours ------------------------------------------------------------------------------
+    //
+    // GraphWorX's light theme sets its property grid's HelpBackColor to SystemColors.Control: beige.
+
+    // The stack's user32 (WpfMac.Win32), by name: the stack's own imports do not reach it.
+    private static Func<int, uint>? s_getSysColor;
+
+    // COLOR_* of each system KnownColor, as .NET's Windows build maps them: ActiveBorder..WindowText,
+    // then ButtonFace..MenuHighlight (the later additions, past the web colours).
+    private static readonly int[] s_colorIndex = { 10, 2, 9, 12, 15, 16, 21, 22, 20, 18, 1, 17, 13, 14, 26, 11, 3, 19, 24, 23, 4, 7, 0, 5, 6, 8 };
+    private static readonly int[] s_laterColorIndex = { 15, 20, 16, 27, 28, 30, 29 };
+
+    private static int SysColorIndex(KnownColor color) =>
+        color >= KnownColor.ActiveBorder && color <= KnownColor.WindowText ? s_colorIndex[color - KnownColor.ActiveBorder]
+        : color >= KnownColor.ButtonFace && color <= KnownColor.MenuHighlight ? s_laterColorIndex[color - KnownColor.ButtonFace]
+        : -1;
+
+    private static uint SysColorArgb(int index)
+    {
+        uint bgr = s_getSysColor!(index);   // COLORREF 0x00BBGGRR
+        return 0xFF000000 | ((bgr & 0xFF) << 16) | (bgr & 0xFF00) | ((bgr >> 16) & 0xFF);
+    }
+
+    private static void InstallSystemColors()
+    {
+        s_getSysColor = Assembly.Load(new AssemblyName("WpfMac.Win32")).GetType("WpfMac.Win32.Exports", throwOnError: true)!
+            .GetMethod("SysColor", BindingFlags.Public | BindingFlags.Static)!.CreateDelegate<Func<int, uint>>();
+        Type table = typeof(Color).Assembly.GetType("System.Drawing.KnownColorTable", throwOnError: true)!;
+        // The dark set (Application.SetColorMode) is the runtime's own on Windows too: left to it.
+        FieldInfo? alternative = typeof(SystemColors).GetField("s_useAlternativeColorSet", BindingFlags.NonPublic | BindingFlags.Static);
+        // GetSystemColorArgb is what every system colour comes through; KnownColorToArgb as well,
+        // where the runtime inlined the first into it.
+        Add(table.GetMethod("GetSystemColorArgb", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!,
+            (Func<KnownColor, uint> orig, KnownColor color) =>
+                SysColorIndex(color) is int i && i >= 0 && alternative?.GetValue(null) is not true ? SysColorArgb(i) : orig(color));
+        Add(table.GetMethod("KnownColorToArgb", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!,
+            (Func<KnownColor, uint> orig, KnownColor color) =>
+                SysColorIndex(color) is int i && i >= 0 && alternative?.GetValue(null) is not true ? SysColorArgb(i) : orig(color));
     }
 
     // ---- named memory-mapped files -----------------------------------------------------------------
