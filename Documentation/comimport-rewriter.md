@@ -87,8 +87,6 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          dialog;
        - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a GraphWorX display playing a
          video through Telerik's media player. SharpMediaFoundationInterop is a different library.
-       - Microsoft.WindowsAPICodePack and .Shell: GraphWorX smoke runs, and a Code Pack shell file
-         dialog or property store;
        - Telerik.Windows.Controls.RibbonView: smoke runs (the ribbon), and a ribbon drag and drop;
        - IcoServices (Workbench): its Active Directory picker.
      - Progress on them (2026-10-20, 02:59-03:12, after a fresh IcoFwxServer restart; no settings change
@@ -99,6 +97,13 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
        - Workbench smoke, the same: Telerik.Windows.Controls and RibbonView (the ribbon) rewritten, clean.
        - 3D frame 0 px against 15c92fc6e with the current rewriter.
        - The smoke parts of their gates have passed; the specific exercises have not.
+       - **Microsoft.WindowsAPICodePack and .Shell: gated and released (2026-10-20).** Besides the
+         smoke, a test app on GraphWorX's own Code Pack DLLs, run stock and under the port with both
+         rewritten, gave identical output:
+         - a ShellObject's properties through IShellItem2, IPropertyStore and PropVariant (size, type
+           text, duration, kind, date modified);
+         - a ShellContainer enumerated, and a known folder;
+         - NetworkListManager: the coclass methods, and GetNetworks' IEnumerable of INetwork.
        - The Telerik file dialog can't be opened under the port at all. It fails the same way on built-in
          COM: `Window.ShowDialog` -> HwndSource -> `CreateWindowEx` "Invalid window handle", from Telerik's
          chromeless window host. That is a WPF-over-WinForms owner bug of the port, not the rewriter.
