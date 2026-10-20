@@ -57,6 +57,9 @@ namespace System.Drawing.Design
 		{
 		}
 
+		// The toolbox's image size at 96 dpi, as .NET's (which scales it to the monitor's DPI).
+		private const int IconSize = 16;
+
 		public ToolboxItem (Type toolType)
 		{
 			Initialize (toolType);
@@ -280,24 +283,31 @@ namespace System.Drawing.Design
 			AssemblyName = type.Assembly.GetName();
 			DisplayName = type.Name;
 			TypeName = type.FullName;
-			
-			// seems to be a right place to create the bitmap
-			System.Drawing.Image image = null;
-			foreach (object attribute in type.GetCustomAttributes(true)) {
-				ToolboxBitmapAttribute tba = attribute as ToolboxBitmapAttribute;
-				if (tba != null) {
-					image = tba.GetImage (type);
-					break;
-				}
-			}
+
+			// As .NET does: the assembly's company and the type's description.
+			AssemblyCompanyAttribute company = (AssemblyCompanyAttribute) Attribute.GetCustomAttribute (type.Assembly, typeof (AssemblyCompanyAttribute));
+			if (company != null)
+				Company = company.Company;
+			DescriptionAttribute description = (DescriptionAttribute) TypeDescriptor.GetAttributes (type)[typeof (DescriptionAttribute)];
+			if (description != null)
+				Description = description.Description;
+
+			// The small image, as .NET takes it: kept whole as OriginalBitmap, and Bitmap is that at the
+			// toolbox's 16x16. Without OriginalBitmap an application that keeps its toolbox items took a
+			// reloaded item for a broken one and made it anew from the type, at 16x16 only: GraphWorX's
+			// Controls ribbon showed those, stretched to 32x32, instead of the 32x32 images it saved.
+			ToolboxBitmapAttribute tba = (ToolboxBitmapAttribute) TypeDescriptor.GetAttributes (type)[typeof (ToolboxBitmapAttribute)];
+			System.Drawing.Image image = tba != null ? tba.GetImage (type, false) : null;
 			//fallback: check for image even if not attribute
 			if (image == null)
 				image = ToolboxBitmapAttribute.GetImageFromResource (type, null, false);
-			
+
 			if (image != null) {
-				Bitmap = (image as Bitmap);
-				if (Bitmap == null)
-					Bitmap = new Bitmap (image);
+				Bitmap bitmap = image as Bitmap ?? new Bitmap (image);
+				OriginalBitmap = bitmap;
+				if (bitmap.Width != IconSize || bitmap.Height != IconSize)
+					bitmap = new Bitmap (bitmap, new Size (IconSize, IconSize));
+				Bitmap = bitmap;
 			}
 
 			Filter = type.GetCustomAttributes (typeof (ToolboxItemFilterAttribute), true);
@@ -359,6 +369,7 @@ namespace System.Drawing.Design
 				ValidatePropertyType (propertyName, value, typeof (AssemblyName), true);
 				break;
 			case "Bitmap":
+			case "OriginalBitmap":
 				ValidatePropertyType (propertyName, value, typeof (Bitmap), true);
 				break;
 			case "Company":
