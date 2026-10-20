@@ -111,9 +111,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             }
             var cull = CullComponents(_s, _options.RasterizedStream);
             if (cull.Count > 0 && !_link.Any(l => l.Semantic == CullSemantic))
-                Approximate(_link.Count + (cull.Count + 3) / 4 > MaxInterStageVariables
-                    ? "SV_CullDistance: not applied (no inter-stage variable left to carry it); primitives it would cull are drawn"
-                    : "SV_CullDistance: not applied without a pixel shader; primitives it would cull are drawn");
+            {
+                // no pixel shader to discard, or no inter-stage variable left to tell it: each distance becomes
+                // a clip distance of -1 at a vertex whose cull distance is negative and +1e30 at any other. A
+                // primitive whose vertices are all negative is clipped away whole; any other keeps all of
+                // itself but a sliver within 1e-30 of its negative vertices -- in float, none (the clipped
+                // edge's new vertex is the old one)
+                if (HasFeature(D3DDevice.FeatureClipDistances) && clip.Count + cull.Count <= 8)
+                    foreach (var (reg, c) in cull)
+                        clip.Add(_outputRegs.Contains(reg) ? $"select(1e30f, -1.0f, {OutReg(reg)}.{"xyzw"[c]} < 0.0f)" : "1e30f");
+                else
+                    Approximate(!HasFeature(D3DDevice.FeatureClipDistances)
+                        ? "SV_CullDistance: not applied (no pixel shader or inter-stage variable to carry it, and no clip-distances feature); primitives it would cull are drawn"
+                        : "SV_CullDistance: not applied (more than 8 clip and cull distances together); primitives it would cull are drawn");
+            }
             if (clip.Count > 0)
             {
                 if (!HasFeature(D3DDevice.FeatureClipDistances)) throw new NotSupportedException("SV_ClipDistance: this adapter has no clip-distances feature");
@@ -160,7 +171,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     throw new NotSupportedException("SV_PrimitiveID in a pixel shader: this adapter has no primitive-index feature");
                 _enables.Add("primitive_index");
             }
-            w.Append("struct PsIn {\n    @builtin(position) pos: vec4<f32>,\n    @builtin(front_facing) front: bool,\n");
+            // front_facing only when read: WebGPU counts it against the inter-stage variables
+            bool front = _s.Inputs.Any(e => e.SystemValue == SvIsFrontFace || e.SemanticName.Equals("SV_IsFrontFace", StringComparison.OrdinalIgnoreCase));
+            w.Append("struct PsIn {\n    @builtin(position) pos: vec4<f32>,\n");
+            if (front) w.Append("    @builtin(front_facing) front: bool,\n");
             if (primitive) w.Append("    @builtin(primitive_index) prim: u32,\n");
             if (sampleIndex) w.Append("    @builtin(sample_index) sample: u32,\n");
             if (_builtins.Contains("vCoverage")) w.Append("    @builtin(sample_mask) coverage: u32,\n");
