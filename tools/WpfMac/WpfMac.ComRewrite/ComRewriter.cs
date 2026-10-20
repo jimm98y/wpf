@@ -209,7 +209,7 @@ public static partial class ComRewriter
             _activatorCreate1, _activatorCreate2;
         private readonly MethodReference _structToNative, _newStruct, _structFromNative, _freeStruct, _structBack, _structArrayToNative, _structArrayFromNative,
             _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem,
-            _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack,
+            _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack, _takeElemArray,
             _sbOfNative, _sbBack, _nativeRoom, _structToShadow, _freeStructAt, _structFromShadow;
         private readonly TypeReference _variant;
         private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
@@ -275,6 +275,7 @@ public static partial class ComRewriter
             _blitFromNativeN = Imp(nameof(Com.BlitArrayFromNative), typeof(IntPtr), typeof(int), typeof(RuntimeTypeHandle));
             _blitToNative = Imp(nameof(Com.BlitArrayToNative), typeof(Array), typeof(IntPtr), typeof(int));
             _elemFromNativeN = Imp(nameof(Com.ElemArrayFromNativeN), typeof(IntPtr), typeof(int), typeof(int), typeof(RuntimeTypeHandle), typeof(bool));
+            _takeElemArray = Imp(nameof(Com.TakeElemArray), typeof(IntPtr), typeof(int), typeof(int), typeof(RuntimeTypeHandle));
             _elemBack = Imp(nameof(Com.ElemArrayBackToNative), typeof(Array), typeof(IntPtr), typeof(int), typeof(int), typeof(RuntimeTypeHandle));
             _structFromNativeN = Imp(nameof(Com.StructArrayFromNativeN), typeof(IntPtr), typeof(int), typeof(RuntimeTypeHandle), typeof(bool));
             _structArrayBack = Imp(nameof(Com.StructArrayBackToNative), typeof(Array), typeof(IntPtr), typeof(int));
@@ -377,7 +378,7 @@ public static partial class ComRewriter
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList()) if (IsDelegate(t) && !t.IsImport) MaybeRewriteDelegate(t);
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
                 foreach (var md in t.Methods.ToList())
-                    if (md.IsPInvokeImpl && SignatureHasCom(md)) RewritePInvoke(md);
+                    if (md.IsPInvokeImpl && (SignatureHasCom(md) || md.Parameters.Any(p => IsComIfaceArray(p.ParameterType)))) RewritePInvoke(md);
             foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
                 foreach (var md in t.Methods.ToList())
                     if (md.HasBody) RewriteCallSites(md);
@@ -422,6 +423,9 @@ public static partial class ComRewriter
         private static TypeDefinition? Safe(TypeReference t) { try { return t.Resolve(); } catch { return null; } }
 
         private static bool IsDelegate(TypeDefinition t) => t.BaseType?.FullName == "System.MulticastDelegate";
+
+        /// <summary>An array (or a by-reference one) of a COM interface: a P/Invoke's C array of interface pointers.</summary>
+        private bool IsComIfaceArray(TypeReference t) => (t is ByReferenceType b ? b.ElementType : t) is ArrayType { IsVector: true } a && IsComInterface(a.ElementType);
 
         private bool SignatureHasCom(MethodReference m) => IsCom(m.ReturnType) || m.Parameters.Any(p => IsCom(p.ParameterType));
 
@@ -1844,6 +1848,9 @@ public static partial class ComRewriter
             foreach (var prm in p.Parameters)
                 if (prm.ParameterType is ByReferenceType b && IsComInterface(b.ElementType) && !prm.IsOut)
                 { _r.Unsupported.Add($"P/Invoke {p.DeclaringType.FullName}.{p.Name}: ref interface {prm.Name}"); return; }
+            foreach (var prm in p.Parameters)
+                if (IsComIfaceArray(prm.ParameterType) && !PInvokeArrayOk(prm, out string why))
+                { _r.Unsupported.Add($"P/Invoke {p.DeclaringType.FullName}.{p.Name}: {why} {prm.Name}"); return; }
             if (AnalyzeOnly) { _r.PInvokes++; return; }
             var info = p.PInvokeInfo;
             var native = new MethodDefinition(p.Name + "<native>", p.Attributes, NativeOf(p.ReturnType, out _))
@@ -1854,7 +1861,10 @@ public static partial class ComRewriter
             };
             foreach (var prm in p.Parameters)
             {
-                var np = new ParameterDefinition(prm.Name, prm.Attributes, NativeOf(prm.ParameterType, out bool ch));
+                bool array = IsComIfaceArray(prm.ParameterType), ch = array;
+                // an interface array: a pointer to the buffer (or to where the callee puts its own)
+                var nt = array ? (prm.ParameterType is ByReferenceType ? new ByReferenceType(_intPtr) : _intPtr) : NativeOf(prm.ParameterType, out ch);
+                var np = new ParameterDefinition(prm.Name, prm.Attributes, nt);
                 if (!ch && prm.HasMarshalInfo) np.MarshalInfo = prm.MarshalInfo;
                 else np.Attributes &= ~ParameterAttributes.HasFieldMarshal;
                 native.Parameters.Add(np);
@@ -1868,7 +1878,7 @@ public static partial class ComRewriter
             p.IsPInvokeImpl = false;
             p.ImplAttributes = MethodImplAttributes.IL | MethodImplAttributes.Managed;
             p.Body = new MethodBody(p);
-            EmitForward(p, p.IsStatic ? null : default(int?), native, p.Parameters, p.ReturnType, isStatic: true);
+            EmitForward(p, p.IsStatic ? null : default(int?), native, p.Parameters, p.ReturnType, isStatic: true, arrays: true);
             _r.PInvokes++;
         }
 
@@ -1909,9 +1919,66 @@ public static partial class ComRewriter
             _r.Delegates++;
         }
 
+        /// <summary>Whether a P/Invoke's interface array is one this converts: by value (its length is its own), or
+        /// [Out] out with its length in another parameter or a constant.</summary>
+        private static bool PInvokeArrayOk(ParameterDefinition prm, out string why)
+        {
+            why = "";
+            var ami = prm.MarshalInfo as ArrayMarshalInfo;
+            if (prm.HasMarshalInfo && ami == null) { why = $"interface array as {prm.MarshalInfo.NativeType}"; return false; }
+            if (prm.ParameterType is not ByReferenceType) return true;
+            if (!prm.IsOut || prm.IsIn) { why = "ref interface array"; return false; }
+            if ((ami?.SizeParameterIndex ?? -1) < 0 && (ami?.Size ?? -1) <= 0) { why = "unsized out interface array"; return false; }
+            return true;
+        }
+
+        /// <summary>A P/Invoke's C array of interface pointers. By value: the elements as AddRef'd pointers in a
+        /// buffer of ours (copied back for [Out]). Out: the callee's buffer, its count read from the size parameter
+        /// after the call, its elements wrapped and the buffer freed.</summary>
+        private void PrepareIfaceArray(MethodDefinition stub, ILProcessor il, IList<ParameterDefinition> oldParams, int i, int firstArg, List<Action> pushes, List<Action> cleanup, List<Action> after)
+        {
+            var prm = oldParams[i];
+            int argIndex = i + firstArg;
+            var ami = prm.MarshalInfo as ArrayMarshalInfo;
+            if (prm.ParameterType is not ByReferenceType)
+            {
+                var at = (ArrayType)StripMods(prm.ParameterType);
+                bool outAttr = prm.IsOut, inAttr = prm.IsIn || !prm.IsOut;
+                Prepare(stub, il, new Arg(Kind.ElemArray, _intPtr, at.ElementType, (outAttr ? CopyBack : 0) | (outAttr && !inAttr ? OutOnly : 0), null, Com.ElemIface,
+                    ami?.SizeParameterIndex ?? -1, ami?.Size ?? -1), argIndex, prm.ParameterType, pushes, cleanup, after);
+                return;
+            }
+            var arrType = ((ByReferenceType)prm.ParameterType).ElementType;
+            var tmp = Local(stub, _intPtr);
+            pushes.Add(() => il.Emit(OpCodes.Ldloca, tmp));
+            after.Add(() =>
+            {
+                il.Emit(OpCodes.Ldarg, argIndex);
+                il.Emit(OpCodes.Ldloc, tmp);
+                int sp = ami?.SizeParameterIndex ?? -1;
+                if (sp >= 0)
+                {
+                    var sizeType = oldParams[sp].ParameterType;
+                    il.Emit(OpCodes.Ldarg, sp + firstArg);
+                    var st = sizeType is ByReferenceType sbr ? sbr.ElementType : sizeType;
+                    if (sizeType is ByReferenceType)
+                        il.Emit(st.FullName switch { "System.Int64" or "System.UInt64" => OpCodes.Ldind_I8, "System.Int16" => OpCodes.Ldind_I2, "System.UInt16" => OpCodes.Ldind_U2,
+                            "System.IntPtr" or "System.UIntPtr" => OpCodes.Ldind_I, _ => OpCodes.Ldind_I4 });
+                    if (st.FullName is "System.Int64" or "System.UInt64" or "System.IntPtr" or "System.UIntPtr") il.Emit(OpCodes.Conv_I4);
+                    if ((ami?.Size ?? 0) > 0) { il.Emit(OpCodes.Ldc_I4, ami!.Size); il.Emit(OpCodes.Add); }
+                }
+                else il.Emit(OpCodes.Ldc_I4, ami!.Size);
+                il.Emit(OpCodes.Ldc_I4, Com.ElemIface);
+                il.Emit(OpCodes.Ldtoken, arrType);
+                il.Emit(OpCodes.Call, _takeElemArray);
+                il.Emit(OpCodes.Castclass, arrType);
+                il.Emit(OpCodes.Stind_Ref);
+            });
+        }
+
         /// <summary>The body of <paramref name="stub"/>: converts its parameters (old types) for
         /// <paramref name="target"/> (pointers), calls it, converts back.</summary>
-        private void EmitForward(MethodDefinition stub, int? targetArg, MethodReference target, IList<ParameterDefinition> oldParams, TypeReference oldRet, bool isStatic, int firstArg = 0)
+        private void EmitForward(MethodDefinition stub, int? targetArg, MethodReference target, IList<ParameterDefinition> oldParams, TypeReference oldRet, bool isStatic, int firstArg = 0, bool arrays = false)
         {
             stub.Body.InitLocals = true;
             var il = stub.Body.GetILProcessor();
@@ -1923,7 +1990,8 @@ public static partial class ComRewriter
             {
                 int argIndex = i + firstArg;
                 var t = oldParams[i].ParameterType;
-                if (t is ByReferenceType br && IsComInterface(br.ElementType)) Prepare(stub, il, new Arg(Kind.OutIface, _intPtr, br.ElementType), argIndex, t, pushes, cleanup, after);
+                if (arrays && IsComIfaceArray(t)) PrepareIfaceArray(stub, il, oldParams, i, firstArg, pushes, cleanup, after);
+                else if (t is ByReferenceType br && IsComInterface(br.ElementType)) Prepare(stub, il, new Arg(Kind.OutIface, _intPtr, br.ElementType), argIndex, t, pushes, cleanup, after);
                 else if (IsComInterface(t)) Prepare(stub, il, new Arg(Kind.Iface, _intPtr, t), argIndex, t, pushes, cleanup, after);
                 else pushes.Add(() => il.Emit(OpCodes.Ldarg, argIndex));
             }

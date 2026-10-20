@@ -126,6 +126,16 @@ public static unsafe partial class Com
         return a;
     }
 
+    /// <summary>A callee-allocated array (a P/Invoke's [Out] out T[] with its length in another parameter): its
+    /// <paramref name="n"/> elements as a managed array, then the elements let go of and the buffer freed, as
+    /// built-in interop does.</summary>
+    public static Array? TakeElemArray(IntPtr p, int n, int kind, RuntimeTypeHandle arrayType)
+    {
+        if (p == IntPtr.Zero) return null;
+        try { return ElemArrayFromNativeN(p, n, kind, arrayType, outOnly: false); }
+        finally { FreeElemArray(p, Math.Max(0, n), kind); }
+    }
+
     /// <summary>A CCW's [Out] array back into native code's buffer: the old elements let go of, the new written.</summary>
     public static void ElemArrayBackToNative(Array? a, IntPtr p, int n, int kind, RuntimeTypeHandle arrayType)
     {
