@@ -23,6 +23,8 @@
 // WPF_D3DIMAGE_SHARE=0: shim devices get a device of their own (none is shared with a compositor).
 //
 
+// Desktop only: the browser has one device, made from navigator.gpu, and no Direct3D shim.
+#if !WGPU_BROWSER
 using System;
 using System.Collections.Generic;
 using Microsoft.Wpf.Interop.WebGpu.Direct3D;
@@ -183,3 +185,4 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public static bool Manages(WgpuContext ctx) { lock (s_lock) return s_byCtx.ContainsKey(ctx); }
     }
 }
+#endif
