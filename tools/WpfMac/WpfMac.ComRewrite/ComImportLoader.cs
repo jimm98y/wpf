@@ -107,8 +107,8 @@ public sealed class ComImportLoader
             }
             else
             {
-                var (img, sym, result) = ComRewriter.RewriteToMemory(path, _searchDirs, locationOnly: (parts & Parts.Location) != 0 && (parts & Parts.Com) == 0,
-                    com: (parts & Parts.Com) != 0, pinvokes: (parts & Parts.PInvokes) != 0, windows: windows);
+                var (img, sym, result) = RewriteServicingTheMainThread(() => ComRewriter.RewriteToMemory(path, _searchDirs, locationOnly: (parts & Parts.Location) != 0 && (parts & Parts.Com) == 0,
+                    com: (parts & Parts.Com) != 0, pinvokes: (parts & Parts.PInvokes) != 0, windows: windows));
                 image = img; symbols = sym;
                 what = ((parts & Parts.Com) != 0 ? result.ToString() : (parts & Parts.Location) != 0 ? $"its location calls ({result.CallSites})" : "")
                     + ((parts & Parts.PInvokes) != 0 ? ((parts & (Parts.Com | Parts.Location)) != 0 ? "; " : "") + result.Win32Summary : "");
@@ -125,6 +125,25 @@ public sealed class ComImportLoader
             return asm;
         }
     }
+
+    /// <summary>
+    /// The rewrite, run on a worker thread while this one -- the main thread, which loads most of an app's
+    /// assemblies -- goes on doing the work other threads queue for it (WinForms publishes the drain:
+    /// WinFormsWebGpu.DrainMainWork). A rewrite takes up to a second; a splash screen shown from its own
+    /// thread waits on the main thread for its window and every frame, and stayed invisible through the
+    /// start-up while the assemblies it was covering for were rewritten.
+    /// </summary>
+    private static T RewriteServicingTheMainThread<T>(Func<T> rewrite)
+    {
+        if (AppContext.GetData("WinFormsWebGpu.DrainMainWork") is not Action drain || !IsMainThread()) return rewrite();
+        var task = Task.Run(rewrite);
+        while (!task.Wait(10)) { try { drain(); } catch { } }
+        return task.GetAwaiter().GetResult();
+    }
+
+    private static bool IsMainThread() => OperatingSystem.IsMacOS() && pthread_main_np() != 0;
+
+    [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();
 
     /// <summary>Where the rewritten image of <paramref name="path"/> is kept: named by everything it depends on.</summary>
     private string? CachePath(string name, string path, Parts parts, bool windows)

@@ -94,6 +94,26 @@ public static unsafe partial class Exports
     [Win32Export("CoInitializeEx")] public static int CoInitializeEx(void* reserved, uint model) => S_OK;
     [Win32Export("CoInitialize", "OleInitialize")] public static int CoInitialize(void* reserved) => S_OK;
     [Win32Export("CoUninitialize", "OleUninitialize")] public static void CoUninitialize() { }
+
+    // Keeping the multithreaded apartment alive without a thread in it (CsWinRT's module does, from its
+    // constructor to its finalizer): a cookie per call, the MTA's usage counted. Every thread here is in
+    // the MTA as far as anything asks, so there is nothing else to keep alive.
+    private static int s_mtaUsage;
+    [Win32Export("CoIncrementMTAUsage")]
+    public static int CoIncrementMTAUsage(nint* cookie)
+    {
+        if (cookie == null) return E_INVALIDARG;
+        *cookie = Interlocked.Increment(ref s_mtaUsage);
+        return S_OK;
+    }
+
+    [Win32Export("CoDecrementMTAUsage")]
+    public static int CoDecrementMTAUsage(nint cookie)
+    {
+        if (cookie == 0) return E_INVALIDARG;
+        Interlocked.Decrement(ref s_mtaUsage);
+        return S_OK;
+    }
     [Win32Export("CoInitializeSecurity")] public static int CoInitializeSecurity(void* a, int b, void* c, void* d, uint e, uint f, void* g, uint h, void* i) => S_OK;
 
     [Win32Export("CoCreateInstance")]

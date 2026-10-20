@@ -164,7 +164,14 @@ public sealed class Win32Catalog
     }
 
     /// <summary>Whether <paramref name="module"/> (normalized) is a Windows DLL.</summary>
-    public bool IsWindowsModule(string module) => _modules.Contains(module);
+    public bool IsWindowsModule(string module) => _modules.Contains(module) || IsApiSet(module);
+
+    /// <summary>An API set (api-ms-win-core-com-l1-1-0, ext-ms-win-...): a contract name Windows maps to the
+    /// DLL that implements it (combase, kernelbase ...), whatever version of the contract is named. The
+    /// metadata files the functions under their DLL, so an import through any API set is a Windows DLL's,
+    /// its functions found by name (Exports' any-module lookup).</summary>
+    public static bool IsApiSet(string module) =>
+        module.StartsWith("api-ms-win-", StringComparison.OrdinalIgnoreCase) || module.StartsWith("ext-ms-win-", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Whether <paramref name="module"/> exports <paramref name="name"/>; else whether some Windows
     /// DLL does (the metadata names a function's home DLL, an app may import it from one that forwards it).</summary>
