@@ -214,8 +214,20 @@ public static unsafe partial class Exports
 
     private static RECT ControlScreenRect(Forms.Control c)
     {
-        var r = c.Parent != null ? c.Parent.RectangleToScreen(c.Bounds) : c.Bounds;
-        return RectOf(r.X, r.Y, r.Width, r.Height);
+        // Without creating a window. RectangleToScreen reads the parent's Handle, and a parent that
+        // has none yet (WinForms makes them lazily; on Windows a child's window cannot exist without
+        // its parent's) was created by the question: DotNetBar's Bar, from inside its own
+        // RecalcSize, whose OnHandleCreated then skipped the dock tab strip for good (app's
+        // Explorer and Properties had no tabs). Ancestors without a window are walked by position.
+        var origin = c.Location;
+        Forms.Control? p = c.Parent;
+        while (p != null && !p.IsHandleCreated)
+        {
+            origin.Offset(p.Left + (p.Width - p.ClientSize.Width) / 2, p.Top + (p.Height - p.ClientSize.Height) / 2);
+            p = p.Parent;
+        }
+        if (p != null) origin = p.PointToScreen(origin);
+        return RectOf(origin.X, origin.Y, c.Width, c.Height);
     }
 
     [UnmanagedCallersOnly]
