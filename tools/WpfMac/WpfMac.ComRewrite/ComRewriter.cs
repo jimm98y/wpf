@@ -198,7 +198,9 @@ public static partial class ComRewriter
         private readonly MethodReference _toSafeArray, _fromSafeArray, _takeSafeArray, _destroySafeArray;
         private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider;
         private readonly MethodReference _structToNative, _newStruct, _structFromNative, _freeStruct, _structBack, _structArrayToNative, _structArrayFromNative,
-            _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem;
+            _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem,
+            _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack,
+            _sbOfNative, _sbBack, _nativeRoom;
         private readonly TypeReference _variant;
         private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
         private readonly MethodReference _this, _borrow, _borrowUnknown, _release, _take, _check, _unsupported, _createInstance, _keepAlive;
@@ -252,6 +254,18 @@ public static partial class ComRewriter
             _sbToNative = Imp(nameof(Com.StringBuilderToNative), typeof(System.Text.StringBuilder), typeof(bool), typeof(bool));
             _sbFromNative = Imp(nameof(Com.StringBuilderFromNative), typeof(System.Text.StringBuilder), typeof(IntPtr), typeof(bool));
             _freeCoTaskMem = Imp(nameof(Com.FreeCoTaskMem), typeof(IntPtr));
+            _elemToNative = Imp(nameof(Com.ElemArrayToNative), typeof(Array), typeof(int), typeof(RuntimeTypeHandle), typeof(bool));
+            _elemFromNative = Imp(nameof(Com.ElemArrayFromNative), typeof(IntPtr), typeof(Array), typeof(int), typeof(RuntimeTypeHandle));
+            _freeElem = Imp(nameof(Com.FreeElemArray), typeof(IntPtr), typeof(int), typeof(int));
+            _blitFromNativeN = Imp(nameof(Com.BlitArrayFromNative), typeof(IntPtr), typeof(int), typeof(RuntimeTypeHandle));
+            _blitToNative = Imp(nameof(Com.BlitArrayToNative), typeof(Array), typeof(IntPtr), typeof(int));
+            _elemFromNativeN = Imp(nameof(Com.ElemArrayFromNativeN), typeof(IntPtr), typeof(int), typeof(int), typeof(RuntimeTypeHandle), typeof(bool));
+            _elemBack = Imp(nameof(Com.ElemArrayBackToNative), typeof(Array), typeof(IntPtr), typeof(int), typeof(int), typeof(RuntimeTypeHandle));
+            _structFromNativeN = Imp(nameof(Com.StructArrayFromNativeN), typeof(IntPtr), typeof(int), typeof(RuntimeTypeHandle), typeof(bool));
+            _structArrayBack = Imp(nameof(Com.StructArrayBackToNative), typeof(Array), typeof(IntPtr), typeof(int));
+            _sbOfNative = Imp(nameof(Com.StringBuilderOfNative), typeof(IntPtr), typeof(bool));
+            _sbBack = Imp(nameof(Com.StringBuilderBackToNative), typeof(System.Text.StringBuilder), typeof(IntPtr), typeof(bool), typeof(int));
+            _nativeRoom = Imp(nameof(Com.NativeStringRoom), typeof(IntPtr), typeof(bool));
             _variant = m.ImportReference(typeof(ComVariant));
             _freeBstr = Imp(nameof(Com.FreeBstr), typeof(IntPtr));
             _takeBstr = Imp(nameof(Com.TakeBstr), typeof(IntPtr));
@@ -357,6 +371,8 @@ public static partial class ComRewriter
         {
             if (t == null) return false;
             if (t is ByReferenceType br) return IsCom(br.ElementType);
+            // Resolve() of an array (or pointer, or generic instance) gives its element's definition: not itself COM
+            if (t is ArrayType or PointerType or GenericInstanceType or PinnedType or RequiredModifierType or OptionalModifierType) return false;
             TypeDefinition? d = t.Module == _m || t.Scope == _m ? Safe(t) : null;
             if (d != null && _comTypes.Contains(d)) return true;
             return t is not GenericParameter && t.Namespace == "System.Runtime.InteropServices.ComTypes" && (d ?? Safe(t)) is { } b && IsBclCom(b);
@@ -380,7 +396,7 @@ public static partial class ComRewriter
         // ---- marshalling ------------------------------------------------------------------------
 
         private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant, SafeArray, RefSafeArray,
-            LPStructBlit, FormattedClass, RefStruct, Custom, RefCustom, StringBuilder, StructArray }
+            LPStructBlit, FormattedClass, RefStruct, Custom, RefCustom, StringBuilder, StructArray, ElemArray }
 
         // Arg.Vt's bits for the formatted kinds: copy back after the call (an [Out], or a blittable class,
         // which built-in interop pins), out only (nothing copied in), ANSI (a StringBuilder)
@@ -392,7 +408,27 @@ public static partial class ComRewriter
             or Kind.RefCustom or Kind.StringBuilder or Kind.StructArray;
 
         /// <summary>Kinds a CCW stub cannot take from native code (it does not know their extent or owner).</summary>
-        private static bool BadReverseParam(Kind k) => k is Kind.BlitArray or Kind.Custom or Kind.RefCustom or Kind.StringBuilder or Kind.StructArray;
+        private static bool BadReverseParam(Kind k) => k is Kind.Custom or Kind.RefCustom;
+
+        /// <summary>Why a CCW stub cannot take argument <paramref name="i"/> of <paramref name="md"/> (null: it can): an
+        /// array needs its length (SizeParamIndex/SizeConst), an [Out]-only StringBuilder its buffer's size (the next
+        /// parameter, by value).</summary>
+        private static string? ReverseSizeWhy(Arg a, MethodDefinition md, int i)
+        {
+            if (a.Kind is Kind.BlitArray or Kind.StructArray or Kind.ElemArray)
+            {
+                if (a.SizeParam < 0 && a.SizeConst < 0) return "an array of unknown length";
+                if (a.SizeParam >= md.Parameters.Count || (a.SizeParam >= 0 && !IsCount(md.Parameters[a.SizeParam].ParameterType))) return "an array whose length parameter is not a by-value integer";
+            }
+            if (a.Kind == Kind.StringBuilder && (a.Vt & OutOnly) != 0 && SizeOfBuffer(md, i) < 0) return "an [Out] StringBuilder whose buffer's size is unknown";
+            return null;
+        }
+
+        private static bool IsCount(TypeReference t) => t.FullName is "System.Int32" or "System.UInt32" or "System.Int16" or "System.UInt16" or "System.Int64" or "System.UInt64" or "System.IntPtr" or "System.UIntPtr";
+
+        /// <summary>A StringBuilder's buffer size in characters: the next parameter when it is a by-value integer
+        /// (the cch convention), else -1.</summary>
+        private static int SizeOfBuffer(MethodDefinition md, int i) => i + 1 < md.Parameters.Count && IsCount(md.Parameters[i + 1].ParameterType) ? i + 1 : -1;
 
         /// <summary>The parameter's direction into a formatted kind's bits ([Out] copies back; [Out] alone: out only).</summary>
         private static Arg WithDirection(Arg a, ParameterDefinition p)
@@ -400,7 +436,8 @@ public static partial class ComRewriter
             bool outAttr = p.IsOut, inAttr = p.IsIn;
             return a.Kind switch
             {
-                Kind.FormattedClass or Kind.StructArray => outAttr ? a with { Vt = a.Vt | CopyBack } : a,
+                Kind.FormattedClass => outAttr ? a with { Vt = a.Vt | CopyBack } : a,
+                Kind.StructArray or Kind.ElemArray or Kind.BlitArray => a with { Vt = a.Vt | (outAttr ? CopyBack : 0) | (outAttr && !inAttr ? OutOnly : 0) },
                 Kind.StringBuilder => outAttr && !inAttr ? a with { Vt = a.Vt | OutOnly } : a,
                 Kind.Custom => outAttr ? a with { Vt = a.Vt | CopyBack } : a,
                 Kind.RefStruct => outAttr && !inAttr ? a with { Vt = a.Vt | OutOnly } : a,
@@ -409,7 +446,9 @@ public static partial class ComRewriter
         }
 
         /// <param name="Vt">a SAFEARRAY's element VARTYPE (0: the managed element type's default, at run time)</param>
-        private sealed record Arg(Kind Kind, TypeReference Native, TypeReference? Iface = null, int Vt = 0, string? Cookie = null);
+        /// <param name="Elem">an ElemArray's element kind (Com.ElemLPWStr ...)</param>
+        /// <param name="SizeParam">a C array's SizeParamIndex (-1: none), <paramref name="SizeConst"/> its SizeConst (-1: none)</param>
+        private sealed record Arg(Kind Kind, TypeReference Native, TypeReference? Iface = null, int Vt = 0, string? Cookie = null, int Elem = 0, int SizeParam = -1, int SizeConst = -1);
 
         private static readonly HashSet<string> s_prim = new()
         {
@@ -541,14 +580,30 @@ public static partial class ComRewriter
             }
             // an array marshalled as a C array (not COM's default SAFEARRAY) of blittable elements: pinned (a
             // char is UTF-16 in a COM method)
+            var ami = mi as ArrayMarshalInfo;
+            int sizeParam = ami?.SizeParameterIndex ?? -1, sizeConst = ami?.Size ?? -1;
             if (type is ArrayType at && at.IsVector && IsBlittable(at.ElementType) && (at.ElementType.FullName != "System.Char" || comDefaults)
                 && (nt is NativeType.Array || (nt == NativeType.None && !comDefaults)))
-                return new Arg(Kind.BlitArray, _intPtr);
+                return new Arg(Kind.BlitArray, _intPtr, null, 0, null, 0, sizeParam, sizeConst);
+            // a C array of strings, interfaces or VARIANTs
+            if (type is ArrayType eat && eat.IsVector && (nt is NativeType.Array || (nt == NativeType.None && !comDefaults)))
+            {
+                var sub = ami?.ElementType ?? NativeType.None;
+                if (sub == NativeType.Max) sub = NativeType.None;            // ArraySubType not given
+                var et = eat.ElementType;
+                int elem = et.FullName == "System.String"
+                        ? sub switch { NativeType.LPWStr or NativeType.LPTStr => Com.ElemLPWStr, NativeType.LPStr => Com.ElemLPStr, NativeType.BStr => Com.ElemBStr, NativeType.None => comDefaults ? Com.ElemBStr : Com.ElemLPStr, _ => 0 }
+                    : et.FullName == "System.Object"
+                        ? sub switch { NativeType.IUnknown or NativeType.IntF => Com.ElemIface, NativeType.IDispatch => Com.ElemDispatch, NativeType.Struct or NativeType.None => Com.ElemVariant, _ => 0 }
+                    : IsComInterface(et) ? Com.ElemIface : -1;
+                if (elem == 0) { why = $"array {type.Name} of {sub}"; return null; }
+                if (elem > 0) return new Arg(Kind.ElemArray, _intPtr, et, 0, null, elem, sizeParam, sizeConst);
+            }
             // a C array of formatted structs or classes: one native buffer of their layouts
             if (type is ArrayType sat && sat.IsVector && (nt is NativeType.Array || (nt == NativeType.None && !comDefaults)))
             {
                 if (!IsFormatted(sat.ElementType, out string? fw)) { why = $"array {type.Name}: {fw}"; return null; }
-                return new Arg(Kind.StructArray, _intPtr, sat.ElementType, Safe(sat.ElementType) is { IsValueType: false } ec && IsBlittableClass(ec) ? CopyBack : 0);
+                return new Arg(Kind.StructArray, _intPtr, sat.ElementType, Safe(sat.ElementType) is { IsValueType: false } ec && IsBlittableClass(ec) ? CopyBack : 0, null, 0, sizeParam, sizeConst);
             }
             if (IsSafeArray(type, nt, comDefaults))
                 return SafeArrayVt(type, mi, out why) is int vt ? new Arg(Kind.SafeArray, _intPtr, null, vt) : null;
@@ -819,6 +874,7 @@ public static partial class ComRewriter
             {
                 var a = Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? w);
                 if (a == null || BadReverseParam(a.Kind)) return $"parameter {p.Name}: {w ?? ReverseWhyOf(a!.Kind)}";
+                if (ReverseSizeWhy(WithDirection(a, p), md, md.Parameters.IndexOf(p)) is { } sw) return $"parameter {p.Name}: {sw}";
             }
             if (md.ReturnType.FullName == "System.Void") return null;
             var ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w2);
@@ -1151,6 +1207,21 @@ public static partial class ComRewriter
                     pushes.Add(() => il.Emit(OpCodes.Ldloc, tmp));
                     after.Add(() => { il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Ldloc, tmp); il.Emit(ansi ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _sbFromNative); });
                     cleanup.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Call, _freeCoTaskMem); });
+                    break;
+                }
+                case Kind.ElemArray:
+                {
+                    var tmp = Local(body, _intPtr);
+                    il.Emit(OpCodes.Ldarg, argIndex);
+                    il.Emit(OpCodes.Ldc_I4, a.Elem);
+                    il.Emit(OpCodes.Ldtoken, a.Iface!);
+                    il.Emit((a.Vt & OutOnly) != 0 ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+                    il.Emit(OpCodes.Call, _elemToNative);
+                    il.Emit(OpCodes.Stloc, tmp);
+                    pushes.Add(() => il.Emit(OpCodes.Ldloc, tmp));
+                    if ((a.Vt & CopyBack) != 0)
+                        after.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Ldc_I4, a.Elem); il.Emit(OpCodes.Ldtoken, a.Iface!); il.Emit(OpCodes.Call, _elemFromNative); });
+                    cleanup.Add(() => { il.Emit(OpCodes.Ldloc, tmp); il.Emit(OpCodes.Ldarg, argIndex); il.Emit(OpCodes.Call, _lengthOf); il.Emit(OpCodes.Ldc_I4, a.Elem); il.Emit(OpCodes.Call, _freeElem); });
                     break;
                 }
                 case Kind.StructArray:

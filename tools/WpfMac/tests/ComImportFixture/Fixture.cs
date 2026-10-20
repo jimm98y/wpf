@@ -297,6 +297,37 @@ namespace ComImportFixture
         public int Older(Person p) { p.Age++; p.Name += " Sr."; return p.Name.Length; }
     }
 
+    /// <summary>C arrays (LPArray) of strings, VARIANTs and interfaces.</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface ICArrays
+    {
+        [PreserveSig] int Join([MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 1)] string[] s, int n);    // slot 3
+        void Fill([Out, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.BStr, SizeParamIndex = 1)] string[] s, int n);             // slot 4
+        [PreserveSig] int Values([MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] object[] v, int n);                                       // slot 5
+        [PreserveSig] int Others([MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] IOther[] o, int n);                                       // slot 6
+        string UseSink(IArrayCcwSink sink);                                                                                                       // slot 7
+    }
+
+    /// <summary>Arrays given to a managed object by native code, their length in another parameter.</summary>
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A10"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IArrayCcwSink
+    {
+        [PreserveSig] int Sum([MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] int[] a, int n);                                            // slot 3
+        void Squares([Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] int[] a, int n);                                                // slot 4
+        void Names([Out, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr, SizeParamIndex = 1)] string[] s, int n);         // slot 5
+        void Name([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder sb, int cch);                                                 // slot 6
+        [PreserveSig] int Tags([In, Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] Tag[] t, int n);                                   // slot 7
+    }
+
+    internal sealed class ManagedArrayCcwSink : IArrayCcwSink
+    {
+        public int Sum(int[] a, int n) { int s = 0; foreach (int x in a) s += x; return s; }
+        public void Squares(int[] a, int n) { for (int i = 0; i < a.Length; i++) a[i] = i * i; }
+        public void Names(string[] s, int n) { for (int i = 0; i < s.Length; i++) s[i] = "s" + i; }
+        public void Name(System.Text.StringBuilder sb, int cch) => sb.Append("managed-name");
+        public int Tags(Tag[] t, int n) { int s = 0; for (int i = 0; i < t.Length; i++) { s += t[i].N; t[i].N *= 2; } return s; }
+    }
+
     /// <summary>A managed IStream over bytes, handed to native code.</summary>
     internal sealed class ManagedStream : IStream
     {
@@ -431,6 +462,17 @@ namespace ComImportFixture
             return string.Join("|", parts);
         }
         public static string FormattedSink(IntPtr p) => Fmt(p).UseSink(new ManagedFormattedSink());
+
+        // ---- C arrays ----
+        private static ICArrays CArr(IntPtr p) => (ICArrays)Marshal.GetObjectForIUnknown(p);
+        public static string CArrays(IntPtr p)
+        {
+            var c = CArr(p);
+            var filled = new string[2];
+            c.Fill(filled, 2);
+            return $"{c.Join(new[] { "ab", "cde" }, 2)}|{string.Join(",", filled)}|{c.Values(new object[] { 1, 2.5, "x" }, 3)}|{c.Others(new IOther[] { new ManagedOther(), new ManagedOther() }, 2)}";
+        }
+        public static string CArraysSink(IntPtr p) => CArr(p).UseSink(new ManagedArrayCcwSink());
 
         // ---- events ----
         /// <summary>A managed event source seen as a COM object (its CCW, wrapped back): subscribed through the

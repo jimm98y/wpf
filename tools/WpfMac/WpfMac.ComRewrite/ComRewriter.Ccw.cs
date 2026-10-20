@@ -97,7 +97,9 @@ public static partial class ComRewriter
             {
                 var a = Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? w);
                 if (a == null || BadReverseParam(a.Kind)) { why = $"parameter {p.Name}: {w ?? ReverseWhyOf(a!.Kind)}"; break; }
-                args.Add(WithDirection(a, p));
+                a = WithDirection(a, p);
+                if (ReverseSizeWhy(a, md, args.Count) is { } sw) { why = $"parameter {p.Name}: {sw}"; break; }
+                args.Add(a);
             }
             Arg? ret = null;
             bool isVoid = md.ReturnType.FullName == "System.Void";
@@ -160,6 +162,53 @@ public static partial class ComRewriter
                     case Kind.LPStructBlit:
                         loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldobj, a.Iface!); });
                         break;
+                    case Kind.BlitArray: case Kind.StructArray: case Kind.ElemArray:
+                    {
+                        // the length: SizeParamIndex's argument (+ SizeConst), or SizeConst
+                        var t = prm.ParameterType;
+                        var len = Local(stub, _int32);
+                        if (a.SizeParam >= 0)
+                        {
+                            il.Emit(OpCodes.Ldarg, a.SizeParam + 1); il.Emit(OpCodes.Conv_I4);
+                            if (a.SizeConst > 0) { il.Emit(OpCodes.Ldc_I4, a.SizeConst); il.Emit(OpCodes.Add); }
+                        }
+                        else il.Emit(OpCodes.Ldc_I4, a.SizeConst);
+                        il.Emit(OpCodes.Stloc, len);
+                        var l = Local(stub, t);
+                        il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldloc, len);
+                        if (a.Kind == Kind.BlitArray) { il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _blitFromNativeN!); }
+                        else if (a.Kind == Kind.StructArray) { il.Emit(OpCodes.Ldtoken, t); il.Emit((a.Vt & OutOnly) != 0 ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _structFromNativeN!); }
+                        else { il.Emit(OpCodes.Ldc_I4, a.Elem); il.Emit(OpCodes.Ldtoken, t); il.Emit((a.Vt & OutOnly) != 0 ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _elemFromNativeN!); }
+                        il.Emit(OpCodes.Castclass, t);
+                        il.Emit(OpCodes.Stloc, l);
+                        loads.Add(() => il.Emit(OpCodes.Ldloc, l));
+                        if ((a.Vt & CopyBack) != 0)
+                            after.Add(() =>
+                            {
+                                il.Emit(OpCodes.Ldloc, l); il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldloc, len);
+                                if (a.Kind == Kind.BlitArray) il.Emit(OpCodes.Call, _blitToNative!);
+                                else if (a.Kind == Kind.StructArray) il.Emit(OpCodes.Call, _structArrayBack!);
+                                else { il.Emit(OpCodes.Ldc_I4, a.Elem); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _elemBack!); }
+                            });
+                        break;
+                    }
+                    case Kind.StringBuilder:
+                    {
+                        // the room: the next parameter (the cch convention), else what the buffer holds now
+                        bool ansi = (a.Vt & Ansi) != 0;
+                        int sizeArg = SizeOfBuffer(md, i);
+                        var room = Local(stub, _int32);
+                        if (sizeArg >= 0) { il.Emit(OpCodes.Ldarg, sizeArg + 1); il.Emit(OpCodes.Conv_I4); }
+                        else { il.Emit(OpCodes.Ldarg, n); il.Emit(ansi ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _nativeRoom!); }
+                        il.Emit(OpCodes.Stloc, room);
+                        var l = Local(stub, _m.ImportReference(typeof(System.Text.StringBuilder)));
+                        if ((a.Vt & OutOnly) != 0) { il.Emit(OpCodes.Ldloc, room); il.Emit(OpCodes.Newobj, _m.ImportReference(typeof(System.Text.StringBuilder).GetConstructor(new[] { typeof(int) })!)); }
+                        else { il.Emit(OpCodes.Ldarg, n); il.Emit(ansi ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Call, _sbOfNative!); }
+                        il.Emit(OpCodes.Stloc, l);
+                        loads.Add(() => il.Emit(OpCodes.Ldloc, l));
+                        after.Add(() => { il.Emit(OpCodes.Ldloc, l); il.Emit(OpCodes.Ldarg, n); il.Emit(ansi ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, room); il.Emit(OpCodes.Call, _sbBack!); });
+                        break;
+                    }
                     case Kind.FormattedClass:
                     {
                         var t = a.Iface!;
