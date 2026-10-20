@@ -255,6 +255,15 @@ public static unsafe partial class Com
     [DllImport("ole32.dll")]
     private static extern int CoCreateInstance(in Guid clsid, IntPtr outer, uint context, in Guid iid, out IntPtr p);
 
+    /// <summary>Activator.CreateInstance(type), rewritten: a COM class the rewriter rewrote (its nested ComCoClass
+    /// marks it) is co-created by its CLSID, as built-in interop creates a ComImport class; anything else is
+    /// Activator's (System.Management's MTAHelper.CreateInMTA makes WbemDefPath so).</summary>
+    public static object? ActivatorCreateInstance(Type type) => IsRewrittenCoClass(type) ? CreateInstance(type.GUID) : Activator.CreateInstance(type);
+
+    public static object? ActivatorCreateInstance(Type type, bool nonPublic) => IsRewrittenCoClass(type) ? CreateInstance(type.GUID) : Activator.CreateInstance(type, nonPublic);
+
+    private static bool IsRewrittenCoClass(Type type) => type.IsClass && type.GetNestedType("ComCoClass", BindingFlags.Public | BindingFlags.NonPublic) != null;
+
 }
 
 /// <summary>A native COM object, one per identity (its IUnknown): what a rewritten assembly holds where

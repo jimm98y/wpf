@@ -414,6 +414,10 @@ namespace ComImportFixture
         public void Clone(out IEnumFORMATETC newEnum) => newEnum = new ManagedFormats { _at = _at };
     }
 
+    /// <summary>A COM class (Windows' StdComponentCategoriesMgr, registered on every Windows), as tlbimp declares one.</summary>
+    [ComImport, Guid("0002E005-0000-0000-C000-000000000046")]
+    internal class ComponentCategoriesClass { }
+
     /// <summary>A managed IStream over bytes, handed to native code.</summary>
     internal sealed class ManagedStream : IStream
     {
@@ -559,6 +563,17 @@ namespace ComImportFixture
             return $"{c.Join(new[] { "ab", "cde" }, 2)}|{string.Join(",", filled)}|{c.Values(new object[] { 1, 2.5, "x" }, 3)}|{c.Others(new IOther[] { new ManagedOther(), new ManagedOther() }, 2)}";
         }
         public static string CArraysSink(IntPtr p) => CArr(p).UseSink(new ManagedArrayCcwSink());
+
+        // ---- COM classes ----
+        /// <summary>A COM class made with new, and with Activator.CreateInstance(Type) as System.Management's MTAHelper
+        /// makes WbemDefPath: both are COM objects.</summary>
+        public static string CoClasses()
+        {
+            object byNew = new ComponentCategoriesClass();
+            object byActivator = Activator.CreateInstance(typeof(ComponentCategoriesClass))!;
+            object plain = Activator.CreateInstance(typeof(System.Text.StringBuilder))!;
+            return $"{Marshal.IsComObject(byNew)}|{Marshal.IsComObject(byActivator)}|{plain.GetType().Name}";
+        }
 
         // ---- shapes ----
         private static IShapes Shapes(IntPtr p) => (IShapes)Marshal.GetObjectForIUnknown(p);

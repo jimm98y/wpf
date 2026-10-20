@@ -1402,6 +1402,13 @@ public sealed unsafe class ComRewriterTests
         => Assert.Equal(1000 + 21, WithCalc(21, p => (int)Run("ThroughMarshalAsDelegate", p)!));
 
     [Fact]
+    public void ACoClass_MadeByNewOrByActivator_IsACOMObject()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a registered COM class");
+        Assert.Equal("True|True|StringBuilder", (string)Run("CoClasses")!);
+    }
+
+    [Fact]
     public void ADelegateCall_ThroughAVtableSlot_AsDXEngineMakesIt()
         => Assert.Equal(55, WithCalc(55, p => (int)Run("ThroughDelegate", p)!));
 
