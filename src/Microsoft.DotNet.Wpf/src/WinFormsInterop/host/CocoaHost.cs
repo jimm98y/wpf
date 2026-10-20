@@ -451,6 +451,10 @@ internal sealed class CocoaHost : IWinFormsHost
                 _imageView = nv;
                 _window = nw;
                 SendVoidPtr(nw, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                // As the main thread's forms do: a process the user just started takes the foreground
+                // with its first window. A splash screen shown from its own thread came up before any
+                // main-thread form, behind the app it was launched from, and was never seen.
+                Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
                 if (UseWebGpu)
                 {
                     try
@@ -569,6 +573,12 @@ internal sealed class CocoaHost : IWinFormsHost
             Rectangle? caret = GetCaretRect(ox, oy);
             _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _form.Width, _form.Height);
             if (!_lastPresentOk && _offMain) _lastPresentOk = PresentAsLayerContents(scenes, caret);
+            else if (_lastPresentOk && _surfaceLayerHidden)
+            {
+                // a drawable again: the surface shows the frames
+                IntPtr view = _imageView;
+                OnMain(() => { if (_imageView != IntPtr.Zero && !_closed) { SetSurfaceLayerHidden(Send(view, Sel("layer")), false); Send(Cls("CATransaction"), Sel("flush")); } });
+            }
             if (popups != null) PresentPopups(popups, ox, oy);
             _lastVer = ver; _lastCaretOn = caretOn;
             if (Environment.GetEnvironmentVariable("WF_TRACE") != null) Console.Error.WriteLine("[present]");
@@ -655,6 +665,53 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private byte[] _scratch;
     private bool _savedGpu;
+    private int _tracedContents, _savedContents;
+    private static readonly bool s_traceSurface = Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1";
+
+    /// <summary>On the main thread: a frame made off it becomes the window's layer contents.</summary>
+    private void ApplyLayerContents(IntPtr cg, long queuedAt)
+    {
+        IntPtr view = _imageView;
+        if (view != IntPtr.Zero && !_closed)
+        {
+            IntPtr layer = Send(view, Sel("layer"));
+            SendVoidPtr(layer, Sel("setContents:"), cg);
+            // The surface's Metal layer is a sublayer, composited ABOVE these contents, and it keeps
+            // showing the last frame it was given: the splash's fade-in drew nothing that could be seen.
+            // Out of the way while frames come this way; back for the next drawable (SurfaceLayerHidden).
+            SetSurfaceLayerHidden(layer, true);
+            Send(Cls("CATransaction"), Sel("flush"));
+            if (s_traceSurface && _tracedContents++ < 5)
+            {
+                IntPtr subs = Send(layer, Sel("sublayers"));
+                Console.WriteLine($"surface: layer contents set for '{_form.Text}' after {Environment.TickCount64 - queuedAt} ms on {Marshal.PtrToStringUTF8(object_getClassName(layer))} " +
+                                  $"sublayers={(subs == IntPtr.Zero ? 0 : (nint)Send(subs, Sel("count")))} windowVisible={(nint)Send(_window, Sel("isVisible")) != 0} alpha={SendDouble(_window, Sel("alphaValue"))} " +
+                                  $"frame={F(SendRectRet(_window, Sel("frame")))} layerFrame={F(SendRectRet(layer, Sel("frame")))} hidden={(nint)Send(layer, Sel("isHidden")) != 0} " +
+                                  $"level={(nint)Send(_window, Sel("level"))} occlusion={(nint)Send(_window, Sel("occlusionState"))} opaque={(nint)Send(_window, Sel("isOpaque")) != 0} number={(nint)Send(_window, Sel("windowNumber"))}");
+                static string F(NSRect r) => $"{r.x},{r.y} {r.w}x{r.h}";
+            }
+        }
+        CGImageRelease(cg);
+    }
+
+    [DllImport(ObjC)] private static extern IntPtr object_getClassName(IntPtr obj);
+
+    private volatile bool _surfaceLayerHidden;
+
+    private void SetSurfaceLayerHidden(IntPtr layer, bool hidden)
+    {
+        if (layer == IntPtr.Zero || _surfaceLayerHidden == hidden) return;
+        IntPtr subs = Send(layer, Sel("sublayers"));
+        nint n = subs == IntPtr.Zero ? 0 : (nint)Send(subs, Sel("count"));
+        for (nint i = 0; i < n; i++)
+        {
+            // the view's sublayers are the surface's (wgpu's layer, whatever its class)
+            IntPtr sub = Send(subs, Sel("objectAtIndex:"), (IntPtr)i);
+            SendVoidBool(sub, Sel("setHidden:"), hidden);
+            if (s_traceSurface) Console.WriteLine($"surface: sublayer {Marshal.PtrToStringUTF8(object_getClassName(sub))} hidden={hidden}");
+        }
+        _surfaceLayerHidden = hidden;
+    }
 
     // The off-main-thread present: composite here (System.Drawing and CoreGraphics bitmaps are thread
     // safe), then set the layer's contents on the main thread. Only when the content changed: the
@@ -663,7 +720,14 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         byte[] rgba = _wgpu.RenderScenesToRgba(scenes, caret);
         SetLayerContents(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight);
-        if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1") Console.WriteLine($"surface: no drawable for '{_form.Text}'; presented as layer contents");
+        if (s_traceSurface)
+        {
+            int opaque = 0, maxA = 0;
+            for (int i = 3; i < rgba.Length; i += 4) { if (rgba[i] != 0) opaque++; if (rgba[i] > maxA) maxA = rgba[i]; }
+            Console.WriteLine($"surface: no drawable for '{_form.Text}'; presented as layer contents {_wgpu.DeviceWidth}x{_wgpu.DeviceHeight} scenes={scenes.Count} nonTransparent={opaque} maxAlpha={maxA}");
+            if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE_SAVE") is { Length: > 0 } dir && _savedContents++ < 8)
+                SaveRgbaPng(rgba, _wgpu.DeviceWidth, _wgpu.DeviceHeight, System.IO.Path.Combine(dir, $"contents-{_form.Handle.ToInt64():x}-{_savedContents}.png"));
+        }
         return true;
     }
 
@@ -679,16 +743,8 @@ internal sealed class CocoaHost : IWinFormsHost
             cg = CGBitmapContextCreateImage(ctx);    // copies the pixels
             CGContextRelease(ctx); CGColorSpaceRelease(cs);
         }
-        OnMain(() =>
-        {
-            IntPtr view = _imageView;
-            if (view != IntPtr.Zero && !_closed)
-            {
-                SendVoidPtr(Send(view, Sel("layer")), Sel("setContents:"), cg);
-                Send(Cls("CATransaction"), Sel("flush"));
-            }
-            CGImageRelease(cg);
-        });
+        long queuedAt = Environment.TickCount64;
+        OnMain(() => ApplyLayerContents(cg, queuedAt));
     }
 
     private void PresentOffMain()
@@ -715,16 +771,8 @@ internal sealed class CocoaHost : IWinFormsHost
             finally { composite.UnlockBits(bd); }
         }
         _lastPresentOk = true;
-        OnMain(() =>
-        {
-            IntPtr view = _imageView;
-            if (view != IntPtr.Zero && !_closed)
-            {
-                SendVoidPtr(Send(view, Sel("layer")), Sel("setContents:"), cg);
-                Send(Cls("CATransaction"), Sel("flush"));
-            }
-            CGImageRelease(cg);
-        });
+        long queuedAt = Environment.TickCount64;
+        OnMain(() => ApplyLayerContents(cg, queuedAt));
     }
 
     // ---- the window frame and the form's bounds -----------------------------------------
