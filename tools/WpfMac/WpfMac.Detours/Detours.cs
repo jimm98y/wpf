@@ -10,6 +10,10 @@
 //                                   is the same thing on macOS, shared by every process that opens it.
 //   GetFolderPath(Common*)          the machine-wide folders (ProgramData and friends) are /usr/share
 //                                   or empty on macOS, and not writable. They map into wpfmac's state.
+//   HttpListener prefixes           matched case-insensitively, as HTTP.sys matches them. Off Windows the
+//                                   managed listener compared paths ordinally: app registers
+//                                   /fwxserverws/Ws_Anon/ and its clients ask for /fwxserverws/ws_anon/,
+//                                   which found no listener (404), so no client could connect.
 //   SystemColors                    off Windows System.Drawing.Primitives answers a palette compiled
 //                                   into it, Windows XP's (a beige #ECE9D8 Control). On Windows it asks
 //                                   GetSysColor, and so does this, of the stack's user32.
@@ -40,6 +44,7 @@ public static class Detours
         Try(installed, "named memory-mapped files", InstallMemoryMappedFiles);
         Try(installed, "machine-wide folders", InstallSpecialFolders);
         Try(installed, "system colours", InstallSystemColors);
+        Try(installed, "HttpListener prefix case", InstallHttpListenerCase);
         return installed.ToArray();
     }
 
@@ -81,6 +86,46 @@ public static class Detours
         Add(typeof(Thread).GetMethod(nameof(Thread.GetApartmentState), Type.EmptyTypes)!,
             (Func<Thread, ApartmentState> orig, Thread self) =>
                 s_apartments.TryGetValue(self, out var box) ? box.Value : orig(self));
+    }
+
+    // ---- HttpListener prefixes ------------------------------------------------------------------------
+    //
+    // Both sides of the match in lower case: the prefixes as they are registered, and a request's path
+    // while the listener looks for its prefix (HttpEndPointListener.BindContext) -- put back before the
+    // application sees the request, which keeps its path as sent, as HTTP.sys gives it.
+
+    /// <summary>A URL prefix with its path in lower case: scheme, host and port as given.</summary>
+    private static string LowerPath(string prefix)
+    {
+        int scheme = prefix.IndexOf("://", StringComparison.Ordinal);
+        int path = scheme < 0 ? -1 : prefix.IndexOf('/', scheme + 3);
+        return path < 0 ? prefix : prefix[..path] + prefix[path..].ToLowerInvariant();
+    }
+
+    private static void InstallHttpListenerCase()
+    {
+        Assembly asm = typeof(System.Net.HttpListener).Assembly;
+        Type prefixes = typeof(System.Net.HttpListenerPrefixCollection);
+        Add(prefixes.GetMethod(nameof(System.Net.HttpListenerPrefixCollection.Add), new[] { typeof(string) })!,
+            (Action<System.Net.HttpListenerPrefixCollection, string> orig, System.Net.HttpListenerPrefixCollection self, string prefix) => orig(self, LowerPath(prefix)));
+        Add(prefixes.GetMethod(nameof(System.Net.HttpListenerPrefixCollection.Remove), new[] { typeof(string) })!,
+            (Func<System.Net.HttpListenerPrefixCollection, string, bool> orig, System.Net.HttpListenerPrefixCollection self, string prefix) => orig(self, LowerPath(prefix)));
+        Add(prefixes.GetMethod(nameof(System.Net.HttpListenerPrefixCollection.Contains), new[] { typeof(string) })!,
+            (Func<System.Net.HttpListenerPrefixCollection, string, bool> orig, System.Net.HttpListenerPrefixCollection self, string prefix) => orig(self, LowerPath(prefix)));
+
+        FieldInfo uriField = typeof(System.Net.HttpListenerRequest).GetField("_requestUri", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new MissingFieldException(nameof(System.Net.HttpListenerRequest), "_requestUri");
+        Type endPoint = asm.GetType("System.Net.HttpEndPointListener", throwOnError: true)!;
+        Add(endPoint.GetMethod("BindContext", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!,
+            (Func<object, System.Net.HttpListenerContext, bool> orig, object self, System.Net.HttpListenerContext context) =>
+            {
+                System.Net.HttpListenerRequest request = context.Request;
+                if (uriField.GetValue(request) is not Uri uri) return orig(self, context);
+                var lowered = new UriBuilder(uri) { Path = uri.AbsolutePath.ToLowerInvariant() }.Uri;
+                uriField.SetValue(request, lowered);
+                try { return orig(self, context); }
+                finally { uriField.SetValue(request, uri); }
+            });
     }
 
     // ---- system colours ------------------------------------------------------------------------------
