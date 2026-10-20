@@ -87,7 +87,6 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          dialog;
        - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a GraphWorX display playing a
          video through Telerik's media player. SharpMediaFoundationInterop is a different library.
-       - Telerik.Windows.Controls.RibbonView: smoke runs (the ribbon), and a ribbon drag and drop;
        - IcoServices (Workbench): its Active Directory picker.
      - Progress on them (2026-10-20, 02:59-03:12, after a fresh IcoFwxServer restart; no settings change
        in any run):
@@ -97,6 +96,12 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
        - Workbench smoke, the same: Telerik.Windows.Controls and RibbonView (the ribbon) rewritten, clean.
        - 3D frame 0 px against 15c92fc6e with the current rewriter.
        - The smoke parts of their gates have passed; the specific exercises have not.
+       - **Telerik.Windows.Controls.RibbonView: gated and released (2026-10-20).** Its COM types are the
+         copied WPF Shell-integration ones: ITaskbarList*, ICustomDestinationList, IShellLinkW,
+         IObjectCollection, IPropertyStore, and so on. No method uses them except a SHAddToRecentDocs
+         wrapper that nothing calls (an IL scan of every body for their members, and for calls whose
+         signatures carry them). So its gate is the load and the ribbon: Workbench smoke with it
+         rewritten, the ribbon drawn, no exceptions.
        - **Microsoft.WindowsAPICodePack and .Shell: gated and released (2026-10-20).** Besides the
          smoke, a test app on GraphWorX's own Code Pack DLLs, run stock and under the port with both
          rewritten, gave identical output:

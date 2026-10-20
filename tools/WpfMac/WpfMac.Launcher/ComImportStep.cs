@@ -42,7 +42,6 @@ internal static class ComImportStep
         ["Telerik.Windows.Controls"] = "GraphWorX and Workbench smoke runs with it rewritten, and a Telerik dialog",
         ["MediaFoundation"] = "a GraphWorX display playing a video through Telerik's media player (MF.Net, not SharpMediaFoundationInterop)",
         ["Telerik.Windows.MediaFoundation"] = "with MediaFoundation: a GraphWorX display playing a video",
-        ["Telerik.Windows.Controls.RibbonView"] = "GraphWorX and Workbench smoke runs with it rewritten (the ribbon), and a ribbon drag and drop",
         ["IcoServices"] = "Workbench with it rewritten, and its Active Directory picker",
     };
 
