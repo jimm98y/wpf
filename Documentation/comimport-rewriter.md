@@ -80,10 +80,7 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - They stay on built-in COM, and the verdict says "rewritable, awaiting its gate: ...".
      - An entry leaves the list in its own commit once its gate passes.
      - `WPF_COMIMPORT_FORCE` overrides it.
-     - Now listed:
-       - IcoServices (Workbench): its Active Directory picker. An IL scan finds nothing that uses its
-         two COM interfaces (0 call sites), but a plain Workbench session never loads it (the picker
-         does), so it has not yet run rewritten.
+     - Now listed: nothing (every assembly app and Workbench bring has passed its gate).
      - The released set, run together (cr26, 04:38-04:42, 14 assemblies rewritten in app): bench
        smoke 470 move / 53 resize steps, no settings change; 3D frame 0 px against 15c92fc6e.
      - Progress on them (2026-10-20, 02:59-03:12, after a fresh IcoFwxServer restart; no settings change
@@ -141,6 +138,16 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
            (db43c67cc).
          - app bench smoke with both rewritten (cr29, 08:12): 17 assemblies rewritten,
            536 move / 102 resize steps, no exceptions, no settings change.
+       - **IcoServices: gated and released (2026-10-20).** There is no Active Directory picker to drive.
+         Its COM types (IDsObjectPicker, an IDataObject and the DSObjectPicker coclass) are internal,
+         and nothing uses them: no code in the assembly, no InternalsVisibleTo, and no other Workbench
+         binary names them. The assembly is app' service helper (ServiceManager, ServiceInstaller,
+         LocalSecurityPolicy). Workbench reaches it from IcoWorkbenchCore, through Configure Services,
+         which changes start modes, so that dialog was not driven.
+         - Gate: a test app on Workbench's own IcoServices.dll ran its read-only queries, stock,
+           under the port held, and under the port rewritten. All three gave identical output: 331
+           services listed with their app entries, status and start mode, a missing service,
+           processor counts and affinity, and the AD types' public members.
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.

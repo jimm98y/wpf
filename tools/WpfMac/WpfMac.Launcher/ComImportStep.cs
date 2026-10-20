@@ -38,7 +38,6 @@ internal static class ComImportStep
     /// An entry leaves this list, in its own commit, when its gate passes. WPF_COMIMPORT_FORCE overrides it.</summary>
     internal static readonly IReadOnlyDictionary<string, string> AwaitingGate = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        ["IcoServices"] = "Workbench with it rewritten, and its Active Directory picker",
     };
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
