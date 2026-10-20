@@ -1217,6 +1217,9 @@ internal sealed class CocoaHost : IWinFormsHost
         // Form.WindowState set by the application (DotNetBar's own caption buttons post SC_MINIMIZE,
         // which the driver makes Minimized): the real window follows, as ShowWindow does on Windows.
         System.Windows.Forms.XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
+        // for long work the main thread does outside WinForms (rewriting an assembly as it loads): it can
+        // keep the work other threads queue for it moving (see MainWork)
+        if (AppContext.GetData("WinFormsWebGpu.DrainMainWork") == null) AppContext.SetData("WinFormsWebGpu.DrainMainWork", (Action)DrainMainWork);
         AppDomain.CurrentDomain.AssemblyLoad += (_, e) => { if (e.LoadedAssembly.GetName().Name == "WindowsBase") s_wpfLoaded = true; };
         foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
             if (a.GetName().Name == "WindowsBase") s_wpfLoaded = true;

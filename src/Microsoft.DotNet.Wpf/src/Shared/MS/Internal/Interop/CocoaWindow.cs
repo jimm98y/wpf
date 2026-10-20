@@ -1376,9 +1376,15 @@ namespace MS.Internal.Interop
         /// </summary>
         public static ulong CurrentModifierFlags()
         {
-            IntPtr cls = objc_getClass("NSEvent");
-            return cls == IntPtr.Zero ? 0 : SendNUInt(cls, Sel("modifierFlags"));
+            // CoreGraphics' state, not +[NSEvent modifierFlags]: that one carries the device-independent
+            // flags alone, so which Option (left or right) was down could not be told, and
+            // IsKeyDown(Key.LeftAlt) -- what a 3D view's Alt+drag asks -- was false with Option held.
+            try { return CGEventSourceFlagsState(0 /* kCGEventSourceStateCombinedSessionState */); }
+            catch (DllNotFoundException) { return 0; }
         }
+
+        [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+        private static extern ulong CGEventSourceFlagsState(int stateId);
 
         /// <summary>
         /// The outer rect, in top-left screen device pixels, of a native window this head did not make:
