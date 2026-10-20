@@ -66,13 +66,27 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - app: MediaFoundation's 162 such verdicts are gone (Telerik.Windows.MediaFoundation is
        trusted, Telerik.Windows.Controls.Media is clean). Its 12 remaining reasons are fields of
        class, interface or array type, a System.Drawing.Color by value, and interface or Guid arrays.
+   - **Group members that declare no COM types.** An assembly that uses candidates' COM types and can
+     make RCWs of its own counts as a referrer that is not clean. It is judged as a forced candidate and
+     rewritten with them: its Marshal calls and its P/Invokes with their types become the rewrite's.
+     - It is chosen only with a chosen group it uses. If it is left, so is the group.
+     - SharpMediaFoundationInterop.WPF is one: GetObjectForIUnknown and a D3D9 P/Invoke.
+   - **Built-in interop cannot either.** A member that built-in COM interop cannot marshal either
+     (`System.Drawing.Color` by value: "Invalid managed/unmanaged type combination") throws when
+     called, as it does there, and does not keep its assembly on built-in COM. Verdicts list such
+     members separately.
    - **Awaiting a gate.** `ComImportStep.AwaitingGate` lists assemblies that are rewritable but whose
      first rewrite on Windows waits for an app run that exercises them; the smoke runs do not.
      - They stay on built-in COM, and the verdict says "rewritable, awaiting its gate: ...".
      - An entry leaves the list in its own commit once its gate passes.
      - `WPF_COMIMPORT_FORCE` overrides it.
-     - Now listed: Telerik.Windows.Controls.FileDialogs (a Telerik file dialog opened and cancelled,
-       app File > Open).
+     - Now listed:
+       - Telerik.Windows.Controls.FileDialogs: a Telerik file dialog opened and cancelled (app
+         File > Open);
+       - Telerik.Windows.Controls: app and Workbench smoke runs with it rewritten, and a Telerik
+         dialog;
+       - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a app display playing a
+         video through Telerik's media player. SharpMediaFoundationInterop is a different library.
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
@@ -300,6 +314,45 @@ adapter.
       "used by other assemblies"), WindowsAPICodePack.Shell 69 -> 29, RibbonView 18 -> 3,
       Telerik.Windows.Controls 22 -> 9, WebView2.Wpf 1 -> 0 (it stays with WebView2.Core).
       Telerik.Windows.Controls.FileDialogs becomes rewritable and is held for its gate.
+  - **Structs by value, struct retvals, `ref` classes, interface fields.**
+    - A non-blittable struct by value is passed as a generated blittable shadow
+      (`WpfMac.Shadows.*`).
+      - The shadow has the struct's native size and alignment, computed from the metadata as built-in
+        struct marshalling lays it out. Its fields are integers of the alignment's width, so the ABI
+        classifies it as the native aggregate.
+      - The runtime checks the size against Marshal.SizeOf before every use, so a wrong layout throws
+        rather than passing the wrong bytes.
+      - A floating-point aggregate (FP registers) is refused.
+    - A struct retval goes into the shadow and is converted.
+    - A formatted class:
+      - by reference (`ref Box`) is T**, as built-in passes it;
+      - as a PreserveSig return is a T* that stays the callee's;
+      - as an [out, retval] is a caller-allocated T*.
+    - `ref StringBuilder` is char**.
+    - `out T[]` with SizeParamIndex is the callee's CoTaskMem array. Its length is read after the call
+      from the size parameter (by reference or not).
+    - A formatted type may contain:
+      - an embedded class with layout;
+      - an array that is not ByValArray (built-in makes it a SAFEARRAY, as StructureToPtr does);
+      - a delegate (a function pointer);
+      - an interface, or an object as IUnknown/IDispatch. Com.StructToNative writes and reads these
+        itself, through Borrow and Wrap, so StructureToPtr never makes built-in CCWs or RCWs of them.
+    - `in` parameters' modreq(InAttribute) is stripped before classifying and emitting.
+  - **Other assemblies' COM interfaces** are COM here too (IsCom). Their assembly is rewritten with
+    this one (the fixpoint), so their objects are ComObjects:
+    - parameters of those types convert;
+    - P/Invokes with them are stubbed;
+    - casts to them adopt built-in RCWs;
+    - a class implementing one uses that assembly's CCW.
+  - **A tlbimp coclass's own methods** (NetworkListManagerClass.GetConnectivity, ...) are called as
+    the interface method each one implements.
+  - **A managed delegate with COM interface parameters** is refused only when it can reach native code:
+    the module calls Marshal.GetFunctionPointerForDelegate, or a P/Invoke or COM method takes its type.
+    Telerik's WMI delegates, made to throw PlatformNotSupported, never reach native code.
+  - **Gate: SharpMediaFoundationInterop + .WPF** (CsWin32's 155 interfaces, 152 P/Invokes) are
+    rewritten as a group. SharpMediaPlayer (big_buck_bunny_480p) and SharpSpatialVideoGUI
+    (IMG_7881.MOV) played at full rate (24.1 and 30.0 fps). Paused at the same position, their frames
+    are identical (0 px) to the runs with built-in COM.
   - **C arrays of strings, interfaces and VARIANTs** (`CArrays.cs`), `LPArray` with an
     `ArraySubType`.
     - Strings: LPWStr, LPStr or BSTR (BSTR by default in a COM method). Interfaces go as their IID,

@@ -106,7 +106,7 @@ public static partial class ComRewriter
             if (why == null && !isVoid)
             {
                 ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
-                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant || (preserve && ret.Kind == Kind.Variant))
+                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue || (preserve && ret.Kind == Kind.Variant))
                     why = $"return {w ?? md.ReturnType.Name}";
             }
 
@@ -162,10 +162,18 @@ public static partial class ComRewriter
                     case Kind.LPStructBlit:
                         loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldobj, a.Iface!); });
                         break;
+                    case Kind.StructByValue:
+                        loads.Add(() =>
+                        {
+                            il.Emit(OpCodes.Ldarga, stub.Parameters[n]); il.Emit(OpCodes.Conv_U);
+                            il.Emit(OpCodes.Ldc_I4, ShadowSize(a.Native)); il.Emit(OpCodes.Ldtoken, a.Iface!);
+                            il.Emit(OpCodes.Call, _structFromShadow); il.Emit(OpCodes.Unbox_Any, a.Iface!);
+                        });
+                        break;
                     case Kind.BlitArray: case Kind.StructArray: case Kind.ElemArray:
                     {
                         // the length: SizeParamIndex's argument (+ SizeConst), or SizeConst
-                        var t = prm.ParameterType;
+                        var t = StripMods(prm.ParameterType);
                         var len = Local(stub, _int32);
                         if (a.SizeParam >= 0)
                         {
@@ -231,13 +239,13 @@ public static partial class ComRewriter
                     }
                     case Kind.SafeArray:
                     {
-                        var t = prm.ParameterType;
+                        var t = StripMods(prm.ParameterType);
                         loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _fromSafeArray); il.Emit(OpCodes.Castclass, t); });
                         break;
                     }
                     case Kind.RefSafeArray:
                     {
-                        var elem = ((ByReferenceType)prm.ParameterType).ElementType;
+                        var elem = ((ByReferenceType)StripMods(prm.ParameterType)).ElementType;
                         var l = Local(stub, elem);
                         if (!outOnly) { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldind_I); il.Emit(OpCodes.Ldtoken, elem); il.Emit(OpCodes.Call, _fromSafeArray); il.Emit(OpCodes.Castclass, elem); il.Emit(OpCodes.Stloc, l); }
                         loads.Add(() => il.Emit(OpCodes.Ldloca, l));
@@ -255,7 +263,7 @@ public static partial class ComRewriter
                     }
                     case Kind.OutIface:
                     {
-                        var elem = ((ByReferenceType)prm.ParameterType).ElementType;
+                        var elem = ((ByReferenceType)StripMods(prm.ParameterType)).ElementType;
                         var l = Local(stub, elem);
                         if (!outOnly) { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldind_I); il.Emit(OpCodes.Call, _wrap!); if (a.Iface != null) il.Emit(OpCodes.Castclass, a.Iface); il.Emit(OpCodes.Stloc, l); }
                         loads.Add(() => il.Emit(OpCodes.Ldloca, l));
@@ -377,6 +385,8 @@ public static partial class ComRewriter
             });
             return stub;
         }
+
+        private int ShadowSize(TypeReference shadow) => _shadowSizes.TryGetValue(shadow, out int n) ? n : 0;
 
         private static string ReverseWhyOf(Kind k) => k switch
         {
