@@ -42,8 +42,6 @@ internal static class ComImportStep
         ["Telerik.Windows.Controls"] = "app and Workbench smoke runs with it rewritten, and a Telerik dialog",
         ["MediaFoundation"] = "a app display playing a video through Telerik's media player (MF.Net, not SharpMediaFoundationInterop)",
         ["Telerik.Windows.MediaFoundation"] = "with MediaFoundation: a app display playing a video",
-        ["Microsoft.WindowsAPICodePack"] = "app smoke runs with it rewritten, and a Code Pack shell file dialog or property store",
-        ["Microsoft.WindowsAPICodePack.Shell"] = "app smoke runs with it rewritten, and a Code Pack shell file dialog or property store",
         ["Telerik.Windows.Controls.RibbonView"] = "app and Workbench smoke runs with it rewritten (the ribbon), and a ribbon drag and drop",
         ["IcoServices"] = "Workbench with it rewritten, and its Active Directory picker",
     };
