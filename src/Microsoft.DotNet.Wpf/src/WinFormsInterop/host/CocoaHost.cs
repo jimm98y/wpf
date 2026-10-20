@@ -239,6 +239,13 @@ internal sealed class CocoaHost : IWinFormsHost
     private NSPoint LocationInContent(IntPtr evt, out bool viaLayer)
     {
         NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+        if (Send(evt, Sel("window")) == IntPtr.Zero)
+        {
+            // a move AppKit attributed to no window (see HostUnderPointer): its location is the screen's
+            NSRect c = ContentScreenRect();
+            viaLayer = _popupShown;
+            return new NSPoint { x = loc.x - c.x, y = loc.y - c.y };
+        }
         viaLayer = _popupWindow != IntPtr.Zero && Send(evt, Sel("window")) == _popupWindow;
         if (!viaLayer) return loc;
         NSRect layer = SendRectRet(_popupWindow, Sel("frame")), content = ContentScreenRect();
@@ -906,9 +913,53 @@ internal sealed class CocoaHost : IWinFormsHost
         if (rescan) Screen.Rescan();
     }
 
+    /// <summary>Form.WindowState was set: miniaturize, zoom or restore the window. Nothing listened
+    /// here (only the Windows host did), so a form's own minimize and maximize buttons did nothing.</summary>
+    private static void ApplyWindowState(IntPtr formHandle, FormWindowState state)
+    {
+        CocoaHost host = null;
+        lock (s_live)
+            foreach (CocoaHost h in s_live)
+                if (!h._form.IsDisposed && h._form.IsHandleCreated && h._form.Handle == formHandle) { host = h; break; }
+        if (host == null) return;
+        OnMain(() =>
+        {
+            IntPtr window = host._window;
+            if (window == IntPtr.Zero || host._closed) return;
+            bool iconic = (nint)Send(window, Sel("isMiniaturized")) != 0, zoomed = (nint)Send(window, Sel("isZoomed")) != 0;
+            if (state == FormWindowState.Minimized && !iconic) SendVoidPtr(window, Sel("miniaturize:"), IntPtr.Zero);
+            else if (state == FormWindowState.Maximized)
+            {
+                if (iconic) SendVoidPtr(window, Sel("deminiaturize:"), IntPtr.Zero);
+                if (!zoomed) SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);
+            }
+            else if (state == FormWindowState.Normal)
+            {
+                if (iconic) SendVoidPtr(window, Sel("deminiaturize:"), IntPtr.Zero);
+                else if (zoomed) SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);
+            }
+        });
+    }
+
+    // The window's state, as the driver knows it: Win32Host reports it from each WM_SIZE. Never reported
+    // here, the driver kept the state the application last SET -- Minimized, after its own minimize
+    // button -- once the window was back from the Dock, and the form went on as a minimized one.
+    private FormWindowState _reportedState = FormWindowState.Normal;
+
+    private void ReportWindowState()
+    {
+        if (_window == IntPtr.Zero || _form.IsDisposed || !_form.IsHandleCreated) return;
+        FormWindowState state = (nint)Send(_window, Sel("isMiniaturized")) != 0 ? FormWindowState.Minimized
+            : (nint)Send(_window, Sel("isZoomed")) != 0 ? FormWindowState.Maximized : FormWindowState.Normal;
+        if (state == _reportedState) return;
+        _reportedState = state;
+        (_driver as XplatUIWebGpu)?.HostWindowState(_form.Handle, state);
+    }
+
     private void SyncFrame()
     {
         if (_window == IntPtr.Zero || _form.IsDisposed) return;
+        ReportWindowState();
         // A minimized window keeps its frame; the form's restore bounds are not this.
         if ((nint)Send(_window, Sel("isMiniaturized")) != 0) return;
 
@@ -1140,7 +1191,11 @@ internal sealed class CocoaHost : IWinFormsHost
             if (evt == IntPtr.Zero) break;
             Route(evt);
         }
-        return (nint)Send(_window, Sel("isVisible")) != 0;
+        // A miniaturized window is not visible to AppKit, but it is no less the form's: the form is
+        // minimized, as it is on Windows while its window sits in the taskbar. Treated as closed, the
+        // host went away the moment the window reached the Dock, and the still-visible form was given a
+        // new window at once -- out of the Dock, with a native title bar over the form's own caption.
+        return (nint)Send(_window, Sel("isVisible")) != 0 || (nint)Send(_window, Sel("isMiniaturized")) != 0;
     }
 
     // ---- one event queue, several owners -------------------------------------------------
@@ -1159,6 +1214,9 @@ internal sealed class CocoaHost : IWinFormsHost
 
     static CocoaHost()
     {
+        // Form.WindowState set by the application (DotNetBar's own caption buttons post SC_MINIMIZE,
+        // which the driver makes Minimized): the real window follows, as ShowWindow does on Windows.
+        System.Windows.Forms.XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
         AppDomain.CurrentDomain.AssemblyLoad += (_, e) => { if (e.LoadedAssembly.GetName().Name == "WindowsBase") s_wpfLoaded = true; };
         foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
             if (a.GetName().Name == "WindowsBase") s_wpfLoaded = true;
@@ -1185,9 +1243,28 @@ internal sealed class CocoaHost : IWinFormsHost
         return null;
     }
 
+    /// <summary>
+    /// The host a mouse move AppKit attributed to no window belongs to: the one whose popup layer is
+    /// showing (a menu is above everything of its form), else the one whose window is under the pointer.
+    /// AppKit sends a bare move with no window when the pointer is over none of the KEY window's own
+    /// views -- with an ElementHost's window key, over the form's popup layer -- and such moves were
+    /// dropped, so a menu opened over the canvas highlighted nothing until it was clicked.
+    /// </summary>
+    private static CocoaHost HostUnderPointer(IntPtr evt)
+    {
+        if (Send(evt, Sel("window")) != IntPtr.Zero) return null;
+        nint type = (nint)Send(evt, Sel("type"));
+        if (type != 5 && type != 6 && type != 7) return null;
+        NSPoint p = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
+        static bool Inside(NSRect r, NSPoint q) => q.x >= r.x && q.x < r.x + r.w && q.y >= r.y && q.y < r.y + r.h;
+        foreach (CocoaHost h in s_live) if (h._popupShown && h._window != IntPtr.Zero && Inside(h._popupFrame, p)) return h;
+        foreach (CocoaHost h in s_live) if (h._window != IntPtr.Zero && Inside(SendRectRet(h._window, Sel("frame")), p)) return h;
+        return null;
+    }
+
     private static bool RouteFromWpf(IntPtr evt)
     {
-        CocoaHost host = HostFor(Send(evt, Sel("window")));
+        CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
         if (host == null) return FilterEmbeddedPress(evt);
         host.HandleEvent(evt);
         return true;
@@ -1195,7 +1272,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static void Route(IntPtr evt)
     {
-        CocoaHost host = HostFor(Send(evt, Sel("window")));
+        CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
         if (host != null) host.HandleEvent(evt);
         else if (FilterEmbeddedPress(evt)) return;
         else if (s_wpfDispatch != null) s_wpfDispatch(evt);
@@ -1417,6 +1494,11 @@ internal sealed class CocoaHost : IWinFormsHost
                     return;
                 }
             }
+            // A press on the form's own content takes the keyboard back from a child window of the form
+            // that has it (an ElementHost's WPF window, see CocoaWindow.TakesKeyboardOnPress): on Windows
+            // the clicked control takes the focus. Not through the popup layer: a menu takes no focus.
+            if ((type == 1 || type == 3) && !viaLayer && Send(App(), Sel("keyWindow")) != _window)
+                SendVoidPtr(_window, Sel("makeKeyWindow"), IntPtr.Zero);
             if (type == 1 || type == 3) _formHasMouse = true;
             else if (type == 2 || type == 4) _formHasMouse = false;
             // Window point (Cocoa: bottom-left origin) to the driver's screen space, where it

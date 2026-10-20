@@ -182,6 +182,10 @@ namespace MS.Internal.Interop
         public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public void SetTopmost(bool topmost) { }
         public void SetResizeMode(bool canResize, bool canMinimize) { }
+        public void SetChromeless(bool chromeless) { }
+        public static ulong CurrentModifierFlags() { throw null; }
+        public bool TakesKeyboardOnPress { get { throw null; } set { } }
+        public static bool TryGetForeignOuterRectPixels(System.IntPtr viewOrWindow, out int x, out int y, out int width, out int height) { throw null; }
         public void AttachToParentWindow(System.IntPtr parentView) { }
         public void GetResizeMode(out bool canResize, out bool canMinimize) { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
@@ -350,6 +354,7 @@ namespace MS.Internal.Interop
         void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         void SetTopmost(bool topmost) { }
         void SetResizeMode(bool canResize, bool canMinimize) { }
+        void SetChromeless(bool chromeless) { }
         void GetResizeMode(out bool canResize, out bool canMinimize) { throw null; }
         void BeginMoveDrag();
         void Destroy();

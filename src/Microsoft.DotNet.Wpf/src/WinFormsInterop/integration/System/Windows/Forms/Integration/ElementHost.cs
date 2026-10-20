@@ -357,6 +357,8 @@ namespace System.Windows.Forms.Integration
                     Height = ph,
                 };
                 _source = new HwndSource(p);
+                // the hosted window is this control's child window, as on Windows (Control.FromChildHandle)
+                Control.RegisterForeignChild(_source.Handle, this);
                 // Claim BEFORE the first render: an unclaimed frame would build a swap chain for this
                 // window and present the WPF content into it, which is both wasted and visible.
                 if (CompositeIntoHostFrame) HostedWpfContent.Claim(_source.Handle);
@@ -578,6 +580,7 @@ namespace System.Windows.Forms.Integration
                 if (_source != null)
                 {
                     HostedWpfContent.Release(_source.Handle);
+                    Control.UnregisterForeignChild(_source.Handle);
                     _source.Dispose();
                     _source = null;
                 }

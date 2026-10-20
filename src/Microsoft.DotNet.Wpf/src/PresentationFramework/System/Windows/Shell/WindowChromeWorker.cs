@@ -251,10 +251,8 @@ namespace Microsoft.Windows.Shell
 
             // Non-client-area customization below is Win32-only (system menu, DWM frame extension,
             // window-style bits, SetWindowPos) and P/Invokes the native presentation library that
-            // doesn't exist off-Windows. There the platform window owns its chrome; the managed
-            // template fixup above already lets the app's custom title-bar content fill the client
-            // area, so skip the native calls rather than crash. (_WndProc, hooked above, is likewise
-            // never invoked off-Windows since there is no Win32 message loop.)
+            // doesn't exist off-Windows. (_WndProc, hooked above, is likewise never invoked off-Windows
+            // since there is no Win32 message loop.)
             if (System.OperatingSystem.IsWindows())
             {
                 // Force this the first time.
@@ -263,6 +261,51 @@ namespace Microsoft.Windows.Shell
 
                 NativeMethods.SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0, _SwpFlags);
             }
+            else
+            {
+                // What WM_NCCALCSIZE does on Windows: the platform's title bar goes and the client area
+                // is the whole window, so the app's own caption is the only one (it was drawn under a
+                // native title bar: two of them). The caption area then moves the window, as
+                // WM_NCHITTEST's HTCAPTION does there.
+                MS.Internal.Interop.PlatformWindow.FromHandle(_hwnd)?.SetChromeless(true);
+                _HookCaption(true);
+            }
+        }
+
+        private bool _captionHooked;
+
+        /// <summary>Off Windows: presses on the caption area (<see cref="_HitTestNca"/>'s HTCAPTION, minus
+        /// what opts out with IsHitTestVisibleInChrome) move the window, and a double-click there
+        /// maximizes or restores it, as Windows does for the non-client caption.</summary>
+        private void _HookCaption(bool hook)
+        {
+            if (hook == _captionHooked || _window == null) return;
+            _captionHooked = hook;
+            if (hook) _window.AddHandler(UIElement.PreviewMouseLeftButtonDownEvent, (System.Windows.Input.MouseButtonEventHandler)_OnCaptionMouseDown, true);
+            else _window.RemoveHandler(UIElement.PreviewMouseLeftButtonDownEvent, (System.Windows.Input.MouseButtonEventHandler)_OnCaptionMouseDown);
+        }
+
+        private void _OnCaptionMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (_chromeInfo == null || e.Handled) return;
+            Point p = e.GetPosition(_window);
+            Thickness border = _chromeInfo.ResizeBorderThickness;
+            // the top band: resize border and caption (the platform window resizes from its own edges)
+            if (p.Y < 0 || p.Y >= border.Top + _chromeInfo.CaptionHeight) return;
+            if (p.X < border.Left || p.X >= _window.ActualWidth - border.Right) return;
+            for (DependencyObject d = _window.InputHitTest(p) as DependencyObject; d != null; d = VisualTreeHelper.GetParent(d) ?? LogicalTreeHelper.GetParent(d))
+            {
+                if (d is System.Windows.IInputElement element && WindowChrome.GetIsHitTestVisibleInChrome(element)) return;
+                if (d == _window) break;
+            }
+            e.Handled = true;
+            if (e.ClickCount == 2)
+            {
+                if (_window.ResizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip)
+                    _window.WindowState = _window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                return;
+            }
+            _window.DragMove();
         }
 
         /// <summary>
@@ -1127,6 +1170,14 @@ namespace Microsoft.Windows.Shell
             VerifyAccess();
 
             _UnhookCustomChrome();
+
+            if (!System.OperatingSystem.IsWindows())
+            {
+                _HookCaption(false);
+                // back to the platform's title bar, unless WindowStyle=None never had one
+                if (!isClosing && !_hwndSource.IsDisposed)
+                    MS.Internal.Interop.PlatformWindow.FromHandle(_hwnd)?.SetChromeless(_window.WindowStyle == WindowStyle.None);
+            }
 
             if (!isClosing && !_hwndSource.IsDisposed)
             {

@@ -2466,7 +2466,7 @@ namespace Standard
         public static bool DwmGetColorizationColor(out uint pcrColorization, out bool pfOpaqueBlend)
         {
             // Make this call safe to make on downlevel OSes...
-            if (Utility.IsOSVistaOrNewer && IsThemeActive())
+            if (OperatingSystem.IsWindows() && Utility.IsOSVistaOrNewer && IsThemeActive())
             {
                 HRESULT hr = _DwmGetColorizationColor(out pcrColorization, out pfOpaqueBlend);
                 if (hr.Succeeded)
@@ -2486,6 +2486,12 @@ namespace Standard
 
         public static bool DwmIsCompositionEnabled()
         {
+            // always on since Windows 8, and here
+            if (!OperatingSystem.IsWindows())
+            {
+                return true;
+            }
+
             // Make this call safe to make on downlevel OSes...
             if (!Utility.IsOSVistaOrNewer)
             {
@@ -2603,6 +2609,15 @@ namespace Standard
 
         public static void GetCurrentThemeName(out string themeFileName, out string color, out string size)
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                // what Windows 11 answers
+                themeFileName = @"C:\WINDOWS\resources\themes\Aero\Aero.msstyles";
+                color = "NormalColor";
+                size = "NormalSize";
+                return;
+            }
+
             // Not expecting strings longer than MAX_PATH.  We will return the error
             var fileNameBuilder = new StringBuilder((int)Win32Value.MAX_PATH);
             var colorBuilder = new StringBuilder((int)Win32Value.MAX_PATH);
@@ -2619,9 +2634,12 @@ namespace Standard
             size = sizeBuilder.ToString();
         }
 
-        [DllImport("uxtheme.dll")]
+        [DllImport("uxtheme.dll", EntryPoint = "IsThemeActive")]
         [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool IsThemeActive();
+        private static extern bool _IsThemeActive();
+
+        // Off Windows the stack draws the Windows 11 theme (Aero, visual styles on).
+        public static bool IsThemeActive() => !OperatingSystem.IsWindows() || _IsThemeActive();
 
         [DllImport("gdi32.dll")]
         public static extern int GetDeviceCaps(SafeDC hdc, DeviceCap nIndex);
@@ -2696,8 +2714,14 @@ namespace Standard
         [DllImport("user32.dll")]
         public static extern IntPtr GetSystemMenu(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool bRevert);
 
-        [DllImport("user32.dll")]
-        public static extern int GetSystemMetrics(SM nIndex);
+        [DllImport("user32.dll", EntryPoint = "GetSystemMetrics")]
+        private static extern int _GetSystemMetrics(SM nIndex);
+
+        // Off Windows: the stack's answers, the same ones WPF's own UnsafeNativeMethods gives (the
+        // non-client metrics of the Windows 11 frame), rather than a DllNotFoundException from every
+        // SystemParameters property WindowChrome reads (WindowResizeBorderThickness, ...).
+        public static int GetSystemMetrics(SM nIndex) =>
+            OperatingSystem.IsWindows() ? _GetSystemMetrics(nIndex) : MS.Win32.UnsafeNativeMethods.GetSystemMetrics((MS.Internal.Interop.SM)(int)nIndex);
 
         // This is aliased as a macro in 32bit Windows.
         public static IntPtr GetWindowLongPtr(IntPtr hwnd, GWL nIndex)

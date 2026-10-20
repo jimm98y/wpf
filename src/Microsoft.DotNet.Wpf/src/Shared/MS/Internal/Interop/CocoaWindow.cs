@@ -255,27 +255,7 @@ namespace MS.Internal.Interop
             // WPF as a WM_CLOSE; the window is torn down for real from CocoaWindow.Destroy.
             SendVoidBool(_window, Sel("setReleasedWhenClosed:"), false);
 
-            if (chromeless)
-            {
-                // Take the title bar away without giving up being a titled window: transparent bar, no
-                // title text, and none of the three traffic-light buttons -- WPF drew its own caption
-                // and close/minimise/maximise buttons in the content, and the native ones would sit on
-                // top of them. Combined with FullSizeContentView above, the content view covers the
-                // whole frame, so the window looks exactly as it does on Windows under WindowStyle=None.
-                const nint NSWindowTitleHidden = 1;
-                const nuint NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2;
-                SendVoidBool(_window, Sel("setTitlebarAppearsTransparent:"), true);
-                SendVoidNInt(_window, Sel("setTitleVisibility:"), NSWindowTitleHidden);
-                // NOTE: the window stays MOVABLE. AppKit is kept out of the app's title-bar area by the
-                // content view answering NO to -mouseDownCanMoveWindow (see AddMouseDownCanMoveWindow),
-                // not by setMovable:NO -- which would also disable -performWindowDragWithEvent: and so
-                // break the app's own caption drag, leaving the window impossible to move.
-                foreach (nuint b in new[] { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
-                {
-                    IntPtr button = SendPtrNUInt(_window, Sel("standardWindowButton:"), b);
-                    if (button != IntPtr.Zero) SendVoidBool(button, Sel("setHidden:"), true);
-                }
-            }
+            if (chromeless) ApplyChromeless(true);
 
             if (borderless)
             {
@@ -779,6 +759,8 @@ namespace MS.Internal.Interop
 
         private static IntPtr s_windowClass;
         private static readonly HashSet<IntPtr> s_activatable = new HashSet<IntPtr>();
+        // Child windows that took the keyboard (TakesKeyboardOnPress): key, never main.
+        private static readonly HashSet<IntPtr> s_keyable = new HashSet<IntPtr>();
 
         private delegate bool BoolWindowImpl(IntPtr self, IntPtr sel);
         private static BoolWindowImpl s_canBecomeKeyImpl;
@@ -799,7 +781,7 @@ namespace MS.Internal.Interop
             if (cls == IntPtr.Zero) return s_windowClass = nsWindow;   // fall back to stock NSWindow
 
             // Kept alive in static fields: the runtime stores the raw function pointer.
-            s_canBecomeKeyImpl  = static (self, sel) => s_activatable.Contains(self);
+            s_canBecomeKeyImpl  = static (self, sel) => s_activatable.Contains(self) || s_keyable.Contains(self);
             s_canBecomeMainImpl = static (self, sel) => s_activatable.Contains(self);
             class_addMethod(cls, Sel("canBecomeKeyWindow"),
                             Marshal.GetFunctionPointerForDelegate(s_canBecomeKeyImpl), "c@:");
@@ -1275,6 +1257,72 @@ namespace MS.Internal.Interop
             SendVoidNInt(_window, Sel("setLevel:"), topmost ? NSFloatingWindowLevel : NSNormalWindowLevel);
         }
 
+        private bool _chromeless;
+
+        /// <summary>
+        /// A child window (WS_CHILD) that takes the keyboard when it is pressed: what Win32's SetFocus on
+        /// a child window is -- an ElementHost's WPF window, whose host grants it focus on
+        /// WM_LBUTTONDOWN. A child is never activated on Windows, but it does take keyboard focus, and on
+        /// macOS the keyboard goes to the KEY window: so such a window becomes key (never main) when the
+        /// left button goes down on it. Without it the keys of a WPF tree hosted in a form went to the
+        /// form, whose focused control was whatever WinForms control had it before the click.
+        /// </summary>
+        public bool TakesKeyboardOnPress { get; set; }
+
+        private void TakeKeyboard()
+        {
+            if (_window == IntPtr.Zero || SendBool(_window, Sel("isKeyWindow"))) return;
+            s_keyable.Add(_window);
+            SendVoidPtr(_window, Sel("makeKeyWindow"), IntPtr.Zero);
+        }
+
+        /// <inheritdoc/>
+        public void SetChromeless(bool chromeless)
+        {
+            if (_window == IntPtr.Zero || _borderless || chromeless == _chromeless) return;
+            // The client area becomes the whole window (WindowChrome's WM_NCCALCSIZE): the outer size WPF
+            // gave the window stays, and is now the client size too, with no non-client frame emulated
+            // around it. Re-applied as the content size, the next poll reports it (WM_SIZE) and WPF lays
+            // the content out for it; without that its bottom was cut off until the window was resized.
+            GetWindowPixelSize(out int outerW, out int outerH);
+            nuint mask = GetStyleMask();
+            mask = chromeless ? mask | (nuint)NSWindowStyleMaskFullSizeContentView : mask & ~(nuint)NSWindowStyleMaskFullSizeContentView;
+            SendVoidNUInt(_window, Sel("setStyleMask:"), mask);
+            _clientIsWindow = chromeless;
+            ApplyChromeless(chromeless);
+            if (outerW > 0 && outerH > 0) SetContentSizePixels(outerW, outerH);
+        }
+
+        /// <summary>The client area is the whole window: no emulated Win32 non-client frame (SetChromeless).</summary>
+        private bool _clientIsWindow;
+
+        /// <summary>
+        /// Takes the title bar away without giving up being a titled window (or gives it back): a
+        /// transparent bar, no title text, and none of the three traffic-light buttons -- WPF drew its
+        /// own caption and close/minimise/maximise buttons in the content, and the native ones would sit
+        /// on top of them. With FullSizeContentView (the caller's) the content view covers the whole
+        /// frame, so the window looks as it does on Windows under WindowStyle=None or a WindowChrome.
+        /// </summary>
+        /// <remarks>
+        /// The window stays MOVABLE. AppKit is kept out of the app's title-bar area by the content view
+        /// answering NO to -mouseDownCanMoveWindow (see AddMouseDownCanMoveWindow), not by setMovable:NO
+        /// -- which would also disable -performWindowDragWithEvent: and so break the app's own caption
+        /// drag, leaving the window impossible to move.
+        /// </remarks>
+        private void ApplyChromeless(bool chromeless)
+        {
+            _chromeless = chromeless;
+            const nint NSWindowTitleVisible = 0, NSWindowTitleHidden = 1;
+            const nuint NSWindowCloseButton = 0, NSWindowMiniaturizeButton = 1, NSWindowZoomButton = 2;
+            SendVoidBool(_window, Sel("setTitlebarAppearsTransparent:"), chromeless);
+            SendVoidNInt(_window, Sel("setTitleVisibility:"), chromeless ? NSWindowTitleHidden : NSWindowTitleVisible);
+            foreach (nuint b in new[] { NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton })
+            {
+                IntPtr button = SendPtrNUInt(_window, Sel("standardWindowButton:"), b);
+                if (button != IntPtr.Zero) SendVoidBool(button, Sel("setHidden:"), chromeless);
+            }
+        }
+
         /// <inheritdoc/>
         public void SetResizeMode(bool canResize, bool canMinimize)
         {
@@ -1319,6 +1367,53 @@ namespace MS.Internal.Interop
 
             x = (int)Math.Round(frame.x * scale);
             y = (int)Math.Round((screenH - frame.y - frame.height) * scale);
+        }
+
+        /// <summary>
+        /// The modifier keys down right now, whichever window has the keyboard (NSEvent.modifierFlags,
+        /// with the device-dependent left/right bits): what Win32's GetKeyState says of them, which is the
+        /// thread's keyboard state and not one window's.
+        /// </summary>
+        public static ulong CurrentModifierFlags()
+        {
+            IntPtr cls = objc_getClass("NSEvent");
+            return cls == IntPtr.Zero ? 0 : SendNUInt(cls, Sel("modifierFlags"));
+        }
+
+        /// <summary>
+        /// The outer rect, in top-left screen device pixels, of a native window this head did not make:
+        /// a WinForms form's host window (<paramref name="viewOrWindow"/> may be the NSView it presents
+        /// into). For a WPF window whose owner is such a form -- CenterOwner, RestoreBounds -- which
+        /// would otherwise find no window at all and centre on the origin.
+        /// </summary>
+        public static bool TryGetForeignOuterRectPixels(IntPtr viewOrWindow, out int x, out int y, out int width, out int height)
+        {
+            x = 0; y = 0; width = 0; height = 0;
+            if (viewOrWindow == IntPtr.Zero) return false;
+            IntPtr window = viewOrWindow;
+            if (SendBoolSel(viewOrWindow, Sel("isKindOfClass:"), objc_getClass("NSView"))) window = Send(viewOrWindow, Sel("window"));
+            if (window == IntPtr.Zero || !SendBoolSel(window, Sel("isKindOfClass:"), objc_getClass("NSWindow"))) return false;
+
+            NSRect frame = SendRect(window, Sel("frame"));   // screen points, BOTTOM-left origin
+            double scale = 1;
+            string force = Environment.GetEnvironmentVariable("WPF_MAC_FORCE_SCALE");
+            if (!string.IsNullOrEmpty(force) && double.TryParse(force, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double forced) && forced > 0)
+            {
+                scale = forced;
+            }
+            else
+            {
+                IntPtr screen = Send(window, Sel("screen"));
+                if (screen == IntPtr.Zero) screen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+                if (screen != IntPtr.Zero) scale = SendDouble(screen, Sel("backingScaleFactor"));
+                if (!(scale > 0)) scale = 1;
+            }
+            double screenH = PrimaryScreenHeightPoints();
+            x = (int)Math.Round(frame.x * scale);
+            y = (int)Math.Round((screenH - frame.y - frame.height) * scale);
+            width = (int)Math.Round(frame.width * scale);
+            height = (int)Math.Round(frame.height * scale);
+            return width > 0 && height > 0;
         }
 
         /// <summary>The window's outer rect right now, in top-left screen device pixels.</summary>
@@ -1538,7 +1633,7 @@ namespace MS.Internal.Interop
         /// the invisible resize frame the physical window was shrunk by.</summary>
         private void NonClientInsetsPoints(out double w, out double h)
         {
-            if (_borderless || _window == IntPtr.Zero) { w = 0; h = 0; return; }
+            if (_borderless || _clientIsWindow || _window == IntPtr.Zero) { w = 0; h = 0; return; }
             w = Win32NonClientWidthPts;
             NSRect frame = SendRect(_window, Sel("frame"));
             NSRect content = SendRectRect(_window, Sel("contentRectForFrameRect:"), frame);
@@ -1718,6 +1813,7 @@ namespace MS.Internal.Interop
             if (_window != IntPtr.Zero)
             {
                 s_activatable.Remove(_window);
+                s_keyable.Remove(_window);
                 RemoveFromParent();
                 _parentWindow = IntPtr.Zero;
                 Send(_window, Sel("close"));
@@ -1803,6 +1899,11 @@ namespace MS.Internal.Interop
                 _wasVisible = true;
                 return;
             }
+            // Not closed, only out of sight: a miniaturized window is in the Dock, and a child window
+            // (an ElementHost's WPF content) goes out of sight with its parent -- into the Dock with it --
+            // and cannot be closed by the user at all, having no chrome. Reported as closed, minimizing a
+            // form disposed the WPF content it hosts: the GraphWorX canvas was gone after a restore.
+            if (SendBool(_window, Sel("isMiniaturized")) || _parentWindow != IntPtr.Zero || Send(_window, Sel("parentWindow")) != IntPtr.Zero) return;
             // Was on-screen and now isn't, and we didn't tear it down -> the user closed it.
             if (_wasVisible)
             {
@@ -2432,6 +2533,10 @@ namespace MS.Internal.Interop
                     $"[input] type={type} evtWin=0x{Send(window, Sel("contentView")):x} " +
                     $"capture=0x{MouseCaptureHandle:x} -> target=0x{view:x} at ({x},{y})");
             }
+
+            // a child window that takes the keyboard on a press takes it before the press is handled,
+            // as SetFocus from WM_LBUTTONDOWN does on Windows
+            if (type == NSLeftMouseDown && w.TakesKeyboardOnPress) w.TakeKeyboard();
 
             handler(new CocoaMouseMessage(view, (int)type, button, x, y, wheel, Environment.TickCount));
         }
