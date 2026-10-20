@@ -1031,6 +1031,8 @@ public sealed unsafe class ComRewriterTests
     /// <summary>ComUserFixture: no COM types of its own, ComImportFixture's used through an RCW it makes itself.</summary>
     internal static string UserFixtureFile => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(FixtureFile)!, "..", "..", "..", "..", "ComUserFixture", "bin",
         Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(FixtureFile))!)!, "net10.0", "ComUserFixture.dll"));
+    /// <summary>ComReleaserFixture: no COM types or RCW makers, but Marshal.ReleaseComObject on ComImportFixture's objects.</summary>
+    internal static string ReleaserFixtureFile => Path.Combine(Path.GetDirectoryName(UserFixtureFile)!.Replace("ComUserFixture", "ComReleaserFixture"), "ComReleaserFixture.dll");
 
     internal static string FixtureFile => typeof(ComRewriterTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().First(a => a.Key == "ComImportFixture").Value!;
 
@@ -1043,6 +1045,7 @@ public sealed unsafe class ComRewriterTests
         File.Copy(FixtureFile, file);
         File.Copy(Path.Combine(Path.GetDirectoryName(FixtureFile)!, "LocationAskerFixture.dll"), Path.Combine(dir, "LocationAskerFixture.dll"));
         File.Copy(UserFixtureFile, Path.Combine(dir, "ComUserFixture.dll"));
+        File.Copy(ReleaserFixtureFile, Path.Combine(dir, "ComReleaserFixture.dll"));
         if (File.Exists(Path.ChangeExtension(FixtureFile, ".pdb"))) File.Copy(Path.ChangeExtension(FixtureFile, ".pdb"), Path.ChangeExtension(file, ".pdb"));
         if (OperatingSystem.IsWindows()) File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(dir, "fixturenative.dll"));
         return file;
@@ -1059,15 +1062,17 @@ public sealed unsafe class ComRewriterTests
             ["ComImportFixture"] = s_original.Value,
             ["LocationAskerFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "LocationAskerFixture.dll"),
             ["ComUserFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComUserFixture.dll"),
+            ["ComReleaserFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComReleaserFixture.dll"),
         }, new[] { AppContext.BaseDirectory }, null);
         var alc = new AssemblyLoadContext("comimport-fixture");
         loader.Install(alc);
         var asm = alc.LoadFromAssemblyName(new AssemblyName("ComImportFixture"));
         s_user = alc.LoadFromAssemblyName(new AssemblyName("ComUserFixture")).GetType("ComUserFixture.User", throwOnError: true);
+        s_releaser = alc.LoadFromAssemblyName(new AssemblyName("ComReleaserFixture")).GetType("ComReleaserFixture.Releaser", throwOnError: true);
         return (asm.GetType("ComImportFixture.Scenario", throwOnError: true)!, result);
     });
 
-    private static Type? s_user;
+    private static Type? s_user, s_releaser;
 
     private static object? Run(string method, params object[] args)
     {
@@ -1268,6 +1273,15 @@ public sealed unsafe class ComRewriterTests
     public void IEnumerableReturns_AreIEnumVARIANT()
         // straight from IEnumVARIANT; through IDispatch's DISPID_NEWENUM
         => Assert.Equal("1,2,3|4,5", WithData(p => (string)Run("DataItems", p)!));
+
+    [Fact]
+    public void AnAssemblyReleasingAGroupsObjects_IsRewrittenWithThem()
+    {
+        // ComReleaserFixture makes no RCWs but calls Marshal.IsComObject/ReleaseComObject on ComImportFixture's
+        // objects: built in, IsComObject says False and ReleaseComObject throws (not a __ComObject)
+        _ = s_fixture.Value;
+        Assert.Equal("5|True|0", WithCalc(0, p => (string)s_releaser!.GetMethod("AddAndRelease")!.Invoke(null, new[] { Run("Calc", p)! })!));
+    }
 
     [Fact]
     public void AGroupMember_WithoutComTypes_IsRewrittenWithThem()
@@ -1487,23 +1501,24 @@ public sealed class ComImportStepTests
     private static System.Text.Json.Nodes.JsonObject Deps() => System.Text.Json.Nodes.JsonNode.Parse("""
         {
           "runtimeTarget": { "name": "T" },
-          "targets": { "T": { "App/1.0.0": { "runtime": { "ComImportFixture.dll": {}, "LocationAskerFixture.dll": {}, "ComUserFixture.dll": {}, "Other.dll": {} } } } },
+          "targets": { "T": { "App/1.0.0": { "runtime": { "ComImportFixture.dll": {}, "LocationAskerFixture.dll": {}, "ComUserFixture.dll": {}, "ComReleaserFixture.dll": {}, "Other.dll": {} } } } },
           "libraries": { "App/1.0.0": { "type": "package", "path": "app" } }
         }
         """)!.AsObject();
 
-    private static (System.Text.Json.Nodes.JsonObject Deps, List<string> Notes) Apply(bool windows, string? setting = null)
+    private static (System.Text.Json.Nodes.JsonObject Deps, List<string> Notes) Apply(bool windows, string? setting = null, string? entry = null)
     {
         string app = TestEnvironment.NewDirectory("comstep-app");
         File.Copy(Fixture, Path.Combine(app, "ComImportFixture.dll"));
         File.Copy(Path.Combine(Path.GetDirectoryName(Fixture)!, "LocationAskerFixture.dll"), Path.Combine(app, "LocationAskerFixture.dll"));
         File.Copy(ComRewriterTests.UserFixtureFile, Path.Combine(app, "ComUserFixture.dll"));
+        File.Copy(ComRewriterTests.ReleaserFixtureFile, Path.Combine(app, "ComReleaserFixture.dll"));
         string cache = TestEnvironment.NewDirectory("comstep-cache");
         var deps = Deps();
         var notes = new List<string>();
         var list = new List<string>();
         string appCache = TestEnvironment.NewDirectory("comstep-appcache");
-        WpfMac.ComImportStep.Apply(deps, app, AppContext.BaseDirectory, cache, appCache, windows, setting, notes, list);
+        WpfMac.ComImportStep.Apply(deps, app, AppContext.BaseDirectory, cache, appCache, windows, setting, notes, list, entry);
         Assert.Empty(Directory.EnumerateFileSystemEntries(cache));       // nothing is written: the rewrite happens in memory, at load
         // ...but the verdicts, which the next launch reads instead of judging again
         Assert.All(Directory.EnumerateFileSystemEntries(appCache), f => Assert.Equal(WpfMac.ComImportStep.VerdictFile, Path.GetFileName(f)));
@@ -1539,13 +1554,26 @@ public sealed class ComImportStepTests
         Assert.Contains(notes, n => n.Contains("ComImportFixture: rewritten in memory"));
         Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
         Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["Other.dll"]);
-        Assert.Equal(3, s_lastList!.Count);       // the fixture, its group member ComUserFixture, the location asker
+        Assert.Equal(4, s_lastList!.Count);       // the fixture, its group members ComUserFixture and ComReleaserFixture, the location asker
+        Assert.Contains(s_lastList, e => e.StartsWith("ComReleaserFixture|") && !e.EndsWith("|location"));
         Assert.Contains(s_lastList, e => e.StartsWith("ComImportFixture|") && e.EndsWith("ComImportFixture.dll"));
         Assert.Contains(s_lastList, e => e.StartsWith("ComUserFixture|") && !e.EndsWith("|location"));
         // the helper it calls asks its callers where they are: rewritten for that (caller rewriting)
         Assert.Contains(s_lastList, e => e.StartsWith("LocationAskerFixture|"));
         Assert.Contains(notes, n => n.Contains("LocationAskerFixture: its location calls rewritten") && n.Contains("GetCallingAssembly"));
         Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["LocationAskerFixture.dll"]);
+    }
+
+    [Fact]
+    public void TheEntryAssembly_IsNeverRewritten()
+    {
+        // the host loads it (dotnet exec) before the startup hook installs the loader: listing it would claim a
+        // rewrite that never happens
+        var (deps, notes) = Apply(windows: false, entry: "ComReleaserFixture");
+        Assert.Contains(notes, n => n.Contains("ComReleaserFixture: left on built-in COM") && n.Contains("the entry assembly"));
+        Assert.DoesNotContain(s_lastList!, e => e.StartsWith("ComReleaserFixture|"));
+        Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComReleaserFixture.dll"]);
+        Assert.Contains(s_lastList!, e => e.StartsWith("ComImportFixture|"));
     }
 
     [Fact]
