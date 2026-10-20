@@ -758,6 +758,14 @@ namespace System.Windows.Forms
 		/// <summary>Where the pointer is, in this driver's screen space.</summary>
 		private int _cursorX, _cursorY;
 
+		/// <summary>A press the host saw outside the driver's windows (on an embedded WPF window):
+		/// where the pointer was, as that message's pt says on Windows.</summary>
+		internal void NotePointer(int screenX, int screenY)
+		{
+			_cursorX = screenX;
+			_cursorY = screenY;
+		}
+
 		// The last press, for double clicks: which window, which button, when and where.
 		private IntPtr _pressTarget;
 		private Msg _pressMessage;
@@ -2775,6 +2783,12 @@ namespace System.Windows.Forms
 			// own windows (see Win32Host.TryRealCursor).
 			if (OperatingSystem.IsWindows() && !s_syntheticCursor && PresentationHost.Current is Win32Host && Win32Host.TryRealCursor(out int rx, out int ry)) {
 				x = rx; y = ry;
+			}
+			// macOS likewise: over an ElementHost's WPF window the driver hears nothing, and DotNetBar,
+			// asking where a press outside its open gallery was, was told the last place the pointer
+			// had been over the form -- inside the gallery, which therefore stayed open.
+			if (OperatingSystem.IsMacOS() && !s_syntheticCursor && PresentationHost.Current is CocoaHost && CocoaHost.TryRealCursor(out int mx, out int my)) {
+				x = mx; y = my;
 			}
 			if (InputTrace.On) InputTrace.Log($"cursor #{InputTrace.Seq} asked: real ({x},{y}), last message ({_cursorX},{_cursorY})");
 			if (hwnd == IntPtr.Zero) return;

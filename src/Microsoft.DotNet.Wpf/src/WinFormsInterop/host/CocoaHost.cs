@@ -272,24 +272,44 @@ internal sealed class CocoaHost : IWinFormsHost
             _popupFrame = content;
         }
         if (_popupShown) return;
-        // Added last, so it is ordered above the child windows already there.
+        if (s_traceInput) Console.WriteLine($"[cocoa input] popup layer 0x{_popupWindow:x} of '{_form.Name}' shown");
+        // Added last, so it is ordered above the child windows already there (again each time: an
+        // ElementHost's window added since would cover it).
+        if (_popupAttached) SendVoidPtr(_window, Sel("removeChildWindow:"), _popupWindow);
         SendPtrNInt(_window, Sel("addChildWindow:ordered:"), _popupWindow, 1);   // NSWindowAbove
-        SendVoidPtr(_popupWindow, Sel("orderFront:"), IntPtr.Zero);
+        if (!_popupAttached) SendVoidPtr(_popupWindow, Sel("orderFront:"), IntPtr.Zero);
+        _popupAttached = true;
+        SendVoidBool(_popupWindow, Sel("setIgnoresMouseEvents:"), false);
+        SendVoidDouble(_popupWindow, Sel("setAlphaValue:"), 1.0);
         _popupShown = true;
     }
+
+    // Put away by making it inert, not by ordering it out. Ordered out from inside the press that
+    // closed the last popup (a click outside a menu), the window server put it back on screen with
+    // the picture it last had: app's Controls gallery came back over the click that had just
+    // closed it, and went for good only when the app was deactivated. Cleared, see-through and deaf
+    // to the pointer, it is nothing wherever it is ordered.
+    private bool _popupAttached;
 
     private void HidePopupLayer()
     {
         if (!_popupShown) return;
         _popupShown = false;
-        SendVoidPtr(_window, Sel("removeChildWindow:"), _popupWindow);
-        SendVoidPtr(_popupWindow, Sel("orderOut:"), IntPtr.Zero);
+        try { _popupWgpu?.PresentScenes(new System.Collections.Generic.List<(object, int, int)>(), null, _form.Width, _form.Height); }
+        catch { }
+        SendVoidDouble(_popupWindow, Sel("setAlphaValue:"), 0.0);
+        SendVoidBool(_popupWindow, Sel("setIgnoresMouseEvents:"), true);
+        if (s_traceInput) Console.WriteLine($"[cocoa input] popup layer 0x{_popupWindow:x} of '{_form.Name}' hidden");
     }
+
 
     private void ClosePopupLayer()
     {
         if (_popupWindow == IntPtr.Zero) return;
         HidePopupLayer();
+        if (_popupAttached) SendVoidPtr(_window, Sel("removeChildWindow:"), _popupWindow);
+        SendVoidPtr(_popupWindow, Sel("orderOut:"), IntPtr.Zero);
+        _popupAttached = false;
         Send(_popupWindow, Sel("close"));
         _popupWindow = _popupView = IntPtr.Zero;
         _popupWgpu = null;
@@ -334,7 +354,8 @@ internal sealed class CocoaHost : IWinFormsHost
         return hit == HTCAPTION || hit == HTTOP || hit == HTTOPLEFT || hit == HTTOPRIGHT;
     }
 
-    private const int HTCAPTION = 2, HTLEFT = 10, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14, HTBOTTOMRIGHT = 17;
+    private const int HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
+                      HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
 
     private int HitTest(int x, int y)
     {
@@ -1059,7 +1080,7 @@ internal sealed class CocoaHost : IWinFormsHost
     private static bool RouteFromWpf(IntPtr evt)
     {
         CocoaHost host = HostFor(Send(evt, Sel("window")));
-        if (host == null) return false;
+        if (host == null) return FilterEmbeddedPress(evt);
         host.HandleEvent(evt);
         return true;
     }
@@ -1068,8 +1089,62 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         CocoaHost host = HostFor(Send(evt, Sel("window")));
         if (host != null) host.HandleEvent(evt);
+        else if (FilterEmbeddedPress(evt)) return;
         else if (s_wpfDispatch != null) s_wpfDispatch(evt);
         else Send(App(), Sel("sendEvent:"), evt);
+    }
+
+    /// <summary>Where the pointer is, in Win32's screen coordinates (top-left of the primary
+    /// screen), wherever it is: over the form, an embedded window, or none of the app's.</summary>
+    internal static bool TryRealCursor(out int x, out int y)
+    {
+        x = y = 0;
+        try
+        {
+            NSPoint p = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
+            x = (int)Math.Floor(p.x);
+            y = (int)Math.Floor(PrimaryScreenHeight() - p.y);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // A press on a WPF window embedded in a form (an ElementHost's child window). On Windows it is
+    // a message of the thread the WinForms loop pumps, so the application's message filters see it
+    // before WPF does: DotNetBar closes an open popup from its filter on any press outside it. Here
+    // it reached WPF alone -- through the popup layer, whose see-through parts let the click fall to
+    // the window below -- and app's Controls gallery stayed open over a click on the canvas.
+    // True when a filter took the message, which then does not reach WPF.
+    private static bool FilterEmbeddedPress(IntPtr evt)
+    {
+        try
+        {
+            nint type = (nint)Send(evt, Sel("type"));
+            if (type != 1 && type != 3) return false;   // left or right mouse down
+            IntPtr window = Send(evt, Sel("window"));
+            CocoaHost host = window == IntPtr.Zero ? null : HostFor(Send(window, Sel("parentWindow")));
+            if (host == null || host._form.IsDisposed || !host._form.IsHandleCreated) return false;
+            // The pointer in screen coordinates (Win32's: top-left of the primary screen).
+            NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+            NSRect frame = SendRectRet(window, Sel("frame"));
+            var screen = new System.Drawing.Point((int)(frame.x + loc.x), (int)(PrimaryScreenHeight() - (frame.y + loc.y)));
+            (host._driver as XplatUIWebGpu)?.NotePointer(screen.X, screen.Y);
+            Control target = host._form;
+            while (target.GetChildAtPoint(target.PointToClient(screen), GetChildAtPointSkip.Invisible) is Control child) target = child;
+            System.Drawing.Point client = target.PointToClient(screen);
+            Message m = Message.Create(target.Handle, type == 1 ? (int)Msg.WM_LBUTTONDOWN : (int)Msg.WM_RBUTTONDOWN,
+                                       (IntPtr)(type == 1 ? 1 : 2), (IntPtr)((client.Y << 16) | (client.X & 0xffff)));   // MK_LBUTTON / MK_RBUTTON
+            bool taken = Application.FilterMessage(ref m);
+            if (s_traceInput) Console.WriteLine($"[cocoa input] embedded press at {screen} -> {target.GetType().Name} '{target.Name}' client {client}: filtered={taken}");
+            return taken;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // ---- the wheel ----------------------------------------------------------------------
@@ -1102,6 +1177,58 @@ internal sealed class CocoaHost : IWinFormsHost
     }
 
     private MethodInfo _wheelInject;
+
+    // ---- sizing from the form's own border ------------------------------------------------
+    //
+    // Windows' SC_SIZE loop: the window's frame follows the pointer from the press on the border to
+    // the release, within the form's minimum and maximum size. Each change of frame reaches the form
+    // through the resize notification (OnWindowResized), as a live resize does.
+
+    private int _sizingHit;
+    private NSRect _sizingFrame;
+    private NSPoint _sizingStart;
+
+    private bool IsResizable() => _form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow
+                                  && _form.WindowState == FormWindowState.Normal;
+
+    private NSPoint ScreenPoint(NSPoint inWindow)
+    {
+        NSRect frame = SendRectRet(_window, Sel("frame"));
+        return new NSPoint { x = frame.x + inWindow.x, y = frame.y + inWindow.y };
+    }
+
+    private void BeginSizing(int hit, NSPoint loc)
+    {
+        _sizingHit = hit;
+        _sizingFrame = SendRectRet(_window, Sel("frame"));
+        _sizingStart = ScreenPoint(loc);
+    }
+
+    /// <summary>A mouse event during sizing: the frame follows a drag, a release ends it. True when
+    /// the event was the sizing's.</summary>
+    private bool ContinueSizing(nint type, NSPoint loc)
+    {
+        if (type == 2) { _sizingHit = 0; return true; }
+        if (type != 6) return type == 5 || type == 1;
+        NSPoint p = ScreenPoint(loc);
+        double dx = p.x - _sizingStart.x, dy = p.y - _sizingStart.y;   // Cocoa: y grows upwards
+        NSRect f = _sizingFrame;
+        bool left = _sizingHit is HTLEFT or HTTOPLEFT or HTBOTTOMLEFT;
+        bool right = _sizingHit is HTRIGHT or HTTOPRIGHT or HTBOTTOMRIGHT;
+        bool top = _sizingHit is HTTOP or HTTOPLEFT or HTTOPRIGHT;
+        bool bottom = _sizingHit is HTBOTTOM or HTBOTTOMLEFT or HTBOTTOMRIGHT;
+        double w = f.w + (right ? dx : left ? -dx : 0);
+        double h = f.h + (top ? dy : bottom ? -dy : 0);
+        // The form's limits, else Windows' smallest tracking size (SM_CXMINTRACK x SM_CYMINTRACK).
+        System.Drawing.Size min = _form.MinimumSize, max = _form.MaximumSize;
+        w = Math.Max(w, min.Width > 0 ? min.Width : 136);
+        h = Math.Max(h, min.Height > 0 ? min.Height : 39);
+        if (max.Width > 0) w = Math.Min(w, max.Width);
+        if (max.Height > 0) h = Math.Min(h, max.Height);
+        NSRect next = new NSRect { x = left ? f.x + f.w - w : f.x, y = bottom ? f.y + f.h - h : f.y, w = w, h = h };
+        SendVoidRectBool(_window, Sel("setFrame:display:"), next, true);
+        return true;
+    }
 
     // The event being handled, for a window move the form starts from inside it (SC_MOVE).
     [ThreadStatic] private static IntPtr t_event;
@@ -1137,6 +1264,19 @@ internal sealed class CocoaHost : IWinFormsHost
         if (type >= 1 && type <= 6)
         {
             NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
+            if (_sizingHit != 0 && ContinueSizing(type, loc)) return;
+            // A press on a sizing border the form draws itself sizes the window, as Windows' default
+            // handling of HTLEFT..HTBOTTOMRIGHT does. AppKit sizes only from its own frame: its title
+            // bar zone at the top, nothing along the other edges, which the content covers.
+            if (type == 1 && _ownCaption && !_formHasMouse && IsResizable())
+            {
+                int sizing = HitTest((int)loc.x + _form.Left, (int)(_form.Height - loc.y) + _form.Top);
+                if (sizing >= HTLEFT && sizing <= HTBOTTOMRIGHT)
+                {
+                    BeginSizing(sizing, loc);
+                    return;
+                }
+            }
             // A press, drag or release in the content is the form's alone. Handed on to AppKit as
             // well, it ran AppKit's own tracking on it -- and a drag of a splitter inside the form
             // resized and moved the whole window, taking an ElementHost's window off the form. The
@@ -1274,5 +1414,6 @@ internal sealed class CocoaHost : IWinFormsHost
     [DllImport(CG)] private static extern void CGContextRelease(IntPtr ctx);
     [DllImport(CG)] private static extern void CGImageRelease(IntPtr img);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSPoint SendPointRet(IntPtr r, IntPtr s);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr r, IntPtr s, double a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendNextEvent(IntPtr r, IntPtr s, nuint mask, IntPtr date, IntPtr mode, [MarshalAs(UnmanagedType.I1)] bool dequeue);
 }
