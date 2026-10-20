@@ -205,7 +205,8 @@ public static partial class ComRewriter
         // imported references
         private readonly MethodReference _toVariant, _fromVariant, _clearVariant;
         private readonly MethodReference _toSafeArray, _fromSafeArray, _takeSafeArray, _destroySafeArray;
-        private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider, _registerGenerated, _takeEnumerable, _takeEnumerator;
+        private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider, _registerGenerated, _takeEnumerable, _takeEnumerator,
+            _activatorCreate1, _activatorCreate2;
         private readonly MethodReference _structToNative, _newStruct, _structFromNative, _freeStruct, _structBack, _structArrayToNative, _structArrayFromNative,
             _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem,
             _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack,
@@ -248,6 +249,8 @@ public static partial class ComRewriter
             _borrowDispatch = Imp(nameof(Com.BorrowDispatch), typeof(object));
             _eventProvider = Imp(nameof(Com.EventProvider), typeof(object), typeof(RuntimeTypeHandle));
             _takeEnumerable = Imp(nameof(Com.TakeEnumerable), typeof(IntPtr));
+            _activatorCreate1 = Imp(nameof(Com.ActivatorCreateInstance), typeof(Type));
+            _activatorCreate2 = Imp(nameof(Com.ActivatorCreateInstance), typeof(Type), typeof(bool));
             _takeEnumerator = Imp(nameof(Com.TakeEnumerator), typeof(IntPtr));
             _registerGenerated = Imp(nameof(Com.RegisterGenerated), typeof(RuntimeTypeHandle), typeof(RuntimeTypeHandle), typeof(RuntimeTypeHandle));
             _structToNative = Imp(nameof(Com.StructToNative), typeof(object), typeof(RuntimeTypeHandle));
@@ -2014,6 +2017,17 @@ public static partial class ComRewriter
                         ins.OpCode = OpCodes.Call; ins.Operand = loc; _r.CallSites++;
                         continue;
                     }
+                    // Activator.CreateInstance(Type[, bool]) may make one of this module's COM classes: Com's co-creates it
+                    if (mr.DeclaringType.FullName == "System.Activator" && mr.Name == "CreateInstance" && !mr.HasGenericParameters && mr is not GenericInstanceMethod
+                        && mr.Parameters.Count is 1 or 2 && mr.Parameters[0].ParameterType.FullName == "System.Type"
+                        && (mr.Parameters.Count == 1 || mr.Parameters[1].ParameterType.FullName == "System.Boolean")
+                        && _comTypes.Any(t => !t.IsInterface))
+                    {
+                        ins.OpCode = OpCodes.Call;
+                        ins.Operand = mr.Parameters.Count == 1 ? _activatorCreate1 : _activatorCreate2;
+                        _r.CallSites++;
+                        continue;
+                    }
                     // Marshal's COM members
                     if (mr.DeclaringType.FullName == "System.Runtime.InteropServices.Marshal" && s_marshal.Contains(mr.Name))
                     {
@@ -2153,8 +2167,11 @@ public static partial class ComRewriter
 
         private void RewriteCoClass(TypeDefinition c)
         {
-            // the class no longer comes from COM: its instances are ComObjects made by CreateInstance
+            // the class no longer comes from COM: its instances are ComObjects made by CreateInstance (the nested
+            // ComCoClass marks it for Com.ActivatorCreateInstance)
             c.IsImport = false;
+            if (!c.NestedTypes.Any(n => n.Name == "ComCoClass"))
+                c.NestedTypes.Add(new TypeDefinition("", "ComCoClass", TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed, _object));
             foreach (var m in c.Methods)
                 if (m.IsRuntime || m.IsInternalCall)
                 {
