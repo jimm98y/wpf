@@ -274,7 +274,7 @@ For each `[ComImport]` interface `I` (with `Guid` G):
 ## 5. Off Windows (M6)
 
 With the rewriter, DXEngine's D3DImage path no longer needs built-in COM. What remains for macOS and
-Linux is what the shim needs there anyway: d3d11/dxgi/d3d9 routed to it (`libwin32shim`) and a WebGPU
+Linux is what the shim needs there anyway: d3d11/dxgi/d3d9 routed to it (the P/Invoke rewriter, [pinvoke-rewriter.md](pinvoke-rewriter.md)) and a WebGPU
 adapter.
 
 ## 6. Status (2026-10-20)

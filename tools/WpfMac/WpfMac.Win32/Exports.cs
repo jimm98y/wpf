@@ -1,5 +1,7 @@
-// The entry point the bootstrap calls (by reflection, so the bootstrap itself stays free of WPF and
-// WinForms references): registers every implementation in this assembly with libwin32shim.
+// The implementations of Windows exports, which an app's P/Invokes reach rewritten (WpfMac.ComRewrite's
+// P/Invoke rewriter, Documentation/pinvoke-rewriter.md): each method here tagged [Win32Export] is called,
+// directly, by every P/Invoke of a function it names. Initialize is what the bootstrap calls first (by
+// reflection, so the bootstrap itself stays free of WPF and WinForms references).
 
 using System.Runtime.InteropServices;
 
@@ -7,38 +9,50 @@ namespace WpfMac.Win32;
 
 public static unsafe partial class Exports
 {
-    private static Func<string, IntPtr, bool>? s_register;
     private static Action<string, string>? s_logOnce;
-    private static int s_count;
 
     /// <summary>
-    /// Registers every implementation. <paramref name="register"/> points an export's slot at a
-    /// function and reports whether the library has that export; <paramref name="logOnce"/> writes a
-    /// line to the compatibility log the first time its key is seen.
+    /// Sets up what the implementations need before the first call. <paramref name="logOnce"/> writes a line
+    /// to the compatibility log the first time its key is seen.
     /// </summary>
-    public static int RegisterAll(Func<string, IntPtr, bool> register, Action<string, string> logOnce)
+    public static void Initialize(Action<string, string> logOnce)
     {
-        s_register = register;
         s_logOnce = logOnce;
-        s_count = 0;
-        RegisterKernel32();
-        RegisterUser32System();
-        RegisterUser32Windows();
-        RegisterShell();
+        OnWindows = OperatingSystem.IsWindows();
+        if (OnWindows) return;
+        // for the Direct3D shim (DXGI's EnqueueSetEvent signals an event of ours)
+        AppContext.SetData("WpfMac.SetEvent", (Action<IntPtr>)(h => SetEvent(h)));
         RegisterGdi();
-        RegisterScrollAndFrame();
-        RegisterWinTrust();
-        return s_count;
     }
 
-    /// <summary>Registers <paramref name="fn"/> under each of <paramref name="names"/>.</summary>
-    private static void R(void* fn, params string[] names)
+    /// <summary>
+    /// A rewritten P/Invoke of a function nothing here implements: logs the call once and returns the
+    /// function's failure value (<paramref name="failure"/>: Win32Catalog.Failure), setting the last error as
+    /// the function would on a Windows that lacked it.
+    /// </summary>
+    public static long Unimplemented(string module, string name, int failure)
     {
-        foreach (string name in names)
+        LogOnce("unimpl:" + module + "!" + name, $"win32 shim: {module}!{name} is not implemented; returned {Describe(failure)}");
+        switch (failure)
         {
-            if (s_register!(name, (IntPtr)fn)) s_count++;
+            case 0: return 0;                                         // void
+            case 2: return unchecked((int)0x80004001);                // E_NOTIMPL
+            case 3: return unchecked((int)0xC0000002);                // STATUS_NOT_IMPLEMENTED
+            case 4: return ERROR_CALL_NOT_IMPLEMENTED;                // WIN32_ERROR, returned
+            case 5: SetLastError(ERROR_CALL_NOT_IMPLEMENTED); Marshal.SetLastPInvokeError(ERROR_CALL_NOT_IMPLEMENTED); return -1;  // INVALID_HANDLE_VALUE
+            default: SetLastError(ERROR_CALL_NOT_IMPLEMENTED); Marshal.SetLastPInvokeError(ERROR_CALL_NOT_IMPLEMENTED); return 0;  // FALSE / NULL / 0
         }
     }
+
+    private static string Describe(int failure) => failure switch
+    {
+        0 => "nothing",
+        2 => "E_NOTIMPL",
+        3 => "STATUS_NOT_IMPLEMENTED",
+        4 => "ERROR_CALL_NOT_IMPLEMENTED",
+        5 => "INVALID_HANDLE_VALUE",
+        _ => "0 (last error ERROR_CALL_NOT_IMPLEMENTED)",
+    };
 
     internal static void LogOnce(string key, string message) => s_logOnce?.Invoke(key, message);
 

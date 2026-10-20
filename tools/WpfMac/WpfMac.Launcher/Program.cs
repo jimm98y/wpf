@@ -175,17 +175,14 @@ internal static class Program
         using var resolver = new WpfMac.Audit.Resolver(set);
         var report = new WpfMac.Audit.Auditor(resolver, runner.App.Directory, WpfMac.Audit.StockSet.Build(runner.App, set)).Run();
         report.Notes.AddRange(prepared.Notes);
-        // On macOS, mark each Windows P/Invoke by whether libwin32shim exports it.
+        // Off Windows, mark each Windows P/Invoke by whether the stack implements the function (the P/Invoke
+        // rewriter calls it; ✗: the call returns the function's failure value).
         Func<string, string, bool>? shimHas = null;
-        string manifest = Path.Combine(runner.OverlayDir, "win32shim_exports.txt");
-        if (File.Exists(manifest))
+        if (!HostInfo.IsWindows)
         {
-            var exports = new HashSet<string>(File.ReadLines(manifest).Select(l => l[(l.IndexOf('\t') + 1)..]), StringComparer.Ordinal);
-            // Exports are by name, whichever DLL they are imported from; the DLLs that resolve to the
-            // shim are listed separately (shcore's functions, say, are labelled with their API set).
-            string modulesFile = Path.Combine(runner.OverlayDir, "win32shim_modules.txt");
-            var modules = new HashSet<string>(File.Exists(modulesFile) ? File.ReadLines(modulesFile) : File.ReadLines(manifest).Select(l => l[..l.IndexOf('\t')]), StringComparer.OrdinalIgnoreCase);
-            shimHas = (module, entry) => !modules.Contains(module) || exports.Contains(entry);
+            var catalog = WpfMac.ComRewrite.Win32Catalog.For(new[] { runner.OverlayDir });
+            shimHas = (module, entry) => !catalog.IsWindowsModule(WpfMac.ComRewrite.Win32Catalog.Normalize(module))
+                || catalog.OffWindows(entry) != null || catalog.OffWindows(entry + "W") != null || catalog.OffWindows(entry + "A") != null;
         }
         string md = WpfMac.Audit.Auditor.ToMarkdown(report, runner.App.Name, HostInfo.Rid, shimHas);
         if (output != null)

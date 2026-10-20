@@ -33,13 +33,13 @@
 
   <ItemGroup>
     <ProjectReference Include="../WpfMac.Bootstrap/WpfMac.Bootstrap.csproj" />
-    <!-- The managed half of libwin32shim (macOS); loaded by the bootstrap by name. -->
+    <!-- The implementations of Windows exports the rewritten P/Invokes call; initialized by the bootstrap by name. -->
     <ProjectReference Include="../WpfMac.Win32/WpfMac.Win32.csproj" />
     <!-- Runtime detours for what CoreLib refuses off Windows; loaded by the bootstrap by name. -->
     <ProjectReference Include="../WpfMac.Detours/WpfMac.Detours.csproj" />
     <!-- What app assemblies the launcher rewrote off built-in COM call (Documentation/comimport-rewriter.md). -->
     <ProjectReference Include="../WpfMac.ComInterop/WpfMac.ComInterop.csproj" />
-    <!-- ...and the rewriter itself: the startup hook rewrites them in memory as they load. -->
+    <!-- ...and the rewriter itself (COM, P/Invokes): the startup hook rewrites them as they load. -->
     <ProjectReference Include="../WpfMac.ComRewrite/WpfMac.ComRewrite.csproj" />
   </ItemGroup>
 

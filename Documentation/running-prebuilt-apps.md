@@ -34,7 +34,7 @@ The output is `artifacts/wpfmac/<rid>/`:
 ```
 launcher/                 wpfmac itself (portable: dotnet launcher/wpfmac.dll ...)
 overlay/wpfmac.payload/   the stack an app runs on: WPF, WinForms, System.Drawing, the renderer,
-                          wgpu-native, fonts, the shims, the startup hook, and on macOS libwin32shim
+                          wgpu-native, fonts, the shims, the startup hook, the rewriters
 ```
 
 After changing stack code, `tools/WpfMac/build.sh --repack` repacks the SDK from the existing build
@@ -94,10 +94,12 @@ dotnet exec --runtimeconfig <cache>/App.runtimeconfig.json --depsfile <cache>/Ap
   - puts `AppContext.BaseDirectory` back to the app's folder;
   - maps the app's .NET 10 WinForms references to the stack's;
   - starts the compatibility log;
-  - on macOS, loads `libwin32shim` and installs the runtime detours.
+  - initializes the Win32 implementations and, off Windows, installs the runtime detours.
 
 - **COM imports:** an app assembly that declares `[ComImport]` interfaces may be rewritten when it
   loads ([comimport-rewriter.md](comimport-rewriter.md)).
+- **Windows P/Invokes:** an app assembly that P/Invokes a Windows DLL is rewritten when it loads, its
+  P/Invokes calling the stack's managed implementations ([pinvoke-rewriter.md](pinvoke-rewriter.md)).
   - The startup hook rewrites the original's bytes in memory and loads them from there. Its COM calls
     then go through `ComWrappers` and vtable calls, which work on every OS, Windows included.
   - It still reports its original file as its location.
@@ -125,15 +127,17 @@ pretending to be a particular Windows machine, so an app takes its own "not inst
 | `System.Diagnostics.PerformanceCounter` | counters the app creates work in-process; Processor, Memory, Process and System report live values |
 | `System.Diagnostics.EventLog` | Application, System and Security exist; sources are registered in the registry where Windows keeps them; entries are kept for the process and copied to the compatibility log |
 
-**Native Win32 (`libwin32shim`).** Every function in the Windows API metadata, about 20,000 exports
-across 364 DLLs, has an entry point, so a P/Invoke always resolves. Each entry point is one of two
-things:
+**Win32 ([pinvoke-rewriter.md](pinvoke-rewriter.md)).** Every function in the Windows API metadata,
+about 18,000 exports across 364 DLLs, is known, and the app's P/Invokes of them are rewritten into
+managed calls. No native library is involved. Each function is one of two things:
 
 - a managed implementation, in `tools/WpfMac/WpfMac.Win32`: window, DC and GDI functions over the
   stack's own windows and `System.Drawing`, plus system metrics, `kernel32` basics, `dwmapi`,
   `uxtheme` and others;
 - otherwise, a stub that logs the call once and returns the function's failure value (`FALSE`,
   `E_NOTIMPL`, an invalid handle ...), so the app sees an ordinary failure.
+
+A name no Windows DLL exports throws `EntryPointNotFoundException`, as on Windows.
 
 **Runtime detours.** Named `EventWaitHandle`, `Semaphore` and `MemoryMappedFile` objects, which .NET
 refuses on Unix, work. `CommonApplicationData` and the other machine-wide folders are mapped into
@@ -169,7 +173,7 @@ Every run writes a compatibility log, `~/Library/Logs/WpfMac/<App>.log` (Windows
 - repeat counts, at exit.
 
 `wpfmac audit` gives the same picture statically before the app runs: missing assemblies, types and
-members, P/Invokes (marked ✓/✗ by whether libwin32shim exports them), non-AnyCPU and C++/CLI
+members, P/Invokes (marked ✓/✗ by whether the stack implements the function), non-AnyCPU and C++/CLI
 assemblies, named kernel objects, hard-coded paths, and Windows-only APIs such as WMI and DPAPI.
 A referenced assembly that stock cannot load either (it is neither in the app's folder nor in the
 frameworks the app's own runtimeconfig.json names) is listed separately under "Absent for stock too":
@@ -219,24 +223,20 @@ in the UI stack.
 
 On Windows the stack's WinForms controls are not Windows windows: `Control.Handle` is a handle the
 stack made up. An app that passes one to user32 (`GetWindowDC(control.Handle)`, `SendMessage`,
-`BeginPaint`, `SetWindowPos`, ...) would reach a Windows that has never heard of it. So wpfmac gives
-each of the app's assemblies that P/Invokes user32, gdi32, uxtheme or msimg32 its own copy of that DLL
-(`NativeLibrary.SetDllImportResolver`, from the startup hook):
+`BeginPaint`, `SetWindowPos`, ...) would reach a Windows that has never heard of it. So the P/Invoke
+rewriter rewrites the app's P/Invokes of the functions that have a Windows implementation
+(`[Win32ExportOnWindows]`, `WpfMac.Win32/Windows*.cs`); every other P/Invoke is left as it is:
 
-- the copy is generated at run time from the real DLL's export table (`WpfMac.Bootstrap/Win32/
-  ShimImage.cs`, no native toolchain), with every export at the same name and ordinal, and cached in
-  the app's cache folder;
-- an export without a managed implementation jumps straight to the real function;
-- an export with one (`WpfMac.Win32/Windows*.cs`) runs it when a handle argument is one of the
-  stack's windows, and the real function for every other handle: WPF windows, the windows forms are
-  shown in, windows the app created itself;
+- the implementation runs when a handle argument is one of the stack's windows; the real function
+  (the original import, kept beside it) runs for every other handle: WPF windows, the windows forms
+  are shown in, windows the app created itself;
 - a device context for one of the stack's windows is a real memory DC; what the app draws into it
   reaches the window when it is released (`ReleaseDC`, `EndPaint`);
 - GDI calls on a DC that a `Graphics` is drawing into first write that `Graphics`' drawing to the DC,
   as GDI+ does by drawing as it goes.
 
-The stack's own assemblies and the runtime's are not given the copy. An assembly that installs its
-own resolver is left alone (the log says so).
+The stack's own assemblies and the runtime's are not rewritten.
+
 ## Removing wpfmac
 
 wpfmac installs nothing: no shared framework, no persisted environment variables, no file

@@ -51,6 +51,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 if (!s_seen.Add(key)) return;
             }
+            // the compatibility log of wpfmac's startup hook, when there is one
+            LogOnce ??= AppContext.GetData("WpfMac.LogOnce") as Action<string, string>;
             if (LogOnce != null) LogOnce(key, "d3d11 shim: " + message);
             else Console.Error.WriteLine("d3d11 shim: " + message);
         }

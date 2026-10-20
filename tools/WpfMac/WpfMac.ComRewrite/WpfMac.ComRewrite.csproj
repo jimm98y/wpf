@@ -1,8 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The COM-import rewriter (Documentation/comimport-rewriter.md): rewrites an app assembly's
-       [ComImport] interfaces and the calls that use them onto WpfMac.ComInterop. Used by the launcher
-       when it prepares an app. Mono.Cecil: MIT (its notice ships in the overlay with MonoMod's). -->
+  <!-- The COM-import rewriter (Documentation/comimport-rewriter.md) and the P/Invoke rewriter
+       (Documentation/pinvoke-rewriter.md): rewrite an app assembly's [ComImport] interfaces and its
+       Windows P/Invokes onto the stack's managed implementations. Used by the launcher when it prepares
+       an app, by the bootstrap when it loads one, and by the build of a bundled head. Mono.Cecil: MIT
+       (its notice ships in the overlay with MonoMod's). -->
   <PropertyGroup>
     <AssemblyName>WpfMac.ComRewrite</AssemblyName>
     <RootNamespace>WpfMac.ComRewrite</RootNamespace>

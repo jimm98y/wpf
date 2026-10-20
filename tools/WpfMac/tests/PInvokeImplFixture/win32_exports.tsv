@@ -1,0 +1,19 @@
+testdll	LengthW	1
+testdll	LengthA	1
+testdll	GreetW	1
+testdll	IsPositive	1
+testdll	Grow	1
+testdll	Sum	1
+testdll	FailWith	1
+testdll	Missing	1
+testdll	MissingHr	2
+testdll	MissingVoid	0
+testdll	Call	1
+testdll	OpenThing	5
+testdll	ThingValue	1
+testdll	Hr	2
+testdll	TwoArgs	1
+testdll	WindowValue	1
+testdll	BridgeW	1
+testdll	*
+testdll	BridgeA	1

@@ -81,52 +81,6 @@ public static unsafe partial class Exports
     {
         // What the stack's System.Drawing asks when an app does Graphics.FromHdc on a DC from here.
         AppContext.SetData("System.Drawing.DcSurfaceResolver", (Func<IntPtr, object?>)SurfaceOf);
-
-        R((delegate* unmanaged<nint, nint>)&GetDC, "GetDC", "GetWindowDC");
-        R((delegate* unmanaged<nint, nint, uint, nint>)&GetDCEx, "GetDCEx");
-        R((delegate* unmanaged<nint, nint, int>)&ReleaseDC, "ReleaseDC");
-        R((delegate* unmanaged<nint, byte*, nint>)&BeginPaint, "BeginPaint");
-        R((delegate* unmanaged<nint, byte*, int>)&EndPaint, "EndPaint");
-        R((delegate* unmanaged<char*, char*, char*, void*, nint>)&CreateDCW, "CreateDCW", "CreateDC", "CreateICW", "CreateIC");
-        R((delegate* unmanaged<nint, nint>)&CreateCompatibleDC, "CreateCompatibleDC");
-        R((delegate* unmanaged<nint, int>)&DeleteDC, "DeleteDC");
-        R((delegate* unmanaged<nint, int, int>)&GetDeviceCaps, "GetDeviceCaps");
-        R((delegate* unmanaged<int, nint>)&GetStockObject, "GetStockObject");
-        R((delegate* unmanaged<nint, nint, nint>)&SelectObject, "SelectObject");
-        R((delegate* unmanaged<nint, int>)&DeleteObject, "DeleteObject");
-        R((delegate* unmanaged<nint, uint>)&GetObjectType, "GetObjectType");
-        R((delegate* unmanaged<nint, int, void*, int>)&GetObjectW, "GetObjectW", "GetObject", "GetObjectA");
-        R((delegate* unmanaged<nint, uint, nint>)&GetCurrentObject, "GetCurrentObject");
-        R((delegate* unmanaged<uint, nint>)&CreateSolidBrush, "CreateSolidBrush");
-        R((delegate* unmanaged<int, int, uint, nint>)&CreatePen, "CreatePen");
-        R((delegate* unmanaged<byte*, nint>)&CreateFontIndirectW, "CreateFontIndirectW", "CreateFontIndirect");
-        R((delegate* unmanaged<nint, int, int, nint>)&CreateCompatibleBitmap, "CreateCompatibleBitmap", "CreateDiscardableBitmap");
-        R((delegate* unmanaged<int, int, uint, uint, void*, nint>)&CreateBitmap, "CreateBitmap");
-        R((delegate* unmanaged<nint, byte*, uint, void**, nint, uint, nint>)&CreateDIBSection, "CreateDIBSection");
-        R((delegate* unmanaged<int, int, int, int, nint>)&CreateRectRgn, "CreateRectRgn", "CreateEllipticRgn");
-        R((delegate* unmanaged<RECT*, nint>)&CreateRectRgnIndirect, "CreateRectRgnIndirect", "CreateEllipticRgnIndirect");
-        R((delegate* unmanaged<int, int, int, int, int, int, nint>)&CreateRoundRectRgn, "CreateRoundRectRgn");
-        R((delegate* unmanaged<nint, nint, nint, int, int>)&CombineRgn, "CombineRgn");
-        R((delegate* unmanaged<nint, RECT*, int>)&GetRgnBox, "GetRgnBox");
-        R((delegate* unmanaged<nint, byte*, int>)&GetTextMetricsW, "GetTextMetricsW", "GetTextMetrics");
-        R((delegate* unmanaged<nint, int, int>)&SetBkMode, "SetBkMode");
-        R((delegate* unmanaged<nint, uint, uint>)&SetTextColor, "SetTextColor");
-        R((delegate* unmanaged<nint, uint, uint>)&SetBkColor, "SetBkColor");
-        R((delegate* unmanaged<nint, int, int>)&SetROP2, "SetROP2");
-        R((delegate* unmanaged<nint, int, int>)&SetStretchBltMode, "SetStretchBltMode");
-        R((delegate* unmanaged<nint, int, int>)&SetGraphicsMode, "SetGraphicsMode");
-        R((delegate* unmanaged<nint, int, int>)&SetMapMode, "SetMapMode");
-        R((delegate* unmanaged<nint, int, int>)&SetICMMode, "SetICMMode");
-        R((delegate* unmanaged<nint, int, int, POINT*, int>)&SetBrushOrgEx, "SetBrushOrgEx", "SetViewportOrgEx", "SetWindowOrgEx", "OffsetViewportOrgEx", "OffsetWindowOrgEx");
-        R((delegate* unmanaged<nint, nint, int>)&SelectClipRgn, "SelectClipRgn");
-        R((delegate* unmanaged<nint, int, int, int, int, int>)&ExcludeClipRect, "ExcludeClipRect", "IntersectClipRect");
-        R((delegate* unmanaged<nint, int, int, int, int, nint, int, int, uint, int>)&BitBlt, "BitBlt");
-        R((delegate* unmanaged<nint, int, int, int, int, nint, int, int, int, int, uint, int>)&StretchBlt, "StretchBlt");
-        R((delegate* unmanaged<nint, int, int, uint>)&GetPixel, "GetPixel");
-        R((delegate* unmanaged<void*, uint, void*, uint*, nint>)&AddFontMemResourceEx, "AddFontMemResourceEx");
-        R((delegate* unmanaged<nint, int>)&RemoveFontMemResourceEx, "RemoveFontMemResourceEx");
-        R((delegate* unmanaged<nint, RECT*, nint, int>)&FillRect, "FillRect", "FrameRect");
-        R((delegate* unmanaged<nint, nint, POINT*, int*, nint, POINT*, uint, void*, uint, int>)&UpdateLayeredWindow, "UpdateLayeredWindow");
     }
 
     /// <summary>
@@ -198,9 +152,9 @@ public static unsafe partial class Exports
 
     // ---- DCs ----------------------------------------------------------------------------------------
 
-    [UnmanagedCallersOnly] private static nint GetDC(nint hwnd) => NewDC(new DeviceContext { Hwnd = hwnd });
-    [UnmanagedCallersOnly] private static nint GetDCEx(nint hwnd, nint clip, uint flags) => NewDC(new DeviceContext { Hwnd = hwnd });
-    [UnmanagedCallersOnly] private static int ReleaseDC(nint hwnd, nint hdc) => s_dcs.TryRemove(hdc, out _) ? 1 : 0;
+    [Win32Export("GetDC", "GetWindowDC")] public static nint GetDC(nint hwnd) => NewDC(new DeviceContext { Hwnd = hwnd });
+    [Win32Export("GetDCEx")] public static nint GetDCEx(nint hwnd, nint clip, uint flags) => NewDC(new DeviceContext { Hwnd = hwnd });
+    [Win32Export("ReleaseDC")] public static int ReleaseDC(nint hwnd, nint hdc) => s_dcs.TryRemove(hdc, out _) ? 1 : 0;
 
     /// <summary>Tells the WinForms driver a window of its was painted (BeginPaint) or validated
     /// (ValidateRect) by code that draws it through GDI.</summary>
@@ -218,8 +172,8 @@ public static unsafe partial class Exports
     }
 
     // PAINTSTRUCT: hdc, fErase, RECT rcPaint, fRestore, fIncUpdate, rgbReserved[32].
-    [UnmanagedCallersOnly]
-    private static nint BeginPaint(nint hwnd, byte* ps)
+    [Win32Export("BeginPaint")]
+    public static nint BeginPaint(nint hwnd, byte* ps)
     {
         nint hdc = NewDC(new DeviceContext { Hwnd = hwnd });
         ValidateWinFormsWindow(hwnd, repaint: true);
@@ -230,13 +184,13 @@ public static unsafe partial class Exports
         return hdc;
     }
 
-    [UnmanagedCallersOnly] private static int EndPaint(nint hwnd, byte* ps) { s_dcs.TryRemove(*(nint*)ps, out _); return TRUE; }
-    [UnmanagedCallersOnly] private static nint CreateDCW(char* driver, char* device, char* output, void* mode) => NewDC(new DeviceContext());
-    [UnmanagedCallersOnly] private static nint CreateCompatibleDC(nint hdc) => NewDC(new DeviceContext { Memory = true });
-    [UnmanagedCallersOnly] private static int DeleteDC(nint hdc) => s_dcs.TryRemove(hdc, out _) ? TRUE : FALSE;
+    [Win32Export("EndPaint")] public static int EndPaint(nint hwnd, byte* ps) { s_dcs.TryRemove(*(nint*)ps, out _); return TRUE; }
+    [Win32Export("CreateDCW", "CreateDC", "CreateICW", "CreateIC")] public static nint CreateDCW(char* driver, char* device, char* output, void* mode) => NewDC(new DeviceContext());
+    [Win32Export("CreateCompatibleDC")] public static nint CreateCompatibleDC(nint hdc) => NewDC(new DeviceContext { Memory = true });
+    [Win32Export("DeleteDC")] public static int DeleteDC(nint hdc) => s_dcs.TryRemove(hdc, out _) ? TRUE : FALSE;
 
-    [UnmanagedCallersOnly]
-    private static int GetDeviceCaps(nint hdc, int index)
+    [Win32Export("GetDeviceCaps")]
+    public static int GetDeviceCaps(nint hdc, int index)
     {
         var main = Screens.All()[0];
         int w = main.Bounds.Right - main.Bounds.Left, h = main.Bounds.Bottom - main.Bounds.Top;
@@ -267,7 +221,7 @@ public static unsafe partial class Exports
 
     // ---- objects ------------------------------------------------------------------------------------
 
-    [UnmanagedCallersOnly] private static nint GetStockObject(int index) => index is >= 0 and <= 19 ? StockObject(index) : 0;
+    [Win32Export("GetStockObject")] public static nint GetStockObject(int index) => index is >= 0 and <= 19 ? StockObject(index) : 0;
 
     /// <summary>
     /// An HBITMAP System.Drawing made (Bitmap.GetHbitmap): its pixels, adopted as a 32-bit top-down
@@ -295,8 +249,8 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly]
-    private static nint SelectObject(nint hdc, nint obj)
+    [Win32Export("SelectObject")]
+    public static nint SelectObject(nint hdc, nint obj)
     {
         if (!s_dcs.TryGetValue(hdc, out var dc)) return 0;
         if (!s_gdi.TryGetValue(obj, out var o) && (o = AdoptManagedBitmap(obj)) == null) return 0;
@@ -313,8 +267,8 @@ public static unsafe partial class Exports
         return previous;
     }
 
-    [UnmanagedCallersOnly]
-    private static int DeleteObject(nint obj)
+    [Win32Export("DeleteObject")]
+    public static int DeleteObject(nint obj)
     {
         if (!s_gdi.TryGetValue(obj, out var o)) return FALSE;
         if (o.Stock) return TRUE;
@@ -324,15 +278,15 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static uint GetObjectType(nint obj)
+    [Win32Export("GetObjectType")]
+    public static uint GetObjectType(nint obj)
     {
         if (s_dcs.TryGetValue(obj, out var dc)) return dc.Memory ? (uint)GdiKind.MemDC : (uint)GdiKind.DC;
         return s_gdi.TryGetValue(obj, out var o) ? (uint)o.Kind : 0;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetObjectW(nint obj, int size, void* buffer)
+    [Win32Export("GetObjectW", "GetObject", "GetObjectA")]
+    public static int GetObjectW(nint obj, int size, void* buffer)
     {
         if (!s_gdi.TryGetValue(obj, out var o)) return 0;
         switch (o.Kind)
@@ -359,18 +313,18 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly]
-    private static nint GetCurrentObject(nint hdc, uint type)
+    [Win32Export("GetCurrentObject")]
+    public static nint GetCurrentObject(nint hdc, uint type)
     {
         if (!s_dcs.TryGetValue(hdc, out var dc)) return 0;
         return type switch { 1 => dc.Pen, 2 => dc.Brush, 6 => dc.Font, 7 => dc.Bitmap, _ => 0 };
     }
 
-    [UnmanagedCallersOnly] private static nint CreateSolidBrush(uint color) => NewGdi(new GdiObject { Kind = GdiKind.Brush, Color = color });
-    [UnmanagedCallersOnly] private static nint CreatePen(int style, int width, uint color) => NewGdi(new GdiObject { Kind = GdiKind.Pen, Color = color, Width = width });
+    [Win32Export("CreateSolidBrush")] public static nint CreateSolidBrush(uint color) => NewGdi(new GdiObject { Kind = GdiKind.Brush, Color = color });
+    [Win32Export("CreatePen")] public static nint CreatePen(int style, int width, uint color) => NewGdi(new GdiObject { Kind = GdiKind.Pen, Color = color, Width = width });
 
-    [UnmanagedCallersOnly]
-    private static nint CreateFontIndirectW(byte* lf) => NewGdi(new GdiObject
+    [Win32Export("CreateFontIndirectW", "CreateFontIndirect")]
+    public static nint CreateFontIndirectW(byte* lf) => NewGdi(new GdiObject
     {
         Kind = GdiKind.Font,
         FontHeight = *(int*)lf == 0 ? -12 : *(int*)lf,
@@ -387,10 +341,10 @@ public static unsafe partial class Exports
         });
     }
 
-    [UnmanagedCallersOnly] private static nint CreateCompatibleBitmap(nint hdc, int w, int h) => NewBitmap(w, h, 32, true);
+    [Win32Export("CreateCompatibleBitmap", "CreateDiscardableBitmap")] public static nint CreateCompatibleBitmap(nint hdc, int w, int h) => NewBitmap(w, h, 32, true);
 
-    [UnmanagedCallersOnly]
-    private static nint CreateBitmap(int w, int h, uint planes, uint bpp, void* bits)
+    [Win32Export("CreateBitmap")]
+    public static nint CreateBitmap(int w, int h, uint planes, uint bpp, void* bits)
     {
         nint handle = NewBitmap(w, h, (int)Math.Max(1, bpp), bits == null);
         if (bits != null && s_gdi.TryGetValue(handle, out var o))
@@ -402,8 +356,8 @@ public static unsafe partial class Exports
     }
 
     // BITMAPINFOHEADER: biSize, biWidth, biHeight, biPlanes(2), biBitCount(2), ...
-    [UnmanagedCallersOnly]
-    private static nint CreateDIBSection(nint hdc, byte* info, uint usage, void** bits, nint section, uint offset)
+    [Win32Export("CreateDIBSection")]
+    public static nint CreateDIBSection(nint hdc, byte* info, uint usage, void** bits, nint section, uint offset)
     {
         int width = *(int*)(info + 4), height = *(int*)(info + 8);
         int bpp = *(ushort*)(info + 14);
@@ -413,12 +367,12 @@ public static unsafe partial class Exports
         return handle;
     }
 
-    [UnmanagedCallersOnly] private static nint CreateRectRgn(int l, int t, int r, int b) => NewGdi(new GdiObject { Kind = GdiKind.Region, Region = new RECT { Left = l, Top = t, Right = r, Bottom = b } });
-    [UnmanagedCallersOnly] private static nint CreateRectRgnIndirect(RECT* r) => NewGdi(new GdiObject { Kind = GdiKind.Region, Region = *r });
-    [UnmanagedCallersOnly] private static nint CreateRoundRectRgn(int l, int t, int r, int b, int w, int h) => NewGdi(new GdiObject { Kind = GdiKind.Region, Region = new RECT { Left = l, Top = t, Right = r, Bottom = b } });
+    [Win32Export("CreateRectRgn", "CreateEllipticRgn")] public static nint CreateRectRgn(int l, int t, int r, int b) => NewGdi(new GdiObject { Kind = GdiKind.Region, Region = new RECT { Left = l, Top = t, Right = r, Bottom = b } });
+    [Win32Export("CreateRectRgnIndirect", "CreateEllipticRgnIndirect")] public static nint CreateRectRgnIndirect(RECT* r) => NewGdi(new GdiObject { Kind = GdiKind.Region, Region = *r });
+    [Win32Export("CreateRoundRectRgn")] public static nint CreateRoundRectRgn(int l, int t, int r, int b, int w, int h) => NewGdi(new GdiObject { Kind = GdiKind.Region, Region = new RECT { Left = l, Top = t, Right = r, Bottom = b } });
 
-    [UnmanagedCallersOnly]
-    private static int CombineRgn(nint dest, nint a, nint b, int mode)
+    [Win32Export("CombineRgn")]
+    public static int CombineRgn(nint dest, nint a, nint b, int mode)
     {
         // The bounding boxes, combined; regions here are rectangles.
         if (!s_gdi.TryGetValue(dest, out var d) || !s_gdi.TryGetValue(a, out var ra)) return 0;   // ERROR
@@ -434,8 +388,8 @@ public static unsafe partial class Exports
         return r.Right <= r.Left || r.Bottom <= r.Top ? 1 : 2;   // NULLREGION : SIMPLEREGION
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetRgnBox(nint rgn, RECT* r)
+    [Win32Export("GetRgnBox")]
+    public static int GetRgnBox(nint rgn, RECT* r)
     {
         if (!s_gdi.TryGetValue(rgn, out var o)) return 0;
         *r = o.Region;
@@ -444,8 +398,8 @@ public static unsafe partial class Exports
 
     // TEXTMETRICW: tmHeight, tmAscent, tmDescent, tmInternalLeading, tmExternalLeading, tmAveCharWidth,
     // tmMaxCharWidth, tmWeight, tmOverhang, tmDigitizedAspectX, tmDigitizedAspectY, 4 WCHARs, 5 BYTEs.
-    [UnmanagedCallersOnly]
-    private static int GetTextMetricsW(nint hdc, byte* tm)
+    [Win32Export("GetTextMetricsW", "GetTextMetrics")]
+    public static int GetTextMetricsW(nint hdc, byte* tm)
     {
         int em = 12;
         if (s_dcs.TryGetValue(hdc, out var dc) && s_gdi.TryGetValue(dc.Font, out var f) && f.Kind == GdiKind.Font) em = Math.Abs(f.FontHeight);
@@ -468,17 +422,17 @@ public static unsafe partial class Exports
         return old;
     }
 
-    [UnmanagedCallersOnly] private static int SetBkMode(nint hdc, int mode) => Swap(hdc, d => d.BkMode, d => d.BkMode = mode);
-    [UnmanagedCallersOnly] private static uint SetTextColor(nint hdc, uint c) => (uint)Swap(hdc, d => (int)d.TextColor, d => d.TextColor = c);
-    [UnmanagedCallersOnly] private static uint SetBkColor(nint hdc, uint c) => (uint)Swap(hdc, d => (int)d.BkColor, d => d.BkColor = c);
-    [UnmanagedCallersOnly] private static int SetROP2(nint hdc, int v) => Swap(hdc, d => d.Rop2, d => d.Rop2 = v);
-    [UnmanagedCallersOnly] private static int SetStretchBltMode(nint hdc, int v) => Swap(hdc, d => d.StretchMode, d => d.StretchMode = v);
-    [UnmanagedCallersOnly] private static int SetGraphicsMode(nint hdc, int v) => Swap(hdc, d => d.GraphicsMode, d => d.GraphicsMode = v);
-    [UnmanagedCallersOnly] private static int SetMapMode(nint hdc, int v) => Swap(hdc, d => d.MapMode, d => d.MapMode = v);
-    [UnmanagedCallersOnly] private static int SetICMMode(nint hdc, int v) => Swap(hdc, d => d.IcmMode, d => d.IcmMode = v);
-    [UnmanagedCallersOnly] private static int SetBrushOrgEx(nint hdc, int x, int y, POINT* old) { if (old != null) *old = default; return TRUE; }
-    [UnmanagedCallersOnly] private static int SelectClipRgn(nint hdc, nint rgn) => 2;
-    [UnmanagedCallersOnly] private static int ExcludeClipRect(nint hdc, int l, int t, int r, int b) => 2;
+    [Win32Export("SetBkMode")] public static int SetBkMode(nint hdc, int mode) => Swap(hdc, d => d.BkMode, d => d.BkMode = mode);
+    [Win32Export("SetTextColor")] public static uint SetTextColor(nint hdc, uint c) => (uint)Swap(hdc, d => (int)d.TextColor, d => d.TextColor = c);
+    [Win32Export("SetBkColor")] public static uint SetBkColor(nint hdc, uint c) => (uint)Swap(hdc, d => (int)d.BkColor, d => d.BkColor = c);
+    [Win32Export("SetROP2")] public static int SetROP2(nint hdc, int v) => Swap(hdc, d => d.Rop2, d => d.Rop2 = v);
+    [Win32Export("SetStretchBltMode")] public static int SetStretchBltMode(nint hdc, int v) => Swap(hdc, d => d.StretchMode, d => d.StretchMode = v);
+    [Win32Export("SetGraphicsMode")] public static int SetGraphicsMode(nint hdc, int v) => Swap(hdc, d => d.GraphicsMode, d => d.GraphicsMode = v);
+    [Win32Export("SetMapMode")] public static int SetMapMode(nint hdc, int v) => Swap(hdc, d => d.MapMode, d => d.MapMode = v);
+    [Win32Export("SetICMMode")] public static int SetICMMode(nint hdc, int v) => Swap(hdc, d => d.IcmMode, d => d.IcmMode = v);
+    [Win32Export("SetBrushOrgEx", "SetViewportOrgEx", "SetWindowOrgEx", "OffsetViewportOrgEx", "OffsetWindowOrgEx")] public static int SetBrushOrgEx(nint hdc, int x, int y, POINT* old) { if (old != null) *old = default; return TRUE; }
+    [Win32Export("SelectClipRgn")] public static int SelectClipRgn(nint hdc, nint rgn) => 2;
+    [Win32Export("ExcludeClipRect", "IntersectClipRect")] public static int ExcludeClipRect(nint hdc, int l, int t, int r, int b) => 2;
 
     /// <summary>
     /// The source pixels of a blit: the bitmap selected into a memory DC, as a System.Drawing image
@@ -560,12 +514,12 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static int BitBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, uint rop) => Blit(dst, x, y, w, h, src, sx, sy, w, h, rop);
-    [UnmanagedCallersOnly] private static int StretchBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, int sw, int sh, uint rop) => Blit(dst, x, y, w, h, src, sx, sy, sw, sh, rop);
-    [UnmanagedCallersOnly] private static uint GetPixel(nint hdc, int x, int y) => 0xFFFFFFFF;   // CLR_INVALID
+    [Win32Export("BitBlt")] public static int BitBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, uint rop) => Blit(dst, x, y, w, h, src, sx, sy, w, h, rop);
+    [Win32Export("StretchBlt")] public static int StretchBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, int sw, int sh, uint rop) => Blit(dst, x, y, w, h, src, sx, sy, sw, sh, rop);
+    [Win32Export("GetPixel")] public static uint GetPixel(nint hdc, int x, int y) => 0xFFFFFFFF;   // CLR_INVALID
 
-    [UnmanagedCallersOnly]
-    private static int FillRect(nint hdc, RECT* r, nint brush)
+    [Win32Export("FillRect", "FrameRect")]
+    public static int FillRect(nint hdc, RECT* r, nint brush)
     {
         LogOnce("gdi:fill", "win32: GDI drawing onto a window (FillRect and friends) is accepted but not shown");
         return TRUE;
@@ -577,8 +531,8 @@ public static unsafe partial class Exports
     // colour key (ULW_COLORKEY), and the blend's constant alpha on top; what the window paints is not
     // shown. Position and size come with the update, as on Windows.
     // pptDst, psize, pptSrc: POINT*, SIZE*, POINT*; pblend: BLENDFUNCTION*.
-    [UnmanagedCallersOnly]
-    private static int UpdateLayeredWindow(nint hwnd, nint hdcDst, POINT* pptDst, int* psize, nint hdcSrc, POINT* pptSrc, uint key, void* blend, uint flags)
+    [Win32Export("UpdateLayeredWindow")]
+    public static int UpdateLayeredWindow(nint hwnd, nint hdcDst, POINT* pptDst, int* psize, nint hdcSrc, POINT* pptSrc, uint key, void* blend, uint flags)
     {
         const uint ULW_COLORKEY = 1, ULW_ALPHA = 2;
         object? o = Resolve(hwnd);
@@ -632,12 +586,12 @@ public static unsafe partial class Exports
 
     // Fonts an app carries in its resources and registers for itself. Accepted; the stack's own font
     // catalogue is what text is rendered with.
-    [UnmanagedCallersOnly]
-    private static nint AddFontMemResourceEx(void* data, uint length, void* reserved, uint* count)
+    [Win32Export("AddFontMemResourceEx")]
+    public static nint AddFontMemResourceEx(void* data, uint length, void* reserved, uint* count)
     {
         if (count != null) *count = 1;
         return NewHandle(new object());
     }
 
-    [UnmanagedCallersOnly] private static int RemoveFontMemResourceEx(nint h) { s_handles.TryRemove(h, out _); return TRUE; }
+    [Win32Export("RemoveFontMemResourceEx")] public static int RemoveFontMemResourceEx(nint h) { s_handles.TryRemove(h, out _); return TRUE; }
 }

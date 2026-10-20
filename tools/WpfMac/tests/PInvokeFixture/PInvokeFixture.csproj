@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An app-like assembly with Windows P/Invokes (into a made-up "testdll"), for PInvokeRewriterTests:
+       the tests rewrite it onto PInvokeImplFixture and run the rewritten copy. -->
+  <PropertyGroup>
+    <AssemblyName>PInvokeFixture</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <NoWarn>$(NoWarn);CA1416;SYSLIB1054</NoWarn>
+  </PropertyGroup>
+</Project>

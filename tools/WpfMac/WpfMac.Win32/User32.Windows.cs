@@ -25,90 +25,6 @@ public static unsafe partial class Exports
 
     internal static readonly nint DesktopWindow = 0x10010;
 
-    private static void RegisterUser32Windows()
-    {
-        R((delegate* unmanaged<nint>)&GetDesktopWindow, "GetDesktopWindow", "GetShellWindow");
-        R((delegate* unmanaged<nint, int>)&IsWindow, "IsWindow");
-        R((delegate* unmanaged<nint>)&GetActiveWindow, "GetActiveWindow", "GetForegroundWindow");
-        R((delegate* unmanaged<nint>)&GetFocus, "GetFocus");
-        R((delegate* unmanaged<nint, nint>)&SetFocus, "SetFocus");
-        R((delegate* unmanaged<nint, int>)&SetForegroundWindow, "SetForegroundWindow", "BringWindowToTop");
-        R((delegate* unmanaged<nint, nint>)&SetActiveWindow, "SetActiveWindow");
-        R((delegate* unmanaged<nint, int>)&IsWindowVisible, "IsWindowVisible");
-        R((delegate* unmanaged<nint, int>)&IsWindowEnabled, "IsWindowEnabled");
-        R((delegate* unmanaged<nint, int, int>)&EnableWindow, "EnableWindow");
-        R((delegate* unmanaged<nint, int>)&IsIconic, "IsIconic");
-        R((delegate* unmanaged<nint, int>)&IsZoomed, "IsZoomed");
-        R((delegate* unmanaged<nint, int, int>)&ShowWindow, "ShowWindow", "ShowWindowAsync");
-        R((delegate* unmanaged<nint, uint, uint, int>)&AnimateWindow, "AnimateWindow");
-        R((delegate* unmanaged<nint, uint, int>)&RegisterTouchWindow, "RegisterTouchWindow");
-        R((delegate* unmanaged<nint, int>)&UnregisterTouchWindow, "UnregisterTouchWindow");
-        R((delegate* unmanaged<nint, uint*, int>)&IsTouchWindow, "IsTouchWindow");
-        R((delegate* unmanaged<nint, uint, uint, GESTURECONFIG*, uint, int>)&SetGestureConfig, "SetGestureConfig");
-        R((delegate* unmanaged<nint, uint, uint, uint*, GESTURECONFIG*, uint, int>)&GetGestureConfig, "GetGestureConfig");
-        R((delegate* unmanaged<nint, RECT*, int>)&GetWindowRectExport, "GetWindowRect");
-        R((delegate* unmanaged<nint, RECT*, int>)&GetClientRect, "GetClientRect");
-        R((delegate* unmanaged<nint, POINT*, int>)&ClientToScreen, "ClientToScreen");
-        R((delegate* unmanaged<nint, POINT*, int>)&ScreenToClient, "ScreenToClient");
-        R((delegate* unmanaged<nint, nint, POINT*, uint, int>)&MapWindowPoints, "MapWindowPoints");
-        R((delegate* unmanaged<nint, nint, int, int, int, int, uint, int>)&SetWindowPos, "SetWindowPos");
-        R((delegate* unmanaged<nint, int, int, int, int, int, int>)&MoveWindow, "MoveWindow");
-        R((delegate* unmanaged<nint, nint>)&GetParent, "GetParent");
-        R((delegate* unmanaged<nint, uint, nint>)&GetAncestor, "GetAncestor");
-        R((delegate* unmanaged<nint, uint, nint>)&GetWindow, "GetWindow");
-        R((delegate* unmanaged<nint, nint, nint>)&SetParent, "SetParent");
-        R((delegate* unmanaged<nint, nint, int>)&IsChild, "IsChild");
-        R((delegate* unmanaged<nint, uint*, uint>)&GetWindowThreadProcessId, "GetWindowThreadProcessId");
-        R((delegate* unmanaged<nint, int, nint>)&GetWindowLongPtr, "GetWindowLongPtrW", "GetWindowLongPtr", "GetWindowLongPtrA", "GetWindowLongW", "GetWindowLong", "GetWindowLongA");
-        R((delegate* unmanaged<nint, int, nint, nint>)&SetWindowLongPtr, "SetWindowLongPtrW", "SetWindowLongPtr", "SetWindowLongPtrA", "SetWindowLongW", "SetWindowLong", "SetWindowLongA");
-        R((delegate* unmanaged<nint, int, nint>)&GetClassLongPtr, "GetClassLongPtrW", "GetClassLongPtr", "GetClassLongW", "GetClassLong");
-        R((delegate* unmanaged<nint, int, nint, nint>)&SetClassLongPtr, "SetClassLongPtrW", "SetClassLongPtr", "SetClassLongW", "SetClassLong");
-        R((delegate* unmanaged<nint, char*, int, int>)&GetClassNameW, "GetClassNameW");
-        R((delegate* unmanaged<nint, byte*, int, int>)&GetClassNameBare, "GetClassName", "GetClassNameA");
-        R((delegate* unmanaged<nint, char*, int, int>)&GetWindowTextW, "GetWindowTextW");
-        R((delegate* unmanaged<nint, byte*, int, int>)&GetWindowTextBare, "GetWindowText", "GetWindowTextA");
-        R((delegate* unmanaged<nint, int>)&GetWindowTextLength, "GetWindowTextLengthW", "GetWindowTextLength", "GetWindowTextLengthA");
-        R((delegate* unmanaged<nint, char*, int>)&SetWindowTextW, "SetWindowTextW");
-        R((delegate* unmanaged<nint, byte*, int>)&SetWindowTextBare, "SetWindowText", "SetWindowTextA");
-        R((delegate* unmanaged<char*, char*, nint>)&FindWindowW, "FindWindowW");
-        R((delegate* unmanaged<byte*, byte*, nint>)&FindWindowBare, "FindWindow", "FindWindowA");
-        R((delegate* unmanaged<nint, nint, char*, char*, nint>)&FindWindowExW, "FindWindowExW");
-        R((delegate* unmanaged<nint, nint, byte*, byte*, nint>)&FindWindowExBare, "FindWindowEx", "FindWindowExA");
-        R((delegate* unmanaged<delegate* unmanaged<nint, nint, int>, nint, int>)&EnumWindows, "EnumWindows");
-        R((delegate* unmanaged<uint, delegate* unmanaged<nint, nint, int>, nint, int>)&EnumThreadWindows, "EnumThreadWindows");
-        R((delegate* unmanaged<nint, delegate* unmanaged<nint, nint, int>, nint, int>)&EnumChildWindows, "EnumChildWindows");
-        R((delegate* unmanaged<nint, int>)&DestroyWindow, "DestroyWindow");
-        R((delegate* unmanaged<nint, uint*, int>)&GetWindowPlacement, "GetWindowPlacement");
-        R((delegate* unmanaged<nint, uint*, int>)&SetWindowPlacement, "SetWindowPlacement");
-        R((delegate* unmanaged<nint, RECT*, int, int>)&InvalidateRect, "InvalidateRect");
-        R((delegate* unmanaged<nint, RECT*, int>)&ValidateRect, "ValidateRect");
-        R((delegate* unmanaged<nint, int>)&UpdateWindow, "UpdateWindow");
-        R((delegate* unmanaged<nint, RECT*, nint, uint, int>)&RedrawWindow, "RedrawWindow");
-        R((delegate* unmanaged<nint, int>)&LockWindowUpdate, "LockWindowUpdate");
-
-        R((delegate* unmanaged<nint, uint, nint, nint, nint>)&SendMessageExport, "SendMessageW", "SendMessage", "SendMessageA");
-        R((delegate* unmanaged<nint, uint, nint, nint, uint, uint, nint*, nint>)&SendMessageTimeout, "SendMessageTimeoutW", "SendMessageTimeout", "SendMessageTimeoutA");
-        R((delegate* unmanaged<nint, uint, nint, nint, int>)&PostMessageExport, "PostMessageW", "PostMessage", "PostMessageA", "SendNotifyMessageW", "SendNotifyMessage");
-        R((delegate* unmanaged<uint, uint, nint, nint, int>)&PostThreadMessage, "PostThreadMessageW", "PostThreadMessage", "PostThreadMessageA");
-        R((delegate* unmanaged<nint, uint, nint, nint, nint>)&DefWindowProc, "DefWindowProcW", "DefWindowProc", "DefWindowProcA");
-        R((delegate* unmanaged<nint, nint, uint, nint, nint, nint>)&CallWindowProc, "CallWindowProcW", "CallWindowProc", "CallWindowProcA");
-        R((delegate* unmanaged<byte*, ushort>)&RegisterClassExW, "RegisterClassExW");
-        R((delegate* unmanaged<byte*, ushort>)&RegisterClassW, "RegisterClassW");
-        R((delegate* unmanaged<byte*, ushort>)&RegisterClassExBare, "RegisterClassEx", "RegisterClassExA");
-        R((delegate* unmanaged<byte*, ushort>)&RegisterClassBare, "RegisterClass", "RegisterClassA");
-        R((delegate* unmanaged<char*, nint, int>)&UnregisterClass, "UnregisterClassW", "UnregisterClass", "UnregisterClassA");
-        R((delegate* unmanaged<uint, char*, char*, uint, int, int, int, int, nint, nint, nint, void*, nint>)&CreateWindowExW, "CreateWindowExW");
-        R((delegate* unmanaged<uint, byte*, byte*, uint, int, int, int, int, nint, nint, nint, void*, nint>)&CreateWindowExBare, "CreateWindowEx", "CreateWindowExA");
-        R((delegate* unmanaged<nint, nuint, uint, void*, nuint>)&SetTimer, "SetTimer");
-        R((delegate* unmanaged<nint, nuint, int>)&KillTimer, "KillTimer");
-        R((delegate* unmanaged<nint, char*, nint, int>)&SetPropW, "SetPropW", "SetProp");
-        R((delegate* unmanaged<nint, char*, nint>)&GetPropW, "GetPropW", "GetProp");
-        R((delegate* unmanaged<nint, char*, nint>)&RemovePropW, "RemovePropW", "RemoveProp");
-        R((delegate* unmanaged<nint, nint, int, int>)&SetWindowRgn, "SetWindowRgn");
-        R((delegate* unmanaged<nint, uint, byte, uint, int>)&SetLayeredWindowAttributes, "SetLayeredWindowAttributes");
-        R((delegate* unmanaged<nint, uint, int>)&FlashWindow, "FlashWindow");
-        R((delegate* unmanaged<void*, int>)&FlashWindowEx, "FlashWindowEx");
-    }
 
     // ---- resolving a handle --------------------------------------------------------------------
 
@@ -230,8 +146,9 @@ public static unsafe partial class Exports
         return RectOf(origin.X, origin.Y, c.Width, c.Height);
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetWindowRectExport(nint hwnd, RECT* r)
+    [Win32Export("GetWindowRect")]
+    [Win32ExportOnWindows(A0, "GetWindowRect")]
+    public static int GetWindowRectExport(nint hwnd, RECT* r)
     {
         RECT rect = WindowRect(hwnd, out bool found);
         if (!found) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -239,8 +156,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetClientRect(nint hwnd, RECT* r)
+    [Win32Export("GetClientRect")]
+    [Win32ExportOnWindows(A0, "GetClientRect")]
+    public static int GetClientRect(nint hwnd, RECT* r)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -268,8 +186,9 @@ public static unsafe partial class Exports
 
     private static POINT P(Point p) => new() { X = (int)Math.Round(p.X), Y = (int)Math.Round(p.Y) };
 
-    [UnmanagedCallersOnly]
-    private static int ClientToScreen(nint hwnd, POINT* p)
+    [Win32Export("ClientToScreen")]
+    [Win32ExportOnWindows(A0, "ClientToScreen")]
+    public static int ClientToScreen(nint hwnd, POINT* p)
     {
         object? o = Resolve(hwnd);
         if (o == null) return FALSE;
@@ -278,8 +197,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int ScreenToClient(nint hwnd, POINT* p)
+    [Win32Export("ScreenToClient")]
+    [Win32ExportOnWindows(A0, "ScreenToClient")]
+    public static int ScreenToClient(nint hwnd, POINT* p)
     {
         object? o = Resolve(hwnd);
         if (o == null) return FALSE;
@@ -288,8 +208,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int MapWindowPoints(nint from, nint to, POINT* points, uint count)
+    [Win32Export("MapWindowPoints")]
+    [Win32ExportOnWindows(A0 | A1, "MapWindowPoints")]
+    public static int MapWindowPoints(nint from, nint to, POINT* points, uint count)
     {
         POINT a = from == 0 || from == DesktopWindow ? default : ClientOrigin(Resolve(from));
         POINT b = to == 0 || to == DesktopWindow ? default : ClientOrigin(Resolve(to));
@@ -321,8 +242,9 @@ public static unsafe partial class Exports
         });
     }
 
-    [UnmanagedCallersOnly]
-    private static int SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags)
+    [Win32Export("SetWindowPos")]
+    [Win32ExportOnWindows(A0, "SetWindowPos")]
+    public static int SetWindowPos(nint hwnd, nint after, int x, int y, int cx, int cy, uint flags)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -350,8 +272,9 @@ public static unsafe partial class Exports
         });
     }
 
-    [UnmanagedCallersOnly]
-    private static int MoveWindow(nint hwnd, int x, int y, int w, int h, int repaint)
+    [Win32Export("MoveWindow")]
+    [Win32ExportOnWindows(A0, "MoveWindow")]
+    public static int MoveWindow(nint hwnd, int x, int y, int w, int h, int repaint)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -374,8 +297,8 @@ public static unsafe partial class Exports
 
     // ---- state ---------------------------------------------------------------------------------
 
-    [UnmanagedCallersOnly] private static nint GetDesktopWindow() => DesktopWindow;
-    [UnmanagedCallersOnly] private static int IsWindow(nint hwnd) => hwnd == DesktopWindow || Resolve(hwnd) != null ? TRUE : FALSE;
+    [Win32Export("GetDesktopWindow", "GetShellWindow")] public static nint GetDesktopWindow() => DesktopWindow;
+    [Win32Export("IsWindow")] [Win32ExportOnWindows(A0, "IsWindow")] public static int IsWindow(nint hwnd) => hwnd == DesktopWindow || Resolve(hwnd) != null ? TRUE : FALSE;
 
     private static nint ActiveWindowHandle()
     {
@@ -392,10 +315,10 @@ public static unsafe partial class Exports
         return 0;
     }
 
-    [UnmanagedCallersOnly] private static nint GetActiveWindow() => ActiveWindowHandle();
+    [Win32Export("GetActiveWindow", "GetForegroundWindow")] public static nint GetActiveWindow() => ActiveWindowHandle();
 
-    [UnmanagedCallersOnly]
-    private static nint GetFocus()
+    [Win32Export("GetFocus")]
+    public static nint GetFocus()
     {
         nint active = ActiveWindowHandle();
         object? o = Resolve(active);
@@ -407,8 +330,9 @@ public static unsafe partial class Exports
         return active;
     }
 
-    [UnmanagedCallersOnly]
-    private static nint SetFocus(nint hwnd)
+    [Win32Export("SetFocus")]
+    [Win32ExportOnWindows(A0, "SetFocus")]
+    public static nint SetFocus(nint hwnd)
     {
         nint previous = ActiveWindowHandle();
         object? o = Resolve(hwnd);
@@ -430,10 +354,11 @@ public static unsafe partial class Exports
 
     private static bool Do(Action a) { a(); return true; }
 
-    [UnmanagedCallersOnly] private static int SetForegroundWindow(nint hwnd) => Activate(Resolve(hwnd)) ? TRUE : FALSE;
+    [Win32Export("SetForegroundWindow", "BringWindowToTop")] [Win32ExportOnWindows(A0, "SetForegroundWindow", "BringWindowToTop")] public static int SetForegroundWindow(nint hwnd) => Activate(Resolve(hwnd)) ? TRUE : FALSE;
 
-    [UnmanagedCallersOnly]
-    private static nint SetActiveWindow(nint hwnd)
+    [Win32Export("SetActiveWindow")]
+    [Win32ExportOnWindows(A0, "SetActiveWindow")]
+    public static nint SetActiveWindow(nint hwnd)
     {
         nint previous = ActiveWindowHandle();
         Activate(Resolve(hwnd));
@@ -449,7 +374,7 @@ public static unsafe partial class Exports
         _ => false,
     });
 
-    [UnmanagedCallersOnly] private static int IsWindowVisible(nint hwnd) => IsVisible(Resolve(hwnd)) ? TRUE : FALSE;
+    [Win32Export("IsWindowVisible")] [Win32ExportOnWindows(A0, "IsWindowVisible")] public static int IsWindowVisible(nint hwnd) => IsVisible(Resolve(hwnd)) ? TRUE : FALSE;
 
     private static bool IsEnabled(object? o) => Ui(o, () => o switch
     {
@@ -459,7 +384,7 @@ public static unsafe partial class Exports
         _ => false,
     });
 
-    [UnmanagedCallersOnly] private static int IsWindowEnabled(nint hwnd) => IsEnabled(Resolve(hwnd)) ? TRUE : FALSE;
+    [Win32Export("IsWindowEnabled")] [Win32ExportOnWindows(A0, "IsWindowEnabled")] public static int IsWindowEnabled(nint hwnd) => IsEnabled(Resolve(hwnd)) ? TRUE : FALSE;
 
     // Touch registration on the stack's windows. They are not Windows windows, so user32 refused
     // them -- and DotNetBar's TouchHandler throws "Cannot register window" when RegisterTouchWindow
@@ -468,24 +393,27 @@ public static unsafe partial class Exports
     // application as pointer input through the host window (WM_POINTER), as for every other control.
     private static readonly ConcurrentDictionary<nint, uint> s_touchWindows = new();
 
-    [UnmanagedCallersOnly]
-    private static int RegisterTouchWindow(nint hwnd, uint flags)
+    [Win32Export("RegisterTouchWindow")]
+    [Win32ExportOnWindows(A0, "RegisterTouchWindow")]
+    public static int RegisterTouchWindow(nint hwnd, uint flags)
     {
         if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
         s_touchWindows[hwnd] = flags;
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int UnregisterTouchWindow(nint hwnd)
+    [Win32Export("UnregisterTouchWindow")]
+    [Win32ExportOnWindows(A0, "UnregisterTouchWindow")]
+    public static int UnregisterTouchWindow(nint hwnd)
     {
         if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
         s_touchWindows.TryRemove(hwnd, out _);
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int IsTouchWindow(nint hwnd, uint* flags)
+    [Win32Export("IsTouchWindow")]
+    [Win32ExportOnWindows(A0, "IsTouchWindow")]
+    public static int IsTouchWindow(nint hwnd, uint* flags)
     {
         bool on = s_touchWindows.TryGetValue(hwnd, out uint f);
         if (flags != null) *flags = on ? f : 0;
@@ -498,12 +426,13 @@ public static unsafe partial class Exports
     // is kept per window and handed back by GetGestureConfig; the gestures themselves are not
     // synthesised (touch arrives as pointer input through the host window).
     [StructLayout(LayoutKind.Sequential)]
-    internal struct GESTURECONFIG { public uint dwID, dwWant, dwBlock; }
+    public struct GESTURECONFIG { public uint dwID, dwWant, dwBlock; }
 
     private static readonly ConcurrentDictionary<nint, GESTURECONFIG[]> s_gestureConfigs = new();
 
-    [UnmanagedCallersOnly]
-    private static int SetGestureConfig(nint hwnd, uint reserved, uint count, GESTURECONFIG* configs, uint cbSize)
+    [Win32Export("SetGestureConfig")]
+    [Win32ExportOnWindows(A0, "SetGestureConfig")]
+    public static int SetGestureConfig(nint hwnd, uint reserved, uint count, GESTURECONFIG* configs, uint cbSize)
     {
         if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
         if (reserved != 0 || (count != 0 && configs == null) || cbSize != (uint)sizeof(GESTURECONFIG))
@@ -517,8 +446,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetGestureConfig(nint hwnd, uint reserved, uint flags, uint* count, GESTURECONFIG* configs, uint cbSize)
+    [Win32Export("GetGestureConfig")]
+    [Win32ExportOnWindows(A0, "GetGestureConfig")]
+    public static int GetGestureConfig(nint hwnd, uint reserved, uint flags, uint* count, GESTURECONFIG* configs, uint cbSize)
     {
         if (Resolve(hwnd) == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
         if (count == null || cbSize != (uint)sizeof(GESTURECONFIG)) { SetLastError(ERROR_INVALID_PARAMETER); return FALSE; }
@@ -537,8 +467,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int EnableWindow(nint hwnd, int enable)
+    [Win32Export("EnableWindow")]
+    [Win32ExportOnWindows(A0, "EnableWindow")]
+    public static int EnableWindow(nint hwnd, int enable)
     {
         object? o = Resolve(hwnd);
         bool wasDisabled = !IsEnabled(o);
@@ -559,8 +490,8 @@ public static unsafe partial class Exports
         _ => null,
     });
 
-    [UnmanagedCallersOnly] private static int IsIconic(nint hwnd) => StateOf(Resolve(hwnd)) == WindowState.Minimized ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static int IsZoomed(nint hwnd) => StateOf(Resolve(hwnd)) == WindowState.Maximized ? TRUE : FALSE;
+    [Win32Export("IsIconic")] [Win32ExportOnWindows(A0, "IsIconic")] public static int IsIconic(nint hwnd) => StateOf(Resolve(hwnd)) == WindowState.Minimized ? TRUE : FALSE;
+    [Win32Export("IsZoomed")] [Win32ExportOnWindows(A0, "IsZoomed")] public static int IsZoomed(nint hwnd) => StateOf(Resolve(hwnd)) == WindowState.Maximized ? TRUE : FALSE;
 
     private static bool Show(object? o, int cmd)
     {
@@ -605,15 +536,16 @@ public static unsafe partial class Exports
         return wasVisible;
     }
 
-    [UnmanagedCallersOnly] private static int ShowWindow(nint hwnd, int cmd) => Show(Resolve(hwnd), cmd) ? TRUE : FALSE;
+    [Win32Export("ShowWindow", "ShowWindowAsync")] [Win32ExportOnWindows(A0, "ShowWindow", "ShowWindowAsync")] public static int ShowWindow(nint hwnd, int cmd) => Show(Resolve(hwnd), cmd) ? TRUE : FALSE;
 
     // A WinForms window animates in the driver: its composited scene is rolled, slid, grown or
     // faded in or out (see XplatUIWebGpu.Animate.cs). The window's own state is what is shown or
     // hidden, not Control.Visible: popups that open this way (DotNetBar's menus) are created
     // hidden with Visible already true, and setting it again does nothing. Other windows are shown
     // or hidden straight away.
-    [UnmanagedCallersOnly]
-    private static int AnimateWindow(nint hwnd, uint time, uint flags)
+    [Win32Export("AnimateWindow")]
+    [Win32ExportOnWindows(A0, "AnimateWindow")]
+    public static int AnimateWindow(nint hwnd, uint time, uint flags)
     {
         const uint AW_HIDE = 0x10000, AW_ACTIVATE = 0x20000;
         object? o = Resolve(hwnd);
@@ -647,10 +579,11 @@ public static unsafe partial class Exports
         _ => (nint)0,
     });
 
-    [UnmanagedCallersOnly] private static nint GetParent(nint hwnd) => OwnerOrParent(Resolve(hwnd));
+    [Win32Export("GetParent")] [Win32ExportOnWindows(A0, "GetParent")] public static nint GetParent(nint hwnd) => OwnerOrParent(Resolve(hwnd));
 
-    [UnmanagedCallersOnly]
-    private static nint GetAncestor(nint hwnd, uint flags)
+    [Win32Export("GetAncestor")]
+    [Win32ExportOnWindows(A0, "GetAncestor")]
+    public static nint GetAncestor(nint hwnd, uint flags)
     {
         object? o = Resolve(hwnd);
         if (flags == 1) return OwnerOrParent(o);                 // GA_PARENT
@@ -664,8 +597,9 @@ public static unsafe partial class Exports
         return h;
     }
 
-    [UnmanagedCallersOnly]
-    private static nint GetWindow(nint hwnd, uint cmd)
+    [Win32Export("GetWindow")]
+    [Win32ExportOnWindows(A0, "GetWindow")]
+    public static nint GetWindow(nint hwnd, uint cmd)
     {
         object? o = Resolve(hwnd);
         return cmd switch
@@ -695,8 +629,9 @@ public static unsafe partial class Exports
     [DllImport("user32", CharSet = CharSet.Unicode)]
     private static extern nint CreateWindowExW(uint exStyle, string className, string title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, nint param);
 
-    [UnmanagedCallersOnly]
-    private static nint SetParent(nint child, nint parent)
+    [Win32Export("SetParent")]
+    [Win32ExportOnWindows(A0, "SetParent")]
+    public static nint SetParent(nint child, nint parent)
     {
         object? o = Resolve(child);
         nint previous = OwnerOrParent(o);
@@ -709,8 +644,9 @@ public static unsafe partial class Exports
         return previous;
     }
 
-    [UnmanagedCallersOnly]
-    private static int IsChild(nint parent, nint child)
+    [Win32Export("IsChild")]
+    [Win32ExportOnWindows(A0 | A1, "IsChild")]
+    public static int IsChild(nint parent, nint child)
     {
         for (nint h = OwnerOrParent(Resolve(child)), guard = 0; h != 0 && guard < 64; h = OwnerOrParent(Resolve(h)), guard++)
         {
@@ -719,8 +655,9 @@ public static unsafe partial class Exports
         return FALSE;
     }
 
-    [UnmanagedCallersOnly]
-    private static uint GetWindowThreadProcessId(nint hwnd, uint* pid)
+    [Win32Export("GetWindowThreadProcessId")]
+    [Win32ExportOnWindows(A0, "GetWindowThreadProcessId")]
+    public static uint GetWindowThreadProcessId(nint hwnd, uint* pid)
     {
         if (pid != null) *pid = (uint)Environment.ProcessId;
         object? o = Resolve(hwnd);
@@ -756,8 +693,9 @@ public static unsafe partial class Exports
         _ => 0u,
     });
 
-    [UnmanagedCallersOnly]
-    private static nint GetWindowLongPtr(nint hwnd, int index)
+    [Win32Export("GetWindowLongPtrW", "GetWindowLongPtr", "GetWindowLongPtrA", "GetWindowLongW", "GetWindowLong", "GetWindowLongA")]
+    [Win32ExportOnWindows(A0, "GetWindowLongPtrW", "GetWindowLongPtrA", "GetWindowLongW", "GetWindowLongA")]
+    public static nint GetWindowLongPtr(nint hwnd, int index)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return 0; }
@@ -773,8 +711,9 @@ public static unsafe partial class Exports
         };
     }
 
-    [UnmanagedCallersOnly]
-    private static nint SetWindowLongPtr(nint hwnd, int index, nint value)
+    [Win32Export("SetWindowLongPtrW", "SetWindowLongPtr", "SetWindowLongPtrA", "SetWindowLongW", "SetWindowLong", "SetWindowLongA")]
+    [Win32ExportOnWindows(A0, "SetWindowLongPtrW", "SetWindowLongPtrA", "SetWindowLongW", "SetWindowLongA")]
+    public static nint SetWindowLongPtr(nint hwnd, int index, nint value)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return 0; }
@@ -830,8 +769,8 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly] private static nint GetClassLongPtr(nint hwnd, int index) => 0;
-    [UnmanagedCallersOnly] private static nint SetClassLongPtr(nint hwnd, int index, nint value) => 0;
+    [Win32Export("GetClassLongPtrW", "GetClassLongPtr", "GetClassLongW", "GetClassLong")] [Win32ExportOnWindows(A0, "GetClassLongPtrW", "GetClassLongW")] public static nint GetClassLongPtr(nint hwnd, int index) => 0;
+    [Win32Export("SetClassLongPtrW", "SetClassLongPtr", "SetClassLongW", "SetClassLong")] [Win32ExportOnWindows(A0, "SetClassLongPtrW", "SetClassLongW")] public static nint SetClassLongPtr(nint hwnd, int index, nint value) => 0;
 
     // ---- names and text --------------------------------------------------------------------------
 
@@ -843,16 +782,17 @@ public static unsafe partial class Exports
         _ => null,
     };
 
-    [UnmanagedCallersOnly]
-    private static int GetClassNameW(nint hwnd, char* buffer, int max)
+    [Win32Export("GetClassNameW")]
+    [Win32ExportOnWindows(A0, "GetClassNameW")]
+    public static int GetClassNameW(nint hwnd, char* buffer, int max)
     {
         string? name = ClassNameOf(Resolve(hwnd));
         if (name == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return 0; }
         return WriteUtf16(buffer, max, name);
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetClassNameBare(nint hwnd, byte* buffer, int max)
+    [Win32Export("GetClassName", "GetClassNameA")]
+    public static int GetClassNameBare(nint hwnd, byte* buffer, int max)
     {
         string? name = ClassNameOf(Resolve(hwnd));
         if (name == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return 0; }
@@ -867,9 +807,9 @@ public static unsafe partial class Exports
         _ => "",
     });
 
-    [UnmanagedCallersOnly] private static int GetWindowTextW(nint hwnd, char* buffer, int max) => WriteUtf16(buffer, max, TitleOf(Resolve(hwnd)));
-    [UnmanagedCallersOnly] private static int GetWindowTextBare(nint hwnd, byte* buffer, int max) => WriteUtf8(buffer, max, TitleOf(Resolve(hwnd)));
-    [UnmanagedCallersOnly] private static int GetWindowTextLength(nint hwnd) => TitleOf(Resolve(hwnd)).Length;
+    [Win32Export("GetWindowTextW")] [Win32ExportOnWindows(A0, "GetWindowTextW")] public static int GetWindowTextW(nint hwnd, char* buffer, int max) => WriteUtf16(buffer, max, TitleOf(Resolve(hwnd)));
+    [Win32Export("GetWindowText", "GetWindowTextA")] public static int GetWindowTextBare(nint hwnd, byte* buffer, int max) => WriteUtf8(buffer, max, TitleOf(Resolve(hwnd)));
+    [Win32Export("GetWindowTextLengthW", "GetWindowTextLength", "GetWindowTextLengthA")] [Win32ExportOnWindows(A0, "GetWindowTextLengthW")] public static int GetWindowTextLength(nint hwnd) => TitleOf(Resolve(hwnd)).Length;
 
     private static int SetTitle(nint hwnd, string? text)
     {
@@ -885,8 +825,8 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static int SetWindowTextW(nint hwnd, char* text) => SetTitle(hwnd, ReadUtf16(text));
-    [UnmanagedCallersOnly] private static int SetWindowTextBare(nint hwnd, byte* text) => SetTitle(hwnd, ReadEither(text));
+    [Win32Export("SetWindowTextW")] [Win32ExportOnWindows(A0, "SetWindowTextW")] public static int SetWindowTextW(nint hwnd, char* text) => SetTitle(hwnd, ReadUtf16(text));
+    [Win32Export("SetWindowText", "SetWindowTextA")] public static int SetWindowTextBare(nint hwnd, byte* text) => SetTitle(hwnd, ReadEither(text));
 
     private static nint Find(IEnumerable<object> candidates, string? className, string? title, nint after)
     {
@@ -916,10 +856,10 @@ public static unsafe partial class Exports
         return list;
     }
 
-    [UnmanagedCallersOnly] private static nint FindWindowW(char* cls, char* title) => Find(TopLevels(), ClassArg(cls), ReadUtf16(title), 0);
-    [UnmanagedCallersOnly] private static nint FindWindowBare(byte* cls, byte* title) => Find(TopLevels(), (nuint)cls < 0x10000 ? null : ReadEither(cls), ReadEither(title), 0);
-    [UnmanagedCallersOnly] private static nint FindWindowExW(nint parent, nint after, char* cls, char* title) => Find(ChildrenOf(parent), ClassArg(cls), ReadUtf16(title), after);
-    [UnmanagedCallersOnly] private static nint FindWindowExBare(nint parent, nint after, byte* cls, byte* title) => Find(ChildrenOf(parent), (nuint)cls < 0x10000 ? null : ReadEither(cls), ReadEither(title), after);
+    [Win32Export("FindWindowW")] public static nint FindWindowW(char* cls, char* title) => Find(TopLevels(), ClassArg(cls), ReadUtf16(title), 0);
+    [Win32Export("FindWindow", "FindWindowA")] public static nint FindWindowBare(byte* cls, byte* title) => Find(TopLevels(), (nuint)cls < 0x10000 ? null : ReadEither(cls), ReadEither(title), 0);
+    [Win32Export("FindWindowExW")] public static nint FindWindowExW(nint parent, nint after, char* cls, char* title) => Find(ChildrenOf(parent), ClassArg(cls), ReadUtf16(title), after);
+    [Win32Export("FindWindowEx", "FindWindowExA")] public static nint FindWindowExBare(nint parent, nint after, byte* cls, byte* title) => Find(ChildrenOf(parent), (nuint)cls < 0x10000 ? null : ReadEither(cls), ReadEither(title), after);
 
     /// <summary>A class name argument: a string, or an atom from RegisterClass in the low word.</summary>
     private static string? ClassArg(char* cls)
@@ -929,8 +869,8 @@ public static unsafe partial class Exports
         return ReadUtf16(cls);
     }
 
-    [UnmanagedCallersOnly]
-    private static int EnumWindows(delegate* unmanaged<nint, nint, int> callback, nint data)
+    [Win32Export("EnumWindows")]
+    public static int EnumWindows(delegate* unmanaged<nint, nint, int> callback, nint data)
     {
         foreach (object o in TopLevels())
         {
@@ -940,8 +880,8 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int EnumThreadWindows(uint thread, delegate* unmanaged<nint, nint, int> callback, nint data)
+    [Win32Export("EnumThreadWindows")]
+    public static int EnumThreadWindows(uint thread, delegate* unmanaged<nint, nint, int> callback, nint data)
     {
         bool any = false;
         foreach (object o in TopLevels())
@@ -956,8 +896,9 @@ public static unsafe partial class Exports
         return any ? TRUE : FALSE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int EnumChildWindows(nint parent, delegate* unmanaged<nint, nint, int> callback, nint data)
+    [Win32Export("EnumChildWindows")]
+    [Win32ExportOnWindows(A0, "EnumChildWindows")]
+    public static int EnumChildWindows(nint parent, delegate* unmanaged<nint, nint, int> callback, nint data)
     {
         foreach (object o in ChildrenOf(parent))
         {
@@ -967,8 +908,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int DestroyWindow(nint hwnd)
+    [Win32Export("DestroyWindow")]
+    [Win32ExportOnWindows(A0, "DestroyWindow")]
+    public static int DestroyWindow(nint hwnd)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -984,8 +926,9 @@ public static unsafe partial class Exports
     }
 
     // WINDOWPLACEMENT: length, flags, showCmd, POINT ptMinPosition, POINT ptMaxPosition, RECT rcNormalPosition.
-    [UnmanagedCallersOnly]
-    private static int GetWindowPlacement(nint hwnd, uint* wp)
+    [Win32Export("GetWindowPlacement")]
+    [Win32ExportOnWindows(A0, "GetWindowPlacement")]
+    public static int GetWindowPlacement(nint hwnd, uint* wp)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -1003,8 +946,9 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int SetWindowPlacement(nint hwnd, uint* wp)
+    [Win32Export("SetWindowPlacement")]
+    [Win32ExportOnWindows(A0, "SetWindowPlacement")]
+    public static int SetWindowPlacement(nint hwnd, uint* wp)
     {
         object? o = Resolve(hwnd);
         if (o == null) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
@@ -1021,15 +965,15 @@ public static unsafe partial class Exports
         return 0;
     });
 
-    [UnmanagedCallersOnly] private static int InvalidateRect(nint hwnd, RECT* r, int erase) { Invalidate(Resolve(hwnd)); return TRUE; }
-    [UnmanagedCallersOnly] private static int ValidateRect(nint hwnd, RECT* r) { ValidateWinFormsWindow(hwnd, repaint: false); return TRUE; }
-    [UnmanagedCallersOnly] private static int UpdateWindow(nint hwnd) { object? o = Resolve(hwnd); Ui(o, () => { if (o is Forms.Control c) c.Update(); return 0; }); return TRUE; }
-    [UnmanagedCallersOnly] private static int RedrawWindow(nint hwnd, RECT* r, nint rgn, uint flags) { Invalidate(Resolve(hwnd)); return TRUE; }
-    [UnmanagedCallersOnly] private static int LockWindowUpdate(nint hwnd) => TRUE;
-    [UnmanagedCallersOnly] private static int SetWindowRgn(nint hwnd, nint rgn, int redraw) => TRUE;
-    [UnmanagedCallersOnly] private static int SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags) => TRUE;
-    [UnmanagedCallersOnly] private static int FlashWindow(nint hwnd, uint invert) => FALSE;
-    [UnmanagedCallersOnly] private static int FlashWindowEx(void* info) => FALSE;
+    [Win32Export("InvalidateRect")] [Win32ExportOnWindows(A0, "InvalidateRect")] public static int InvalidateRect(nint hwnd, RECT* r, int erase) { Invalidate(Resolve(hwnd)); return TRUE; }
+    [Win32Export("ValidateRect")] [Win32ExportOnWindows(A0, "ValidateRect")] public static int ValidateRect(nint hwnd, RECT* r) { ValidateWinFormsWindow(hwnd, repaint: false); return TRUE; }
+    [Win32Export("UpdateWindow")] [Win32ExportOnWindows(A0, "UpdateWindow")] public static int UpdateWindow(nint hwnd) { object? o = Resolve(hwnd); Ui(o, () => { if (o is Forms.Control c) c.Update(); return 0; }); return TRUE; }
+    [Win32Export("RedrawWindow")] [Win32ExportOnWindows(A0, "RedrawWindow")] public static int RedrawWindow(nint hwnd, RECT* r, nint rgn, uint flags) { Invalidate(Resolve(hwnd)); return TRUE; }
+    [Win32Export("LockWindowUpdate")] [Win32ExportOnWindows(A0, "LockWindowUpdate")] public static int LockWindowUpdate(nint hwnd) => TRUE;
+    [Win32Export("SetWindowRgn")] [Win32ExportOnWindows(A0, "SetWindowRgn")] public static int SetWindowRgn(nint hwnd, nint rgn, int redraw) => TRUE;
+    [Win32Export("SetLayeredWindowAttributes")] [Win32ExportOnWindows(A0, "SetLayeredWindowAttributes")] public static int SetLayeredWindowAttributes(nint hwnd, uint key, byte alpha, uint flags) => TRUE;
+    [Win32Export("FlashWindow")] public static int FlashWindow(nint hwnd, uint invert) => FALSE;
+    [Win32Export("FlashWindowEx")] public static int FlashWindowEx(void* info) => FALSE;
 
     // ---- messages ------------------------------------------------------------------------------
 
@@ -1120,22 +1064,23 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly] private static nint SendMessageExport(nint hwnd, uint msg, nint w, nint l) => Send(hwnd, msg, w, l);
+    [Win32Export("SendMessageW", "SendMessage", "SendMessageA")] [Win32ExportOnWindows(A0, "SendMessageW", "SendMessageA")] public static nint SendMessageExport(nint hwnd, uint msg, nint w, nint l) => Send(hwnd, msg, w, l);
 
-    [UnmanagedCallersOnly]
-    private static nint SendMessageTimeout(nint hwnd, uint msg, nint w, nint l, uint flags, uint timeout, nint* result)
+    [Win32Export("SendMessageTimeoutW", "SendMessageTimeout", "SendMessageTimeoutA")]
+    [Win32ExportOnWindows(A0, "SendMessageTimeoutW", "SendMessageTimeoutA")]
+    public static nint SendMessageTimeout(nint hwnd, uint msg, nint w, nint l, uint flags, uint timeout, nint* result)
     {
         nint r = Send(hwnd, msg, w, l);
         if (result != null) *result = r;
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static int PostMessageExport(nint hwnd, uint msg, nint w, nint l) => Post(hwnd, msg, w, l) ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static int PostThreadMessage(uint thread, uint msg, nint w, nint l) => AppWindow.PostToThread((int)thread, msg, w, l) ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static nint DefWindowProc(nint hwnd, uint msg, nint w, nint l) => AppWindow.DefaultProc(hwnd, msg, w, l);
+    [Win32Export("PostMessageW", "PostMessage", "PostMessageA", "SendNotifyMessageW", "SendNotifyMessage")] [Win32ExportOnWindows(A0, "PostMessageW", "PostMessageA", "SendNotifyMessageW", "SendNotifyMessageA")] public static int PostMessageExport(nint hwnd, uint msg, nint w, nint l) => Post(hwnd, msg, w, l) ? TRUE : FALSE;
+    [Win32Export("PostThreadMessageW", "PostThreadMessage", "PostThreadMessageA")] public static int PostThreadMessage(uint thread, uint msg, nint w, nint l) => AppWindow.PostToThread((int)thread, msg, w, l) ? TRUE : FALSE;
+    [Win32Export("DefWindowProcW", "DefWindowProc", "DefWindowProcA")] [Win32ExportOnWindows(A0, "DefWindowProcW", "DefWindowProcA")] public static nint DefWindowProc(nint hwnd, uint msg, nint w, nint l) => AppWindow.DefaultProc(hwnd, msg, w, l);
 
-    [UnmanagedCallersOnly]
-    private static nint CallWindowProc(nint proc, nint hwnd, uint msg, nint w, nint l)
+    [Win32Export("CallWindowProcW", "CallWindowProc", "CallWindowProcA")]
+    public static nint CallWindowProc(nint proc, nint hwnd, uint msg, nint w, nint l)
     {
         if (proc == 0) return 0;
         return ((delegate* unmanaged<nint, uint, nint, nint, nint>)proc)(hwnd, msg, w, l);
@@ -1164,27 +1109,27 @@ public static unsafe partial class Exports
     // Windows checks cbSize first and fails with ERROR_INVALID_PARAMETER when it is not
     // sizeof(WNDCLASSEXW). That is not pedantry: a caller whose struct is laid out wrongly gets that
     // failure on Windows and copes with it, and reading its fields anyway would chase garbage pointers.
-    [UnmanagedCallersOnly]
-    private static ushort RegisterClassExW(byte* wc)
+    [Win32Export("RegisterClassExW")]
+    public static ushort RegisterClassExW(byte* wc)
     {
         if (*(uint*)wc != 80) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
         return RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64));
     }
 
-    [UnmanagedCallersOnly] private static ushort RegisterClassW(byte* wc) => RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64));
+    [Win32Export("RegisterClassW")] public static ushort RegisterClassW(byte* wc) => RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64));
     // The class name of the undecorated imports is UTF-8 or UTF-16 by the import's CharSet; see ReadEither.
     // (WNDCLASSW and WNDCLASSEXW put lpszClassName at the same offset on 64-bit.)
-    [UnmanagedCallersOnly] private static ushort RegisterClassBare(byte* wc) => RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64), either: true);
+    [Win32Export("RegisterClass", "RegisterClassA")] public static ushort RegisterClassBare(byte* wc) => RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64), either: true);
 
-    [UnmanagedCallersOnly]
-    private static ushort RegisterClassExBare(byte* wc)
+    [Win32Export("RegisterClassEx", "RegisterClassExA")]
+    public static ushort RegisterClassExBare(byte* wc)
     {
         if (*(uint*)wc != 80) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
         return RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64), either: true);
     }
 
-    [UnmanagedCallersOnly]
-    private static int UnregisterClass(char* className, nint instance)
+    [Win32Export("UnregisterClassW", "UnregisterClass", "UnregisterClassA")]
+    public static int UnregisterClass(char* className, nint instance)
     {
         string? name = ClassArg(className);
         return name != null && s_classes.TryRemove(name, out _) ? TRUE : FALSE;
@@ -1218,12 +1163,12 @@ public static unsafe partial class Exports
         return 0;
     }
 
-    [UnmanagedCallersOnly]
-    private static nint CreateWindowExW(uint ex, char* cls, char* title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, void* param) =>
+    [Win32Export("CreateWindowExW")]
+    public static nint CreateWindowExW(uint ex, char* cls, char* title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, void* param) =>
         CreateWindowCore(ex, ClassArg(cls), ReadUtf16(title), style, x, y, w, h, parent, param);
 
-    [UnmanagedCallersOnly]
-    private static nint CreateWindowExBare(uint ex, byte* cls, byte* title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, void* param) =>
+    [Win32Export("CreateWindowEx", "CreateWindowExA")]
+    public static nint CreateWindowExBare(uint ex, byte* cls, byte* title, uint style, int x, int y, int w, int h, nint parent, nint menu, nint instance, void* param) =>
         CreateWindowCore(ex, (nuint)cls < 0x10000 ? s_classes.Values.FirstOrDefault(c => c.Atom == (ushort)(nuint)cls)?.Name : ReadEither(cls), ReadEither(title), style, x, y, w, h, parent, param);
 
     // Timers: on an app window or with a TIMERPROC they are real. On a stack window the WM_TIMER has no
@@ -1231,8 +1176,9 @@ public static unsafe partial class Exports
     private static readonly ConcurrentDictionary<(nint, nuint), Timer> s_timers = new();
     private static long s_nextTimerId = 0x7000;
 
-    [UnmanagedCallersOnly]
-    private static nuint SetTimer(nint hwnd, nuint id, uint ms, void* proc)
+    [Win32Export("SetTimer")]
+    [Win32ExportOnWindows(A0, "SetTimer")]
+    public static nuint SetTimer(nint hwnd, nuint id, uint ms, void* proc)
     {
         if (hwnd == 0) id = (nuint)Interlocked.Increment(ref s_nextTimerId);
         var key = (hwnd, id);
@@ -1254,8 +1200,9 @@ public static unsafe partial class Exports
         return id;
     }
 
-    [UnmanagedCallersOnly]
-    private static int KillTimer(nint hwnd, nuint id)
+    [Win32Export("KillTimer")]
+    [Win32ExportOnWindows(A0, "KillTimer")]
+    public static int KillTimer(nint hwnd, nuint id)
     {
         if (s_timers.TryRemove((hwnd, id), out var t)) { t.Dispose(); return TRUE; }
         return FALSE;
@@ -1264,9 +1211,9 @@ public static unsafe partial class Exports
     private static readonly ConcurrentDictionary<(nint, string), nint> s_props = new();
 
     private static string PropKey(char* name) => (nuint)name < 0x10000 ? "#" + (nuint)name : ReadUtf16(name) ?? "";
-    [UnmanagedCallersOnly] private static int SetPropW(nint hwnd, char* name, nint value) { s_props[(hwnd, PropKey(name))] = value; return TRUE; }
-    [UnmanagedCallersOnly] private static nint GetPropW(nint hwnd, char* name) => s_props.TryGetValue((hwnd, PropKey(name)), out nint v) ? v : 0;
-    [UnmanagedCallersOnly] private static nint RemovePropW(nint hwnd, char* name) => s_props.TryRemove((hwnd, PropKey(name)), out nint v) ? v : 0;
+    [Win32Export("SetPropW", "SetProp")] [Win32ExportOnWindows(A0, "SetPropW")] public static int SetPropW(nint hwnd, char* name, nint value) { s_props[(hwnd, PropKey(name))] = value; return TRUE; }
+    [Win32Export("GetPropW", "GetProp")] [Win32ExportOnWindows(A0, "GetPropW")] public static nint GetPropW(nint hwnd, char* name) => s_props.TryGetValue((hwnd, PropKey(name)), out nint v) ? v : 0;
+    [Win32Export("RemovePropW", "RemoveProp")] [Win32ExportOnWindows(A0, "RemovePropW")] public static nint RemovePropW(nint hwnd, char* name) => s_props.TryRemove((hwnd, PropKey(name)), out nint v) ? v : 0;
 }
 
 /// <summary>

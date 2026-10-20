@@ -45,8 +45,8 @@ and SharpDX, the embedded shaders, and a run of a app 3D display under the launc
 - No Windows Desktop framework dependency.
 - No `[ComImport]` of our own. The COM objects here are plain vtables of `[UnmanagedCallersOnly]`
   function pointers in native memory.
-- No native DLL that we build. The Windows export images are generated at run time by the existing
-  `ShimImage` writer. Off Windows the existing `libwin32shim` carries the exports.
+- No native DLL that we build. The app's P/Invokes of the exports are rewritten into managed calls
+  ([pinvoke-rewriter.md](pinvoke-rewriter.md)).
 - Cross-platform: the same managed implementation serves Windows, macOS, Linux and the browser.
 
 ## Architecture
@@ -54,8 +54,7 @@ and SharpDX, the embedded shaders, and a run of a app 3D display under the launc
 ```
 app (SharpDX / Ab3d)            our code
 ---------------------           ---------------------------------------------------------------
-[DllImport d3d11.dll] -------> generated d3d11 image (ShimImage) --jmp--> D3D11CreateDevice
-                                                                           (UnmanagedCallersOnly)
+[DllImport d3d11.dll] -------> rewritten P/Invoke --call--> D3D11CreateDevice ([Win32Export])
 calli vtbl[slot] ------------> D3DDevice / D3DContext / D3DResource ... (managed objects)
                                      |
                                      v
@@ -66,17 +65,11 @@ D3DImage.SetBackBuffer ------> managed InteropDeviceBitmap ---> scene "external 
 
 ### 1. Routing the exports
 
-- **Windows.** `WindowsShim` already builds, per covered system DLL, an image whose exports mirror the
-  real DLL's ordinals. Each export jumps either to the real function or through a classifier to a
-  managed one. It installs the image per assembly with `NativeLibrary.SetDllImportResolver`.
-
-  The D3D modules add a third kind of entry: **always managed**. The stub's jump target is the
-  managed function itself, with no classifier, so the call costs one indirect jump. Exports that
-  have no managed implementation keep jumping to the real DLL.
-
-  The implementations register the same way WpfMac.Win32's do. The bootstrap finds them by name, in
-  `Microsoft.Wpf.Interop.WebGpu`, type `Microsoft.Wpf.Interop.WebGpu.Direct3D.Exports`, method
-  `Register`.
+- **Every OS.** Each export is a method of `Microsoft.Wpf.Interop.WebGpu.Direct3D.Exports` tagged
+  `[Win32Export]` and `[Win32ExportOnWindows(Always, ...)]`. The P/Invoke rewriter turns an app's
+  import of it into a direct managed call: on Windows for every call (the Always bit), elsewhere
+  like every other implemented export. Exports without an implementation return their failure value
+  off Windows, and on Windows stay on the real DLL.
 - **Which assemblies get it: every app assembly, on every OS** (the user's decision, 2026-10-19: one
   implementation, ours, on macOS, Linux and Windows alike). Every d3d11, dxgi, d3d9 and
   d3dcompiler_47 import of an app assembly lands in the shim, on Windows too, where the real Direct3D
@@ -89,8 +82,7 @@ D3DImage.SetBackBuffer ------> managed InteropDeviceBitmap ---> scene "external 
   An app that hands the shim's device to native code -- Media Foundation through
   `IMFDXGIDeviceManager`, as SharpMediaFoundationInterop does -- has that native code call the
   shim's vtables (section 8, video).
-- **macOS and Linux.** `libwin32shim` gains the d3d11, dxgi and d3d9 exports, and their slots point at
-  the same managed functions (`Implementations.RegisterAll`). Built-in COM interop does not exist
+- **macOS and Linux.** The same rewritten calls reach the same managed functions. Built-in COM interop does not exist
   off Windows, so DXEngine's `[ComImport]` D3D9 path cannot run there. DXEngine has a
   WriteableBitmap present path ("Switching to using WritableBitmap"), and milestone 6 probes that it
   falls back to it.
@@ -525,7 +517,7 @@ green throughout.
 - **M2:** done.
   - D3D9Ex shim (095d5e223) and managed D3DImage on the copy path (f087d629c), with sharing both ways.
   - The launcher routes d3d11/dxgi/d3d9/d3dcompiler_47 (`WPF_D3D11_SHIM`, default every app assembly
-    on every OS since 2026-10-19; it was `SharpDX*;Ab3d.DXEngine*`) and fills `libwin32shim` elsewhere.
+    on every OS since 2026-10-19; it was `SharpDX*;Ab3d.DXEngine*`); since 2026-10-20 through the P/Invoke rewriter.
   - Shim surfaces are copied on the GPU (zero-copy) since 2026-10-19, by the user's decision
     (section 8).
 - **M5 (2026-10-19):** app 3D works with the shim. The display has three `Box3D`s and a

@@ -1,7 +1,8 @@
-// Exports libwin32shim carries besides those the Windows SDK metadata describes: functions apps
+// Windows exports the table has besides those the Windows SDK metadata describes: functions apps
 // P/Invoke that live in the WDK metadata, undocumented ones, and imports by ordinal. Format:
 //   module  name  [failure: zero (default), void, hresult, ntstatus, win32error, invalidhandle]
-// Grown from `wpfmac audit` output: an ✗ against a Windows DLL's entry point means it is missing here.
+// Grown from `wpfmac audit` output: an entry point no Windows DLL is known to export
+// throws EntryPointNotFoundException when called, so one that Windows has belongs here.
 
 ntdll    RtlGetVersion                 ntstatus
 ntdll    RtlNtStatusToDosError

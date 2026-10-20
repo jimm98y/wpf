@@ -8,11 +8,14 @@
 //    to code whose location calls are redirected. App assemblies that ask OTHER assemblies where they are
 //    (LocationCallers) and can reach a rewritten one -- it calls them, or they enumerate every assembly --
 //    are rewritten too, for their location calls alone; and so on, to a fixpoint.
-// 3. The chosen leave the deps, and their names and original paths go to the runtimeconfig
-//    (WpfMac.ComImport): the startup hook rewrites each in memory when it is first loaded.
+// 3. Every app assembly that P/Invokes a Windows DLL is rewritten for those P/Invokes (Documentation/
+//    pinvoke-rewriter.md): onto the stack's implementations off Windows; on Windows, those the stack routes
+//    for its own windows.
+// 4. The chosen leave the deps, and their names, original paths and what of them is rewritten go to the
+//    runtimeconfig (WpfMac.ComImport): the startup hook rewrites each when it is first loaded.
 //
-// Nothing rewritten is written to disk. The verdicts are cached, by file hash and rewriter version, in a
-// small JSON file in the app's cache folder (comimport-verdicts.json) -- verdicts, not assemblies.
+// The verdicts are cached, by file hash and rewriter version, in a small JSON file in the app's cache
+// folder (comimport-verdicts.json); the rewritten images, by the loader (rewritten/).
 
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
@@ -71,7 +74,7 @@ internal static class ComImportStep
         /// <summary>Its entries in the deps (an assembly can be listed by more than one library).</summary>
         public List<(JsonObject Runtime, string Asset)> Entries = new();
         public string Hash = "";
-        public bool DeclaresCom, MayReadLocations;
+        public bool DeclaresCom, MayReadLocations, ILOnly;
         public List<string> References = new();
         public Verdict? Verdict;
         public LocationAsks? Asks;
@@ -135,8 +138,31 @@ internal static class ComImportStep
                 files.Add(f);
             }
         }
+        // 3. (first: it needs no verdicts) the assemblies with Windows P/Invokes
+        bool IsEntryFile(AppFile c) => entry != null && string.Equals(c.Name, entry, StringComparison.OrdinalIgnoreCase);
+        var pinvokes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pinvokeScope = Scope(Environment.GetEnvironmentVariable("WPF_PINVOKE_REWRITE"));
+        Win32Catalog? catalog = null;
+        try { catalog = Win32Catalog.For(searchDirs); foreach (string problem in catalog.Problems) notes.Add($"pinvoke: {problem}"); }
+        catch (Exception e) { notes.Add($"pinvoke: no export catalog ({e.GetType().Name}: {e.Message}); Windows P/Invokes are not rewritten"); }
+        if (catalog != null)
+            foreach (var f in files)
+            {
+                if (!ComRewriter.ImportsWindows(f.File, catalog, windows)) continue;
+                if (!pinvokeScope(f.Name)) { notes.Add($"pinvoke {f.Name}: left (WPF_PINVOKE_REWRITE)"); continue; }
+                if (IsEntryFile(f)) { notes.Add($"pinvoke {f.Name}: the entry assembly, which the host loads before the startup hook: its Windows P/Invokes are not rewritten"); continue; }
+                if (!f.ILOnly) { notes.Add($"pinvoke {f.Name}: mixed-mode (not IL-only): its Windows P/Invokes are not rewritten"); continue; }
+                pinvokes.Add(f.Name);
+            }
+
         var candidates = files.Where(f => f.DeclaresCom).ToList();
-        if (candidates.Count == 0) return;
+        if (candidates.Count == 0)
+        {
+            foreach (var f in files.Where(f => pinvokes.Contains(f.Name))) Take(f, list, ComImportLoader.Parts.PInvokes);
+            Finish();
+            notes.Add($"rewriter: {files.Count} app assemblies read, none declares COM types; {pinvokes.Count} rewritten for their Windows P/Invokes; {total.ElapsedMilliseconds} ms");
+            return;
+        }
         foreach (var c in candidates.Where(c => !inScope(c.Name))) notes.Add($"comimport {c.Name}: left (WPF_COMIMPORT_REWRITE)");
         candidates = candidates.Where(c => inScope(c.Name)).ToList();
         // the group's other members: assemblies that use the candidates' types and can make RCWs of their own (a
@@ -202,7 +228,7 @@ internal static class ComImportStep
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
         bool Held(AppFile c) => !partial && !force(c.Name) && AwaitingGate.ContainsKey(c.Name);
         // the entry assembly is the host's to load (dotnet exec), before the startup hook: never rewritten
-        bool IsEntry(AppFile c) => entry != null && string.Equals(c.Name, entry, StringComparison.OrdinalIgnoreCase);
+        bool IsEntry(AppFile c) => IsEntryFile(c);
         var entryFile = candidates.FirstOrDefault(IsEntry);
         var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c) && !IsEntry(c) && !(c.Forced && c.Verdict!.UsesComTypesOf.Count == 0)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
@@ -250,7 +276,9 @@ internal static class ComImportStep
             }
         }
 
-        // 3. the chosen and their callers leave the deps; the startup hook loads them rewritten
+        // 4. the chosen and their callers leave the deps; the startup hook loads them rewritten
+        var parts = new Dictionary<string, (AppFile File, ComImportLoader.Parts Parts)>(StringComparer.OrdinalIgnoreCase);
+        void Add(AppFile f, ComImportLoader.Parts p) => parts[f.Name] = (f, (parts.TryGetValue(f.Name, out var known) ? known.Parts : 0) | p);
         foreach (var c in candidates)
         {
             bool rewrite = chosen.ContainsKey(c.Name);
@@ -259,27 +287,38 @@ internal static class ComImportStep
                     ? $"its COM types are used by the entry assembly {entryFile.Name} (left with it); " : "")
                 + c.Verdict!.Summary + (c.Trusts.Count > 0 ? $" (its interfaces' users {string.Join(", ", c.Trusts)} go with it)" : "") + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
                 : !rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
-            if (rewrite) Take(c, list);
+            if (rewrite) Add(c, ComImportLoader.Parts.Com);
             notes.Add($"comimport {c.Name}: {(rewrite ? "rewritten in memory at load" : "left on built-in COM")} -- {why}");
         }
-        foreach (var x in callers.Values) Take(x, list, locationOnly: !chosen.ContainsKey(x.Name));
-        foreach (var (_, libNode) in target)
-            if (libNode is JsonObject lib && lib["runtime"] is JsonObject rt && rt.Count == 0) lib.Remove("runtime");
+        foreach (var x in callers.Values) if (!chosen.ContainsKey(x.Name)) Add(x, ComImportLoader.Parts.Location);
+        foreach (var f in files) if (pinvokes.Contains(f.Name)) Add(f, ComImportLoader.Parts.PInvokes);
+        foreach (var (f, p) in parts.Values) Take(f, list, p);
+        Finish();
 
         if (dirty && cachePath != null)
         {
             try { Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!); File.WriteAllText(cachePath, JsonSerializer.Serialize(cache)); }
             catch (IOException) { }
         }
-        notes.Add($"comimport: {files.Count} app assemblies read, {candidates.Count} declare COM types, {judged} judged now (the rest cached), " +
-                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls; {total.ElapsedMilliseconds} ms");
+        notes.Add($"rewriter: {files.Count} app assemblies read, {candidates.Count} declare COM types, {judged} judged now (the rest cached), " +
+                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls, {pinvokes.Count} for their Windows P/Invokes; {total.ElapsedMilliseconds} ms");
+
+        void Finish()
+        {
+            foreach (var (_, libNode) in target)
+                if (libNode is JsonObject lib && lib["runtime"] is JsonObject rt && rt.Count == 0) lib.Remove("runtime");
+        }
     }
 
-    private static void Take(AppFile f, List<string> list, bool locationOnly = false)
+    private static void Take(AppFile f, List<string> list, ComImportLoader.Parts parts)
     {
         foreach (var (runtime, asset) in f.Entries) runtime.Remove(asset);
         // a caller alone keeps its COM types as they are, for built-in COM
-        list.Add($"{f.Name}|{f.File}{(locationOnly ? "|location" : "")}");
+        var names = new List<string>();
+        if ((parts & ComImportLoader.Parts.Com) != 0) names.Add("com");
+        if ((parts & ComImportLoader.Parts.Location) != 0) names.Add("location");
+        if ((parts & ComImportLoader.Parts.PInvokes) != 0) names.Add("pinvoke");
+        list.Add($"{f.Name}|{f.File}|{string.Join(",", names)}");
     }
 
     /// <summary>The file's hash, what it references, whether it declares COM types and may read locations.</summary>
@@ -293,6 +332,7 @@ internal static class ComImportStep
             if (!pe.HasMetadata) return false;
             var md = pe.GetMetadataReader();
             if (!md.IsAssembly) return false;
+            f.ILOnly = (pe.PEHeaders.CorHeader?.Flags & CorFlags.ILOnly) != 0;
             f.Name = md.GetString(md.GetAssemblyDefinition().Name);
             foreach (var h in md.TypeDefinitions)
                 if ((md.GetTypeDefinition(h).Attributes & System.Reflection.TypeAttributes.Import) != 0) { f.DeclaresCom = true; break; }

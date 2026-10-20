@@ -37,6 +37,16 @@ public sealed class RewriteResult
     /// <summary>Written to the output path.</summary>
     public bool Written;
     public int Interfaces, Methods, PInvokes, Delegates, CallSites, EventInterfaces;
+    /// <summary>Windows P/Invokes (ComRewriter.PInvoke.cs): onto an implementation, onto the logged failure, onto
+    /// EntryPointNotFoundException (no Windows DLL exports it); on Windows, routed for the stack's windows.</summary>
+    public int Win32Implemented, Win32Unimplemented, Win32Missing, Win32Routed;
+    /// <summary>Windows P/Invokes whose signature the rewriter cannot marshal (they throw by name when called; on
+    /// Windows they stay on the real function).</summary>
+    public List<string> Win32Unsupported { get; } = new();
+
+    public string Win32Summary => Win32Implemented + Win32Unimplemented + Win32Missing + Win32Routed + Win32Unsupported.Count == 0 ? "no Windows P/Invokes"
+        : (Win32Routed > 0 ? $"{Win32Routed} Windows P/Invokes routed for the stack's windows" : $"Windows P/Invokes: {Win32Implemented} implemented, {Win32Unimplemented} unimplemented, {Win32Missing} not exported")
+          + (Win32Unsupported.Count == 0 ? "" : $"; {Win32Unsupported.Count} unsupported: {string.Join("; ", Win32Unsupported.Take(6))}{(Win32Unsupported.Count > 6 ? $" (+{Win32Unsupported.Count - 6} more)" : "")}");
 
     public override string ToString() => !UsesComImport ? "no ComImport"
         : $"{Interfaces} interfaces ({Methods} methods), {PInvokes} P/Invokes, {Delegates} delegates, {CallSites} call sites" + (EventInterfaces > 0 ? $", {EventInterfaces} event interfaces" : "") +
@@ -140,8 +150,15 @@ public static partial class ComRewriter
     /// </summary>
     /// <param name="locationOnly">only the location calls (caller rewriting): the COM types stay as they are,
     /// for built-in COM.</param>
-    public static (MemoryStream Image, MemoryStream? Symbols, RewriteResult Result) RewriteToMemory(string input, IEnumerable<string> searchDirs, bool locationOnly = false)
+    /// <param name="com">its COM types (false: left as they are; the location calls alone with
+    /// <paramref name="locationOnly"/>)</param>
+    /// <param name="pinvokes">its Windows P/Invokes, onto the stack's implementations (ComRewriter.PInvoke.cs);
+    /// <paramref name="windows"/>: as the Windows head routes them</param>
+    /// <param name="catalog">the Windows exports and their implementations (default: those in <paramref name="searchDirs"/>)</param>
+    public static (MemoryStream Image, MemoryStream? Symbols, RewriteResult Result) RewriteToMemory(string input, IEnumerable<string> searchDirs, bool locationOnly = false,
+        bool com = true, bool pinvokes = false, bool windows = false, Win32Catalog? catalog = null)
     {
+        searchDirs = searchDirs.ToList();
         var result = new RewriteResult();
         var resolver = new DefaultAssemblyResolver();
         foreach (string d in searchDirs) if (Directory.Exists(d)) resolver.AddSearchDirectory(d);
@@ -165,8 +182,10 @@ public static partial class ComRewriter
         using (module)
         {
             result.UsesComImport = module.Types.SelectMany(AllTypes).Any(t => t.IsImport);
-            if (locationOnly) new Work(module, result, externallyReferenced: null).RunLocationOnly();
-            else new Work(module, result, externallyReferenced: null).Run();
+            var work = new Work(module, result, externallyReferenced: null);
+            if (locationOnly) work.RunLocationOnly();
+            else if (com) work.Run();
+            if (pinvokes) work.RunPInvokes(catalog ?? Win32Catalog.For(searchDirs), windows);
             module.Attributes &= ~ModuleAttributes.StrongNameSigned;
             var image = new MemoryStream();
             MemoryStream? sym = null;
@@ -433,7 +452,9 @@ public static partial class ComRewriter
 
         private enum Kind { Blit, Bool4, Bool2, Bool1, Iface, Unknown, OutIface, ByRefBlit, StrW, StrA, StrB, BlitArray, RefBool4, RefBool2, RefBool1, RefStrB, RefStrW, Variant, RefVariant, SafeArray, RefSafeArray,
             LPStructBlit, FormattedClass, RefStruct, Custom, RefCustom, StringBuilder, StructArray, ElemArray,
-            StructByValue, RefFormattedClass, RefStringBuilder, RefArray, Enumerable }
+            StructByValue, RefFormattedClass, RefStringBuilder, RefArray, Enumerable,
+            // P/Invokes only (ComRewriter.PInvoke.cs)
+            Delegate, SafeHandle, OutSafeHandle, HandleRef }
 
         /// <summary>A refusal's prefix when built-in interop cannot marshal it either.</summary>
         private const string BuiltInCannotPrefix = "[built-in cannot] ";
@@ -1485,7 +1506,7 @@ public static partial class ComRewriter
                     {
                         if (a.SizeParam >= 0)
                         {
-                            il.Emit(OpCodes.Ldarg, a.SizeParam + 1);
+                            il.Emit(OpCodes.Ldarg, a.SizeParam + _argBase);
                             if (body.Parameters[a.SizeParam].ParameterType is ByReferenceType) il.Emit(OpCodes.Ldind_I4);
                             il.Emit(OpCodes.Conv_I4);
                             if (a.SizeConst > 0) { il.Emit(OpCodes.Ldc_I4, a.SizeConst); il.Emit(OpCodes.Add); }
