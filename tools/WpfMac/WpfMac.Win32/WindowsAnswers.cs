@@ -37,28 +37,28 @@ public static unsafe partial class Exports
         return c->Callback(ToStack(h), c->Data);
     }
 
-    [UnmanagedCallersOnly]
-    private static int WinEnumWindows(delegate* unmanaged<nint, nint, int> callback, nint data)
+    [Win32ExportOnWindows(Always, "EnumWindows")]
+    public static int WinEnumWindows(delegate* unmanaged<nint, nint, int> callback, nint data)
     {
         var c = new EnumContext { Callback = callback, Data = data };
         return RealEnumWindows(&EnumTranslated, (nint)(&c));
     }
 
-    [UnmanagedCallersOnly]
-    private static int WinEnumThreadWindows(uint thread, delegate* unmanaged<nint, nint, int> callback, nint data)
+    [Win32ExportOnWindows(Always, "EnumThreadWindows")]
+    public static int WinEnumThreadWindows(uint thread, delegate* unmanaged<nint, nint, int> callback, nint data)
     {
         var c = new EnumContext { Callback = callback, Data = data };
         return RealEnumThreadWindows(thread, &EnumTranslated, (nint)(&c));
     }
 
-    [UnmanagedCallersOnly] private static nint WinGetForegroundWindow() => ToStack(RealGetForegroundWindow());
-    [UnmanagedCallersOnly] private static nint WinGetActiveWindow() => ToStack(RealGetActiveWindow());
-    [UnmanagedCallersOnly] private static nint WinWindowFromPoint(POINT p) => ToStack(RealWindowFromPoint(p));
+    [Win32ExportOnWindows(Always, "GetForegroundWindow")] public static nint WinGetForegroundWindow() => ToStack(RealGetForegroundWindow());
+    [Win32ExportOnWindows(Always, "GetActiveWindow")] public static nint WinGetActiveWindow() => ToStack(RealGetActiveWindow());
+    [Win32ExportOnWindows(Always, "WindowFromPoint")] public static nint WinWindowFromPoint(POINT p) => ToStack(RealWindowFromPoint(p));
 
     /// <summary>The focus inside a form is the stack's: when Windows has it on a form's host window,
     /// the answer is the form's focused control.</summary>
-    [UnmanagedCallersOnly]
-    private static nint WinGetFocus()
+    [Win32ExportOnWindows(Always, "GetFocus")]
+    public static nint WinGetFocus()
     {
         nint real = RealGetFocus();
         nint form = ToStack(real);

@@ -29,28 +29,27 @@ internal static class StartupHook
         AppContext.SetData(Keys.LogCallback, (Action<string>)CompatLog.Info);
         AppContext.SetData(Keys.LogOnceCallback, (Action<string, string>)CompatLog.Once);
         VersionUnification.Install(AssemblyLoadContext.Default);
-        // App assemblies with [ComImport] types that the launcher chose: rewritten in memory on first load
-        // (WpfMac.ComRewrite; Documentation/comimport-rewriter.md)
+        // App assemblies the launcher chose -- with [ComImport] types, with Windows P/Invokes: rewritten in
+        // memory on first load (WpfMac.ComRewrite; Documentation/comimport-rewriter.md, pinvoke-rewriter.md)
         if (AppContext.GetData(Keys.ComImport) is string comImport && comImport.Length > 0)
         {
             try
             {
                 Type.GetType("WpfMac.ComRewrite.ComImportLoader, WpfMac.ComRewrite", throwOnError: true)!
                     .GetMethod("InstallDefault")!
-                    .Invoke(null, new object[] { comImport, AppContext.GetData(Keys.AppDirectory) as string ?? AppContext.BaseDirectory,
-                        AppContext.GetData(Keys.OverlayDirectory) as string ?? "", (Action<string>)CompatLog.Info });
+                    .Invoke(null, new object?[] { comImport, AppContext.GetData(Keys.AppDirectory) as string ?? AppContext.BaseDirectory,
+                        AppContext.GetData(Keys.OverlayDirectory) as string ?? "", AppContext.GetData(Keys.CacheDirectory) as string, (Action<string>)CompatLog.Info });
             }
             catch (Exception e) { CompatLog.Info($"comimport: the in-memory rewriter is not available ({e.GetBaseException().Message})"); }
         }
         if (AppContext.GetData(Keys.OverlayDirectory) is string overlay && overlay.Length > 0)
         {
-            WpfMac.Bootstrap.Win32.ShimLibrary.Initialize(overlay);
-            // Windows: the app's user32 calls on the stack's own windows reach the stack.
-            WpfMac.Bootstrap.Win32.WindowsShim.Initialize(overlay, AppContext.GetData(Keys.CacheDirectory) as string);
+            // The implementations of Windows exports the app's rewritten P/Invokes call (above).
+            CallWin32("WpfMac.Win32.Exports", "Initialize", (Action<string, string>)CompatLog.Once);
             // Unless asked to keep them (wpfmac run --crash-reports), no crash reports or dialogs.
             if (AppContext.GetData(Keys.CrashReports) as string != "true")
             {
-                WpfMac.Bootstrap.Win32.ShimLibrary.QuietAborts(AppContext.GetData(Keys.LogPath) as string);
+                WpfMac.Bootstrap.Win32.QuietAborts.Install();
             }
         }
         if (!OperatingSystem.IsWindows() && AppContext.GetData(Keys.StateDirectory) is string state && state.Length > 0)
@@ -142,7 +141,7 @@ namespace WpfMac.Bootstrap
         public const string Isolate = "WpfMac.Isolate";
         public const string ScreenshotInterval = "WpfMac.ScreenshotInterval";
         public const string CrashReports = "WpfMac.CrashReports";
-        /// <summary>The app assemblies to rewrite in memory: "name|original path" lines (ComImportStep).</summary>
+        /// <summary>The app assemblies to rewrite in memory: "name|original path|parts" lines (ComImportStep).</summary>
         public const string ComImport = "WpfMac.ComImport";
 
         // Published by the hook, not passed to it: Action<string> and Action<string, string> (key, message).

@@ -23,9 +23,13 @@
     <ProjectReference Include="../ComUserFixture/ComUserFixture.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../ComReleaserFixture/ComReleaserFixture.csproj" ReferenceOutputAssembly="false" />
     <AssemblyMetadata Include="ComImportFixture" Value="$(MSBuildThisFileDirectory)../ComImportFixture/bin/$(Configuration)/net10.0/ComImportFixture.dll" />
-    <!-- The generated stand-in DLL for user32 (Windows), tested by loading what it writes. -->
-    <Compile Include="../../WpfMac.Bootstrap/Win32/ShimImage.cs" Link="Bootstrap/ShimImage.cs" />
-    <Compile Include="../../WpfMac.Bootstrap/Win32/Direct3DShim.cs" Link="Bootstrap/Direct3DShim.cs" />
+    <!-- rewritten by PInvokeRewriterTests onto PInvokeImplFixture's implementations -->
+    <ProjectReference Include="../PInvokeFixture/PInvokeFixture.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../PInvokeImplFixture/PInvokeImplFixture.csproj" ReferenceOutputAssembly="false" />
+    <AssemblyMetadata Include="PInvokeFixture" Value="$(MSBuildThisFileDirectory)../PInvokeFixture/bin/$(Configuration)/net10.0/PInvokeFixture.dll" />
+    <AssemblyMetadata Include="PInvokeImplFixture" Value="$(MSBuildThisFileDirectory)../PInvokeImplFixture/bin/$(Configuration)/net10.0/PInvokeImplFixture.dll" />
+    <!-- the real export table, when WpfMac.Win32 has been built (it needs the WebGPU SDK) -->
+    <AssemblyMetadata Include="WpfMacWin32" Value="$(MSBuildThisFileDirectory)../../WpfMac.Win32/bin/$(Configuration)/net10.0/WpfMac.Win32.dll" />
     <Compile Include="../../WpfMac.Bootstrap/CompatLog.cs" Link="Bootstrap/CompatLog.cs" />
     <ProjectReference Include="$(WpfMacRepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" Aliases="RegistryShim" />
     <ProjectReference Include="$(WpfMacRepoRoot)shims/System.Management/System.Management.csproj" />

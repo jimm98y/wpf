@@ -1057,13 +1057,14 @@ public sealed unsafe class ComRewriterTests
         var result = ComRewriter.Rewrite(FixtureFile, null, new[] { AppContext.BaseDirectory }, partial: true);
         // the load, as the startup hook does it: rewritten in memory on the first request
         // the fixture, and the helper that asks its callers where they are (caller rewriting)
-        var loader = new ComImportLoader(new Dictionary<string, string>
+        const ComImportLoader.Parts com = ComImportLoader.Parts.Com;
+        var loader = new ComImportLoader(new Dictionary<string, (string, ComImportLoader.Parts)>
         {
-            ["ComImportFixture"] = s_original.Value,
-            ["LocationAskerFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "LocationAskerFixture.dll"),
-            ["ComUserFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComUserFixture.dll"),
-            ["ComReleaserFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComReleaserFixture.dll"),
-        }, new[] { AppContext.BaseDirectory }, null);
+            ["ComImportFixture"] = (s_original.Value, com),
+            ["LocationAskerFixture"] = (Path.Combine(Path.GetDirectoryName(s_original.Value)!, "LocationAskerFixture.dll"), com),
+            ["ComUserFixture"] = (Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComUserFixture.dll"), com),
+            ["ComReleaserFixture"] = (Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComReleaserFixture.dll"), com),
+        }, new[] { AppContext.BaseDirectory }, cacheDir: null, log: null);
         var alc = new AssemblyLoadContext("comimport-fixture");
         loader.Install(alc);
         var asm = alc.LoadFromAssemblyName(new AssemblyName("ComImportFixture"));
@@ -1556,7 +1557,7 @@ public sealed class ComImportStepTests
         Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["Other.dll"]);
         Assert.Equal(4, s_lastList!.Count);       // the fixture, its group members ComUserFixture and ComReleaserFixture, the location asker
         Assert.Contains(s_lastList, e => e.StartsWith("ComReleaserFixture|") && !e.EndsWith("|location"));
-        Assert.Contains(s_lastList, e => e.StartsWith("ComImportFixture|") && e.EndsWith("ComImportFixture.dll"));
+        Assert.Contains(s_lastList, e => e.StartsWith("ComImportFixture|") && e.EndsWith("ComImportFixture.dll|com"));
         Assert.Contains(s_lastList, e => e.StartsWith("ComUserFixture|") && !e.EndsWith("|location"));
         // the helper it calls asks its callers where they are: rewritten for that (caller rewriting)
         Assert.Contains(s_lastList, e => e.StartsWith("LocationAskerFixture|"));

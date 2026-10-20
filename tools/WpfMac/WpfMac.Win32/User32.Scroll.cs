@@ -22,25 +22,6 @@ namespace WpfMac.Win32;
 
 public static unsafe partial class Exports
 {
-    private static void RegisterScrollAndFrame()
-    {
-        R((delegate* unmanaged<RECT*, uint, int, int>)&AdjustWindowRect, "AdjustWindowRect");
-        R((delegate* unmanaged<RECT*, uint, int, uint, int>)&AdjustWindowRectEx, "AdjustWindowRectEx");
-        R((delegate* unmanaged<RECT*, uint, int, uint, uint, int>)&AdjustWindowRectExForDpi, "AdjustWindowRectExForDpi");
-
-        R((delegate* unmanaged<nint, int, uint*, int>)&GetScrollInfo, "GetScrollInfo");
-        R((delegate* unmanaged<nint, int, uint*, int, int>)&SetScrollInfo, "SetScrollInfo");
-        R((delegate* unmanaged<nint, int, int>)&GetScrollPos, "GetScrollPos");
-        R((delegate* unmanaged<nint, int, int, int, int>)&SetScrollPos, "SetScrollPos");
-        R((delegate* unmanaged<nint, int, int*, int*, int>)&GetScrollRange, "GetScrollRange");
-        R((delegate* unmanaged<nint, int, int, int, int, int>)&SetScrollRange, "SetScrollRange");
-        R((delegate* unmanaged<nint, int, int, int>)&ShowScrollBar, "ShowScrollBar");
-        R((delegate* unmanaged<nint, uint, uint, int>)&EnableScrollBar, "EnableScrollBar");
-        R((delegate* unmanaged<nint, int, byte*, int>)&GetScrollBarInfo, "GetScrollBarInfo");
-
-        R((delegate* unmanaged<nint, RECT*, int, int>)&GetUpdateRect, "GetUpdateRect");
-        R((delegate* unmanaged<uint*, int>)&TrackMouseEvent, "TrackMouseEvent", "_TrackMouseEvent");
-    }
 
     // ---- frames ------------------------------------------------------------------------------------
 
@@ -70,24 +51,24 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly]
-    private static int AdjustWindowRect(RECT* r, uint style, int menu)
+    [Win32Export("AdjustWindowRect")]
+    public static int AdjustWindowRect(RECT* r, uint style, int menu)
     {
         if (r == null) return FALSE;
         AdjustFrame(r, style, menu != 0, 0, 1);
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int AdjustWindowRectEx(RECT* r, uint style, int menu, uint exStyle)
+    [Win32Export("AdjustWindowRectEx")]
+    public static int AdjustWindowRectEx(RECT* r, uint style, int menu, uint exStyle)
     {
         if (r == null) return FALSE;
         AdjustFrame(r, style, menu != 0, exStyle, 1);
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int AdjustWindowRectExForDpi(RECT* r, uint style, int menu, uint exStyle, uint dpi)
+    [Win32Export("AdjustWindowRectExForDpi")]
+    public static int AdjustWindowRectExForDpi(RECT* r, uint style, int menu, uint exStyle, uint dpi)
     {
         if (r == null) return FALSE;
         AdjustFrame(r, style, menu != 0, exStyle, dpi == 0 ? 1 : dpi / 96.0);
@@ -123,8 +104,8 @@ public static unsafe partial class Exports
 
     // SCROLLINFO: cbSize, fMask, nMin, nMax, nPage, nPos, nTrackPos. WinForms' Maximum is nMax and its
     // LargeChange nPage, as the native bar it stands for has them.
-    [UnmanagedCallersOnly]
-    private static int GetScrollInfo(nint hwnd, int bar, uint* si)
+    [Win32Export("GetScrollInfo")]
+    public static int GetScrollInfo(nint hwnd, int bar, uint* si)
     {
         if (si == null) return FALSE;
         uint mask = si[1];
@@ -138,8 +119,8 @@ public static unsafe partial class Exports
         });
     }
 
-    [UnmanagedCallersOnly]
-    private static int SetScrollInfo(nint hwnd, int bar, uint* si, int redraw)
+    [Win32Export("SetScrollInfo")]
+    public static int SetScrollInfo(nint hwnd, int bar, uint* si, int redraw)
     {
         if (si == null) return 0;
         uint mask = si[1];
@@ -157,14 +138,14 @@ public static unsafe partial class Exports
     private static int ClampScroll(Forms.ScrollBar sb, int pos)
         => Math.Clamp(pos, sb.Minimum, Math.Max(sb.Minimum, sb.Maximum - Math.Max(sb.LargeChange, 1) + 1));
 
-    [UnmanagedCallersOnly] private static int GetScrollPos(nint hwnd, int bar) => OnScrollBar(hwnd, bar, 0, sb => sb.Value);
+    [Win32Export("GetScrollPos")] public static int GetScrollPos(nint hwnd, int bar) => OnScrollBar(hwnd, bar, 0, sb => sb.Value);
 
-    [UnmanagedCallersOnly]
-    private static int SetScrollPos(nint hwnd, int bar, int pos, int redraw)
+    [Win32Export("SetScrollPos")]
+    public static int SetScrollPos(nint hwnd, int bar, int pos, int redraw)
         => OnScrollBar(hwnd, bar, 0, sb => { int old = sb.Value; sb.Value = ClampScroll(sb, pos); return old; });
 
-    [UnmanagedCallersOnly]
-    private static int GetScrollRange(nint hwnd, int bar, int* min, int* max)
+    [Win32Export("GetScrollRange")]
+    public static int GetScrollRange(nint hwnd, int bar, int* min, int* max)
     {
         (int Min, int Max) range = OnScrollBar(hwnd, bar, (0, 0), sb => (sb.Minimum, sb.Maximum));
         if (min != null) *min = range.Min;
@@ -172,12 +153,12 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int SetScrollRange(nint hwnd, int bar, int min, int max, int redraw)
+    [Win32Export("SetScrollRange")]
+    public static int SetScrollRange(nint hwnd, int bar, int min, int max, int redraw)
         => OnScrollBar(hwnd, bar, FALSE, sb => { sb.Minimum = min; sb.Maximum = Math.Max(min, max); return TRUE; });
 
-    [UnmanagedCallersOnly]
-    private static int ShowScrollBar(nint hwnd, int bar, int show)
+    [Win32Export("ShowScrollBar")]
+    public static int ShowScrollBar(nint hwnd, int bar, int show)
     {
         if (bar == SB_BOTH)
         {
@@ -189,8 +170,8 @@ public static unsafe partial class Exports
     }
 
     // ESB_ENABLE_BOTH 0, ESB_DISABLE_BOTH 3 (and the one-arrow variants, which a WinForms bar cannot be).
-    [UnmanagedCallersOnly]
-    private static int EnableScrollBar(nint hwnd, uint bar, uint arrows)
+    [Win32Export("EnableScrollBar")]
+    public static int EnableScrollBar(nint hwnd, uint bar, uint arrows)
     {
         bool enable = arrows == 0;
         if (bar == SB_BOTH)
@@ -206,8 +187,8 @@ public static unsafe partial class Exports
     // DWORD rgstate[6]. OBJID_HSCROLL -6, OBJID_VSCROLL -5, OBJID_CLIENT -4 (the window is the bar).
     private const uint STATE_SYSTEM_UNAVAILABLE = 0x1, STATE_SYSTEM_INVISIBLE = 0x8000;
 
-    [UnmanagedCallersOnly]
-    private static int GetScrollBarInfo(nint hwnd, int idObject, byte* info)
+    [Win32Export("GetScrollBarInfo")]
+    public static int GetScrollBarInfo(nint hwnd, int idObject, byte* info)
     {
         if (info == null || Resolve(hwnd) is not Forms.Control c) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return FALSE; }
         int bar = idObject switch { -6 => SB_HORZ, -5 => SB_VERT, -4 => SB_CTL, _ => -1 };
@@ -257,8 +238,8 @@ public static unsafe partial class Exports
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, Tracking> s_tracking = new();
 
-    [UnmanagedCallersOnly]
-    private static int TrackMouseEvent(uint* tme)
+    [Win32Export("TrackMouseEvent", "_TrackMouseEvent")]
+    public static int TrackMouseEvent(uint* tme)
     {
         if (tme == null) return FALSE;
         uint flags = tme[1];

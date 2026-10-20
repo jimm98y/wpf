@@ -138,13 +138,13 @@ public static unsafe partial class Exports
         return r is int i ? i : 0;
     }
 
-    [UnmanagedCallersOnly] private static nint WinGetDC(nint hwnd) => NewWindowDC(hwnd, window: false)?.Dc ?? 0;
-    [UnmanagedCallersOnly] private static nint WinGetWindowDC(nint hwnd) => NewWindowDC(hwnd, window: true)?.Dc ?? 0;
+    [Win32ExportOnWindows(A0, "GetDC")] public static nint WinGetDC(nint hwnd) => NewWindowDC(hwnd, window: false)?.Dc ?? 0;
+    [Win32ExportOnWindows(A0, "GetWindowDC")] public static nint WinGetWindowDC(nint hwnd) => NewWindowDC(hwnd, window: true)?.Dc ?? 0;
     // DCX_WINDOW (1): the window rectangle rather than the client's. The clip region is the app's own.
-    [UnmanagedCallersOnly] private static nint WinGetDCEx(nint hwnd, nint clip, uint flags) => NewWindowDC(hwnd, window: (flags & 1) != 0)?.Dc ?? 0;
+    [Win32ExportOnWindows(A0, "GetDCEx")] public static nint WinGetDCEx(nint hwnd, nint clip, uint flags) => NewWindowDC(hwnd, window: (flags & 1) != 0)?.Dc ?? 0;
 
-    [UnmanagedCallersOnly]
-    private static int WinReleaseDC(nint hwnd, nint hdc)
+    [Win32ExportOnWindows(A0, "ReleaseDC")]
+    public static int WinReleaseDC(nint hwnd, nint hdc)
     {
         if (!s_windowDcs.TryRemove(hdc, out var wdc)) return 0;
         FlushWindowDC(wdc);
@@ -152,8 +152,8 @@ public static unsafe partial class Exports
     }
 
     // PAINTSTRUCT: hdc, fErase, RECT rcPaint, fRestore, fIncUpdate, rgbReserved[32].
-    [UnmanagedCallersOnly]
-    private static nint WinBeginPaint(nint hwnd, byte* ps)
+    [Win32ExportOnWindows(A0, "BeginPaint")]
+    public static nint WinBeginPaint(nint hwnd, byte* ps)
     {
         NativeMemory.Clear(ps, 72);
         ValidateWinFormsWindow(hwnd, repaint: true);
@@ -164,16 +164,17 @@ public static unsafe partial class Exports
         return wdc.Dc;
     }
 
-    [UnmanagedCallersOnly]
-    private static int WinEndPaint(nint hwnd, byte* ps)
+    [Win32ExportOnWindows(A0, "EndPaint")]
+    public static int WinEndPaint(nint hwnd, byte* ps)
     {
         if (ps != null && s_windowDcs.TryRemove(*(nint*)ps, out var wdc)) FlushWindowDC(wdc);
         return TRUE;
     }
 
     /// <summary>The window's pending update area: all of it while a paint is due, nothing otherwise.</summary>
-    [UnmanagedCallersOnly]
-    private static int GetUpdateRect(nint hwnd, RECT* r, int erase)
+    [Win32Export("GetUpdateRect")]
+    [Win32ExportOnWindows(A0, "GetUpdateRect")]
+    public static int GetUpdateRect(nint hwnd, RECT* r, int erase)
     {
         if (Resolve(hwnd) is not Forms.Control c) return FALSE;
         RECT area = Ui(c, () =>

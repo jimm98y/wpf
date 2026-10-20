@@ -1,7 +1,13 @@
-// Loads the app assemblies the launcher chose to rewrite, rewritten in memory (Documentation/
-// comimport-rewriter.md). The launcher leaves them out of the deps, so the first request for one reaches
-// the load context's Resolving event; the original's bytes are rewritten with Cecil and loaded with
-// LoadFromStream (with symbols when a .pdb lies beside it). Nothing is written to disk.
+// Loads the app assemblies the launcher chose to rewrite, rewritten (Documentation/comimport-rewriter.md,
+// pinvoke-rewriter.md). The launcher leaves them out of the deps, so the first request for one reaches the
+// load context's Resolving event; the original's bytes are rewritten with Cecil -- its COM types, its
+// location calls, its Windows P/Invokes, as the launcher listed -- and loaded with LoadFromStream (with
+// symbols when a .pdb lies beside it).
+//
+// What a rewrite made is kept in the app's cache folder (rewritten/), keyed by the original file (path,
+// size, time), the rewriter build and the implementations it was rewritten against, so a later launch
+// loads it without rewriting. It is loaded from memory all the same: the cache is never the assembly's
+// location.
 //
 // The rewritten assembly's Location, CodeBase and Module names answer with the original file's
 // (WpfMac.ComInterop.Com.RegisterOriginal), and its P/Invokes find native libraries in the original's
@@ -11,54 +17,63 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+using System.Security.Cryptography;
+using System.Text;
 using WpfMac.ComInterop;
 
 namespace WpfMac.ComRewrite;
 
 public sealed class ComImportLoader
 {
-    private readonly Dictionary<string, string> _originals;          // assembly name -> original file
+    /// <summary>What of an assembly is rewritten.</summary>
+    [Flags]
+    public enum Parts { None = 0, Com = 1, Location = 2, PInvokes = 4 }
+
+    private readonly Dictionary<string, (string Path, Parts Parts)> _originals;          // assembly name -> original file
     private readonly string[] _searchDirs;
+    private readonly string? _cacheDir;
     private readonly Action<string>? _log;
     private readonly Dictionary<Assembly, string> _loaded = new();
     private readonly object _lock = new();
 
-    /// <param name="originals">assembly name -> its original file</param>
+    /// <param name="originals">assembly name -> its original file, and what of it is rewritten</param>
     /// <param name="searchDirs">where the rewriter resolves the assemblies' references</param>
-    public ComImportLoader(IDictionary<string, string> originals, IEnumerable<string> searchDirs, Action<string>? log)
+    /// <param name="cacheDir">where rewritten images are kept between launches (null: nowhere)</param>
+    public ComImportLoader(IDictionary<string, (string Path, Parts Parts)> originals, IEnumerable<string> searchDirs, string? cacheDir, Action<string>? log)
     {
-        _originals = new Dictionary<string, string>(originals, StringComparer.OrdinalIgnoreCase);
+        _originals = new Dictionary<string, (string, Parts)>(originals, StringComparer.OrdinalIgnoreCase);
         _searchDirs = searchDirs.ToArray();
+        _cacheDir = cacheDir;
         _log = log;
     }
 
-    /// <summary>Callers rewritten for their location calls alone (their COM types stay for built-in COM).</summary>
-    private readonly HashSet<string> _locationOnly = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>The launcher's list, as it passes it (WpfMac.ComImport: "name|path" lines, "name|path|location"
-    /// for a caller rewritten for its location calls alone, whose names go to <paramref name="locationOnly"/>).</summary>
-    public static Dictionary<string, string> Parse(string? list, ISet<string>? locationOnly = null)
+    /// <summary>The launcher's list, as it passes it (WpfMac.ComImport): "name|path|parts" lines, parts a
+    /// comma-separated list of com, location, pinvoke ("name|path" alone: com).</summary>
+    public static Dictionary<string, (string Path, Parts Parts)> Parse(string? list)
     {
-        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var d = new Dictionary<string, (string, Parts)>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrEmpty(list)) return d;
         foreach (string line in list.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var parts = line.Split('|');
             if (parts.Length < 2 || parts[0].Length == 0) continue;
-            d[parts[0]] = parts[1];
-            if (parts.Length > 2 && parts[2] == "location") locationOnly?.Add(parts[0]);
+            var what = Parts.None;
+            foreach (string p in (parts.Length > 2 ? parts[2] : "com").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                what |= p switch { "com" => Parts.Com, "location" => Parts.Location, "pinvoke" => Parts.PInvokes, _ => Parts.None };
+            d[parts[0]] = (parts[1], what);
         }
         return d;
     }
 
     /// <summary>The startup hook's entry (reached by name): the launcher's list, into the default context.</summary>
-    public static void InstallDefault(string list, string appDir, string overlayDir, Action<string> log)
+    public static void InstallDefault(string list, string appDir, string overlayDir, string? cacheDir, Action<string> log)
     {
-        var locationOnly = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var loader = new ComImportLoader(Parse(list, locationOnly), new[] { appDir, overlayDir, RuntimeEnvironment.GetRuntimeDirectory() }, log);
-        foreach (string n in locationOnly) loader._locationOnly.Add(n);
+        var loader = new ComImportLoader(Parse(list), new[] { appDir, overlayDir, RuntimeEnvironment.GetRuntimeDirectory() },
+            cacheDir == null ? null : Path.Combine(cacheDir, "rewritten"), log);
         loader.Install(AssemblyLoadContext.Default);
-        log($"comimport: {loader._originals.Count} app assemblies are rewritten in memory when first loaded: {string.Join(", ", loader._originals.Keys)}");
+        log($"rewriter: {loader._originals.Count} app assemblies are rewritten when first loaded: {string.Join(", ", loader._originals.Select(kv => $"{kv.Key} ({kv.Value.Parts})"))}");
+        if (loader._originals.Values.Any(v => (v.Parts & Parts.PInvokes) != 0) && Win32Catalog.For(loader._searchDirs) is { Problems.Count: > 0 } cat)
+            foreach (string problem in cat.Problems) log($"pinvoke: {problem}");
     }
 
     public void Install(AssemblyLoadContext alc)
@@ -70,14 +85,35 @@ public sealed class ComImportLoader
     /// <summary>The rewritten assembly <paramref name="name"/>, loaded into <paramref name="alc"/> (once).</summary>
     public Assembly? Load(AssemblyLoadContext alc, string name)
     {
-        if (!_originals.TryGetValue(name, out string? path)) return null;
+        if (!_originals.TryGetValue(name, out var entry)) return null;
         lock (_lock)
         {
             foreach (var (a, _) in _loaded)
                 if (string.Equals(a.GetName().Name, name, StringComparison.OrdinalIgnoreCase) && AssemblyLoadContext.GetLoadContext(a) == alc) return a;
             var sw = Stopwatch.StartNew();
-            bool locationOnly = _locationOnly.Contains(name);
-            var (image, symbols, result) = ComRewriter.RewriteToMemory(path, _searchDirs, locationOnly);
+            string path = entry.Path;
+            var parts = entry.Parts;
+            bool windows = OperatingSystem.IsWindows();
+            string? cached = CachePath(name, path, parts, windows);
+            MemoryStream image;
+            MemoryStream? symbols;
+            string what;
+            if (cached != null && File.Exists(cached))
+            {
+                image = new MemoryStream(File.ReadAllBytes(cached));
+                string pdb = Path.ChangeExtension(cached, ".pdb");
+                symbols = File.Exists(pdb) ? new MemoryStream(File.ReadAllBytes(pdb)) : null;
+                what = "from the cache";
+            }
+            else
+            {
+                var (img, sym, result) = ComRewriter.RewriteToMemory(path, _searchDirs, locationOnly: (parts & Parts.Location) != 0 && (parts & Parts.Com) == 0,
+                    com: (parts & Parts.Com) != 0, pinvokes: (parts & Parts.PInvokes) != 0, windows: windows);
+                image = img; symbols = sym;
+                what = ((parts & Parts.Com) != 0 ? result.ToString() : (parts & Parts.Location) != 0 ? $"its location calls ({result.CallSites})" : "")
+                    + ((parts & Parts.PInvokes) != 0 ? ((parts & (Parts.Com | Parts.Location)) != 0 ? "; " : "") + result.Win32Summary : "");
+                if (cached != null) Keep(cached, image, symbols);
+            }
             long rewrite = sw.ElapsedMilliseconds;
             Assembly asm;
             using (image)
@@ -85,8 +121,48 @@ public sealed class ComImportLoader
                 asm = symbols != null ? alc.LoadFromStream(image, symbols) : alc.LoadFromStream(image);
             Com.RegisterOriginal(asm, path);
             _loaded[asm] = path;
-            _log?.Invoke($"comimport: {name} rewritten in memory from {path} in {rewrite} ms (loaded in {sw.ElapsedMilliseconds - rewrite} ms){(symbols != null ? ", with symbols" : "")}: {(locationOnly ? $"its location calls ({result.CallSites})" : result.ToString())}");
+            _log?.Invoke($"rewriter: {name} rewritten from {path} in {rewrite} ms (loaded in {sw.ElapsedMilliseconds - rewrite} ms){(symbols != null ? ", with symbols" : "")}: {what}");
             return asm;
+        }
+    }
+
+    /// <summary>Where the rewritten image of <paramref name="path"/> is kept: named by everything it depends on.</summary>
+    private string? CachePath(string name, string path, Parts parts, bool windows)
+    {
+        if (_cacheDir == null) return null;
+        try
+        {
+            var fi = new FileInfo(path);
+            string fingerprint = (parts & Parts.PInvokes) != 0 ? Win32Catalog.For(_searchDirs).Fingerprint : "";
+            string key = string.Join("|", Path.GetFullPath(path), fi.Length, fi.LastWriteTimeUtc.Ticks, File.Exists(Path.ChangeExtension(path, ".pdb")),
+                typeof(ComRewriter).Assembly.ManifestModule.ModuleVersionId, typeof(Com).Assembly.ManifestModule.ModuleVersionId,
+                fingerprint, (int)parts, windows, Environment.GetEnvironmentVariable("WPF_D3D11_SHIM"));
+            string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..20].ToLowerInvariant();
+            return Path.Combine(_cacheDir, $"{name}-{hash}.dll");
+        }
+        catch (IOException) { return null; }
+    }
+
+    private void Keep(string cached, MemoryStream image, MemoryStream? symbols)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
+            // the name's other images (an older original, rewriter or implementation) go
+            string stem = Path.GetFileName(cached)[..(Path.GetFileName(cached).LastIndexOf('-') + 1)];
+            foreach (string old in Directory.EnumerateFiles(Path.GetDirectoryName(cached)!, stem + "*"))
+                if (Path.GetFileName(old).Length == Path.GetFileName(cached).Length && !Path.GetFileNameWithoutExtension(old).Equals(Path.GetFileNameWithoutExtension(cached), StringComparison.Ordinal))
+                    try { File.Delete(old); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            if (symbols != null) Write(Path.ChangeExtension(cached, ".pdb"), symbols);
+            Write(cached, image);           // last: its presence says the pair is complete
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _log?.Invoke($"rewriter: could not keep {cached}: {e.Message}"); }
+
+        static void Write(string path, MemoryStream s)
+        {
+            string temp = path + "." + Environment.ProcessId + ".tmp";
+            using (var f = File.Create(temp)) s.WriteTo(f);
+            File.Move(temp, path, overwrite: true);
         }
     }
 

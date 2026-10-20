@@ -12,60 +12,13 @@ using Forms = System.Windows.Forms;
 namespace WpfMac.Win32;
 
 [StructLayout(LayoutKind.Sequential)]
-internal struct RECT { public int Left, Top, Right, Bottom; }
+public struct RECT { public int Left, Top, Right, Bottom; }
 
 [StructLayout(LayoutKind.Sequential)]
-internal struct POINT { public int X, Y; }
+public struct POINT { public int X, Y; }
 
 public static unsafe partial class Exports
 {
-    private static void RegisterUser32System()
-    {
-        R((delegate* unmanaged<int, int>)&GetSystemMetrics, "GetSystemMetrics");
-        R((delegate* unmanaged<int, uint, int>)&GetSystemMetricsForDpi, "GetSystemMetricsForDpi");
-        R((delegate* unmanaged<uint, uint, void*, uint, int>)&SystemParametersInfoW, "SystemParametersInfoW", "SystemParametersInfo");
-        R((delegate* unmanaged<uint, uint, void*, uint, uint, int>)&SystemParametersInfoForDpi, "SystemParametersInfoForDpi");
-        R((delegate* unmanaged<uint>)&GetDoubleClickTime, "GetDoubleClickTime");
-        R((delegate* unmanaged<uint>)&GetCaretBlinkTime, "GetCaretBlinkTime");
-        R((delegate* unmanaged<int, uint>)&GetSysColor, "GetSysColor");
-        R((delegate* unmanaged<int, nint>)&GetSysColorBrush, "GetSysColorBrush");
-
-        R((delegate* unmanaged<nint, uint, nint>)&MonitorFromWindow, "MonitorFromWindow");
-        R((delegate* unmanaged<POINT, uint, nint>)&MonitorFromPoint, "MonitorFromPoint");
-        R((delegate* unmanaged<RECT*, uint, nint>)&MonitorFromRect, "MonitorFromRect");
-        R((delegate* unmanaged<nint, uint*, int>)&GetMonitorInfoW, "GetMonitorInfoW", "GetMonitorInfo", "GetMonitorInfoA");
-        R((delegate* unmanaged<nint, RECT*, delegate* unmanaged<nint, nint, RECT*, nint, int>, nint, int>)&EnumDisplayMonitors, "EnumDisplayMonitors");
-        R((delegate* unmanaged<nint, uint>)&GetDpiForWindow, "GetDpiForWindow");
-        R((delegate* unmanaged<uint>)&GetDpiForSystem, "GetDpiForSystem");
-        R((delegate* unmanaged<nint, int, uint*, uint*, int>)&GetDpiForMonitor, "GetDpiForMonitor");
-        R((delegate* unmanaged<nint, int*, int>)&GetProcessDpiAwareness, "GetProcessDpiAwareness");
-        R((delegate* unmanaged<int>)&IsProcessDPIAware, "IsProcessDPIAware", "SetProcessDPIAware");
-        R((delegate* unmanaged<int, int>)&SetProcessDpiAwareness, "SetProcessDpiAwareness");
-        R((delegate* unmanaged<nint, int>)&SetProcessDpiAwarenessContext, "SetProcessDpiAwarenessContext");
-        R((delegate* unmanaged<nint, nint>)&SetThreadDpiAwarenessContext, "SetThreadDpiAwarenessContext");
-        R((delegate* unmanaged<nint>)&GetThreadDpiAwarenessContext, "GetThreadDpiAwarenessContext", "GetWindowDpiAwarenessContext");
-        R((delegate* unmanaged<nint, int>)&GetAwarenessFromDpiAwarenessContext, "GetAwarenessFromDpiAwarenessContext");
-        R((delegate* unmanaged<nint, nint, int>)&AreDpiAwarenessContextsEqual, "AreDpiAwarenessContextsEqual");
-
-        R((delegate* unmanaged<POINT*, int>)&GetCursorPos, "GetCursorPos", "GetPhysicalCursorPos");
-        R((delegate* unmanaged<int, int, int>)&SetCursorPos, "SetCursorPos", "SetPhysicalCursorPos");
-        R((delegate* unmanaged<int, short>)&GetKeyState, "GetKeyState", "GetAsyncKeyState");
-        R((delegate* unmanaged<byte*, int>)&GetKeyboardState, "GetKeyboardState");
-        R((delegate* unmanaged<uint, int>)&MessageBeep, "MessageBeep");
-        R((delegate* unmanaged<char*, uint>)&RegisterWindowMessageW, "RegisterWindowMessageW");
-        R((delegate* unmanaged<byte*, uint>)&RegisterWindowMessageBare, "RegisterWindowMessage", "RegisterWindowMessageA");
-        R((delegate* unmanaged<int, void*, nint, uint, nint>)&SetWindowsHookEx, "SetWindowsHookExW", "SetWindowsHookEx", "SetWindowsHookExA");
-        R((delegate* unmanaged<nint, int>)&UnhookWindowsHookEx, "UnhookWindowsHookEx");
-        R((delegate* unmanaged<nint, int, nint, nint, nint>)&CallNextHookEx, "CallNextHookEx");
-        R((delegate* unmanaged<uint, uint, int>)&ChangeWindowMessageFilter, "ChangeWindowMessageFilter");
-        R((delegate* unmanaged<nint, uint, uint, void*, int>)&ChangeWindowMessageFilterEx, "ChangeWindowMessageFilterEx");
-        R((delegate* unmanaged<nint>)&GetProcessWindowStation, "GetProcessWindowStation");
-        R((delegate* unmanaged<uint, nint>)&GetThreadDesktop, "GetThreadDesktop");
-        R((delegate* unmanaged<nint, int, void*, uint, uint*, int>)&GetUserObjectInformationW, "GetUserObjectInformationW", "GetUserObjectInformation");
-        R((delegate* unmanaged<uint, uint, uint>)&MapVirtualKey, "MapVirtualKeyW", "MapVirtualKey", "MapVirtualKeyA");
-        R((delegate* unmanaged<uint, nint>)&GetKeyboardLayout, "GetKeyboardLayout");
-        R((delegate* unmanaged<int, nint*, int>)&GetKeyboardLayoutList, "GetKeyboardLayoutList");
-    }
 
     // ---- metrics -------------------------------------------------------------------------------
 
@@ -137,8 +90,8 @@ public static unsafe partial class Exports
         };
     }
 
-    [UnmanagedCallersOnly] private static int GetSystemMetrics(int index) => SystemMetric(index);
-    [UnmanagedCallersOnly] private static int GetSystemMetricsForDpi(int index, uint dpi) => SystemMetric(index);
+    [Win32Export("GetSystemMetrics")] public static int GetSystemMetrics(int index) => SystemMetric(index);
+    [Win32Export("GetSystemMetricsForDpi")] public static int GetSystemMetricsForDpi(int index, uint dpi) => SystemMetric(index);
 
     private static int SystemParameter(uint action, uint param, void* pv)
     {
@@ -240,10 +193,10 @@ public static unsafe partial class Exports
         WriteUtf16((char*)(lf + 28), 32, face);
     }
 
-    [UnmanagedCallersOnly] private static int SystemParametersInfoW(uint action, uint param, void* pv, uint winIni) => SystemParameter(action, param, pv);
-    [UnmanagedCallersOnly] private static int SystemParametersInfoForDpi(uint action, uint param, void* pv, uint winIni, uint dpi) => SystemParameter(action, param, pv);
-    [UnmanagedCallersOnly] private static uint GetDoubleClickTime() => 500;
-    [UnmanagedCallersOnly] private static uint GetCaretBlinkTime() => 530;
+    [Win32Export("SystemParametersInfoW", "SystemParametersInfo")] public static int SystemParametersInfoW(uint action, uint param, void* pv, uint winIni) => SystemParameter(action, param, pv);
+    [Win32Export("SystemParametersInfoForDpi")] public static int SystemParametersInfoForDpi(uint action, uint param, void* pv, uint winIni, uint dpi) => SystemParameter(action, param, pv);
+    [Win32Export("GetDoubleClickTime")] public static uint GetDoubleClickTime() => 500;
+    [Win32Export("GetCaretBlinkTime")] public static uint GetCaretBlinkTime() => 530;
 
     // The Windows 10 default system colours, COLORREF (0x00BBGGRR).
     private static readonly uint[] s_sysColors =
@@ -253,12 +206,12 @@ public static unsafe partial class Exports
         0xFFFFFF, 0x696969, 0xE3E3E3, 0x000000, 0xE1FFFF, 0x000000, 0xCC6600, 0xEAD1B9, 0xF2E4D7, 0xFF9933, 0xF0F0F0,
     };
 
-    [UnmanagedCallersOnly] private static uint GetSysColor(int index) => SysColor(index);
+    [Win32Export("GetSysColor")] public static uint GetSysColor(int index) => SysColor(index);
 
     /// <summary>GetSysColor's answer, for the stack's own code (the SystemColors detour), whose
     /// imports do not reach this library.</summary>
     public static uint SysColor(int index) => (uint)index < (uint)s_sysColors.Length ? s_sysColors[index] : 0;
-    [UnmanagedCallersOnly] private static nint GetSysColorBrush(int index) => (uint)index < (uint)s_sysColors.Length ? 0x1000 + index : 0;
+    [Win32Export("GetSysColorBrush")] public static nint GetSysColorBrush(int index) => (uint)index < (uint)s_sysColors.Length ? 0x1000 + index : 0;
 
     // ---- monitors ------------------------------------------------------------------------------
 
@@ -274,18 +227,18 @@ public static unsafe partial class Exports
         return flags == 0 ? 0 : 1;   // MONITOR_DEFAULTTONULL, else the primary (or nearest; close enough)
     }
 
-    [UnmanagedCallersOnly]
-    private static nint MonitorFromWindow(nint hwnd, uint flags)
+    [Win32Export("MonitorFromWindow")]
+    public static nint MonitorFromWindow(nint hwnd, uint flags)
     {
         RECT r = WindowRect(hwnd, out bool found);
         return found ? MonitorAt((r.Left + r.Right) / 2, (r.Top + r.Bottom) / 2, flags) : (flags == 0 ? 0 : 1);
     }
 
-    [UnmanagedCallersOnly] private static nint MonitorFromPoint(POINT pt, uint flags) => MonitorAt(pt.X, pt.Y, flags);
-    [UnmanagedCallersOnly] private static nint MonitorFromRect(RECT* r, uint flags) => MonitorAt((r->Left + r->Right) / 2, (r->Top + r->Bottom) / 2, flags);
+    [Win32Export("MonitorFromPoint")] public static nint MonitorFromPoint(POINT pt, uint flags) => MonitorAt(pt.X, pt.Y, flags);
+    [Win32Export("MonitorFromRect")] public static nint MonitorFromRect(RECT* r, uint flags) => MonitorAt((r->Left + r->Right) / 2, (r->Top + r->Bottom) / 2, flags);
 
-    [UnmanagedCallersOnly]
-    private static int GetMonitorInfoW(nint monitor, uint* info)
+    [Win32Export("GetMonitorInfoW", "GetMonitorInfo", "GetMonitorInfoA")]
+    public static int GetMonitorInfoW(nint monitor, uint* info)
     {
         var screens = Screens.All();
         int i = (int)monitor - 1;
@@ -299,8 +252,8 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static int EnumDisplayMonitors(nint hdc, RECT* clip, delegate* unmanaged<nint, nint, RECT*, nint, int> callback, nint data)
+    [Win32Export("EnumDisplayMonitors")]
+    public static int EnumDisplayMonitors(nint hdc, RECT* clip, delegate* unmanaged<nint, nint, RECT*, nint, int> callback, nint data)
     {
         var screens = Screens.All();
         for (int i = 0; i < screens.Count; i++)
@@ -320,22 +273,22 @@ public static unsafe partial class Exports
         ?.GetProperty("InitialSystemDpi", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null) ?? 96));
     private static int? s_systemDpi;
 
-    [UnmanagedCallersOnly] private static uint GetDpiForWindow(nint hwnd)
+    [Win32Export("GetDpiForWindow")] public static uint GetDpiForWindow(nint hwnd)
     {
         int dpi = Resolve(hwnd) is Forms.Control ? DriverInt("GetDpiForWindow", hwnd) : 0;
         return dpi > 0 ? (uint)dpi : SystemDpi;
     }
-    [UnmanagedCallersOnly] private static uint GetDpiForSystem() => SystemDpi;
-    [UnmanagedCallersOnly] private static int GetDpiForMonitor(nint monitor, int type, uint* x, uint* y) { *x = SystemDpi; *y = SystemDpi; return S_OK; }
-    [UnmanagedCallersOnly] private static int GetProcessDpiAwareness(nint process, int* value) { *value = Awareness(); return S_OK; }
-    [UnmanagedCallersOnly] private static int IsProcessDPIAware() => Awareness() > 0 ? TRUE : FALSE;
+    [Win32Export("GetDpiForSystem")] public static uint GetDpiForSystem() => SystemDpi;
+    [Win32Export("GetDpiForMonitor")] public static int GetDpiForMonitor(nint monitor, int type, uint* x, uint* y) { *x = SystemDpi; *y = SystemDpi; return S_OK; }
+    [Win32Export("GetProcessDpiAwareness")] public static int GetProcessDpiAwareness(nint process, int* value) { *value = Awareness(); return S_OK; }
+    [Win32Export("IsProcessDPIAware", "SetProcessDPIAware")] public static int IsProcessDPIAware() => Awareness() > 0 ? TRUE : FALSE;
     // The application asks for an awareness: it is its high-DPI mode (fails, as on Windows, once set).
-    [UnmanagedCallersOnly] private static int SetProcessDpiAwareness(int value) =>
+    [Win32Export("SetProcessDpiAwareness")] public static int SetProcessDpiAwareness(int value) =>
         Request(value switch { 0 => Forms.HighDpiMode.DpiUnaware, 1 => Forms.HighDpiMode.SystemAware, _ => Forms.HighDpiMode.PerMonitor }) ? S_OK : unchecked((int)0x80070005);
-    [UnmanagedCallersOnly] private static int SetProcessDpiAwarenessContext(nint ctx) =>
+    [Win32Export("SetProcessDpiAwarenessContext")] public static int SetProcessDpiAwarenessContext(nint ctx) =>
         Request(ctx switch { -1 => Forms.HighDpiMode.DpiUnaware, -2 => Forms.HighDpiMode.SystemAware, -3 => Forms.HighDpiMode.PerMonitor, -5 => Forms.HighDpiMode.DpiUnawareGdiScaled, _ => Forms.HighDpiMode.PerMonitorV2 }) ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static nint SetThreadDpiAwarenessContext(nint ctx) => Context();
-    [UnmanagedCallersOnly] private static nint GetThreadDpiAwarenessContext() => Context();
+    [Win32Export("SetThreadDpiAwarenessContext")] public static nint SetThreadDpiAwarenessContext(nint ctx) => Context();
+    [Win32Export("GetThreadDpiAwarenessContext", "GetWindowDpiAwarenessContext")] public static nint GetThreadDpiAwarenessContext() => Context();
 
     private static bool Request(Forms.HighDpiMode mode)
     {
@@ -360,13 +313,13 @@ public static unsafe partial class Exports
         Forms.HighDpiMode.DpiUnawareGdiScaled => -5,
         _ => -1,
     };
-    [UnmanagedCallersOnly] private static int GetAwarenessFromDpiAwarenessContext(nint ctx) => ctx switch { -1 or -5 => 0, -2 => 1, _ => 2 };
-    [UnmanagedCallersOnly] private static int AreDpiAwarenessContextsEqual(nint a, nint b) => a == b ? TRUE : FALSE;
+    [Win32Export("GetAwarenessFromDpiAwarenessContext")] public static int GetAwarenessFromDpiAwarenessContext(nint ctx) => ctx switch { -1 or -5 => 0, -2 => 1, _ => 2 };
+    [Win32Export("AreDpiAwarenessContextsEqual")] public static int AreDpiAwarenessContextsEqual(nint a, nint b) => a == b ? TRUE : FALSE;
 
     // ---- cursor and keyboard -----------------------------------------------------------------------
 
-    [UnmanagedCallersOnly]
-    private static int GetCursorPos(POINT* p)
+    [Win32Export("GetCursorPos", "GetPhysicalCursorPos")]
+    public static int GetCursorPos(POINT* p)
     {
         CGPoint c = MacNative.CursorPosition();
         p->X = (int)Math.Round(c.X);
@@ -374,7 +327,7 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static int SetCursorPos(int x, int y) => MacNative.CGWarpMouseCursorPosition(new CGPoint { X = x, Y = y }) == 0 ? TRUE : FALSE;
+    [Win32Export("SetCursorPos", "SetPhysicalCursorPos")] public static int SetCursorPos(int x, int y) => MacNative.CGWarpMouseCursorPosition(new CGPoint { X = x, Y = y }) == 0 ? TRUE : FALSE;
 
     // Windows virtual-key codes to macOS key codes (kVK_*), for the keys apps actually poll.
     private static readonly Dictionary<int, ushort> s_vkToMac = new()
@@ -406,22 +359,22 @@ public static unsafe partial class Exports
         return s_vkToMac.TryGetValue(vk, out ushort key) && MacNative.CGEventSourceKeyState(MacNative.CombinedSessionState, key);
     }
 
-    [UnmanagedCallersOnly]
-    private static short GetKeyState(int vk)
+    [Win32Export("GetKeyState", "GetAsyncKeyState")]
+    public static short GetKeyState(int vk)
     {
         if (vk == 0x14) return (short)(KeyDown(0x14) ? 1 : 0);   // caps lock: the toggle bit
         return KeyDown(vk) ? unchecked((short)0x8000) : (short)0;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetKeyboardState(byte* state)
+    [Win32Export("GetKeyboardState")]
+    public static int GetKeyboardState(byte* state)
     {
         for (int vk = 0; vk < 256; vk++) state[vk] = (byte)(KeyDown(vk) ? 0x80 : 0);
         if (KeyDown(0x14)) state[0x14] |= 1;
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static int MessageBeep(uint type) => TRUE;
+    [Win32Export("MessageBeep")] public static int MessageBeep(uint type) => TRUE;
 
     private static readonly ConcurrentDictionary<string, uint> s_messages2 = new(StringComparer.OrdinalIgnoreCase);
     private static int s_nextMessage = 0xC000;
@@ -432,24 +385,24 @@ public static unsafe partial class Exports
         return s_messages2.GetOrAdd(name, _ => (uint)Interlocked.Increment(ref s_nextMessage));
     }
 
-    [UnmanagedCallersOnly] private static uint RegisterWindowMessageW(char* name) => RegisterMessage(ReadUtf16(name));
-    [UnmanagedCallersOnly] private static uint RegisterWindowMessageBare(byte* name) => RegisterMessage(ReadEither(name));
+    [Win32Export("RegisterWindowMessageW")] public static uint RegisterWindowMessageW(char* name) => RegisterMessage(ReadUtf16(name));
+    [Win32Export("RegisterWindowMessage", "RegisterWindowMessageA")] public static uint RegisterWindowMessageBare(byte* name) => RegisterMessage(ReadEither(name));
 
     // Hooks are accepted and never called: there is no system-wide message stream to hook, and an app
     // that installs one to watch for activity must not fail to start because of it.
-    [UnmanagedCallersOnly] private static nint SetWindowsHookEx(int id, void* proc, nint module, uint thread) => NewHandle(new object());
-    [UnmanagedCallersOnly] private static int UnhookWindowsHookEx(nint hook) { s_handles.TryRemove(hook, out _); return TRUE; }
-    [UnmanagedCallersOnly] private static nint CallNextHookEx(nint hook, int code, nint w, nint l) => 0;
-    [UnmanagedCallersOnly] private static int ChangeWindowMessageFilter(uint msg, uint action) => TRUE;
-    [UnmanagedCallersOnly] private static int ChangeWindowMessageFilterEx(nint hwnd, uint msg, uint action, void* status) => TRUE;
+    [Win32Export("SetWindowsHookExW", "SetWindowsHookEx", "SetWindowsHookExA")] public static nint SetWindowsHookEx(int id, void* proc, nint module, uint thread) => NewHandle(new object());
+    [Win32Export("UnhookWindowsHookEx")] public static int UnhookWindowsHookEx(nint hook) { s_handles.TryRemove(hook, out _); return TRUE; }
+    [Win32Export("CallNextHookEx")] public static nint CallNextHookEx(nint hook, int code, nint w, nint l) => 0;
+    [Win32Export("ChangeWindowMessageFilter")] public static int ChangeWindowMessageFilter(uint msg, uint action) => TRUE;
+    [Win32Export("ChangeWindowMessageFilterEx")] public static int ChangeWindowMessageFilterEx(nint hwnd, uint msg, uint action, void* status) => TRUE;
 
     private static readonly nint s_windowStation = 0x50;
     private static readonly nint s_desktop = 0x54;
-    [UnmanagedCallersOnly] private static nint GetProcessWindowStation() => s_windowStation;
-    [UnmanagedCallersOnly] private static nint GetThreadDesktop(uint thread) => s_desktop;
+    [Win32Export("GetProcessWindowStation")] public static nint GetProcessWindowStation() => s_windowStation;
+    [Win32Export("GetThreadDesktop")] public static nint GetThreadDesktop(uint thread) => s_desktop;
 
-    [UnmanagedCallersOnly]
-    private static int GetUserObjectInformationW(nint obj, int index, void* info, uint length, uint* needed)
+    [Win32Export("GetUserObjectInformationW", "GetUserObjectInformation")]
+    public static int GetUserObjectInformationW(nint obj, int index, void* info, uint length, uint* needed)
     {
         // UOI_FLAGS on the window station: WSF_VISIBLE, i.e. an interactive session. .NET's own
         // Environment.UserInteractive asks exactly this.
@@ -464,8 +417,8 @@ public static unsafe partial class Exports
         return FALSE;
     }
 
-    [UnmanagedCallersOnly]
-    private static uint MapVirtualKey(uint code, uint type)
+    [Win32Export("MapVirtualKeyW", "MapVirtualKey", "MapVirtualKeyA")]
+    public static uint MapVirtualKey(uint code, uint type)
     {
         // MAPVK_VK_TO_CHAR (2): letters and digits map to themselves, which is what apps use it for.
         if (type == 2 && ((code >= 'A' && code <= 'Z') || (code >= '0' && code <= '9'))) return code;
@@ -473,10 +426,10 @@ public static unsafe partial class Exports
     }
 
     // The input locale: the current UI culture, in the low word and the device word alike.
-    [UnmanagedCallersOnly] private static nint GetKeyboardLayout(uint thread) { uint lcid = (uint)System.Globalization.CultureInfo.CurrentUICulture.KeyboardLayoutId & 0xFFFF; return (nint)(lcid | (lcid << 16)); }
+    [Win32Export("GetKeyboardLayout")] public static nint GetKeyboardLayout(uint thread) { uint lcid = (uint)System.Globalization.CultureInfo.CurrentUICulture.KeyboardLayoutId & 0xFFFF; return (nint)(lcid | (lcid << 16)); }
 
-    [UnmanagedCallersOnly]
-    private static int GetKeyboardLayoutList(int count, nint* list)
+    [Win32Export("GetKeyboardLayoutList")]
+    public static int GetKeyboardLayoutList(int count, nint* list)
     {
         if (count > 0 && list != null)
         {

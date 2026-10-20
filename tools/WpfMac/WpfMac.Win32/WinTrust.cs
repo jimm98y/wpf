@@ -26,13 +26,6 @@ namespace WpfMac.Win32;
 
 public static unsafe partial class Exports
 {
-    private static void RegisterWinTrust()
-    {
-        R((delegate* unmanaged<nint, Guid*, byte*, int>)&WinVerifyTrust, "WinVerifyTrust", "WinVerifyTrustEx");
-        R((delegate* unmanaged<uint, void*, uint, uint, uint, uint*, uint*, uint*, nint*, nint*, void**, int>)&CryptQueryObject, "CryptQueryObject");
-        R((delegate* unmanaged<nint, uint, uint, byte*, uint*, int>)&CryptMsgGetParam, "CryptMsgGetParam");
-        R((delegate* unmanaged<nint, int>)&CryptMsgClose, "CryptMsgClose");
-    }
 
     private const int TRUST_E_NOSIGNATURE = unchecked((int)0x800B0100), TRUST_E_BAD_DIGEST = unchecked((int)0x80096010),
         TRUST_E_SUBJECT_FORM_UNKNOWN = unchecked((int)0x800B0003), TRUST_E_PROVIDER_UNKNOWN = unchecked((int)0x800B0001),
@@ -183,8 +176,8 @@ public static unsafe partial class Exports
     // WINTRUST_DATA (x64): cbStruct, pPolicyCallbackData @8, pSIPClientData @16, dwUIChoice @24,
     // fdwRevocationChecks @28, dwUnionChoice @32, the union @40, dwStateAction @48, hWVTStateData @56.
     // WINTRUST_FILE_INFO: cbStruct, pcwszFilePath @8, hFile @16.
-    [UnmanagedCallersOnly]
-    private static int WinVerifyTrust(nint hwnd, Guid* action, byte* data)
+    [Win32Export("WinVerifyTrust", "WinVerifyTrustEx")]
+    public static int WinVerifyTrust(nint hwnd, Guid* action, byte* data)
     {
         if (action == null || data == null) return E_INVALIDARG;
         if (*action != WINTRUST_ACTION_GENERIC_VERIFY_V2 && *action != WINTRUST_ACTION_GENERIC_CHAIN_VERIFY && *action != HTTPSPROV_ACTION)
@@ -210,8 +203,8 @@ public static unsafe partial class Exports
     private const uint CERT_QUERY_CONTENT_PKCS7_SIGNED = 8, CERT_QUERY_CONTENT_PKCS7_SIGNED_EMBED = 10;
     private const uint X509_PKCS7_ENCODING = 0x00010001, CERT_QUERY_FORMAT_BINARY = 1;
 
-    [UnmanagedCallersOnly]
-    private static int CryptQueryObject(uint objectType, void* obj, uint contentFlags, uint formatFlags, uint flags,
+    [Win32Export("CryptQueryObject")]
+    public static int CryptQueryObject(uint objectType, void* obj, uint contentFlags, uint formatFlags, uint flags,
         uint* encoding, uint* contentType, uint* formatType, nint* certStore, nint* message, void** context)
     {
         if (certStore != null) *certStore = 0;
@@ -260,8 +253,8 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly]
-    private static int CryptMsgClose(nint message)
+    [Win32Export("CryptMsgClose")]
+    public static int CryptMsgClose(nint message)
     {
         if (message != 0) s_handles.TryRemove(message, out _);
         return TRUE;
@@ -322,8 +315,8 @@ public static unsafe partial class Exports
         return data;
     }
 
-    [UnmanagedCallersOnly]
-    private static int CryptMsgGetParam(nint message, uint type, uint index, byte* data, uint* size)
+    [Win32Export("CryptMsgGetParam")]
+    public static int CryptMsgGetParam(nint message, uint type, uint index, byte* data, uint* size)
     {
         if (size == null) { SetLastError(E_INVALIDARG); return FALSE; }
         if (Handle(message) is not SignedCms cms) { SetLastError(E_INVALIDARG); return FALSE; }

@@ -10,58 +10,14 @@ namespace WpfMac.Win32;
 
 public static unsafe partial class Exports
 {
-    private static void RegisterShell()
-    {
-        // dwmapi
-        R((delegate* unmanaged<int*, int>)&DwmIsCompositionEnabled, "DwmIsCompositionEnabled");
-        R((delegate* unmanaged<uint, int>)&DwmEnableComposition, "DwmEnableComposition");
-        R((delegate* unmanaged<nint, void*, int>)&DwmExtendFrameIntoClientArea, "DwmExtendFrameIntoClientArea");
-        R((delegate* unmanaged<nint, uint, void*, uint, int>)&DwmSetWindowAttribute, "DwmSetWindowAttribute");
-        R((delegate* unmanaged<nint, uint, void*, uint, int>)&DwmGetWindowAttribute, "DwmGetWindowAttribute");
-        R((delegate* unmanaged<uint*, int*, int>)&DwmGetColorizationColor, "DwmGetColorizationColor");
-        R((delegate* unmanaged<nint, uint, nint, nint, nint*, int>)&DwmDefWindowProc, "DwmDefWindowProc");
-        R((delegate* unmanaged<int>)&DwmFlush, "DwmFlush");
 
-        // uxtheme
-        RegisterUxTheme();
+    [Win32Export("DwmIsCompositionEnabled")] public static int DwmIsCompositionEnabled(int* enabled) { *enabled = TRUE; return S_OK; }
+    [Win32Export("DwmEnableComposition")] public static int DwmEnableComposition(uint action) => S_OK;
+    [Win32Export("DwmExtendFrameIntoClientArea")] public static int DwmExtendFrameIntoClientArea(nint hwnd, void* margins) => S_OK;
+    [Win32Export("DwmSetWindowAttribute")] public static int DwmSetWindowAttribute(nint hwnd, uint attr, void* value, uint size) => S_OK;
 
-        // wtsapi32: the console session, local
-        R((delegate* unmanaged<nint, uint, int, char**, uint*, int>)&WTSQuerySessionInformationW, "WTSQuerySessionInformationW", "WTSQuerySessionInformation");
-        R((delegate* unmanaged<void*, void>)&WTSFreeMemory, "WTSFreeMemory");
-        R((delegate* unmanaged<nint, uint, int>)&WTSRegisterSessionNotification, "WTSRegisterSessionNotification");
-        R((delegate* unmanaged<nint, int>)&WTSUnRegisterSessionNotification, "WTSUnRegisterSessionNotification");
-        R((delegate* unmanaged<uint>)&WTSGetActiveConsoleSessionId, "WTSGetActiveConsoleSessionId");
-        R((delegate* unmanaged<uint, uint*, int>)&ProcessIdToSessionId, "ProcessIdToSessionId");
-
-        // ole32 / oleaut32
-        R((delegate* unmanaged<void*, uint, int>)&CoInitializeEx, "CoInitializeEx");
-        R((delegate* unmanaged<void*, int>)&CoInitialize, "CoInitialize", "OleInitialize");
-        R((delegate* unmanaged<void>)&CoUninitialize, "CoUninitialize", "OleUninitialize");
-        R((delegate* unmanaged<void*, int, void*, void*, uint, uint, void*, uint, void*, int>)&CoInitializeSecurity, "CoInitializeSecurity");
-        R((delegate* unmanaged<Guid*, void*, uint, Guid*, void**, int>)&CoCreateInstance, "CoCreateInstance");
-        // PROPVARIANT/VARIANT housekeeping, as ole32/oleaut32 do it (WpfMac.ComInterop's Com.PropVariantClear and kin)
-        R((delegate* unmanaged<void*, int>)&PropVariantClear, "PropVariantClear");
-        R((delegate* unmanaged<void*, void*, int>)&PropVariantCopy, "PropVariantCopy");
-        R((delegate* unmanaged<void*, int>)&VariantClear, "VariantClear");
-        R((delegate* unmanaged<void*, void*, int>)&VariantCopy, "VariantCopy");
-        R((delegate* unmanaged<void*, void>)&VariantInit, "VariantInit");
-
-        // comctl32
-        R((delegate* unmanaged<void>)&InitCommonControls, "InitCommonControls");
-        R((delegate* unmanaged<void*, int>)&InitCommonControlsEx, "InitCommonControlsEx");
-
-        // who is logged on
-        R((delegate* unmanaged<char*, uint*, int>)&GetUserNameW, "GetUserNameW", "GetUserName");
-        R((delegate* unmanaged<int, char*, uint*, byte>)&GetUserNameExW, "GetUserNameExW", "GetUserNameEx");
-    }
-
-    [UnmanagedCallersOnly] private static int DwmIsCompositionEnabled(int* enabled) { *enabled = TRUE; return S_OK; }
-    [UnmanagedCallersOnly] private static int DwmEnableComposition(uint action) => S_OK;
-    [UnmanagedCallersOnly] private static int DwmExtendFrameIntoClientArea(nint hwnd, void* margins) => S_OK;
-    [UnmanagedCallersOnly] private static int DwmSetWindowAttribute(nint hwnd, uint attr, void* value, uint size) => S_OK;
-
-    [UnmanagedCallersOnly]
-    private static int DwmGetWindowAttribute(nint hwnd, uint attr, void* value, uint size)
+    [Win32Export("DwmGetWindowAttribute")]
+    public static int DwmGetWindowAttribute(nint hwnd, uint attr, void* value, uint size)
     {
         switch (attr)
         {
@@ -82,23 +38,29 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly] private static int DwmGetColorizationColor(uint* color, int* opaque) { *color = 0xC40078D7; *opaque = FALSE; return S_OK; }
-    [UnmanagedCallersOnly] private static int DwmDefWindowProc(nint hwnd, uint msg, nint w, nint l, nint* result) { *result = 0; return FALSE; }
-    [UnmanagedCallersOnly] private static int DwmFlush() => S_OK;
+    [Win32Export("DwmGetColorizationColor")] public static int DwmGetColorizationColor(uint* color, int* opaque) { *color = 0xC40078D7; *opaque = FALSE; return S_OK; }
+    [Win32Export("DwmDefWindowProc")] public static int DwmDefWindowProc(nint hwnd, uint msg, nint w, nint l, nint* result) { *result = 0; return FALSE; }
+    [Win32Export("DwmFlush")] public static int DwmFlush() => S_OK;
 
 
     // WTS_INFO_CLASS: 4 WTSConnectState? no: 1 WTSInitialProgram ... 5 WTSUserName, 7 WTSDomainName,
     // 10 WTSClientName, 16 WTSClientProtocolType. The answers of a local console session.
-    [UnmanagedCallersOnly]
-    private static int WTSQuerySessionInformationW(nint server, uint session, int infoClass, char** buffer, uint* bytes)
+    [Win32Export("WTSQuerySessionInformationW")]
+    public static int WTSQuerySessionInformationW(nint server, uint session, int infoClass, char** buffer, uint* bytes) =>
+        QuerySession(infoClass, (byte**)buffer, bytes, wide: true);
+
+    [Win32Export("WTSQuerySessionInformationA")]
+    public static int WTSQuerySessionInformationA(nint server, uint session, int infoClass, byte** buffer, uint* bytes) =>
+        QuerySession(infoClass, buffer, bytes, wide: false);
+
+    private static int QuerySession(int infoClass, byte** buffer, uint* bytes, bool wide)
     {
         switch (infoClass)
         {
             case 16:    // WTSClientProtocolType: 0, the console
             case 8:     // WTSConnectState: 0, WTSActive
             {
-                void* p = NativeMemory.AllocZeroed(4);
-                *buffer = (char*)p;
+                *buffer = (byte*)NativeMemory.AllocZeroed(4);
                 *bytes = infoClass == 16 ? 2u : 4u;
                 return TRUE;
             }
@@ -111,44 +73,47 @@ public static unsafe partial class Exports
                     10 => "",                                  // WTSClientName: no remote client
                     _ => "",
                 };
-                char* p = (char*)NativeMemory.AllocZeroed((nuint)(value.Length + 1) * 2);
-                WriteUtf16(p, value.Length + 1, value);
+                // the A function's text is the ANSI code page's, which .NET off Windows reads as UTF-8
+                int size = wide ? (value.Length + 1) * 2 : System.Text.Encoding.UTF8.GetByteCount(value) + 1;
+                byte* p = (byte*)NativeMemory.AllocZeroed((nuint)size);
+                if (wide) WriteUtf16((char*)p, value.Length + 1, value);
+                else WriteUtf8(p, size, value);
                 *buffer = p;
-                *bytes = (uint)(value.Length + 1) * 2;
+                *bytes = (uint)size;
                 return TRUE;
             }
         }
     }
 
-    [UnmanagedCallersOnly] private static void WTSFreeMemory(void* p) => NativeMemory.Free(p);
-    [UnmanagedCallersOnly] private static int WTSRegisterSessionNotification(nint hwnd, uint flags) => TRUE;
-    [UnmanagedCallersOnly] private static int WTSUnRegisterSessionNotification(nint hwnd) => TRUE;
-    [UnmanagedCallersOnly] private static uint WTSGetActiveConsoleSessionId() => 1;
-    [UnmanagedCallersOnly] private static int ProcessIdToSessionId(uint pid, uint* session) { *session = 1; return TRUE; }
+    [Win32Export("WTSFreeMemory")] public static void WTSFreeMemory(void* p) => NativeMemory.Free(p);
+    [Win32Export("WTSRegisterSessionNotification")] public static int WTSRegisterSessionNotification(nint hwnd, uint flags) => TRUE;
+    [Win32Export("WTSUnRegisterSessionNotification")] public static int WTSUnRegisterSessionNotification(nint hwnd) => TRUE;
+    [Win32Export("WTSGetActiveConsoleSessionId")] public static uint WTSGetActiveConsoleSessionId() => 1;
+    [Win32Export("ProcessIdToSessionId")] public static int ProcessIdToSessionId(uint pid, uint* session) { *session = 1; return TRUE; }
 
-    [UnmanagedCallersOnly] private static int CoInitializeEx(void* reserved, uint model) => S_OK;
-    [UnmanagedCallersOnly] private static int CoInitialize(void* reserved) => S_OK;
-    [UnmanagedCallersOnly] private static void CoUninitialize() { }
-    [UnmanagedCallersOnly] private static int CoInitializeSecurity(void* a, int b, void* c, void* d, uint e, uint f, void* g, uint h, void* i) => S_OK;
+    [Win32Export("CoInitializeEx")] public static int CoInitializeEx(void* reserved, uint model) => S_OK;
+    [Win32Export("CoInitialize", "OleInitialize")] public static int CoInitialize(void* reserved) => S_OK;
+    [Win32Export("CoUninitialize", "OleUninitialize")] public static void CoUninitialize() { }
+    [Win32Export("CoInitializeSecurity")] public static int CoInitializeSecurity(void* a, int b, void* c, void* d, uint e, uint f, void* g, uint h, void* i) => S_OK;
 
-    [UnmanagedCallersOnly]
-    private static int CoCreateInstance(Guid* clsid, void* outer, uint context, Guid* iid, void** result)
+    [Win32Export("CoCreateInstance")]
+    public static int CoCreateInstance(Guid* clsid, void* outer, uint context, Guid* iid, void** result)
     {
         *result = null;
         LogOnce("clsid:" + *clsid, $"win32: CoCreateInstance({*clsid}): no COM class is registered here");
         return unchecked((int)0x80040154);   // REGDB_E_CLASSNOTREG
     }
 
-    [UnmanagedCallersOnly] private static int PropVariantClear(void* pv) => WpfMac.ComInterop.Com.PropVariantClear((nint)pv);
-    [UnmanagedCallersOnly] private static int PropVariantCopy(void* dst, void* src) => WpfMac.ComInterop.Com.PropVariantCopy((nint)dst, (nint)src);
-    [UnmanagedCallersOnly] private static int VariantClear(void* pv) => WpfMac.ComInterop.Com.VariantClear((nint)pv);
-    [UnmanagedCallersOnly] private static int VariantCopy(void* dst, void* src) => WpfMac.ComInterop.Com.VariantCopy((nint)dst, (nint)src);
-    [UnmanagedCallersOnly] private static void VariantInit(void* pv) => WpfMac.ComInterop.Com.VariantInit((nint)pv);
-    [UnmanagedCallersOnly] private static void InitCommonControls() { }
-    [UnmanagedCallersOnly] private static int InitCommonControlsEx(void* icc) => TRUE;
+    [Win32Export("PropVariantClear")] public static int PropVariantClear(void* pv) => WpfMac.ComInterop.Com.PropVariantClear((nint)pv);
+    [Win32Export("PropVariantCopy")] public static int PropVariantCopy(void* dst, void* src) => WpfMac.ComInterop.Com.PropVariantCopy((nint)dst, (nint)src);
+    [Win32Export("VariantClear")] public static int VariantClear(void* pv) => WpfMac.ComInterop.Com.VariantClear((nint)pv);
+    [Win32Export("VariantCopy")] public static int VariantCopy(void* dst, void* src) => WpfMac.ComInterop.Com.VariantCopy((nint)dst, (nint)src);
+    [Win32Export("VariantInit")] public static void VariantInit(void* pv) => WpfMac.ComInterop.Com.VariantInit((nint)pv);
+    [Win32Export("InitCommonControls")] public static void InitCommonControls() { }
+    [Win32Export("InitCommonControlsEx")] public static int InitCommonControlsEx(void* icc) => TRUE;
 
-    [UnmanagedCallersOnly]
-    private static int GetUserNameW(char* buffer, uint* size)
+    [Win32Export("GetUserNameW", "GetUserName")]
+    public static int GetUserNameW(char* buffer, uint* size)
     {
         string name = Environment.UserName;
         if (*size <= name.Length) { *size = (uint)name.Length + 1; SetLastError(ERROR_INSUFFICIENT_BUFFER); return FALSE; }
@@ -156,8 +121,8 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static byte GetUserNameExW(int format, char* buffer, uint* size)
+    [Win32Export("GetUserNameExW", "GetUserNameEx")]
+    public static byte GetUserNameExW(int format, char* buffer, uint* size)
     {
         // NameSamCompatible (2) is DOMAIN\user; NameDisplay (3) a display name. Others are directory
         // forms a machine outside a domain has none of.

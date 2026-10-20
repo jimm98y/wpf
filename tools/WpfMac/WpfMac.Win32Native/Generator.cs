@@ -1,26 +1,17 @@
-// win32shim-gen: writes the sources of libwin32shim, the library macOS hands an unmodified Windows app
-// when it P/Invokes user32, kernel32, gdi32 and the rest of Windows.
+// win32shim-gen: writes the table of every Windows export, which WpfMac.Win32 embeds (win32_exports.tsv)
+// and the P/Invoke rewriter reads (Documentation/pinvoke-rewriter.md).
 //
-// For EVERY function the Windows API metadata (Windows.Win32.winmd) says a Windows DLL exports, the
-// library exports a symbol of that name. Each is a three-instruction arm64 stub that jumps through a
-// slot. The slot starts out pointing at a per-function default that tells the managed side which
-// function was called (once, for the compatibility log) and returns that function's failure value;
-// the bootstrap overwrites the slot with a managed [UnmanagedCallersOnly] implementation for the
-// functions that have one. The stubs never look at the arguments, so one shape serves every signature.
-//
-// Why every function and not just the ones some app uses: a missing export is an
-// EntryPointNotFoundException at the call, so coverage has to be complete for apps nobody has audited.
-// The cost is ~20k stubs of 12 bytes plus a slot each.
+// For EVERY function the Windows API metadata (Windows.Win32.winmd) says a Windows DLL exports: its DLL and
+// what it returns when it fails, which is what a rewritten P/Invoke of it returns when nothing implements
+// it (logged once). A function no Windows DLL exports is an EntryPointNotFoundException at the call, as on
+// Windows, so the table has to be complete for apps nobody has audited.
 //
 // Output, into the directory given:
-//   win32shim_stubs.s     the stubs, the default thunks and the slot table
-//   win32shim_tables.c    names, the module each comes from, and the failure each returns
-//   win32shim_modules.txt the DLL names covered, one per line (lower case, no .dll)
-//   win32shim_exports.txt every export, "module<TAB>name", for `wpfmac audit` to check coverage with
+//   win32_exports.tsv   "module<TAB>name<TAB>failure" per export, then "module<TAB>*" per DLL
 //
 // Besides the SDK metadata, extra-exports.txt lists functions apps P/Invoke that it does not describe:
 // the WDK's (ntdll's RtlGetVersion), undocumented ones (SetWindowCompositionAttribute) and imports by
-// ordinal ("#135"), which .NET off Windows looks up as a symbol of that literal name.
+// ordinal ("#135").
 
 using System.Collections.Immutable;
 using System.Reflection;
@@ -32,7 +23,8 @@ namespace WpfMac.Win32Native;
 
 internal static class Generator
 {
-    // What an unimplemented function returns. Mirrored in WpfMac.Bootstrap/Win32/ShimLibrary.cs.
+    // What an unimplemented function returns. Mirrored in WpfMac.ComRewrite's Win32Catalog.Failure and
+    // WpfMac.Win32's Exports.Unimplemented.
     private enum Failure : byte
     {
         Void = 0,
@@ -73,11 +65,9 @@ internal static class Generator
         if (args.Length > 2) extras = args[2];
         if (File.Exists(extras)) AddExtras(exports, extras);
         Directory.CreateDirectory(outDir);
-        WriteStubs(Path.Combine(outDir, "win32shim_stubs.s"), exports);
-        WriteTables(Path.Combine(outDir, "win32shim_tables.c"), exports);
-        File.WriteAllLines(Path.Combine(outDir, "win32shim_modules.txt"),
-            exports.Select(e => e.Module).Concat(ExtraModules).Distinct().OrderBy(m => m, StringComparer.Ordinal));
-        File.WriteAllLines(Path.Combine(outDir, "win32shim_exports.txt"), exports.Select(e => e.Module + "\t" + e.Name));
+        File.WriteAllLines(Path.Combine(outDir, "win32_exports.tsv"),
+            exports.Select(e => $"{e.Module}\t{e.Name}\t{(int)e.Failure}")
+                .Concat(exports.Select(e => e.Module).Concat(ExtraModules).Distinct().OrderBy(m => m, StringComparer.Ordinal).Select(m => m + "\t*")));
         Console.WriteLine($"win32shim-gen: {exports.Count} exports from {exports.Select(e => e.Module).Distinct().Count()} modules");
         return 0;
     }
@@ -102,10 +92,6 @@ internal static class Generator
                 string entry = import.Name.IsNil ? md.GetString(method.Name) : md.GetString(import.Name);
                 string module = Normalize(md.GetString(md.GetModuleReference(import.Module).Name));
                 if (entry.Length == 0 || !entry.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) continue;
-                // The C runtime that ntdll and the CRT DLLs also export (memcpy, strlen, _wcsicmp...): a
-                // definition of those here would shadow libSystem's inside this very library.
-                // Lower-case names elsewhere (keybd_event, sndPlaySound) are ordinary Windows API.
-                if (!char.IsUpper(entry[0]) && (module is "ntdll" or "msvcrt" or "ucrtbase" or "crtdll" || module.StartsWith("api-ms-win-crt", StringComparison.Ordinal))) continue;
                 if (byName.ContainsKey(entry)) continue;          // same name in two DLLs: one export
 
                 string ret = method.DecodeSignature(provider, null).ReturnType;
@@ -119,15 +105,6 @@ internal static class Generator
                 };
                 byName[entry] = new Export(entry, module, failure);
             }
-        }
-        // The undecorated names. Windows resolves an import of "GetWindowText" with CharSet.Auto by
-        // trying GetWindowTextW; .NET on macOS looks up exactly the name it was given. So the bare name
-        // is an export too, with its own slot: its strings arrive as UTF-8 or UTF-16 depending on the
-        // import's CharSet, which the implementation (not the W one) has to sort out.
-        foreach (var w in byName.Values.Where(e => e.Name.EndsWith('W')).ToList())
-        {
-            string bare = w.Name[..^1];
-            if (!byName.ContainsKey(bare)) byName[bare] = w with { Name = bare };
         }
         return byName.Values.OrderBy(e => e.Name, StringComparer.Ordinal).ToList();
     }
@@ -162,78 +139,11 @@ internal static class Generator
         exports.Sort((a, b) => StringComparer.Ordinal.Compare(a.Name, b.Name));
     }
 
-    /// <summary>A symbol as the assembler takes it: ordinals ("#135") need quoting.</summary>
-    private static string Sym(string name) => name.All(c => char.IsAsciiLetterOrDigit(c) || c == '_') ? "_" + name : "\"_" + name + "\"";
-
     /// <summary>USER32.dll -> user32; api-ms-win-core-com-l1-1-0.dll -> api-ms-win-core-com-l1-1-0.</summary>
     internal static string Normalize(string module)
     {
         string m = module.ToLowerInvariant();
         return m.EndsWith(".dll", StringComparison.Ordinal) ? m[..^4] : m;
-    }
-
-    private static void WriteStubs(string path, List<Export> exports)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("// GENERATED by win32shim-gen. One stub, default thunk and slot per Windows export.");
-        sb.AppendLine("\t.section __TEXT,__text,regular,pure_instructions");
-        for (int i = 0; i < exports.Count; i++)
-        {
-            string n = Sym(exports[i].Name);
-            sb.Append("\t.p2align 2\n\t.globl ").Append(n).Append('\n').Append(n).Append(":\n");
-            sb.Append("\tadrp x16, _wpfmac_slots@PAGE\n");
-            sb.Append("\tadd x16, x16, _wpfmac_slots@PAGEOFF\n");
-            // The slot is at index*8; the immediate form of ldr only reaches 32760, so add the offset first.
-            int offset = i * 8;
-            if (offset <= 4095 * 8)
-            {
-                sb.Append("\tldr x16, [x16, #").Append(offset).Append("]\n");
-            }
-            else
-            {
-                sb.Append("\tmov x17, #").Append(offset & 0xFFFF).Append('\n');
-                if (offset > 0xFFFF) sb.Append("\tmovk x17, #").Append(offset >> 16).Append(", lsl #16\n");
-                sb.Append("\tldr x16, [x16, x17]\n");
-            }
-            sb.Append("\tbr x16\n");
-            sb.Append("Ldefault_").Append(i).Append(":\n");
-            sb.Append("\tmov w17, #").Append(i & 0xFFFF).Append('\n');
-            if (i > 0xFFFF) sb.Append("\tmovk w17, #").Append(i >> 16).Append(", lsl #16\n");
-            sb.Append("\tb _wpfmac_unimplemented\n");
-        }
-
-        sb.AppendLine("\t.section __DATA,__data");
-        sb.AppendLine("\t.p2align 3");
-        sb.AppendLine("\t.globl _wpfmac_slots");
-        sb.AppendLine("_wpfmac_slots:");
-        for (int i = 0; i < exports.Count; i++) sb.Append("\t.quad Ldefault_").Append(i).Append('\n');
-        sb.AppendLine("\t.globl _wpfmac_defaults");
-        sb.AppendLine("_wpfmac_defaults:");
-        for (int i = 0; i < exports.Count; i++) sb.Append("\t.quad Ldefault_").Append(i).Append('\n');
-        File.WriteAllText(path, sb.ToString());
-    }
-
-    private static void WriteTables(string path, List<Export> exports)
-    {
-        var modules = exports.Select(e => e.Module).Concat(ExtraModules).Distinct().OrderBy(m => m, StringComparer.Ordinal).ToList();
-        var moduleIndex = modules.Select((m, i) => (m, i)).ToDictionary(p => p.m, p => p.i, StringComparer.Ordinal);
-        var sb = new StringBuilder();
-        sb.AppendLine("// GENERATED by win32shim-gen. The managed side reads these to find a function's slot by name.");
-        sb.AppendLine($"const int wpfmac_export_count = {exports.Count};");
-        sb.AppendLine($"const int wpfmac_module_count = {modules.Count};");
-        sb.AppendLine("const char *const wpfmac_module_names[] = {");
-        foreach (string m in modules) sb.Append("\t\"").Append(m).Append("\",\n");
-        sb.AppendLine("};");
-        sb.AppendLine("const char *const wpfmac_export_names[] = {");
-        foreach (var e in exports) sb.Append("\t\"").Append(e.Name).Append("\",\n");
-        sb.AppendLine("};");
-        sb.AppendLine("const unsigned short wpfmac_export_modules[] = {");
-        foreach (var e in exports) sb.Append('\t').Append(moduleIndex[e.Module]).Append(",\n");
-        sb.AppendLine("};");
-        sb.AppendLine("const unsigned char wpfmac_export_failures[] = {");
-        foreach (var e in exports) sb.Append('\t').Append((int)e.Failure).Append(",\n");
-        sb.AppendLine("};");
-        File.WriteAllText(path, sb.ToString());
     }
 
     /// <summary>Just enough of a signature decoder to name the return type.</summary>

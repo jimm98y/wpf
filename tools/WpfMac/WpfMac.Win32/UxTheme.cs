@@ -23,43 +23,8 @@ public static unsafe partial class Exports
 {
     private const int E_PROP_ID_UNSUPPORTED = unchecked((int)0x80070490);
 
-    private static void RegisterUxTheme()
-    {
-        R((delegate* unmanaged<int>)&IsThemeActive, "IsThemeActive", "IsAppThemed", "IsCompositionActive");
-        R((delegate* unmanaged<nint, char*, char*, int>)&SetWindowTheme, "SetWindowTheme");
-        R((delegate* unmanaged<nint, char*, nint>)&OpenThemeData, "OpenThemeData");
-        R((delegate* unmanaged<nint, char*, uint, nint>)&OpenThemeDataEx, "OpenThemeDataEx", "OpenThemeDataForDpi");
-        R((delegate* unmanaged<nint, nint>)&GetWindowTheme, "GetWindowTheme");
-        R((delegate* unmanaged<nint, int>)&CloseThemeData, "CloseThemeData");
-        R((delegate* unmanaged<uint>)&GetThemeAppProperties, "GetThemeAppProperties");
-        R((delegate* unmanaged<uint, void>)&SetThemeAppProperties, "SetThemeAppProperties");
-        R((delegate* unmanaged<nint, uint, int>)&EnableThemeDialogTexture, "EnableThemeDialogTexture");
-        R((delegate* unmanaged<int, int>)&EnableTheming, "EnableTheming");
-        R((delegate* unmanaged<char*, int, char*, int, char*, int, int>)&GetCurrentThemeName, "GetCurrentThemeName");
 
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, RECT*, int>)&DrawThemeBackground, "DrawThemeBackground");
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, uint*, int>)&DrawThemeBackgroundEx, "DrawThemeBackgroundEx");
-        R((delegate* unmanaged<nint, nint, int, int, char*, int, uint, uint, RECT*, int>)&DrawThemeText, "DrawThemeText");
-        R((delegate* unmanaged<nint, nint, int, int, char*, int, uint, RECT*, uint*, int>)&DrawThemeTextEx, "DrawThemeTextEx");
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, uint, uint, RECT*, int>)&DrawThemeEdge, "DrawThemeEdge");
-        R((delegate* unmanaged<nint, nint, RECT*, int>)&DrawThemeParentBackground, "DrawThemeParentBackground");
-        R((delegate* unmanaged<nint, nint, uint, RECT*, int>)&DrawThemeParentBackgroundEx, "DrawThemeParentBackgroundEx");
-
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, int, SIZE*, int>)&GetThemePartSize, "GetThemePartSize");
-        R((delegate* unmanaged<nint, nint, int, int, int, RECT*, int*, int>)&GetThemeMargins, "GetThemeMargins");
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, RECT*, int>)&GetThemeBackgroundContentRect, "GetThemeBackgroundContentRect");
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, RECT*, int>)&GetThemeBackgroundExtent, "GetThemeBackgroundExtent");
-        R((delegate* unmanaged<nint, nint, int, int, RECT*, nint*, int>)&GetThemeBackgroundRegion, "GetThemeBackgroundRegion");
-        R((delegate* unmanaged<nint, nint, int, int, char*, int, uint, RECT*, RECT*, int>)&GetThemeTextExtent, "GetThemeTextExtent");
-        R((delegate* unmanaged<nint, int, int, int, uint*, int>)&GetThemeColor, "GetThemeColor");
-        R((delegate* unmanaged<nint, int, int, int, int*, int>)&GetThemeInt, "GetThemeInt", "GetThemeEnumValue", "GetThemeBool");
-        R((delegate* unmanaged<nint, int, int, int, char*, int, int>)&GetThemeFilename, "GetThemeFilename", "GetThemeString");
-        R((delegate* unmanaged<nint, int, uint>)&GetThemeSysColor, "GetThemeSysColor");
-        R((delegate* unmanaged<nint, int, int, int>)&IsThemePartDefined, "IsThemePartDefined");
-        R((delegate* unmanaged<nint, int, int, int>)&IsThemeBackgroundPartiallyTransparent, "IsThemeBackgroundPartiallyTransparent");
-    }
-
-    [StructLayout(LayoutKind.Sequential)] internal struct SIZE { public int cx, cy; }
+    [StructLayout(LayoutKind.Sequential)] public struct SIZE { public int cx, cy; }
 
     // ---- the bridge ------------------------------------------------------------------------------
 
@@ -171,13 +136,13 @@ public static unsafe partial class Exports
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, nint> s_windowThemes = new();
     private static uint s_themeAppProperties = 7;   // STAP_ALLOW_NONCLIENT | STAP_ALLOW_CONTROLS | STAP_ALLOW_WEBCONTENT
 
-    [UnmanagedCallersOnly] private static int IsThemeActive() => Themes != null ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static int SetWindowTheme(nint hwnd, char* app, char* idList) => S_OK;
-    [UnmanagedCallersOnly] private static int CloseThemeData(nint theme) => S_OK;
-    [UnmanagedCallersOnly] private static uint GetThemeAppProperties() => s_themeAppProperties;
-    [UnmanagedCallersOnly] private static void SetThemeAppProperties(uint flags) => s_themeAppProperties = flags;
-    [UnmanagedCallersOnly] private static int EnableThemeDialogTexture(nint hwnd, uint flags) => S_OK;
-    [UnmanagedCallersOnly] private static int EnableTheming(int enable) => S_OK;
+    [Win32Export("IsThemeActive", "IsAppThemed", "IsCompositionActive")] public static int IsThemeActive() => Themes != null ? TRUE : FALSE;
+    [Win32Export("SetWindowTheme")] public static int SetWindowTheme(nint hwnd, char* app, char* idList) => S_OK;
+    [Win32Export("CloseThemeData")] public static int CloseThemeData(nint theme) => S_OK;
+    [Win32Export("GetThemeAppProperties")] public static uint GetThemeAppProperties() => s_themeAppProperties;
+    [Win32Export("SetThemeAppProperties")] public static void SetThemeAppProperties(uint flags) => s_themeAppProperties = flags;
+    [Win32Export("EnableThemeDialogTexture")] public static int EnableThemeDialogTexture(nint hwnd, uint flags) => S_OK;
+    [Win32Export("EnableTheming")] public static int EnableTheming(int enable) => S_OK;
 
     private static nint Open(nint hwnd, char* classList)
     {
@@ -189,12 +154,12 @@ public static unsafe partial class Exports
         return theme;
     }
 
-    [UnmanagedCallersOnly] private static nint OpenThemeData(nint hwnd, char* classList) => Open(hwnd, classList);
-    [UnmanagedCallersOnly] private static nint OpenThemeDataEx(nint hwnd, char* classList, uint flagsOrDpi) => Open(hwnd, classList);
-    [UnmanagedCallersOnly] private static nint GetWindowTheme(nint hwnd) => s_windowThemes.TryGetValue(hwnd, out nint t) ? t : 0;
+    [Win32Export("OpenThemeData")] public static nint OpenThemeData(nint hwnd, char* classList) => Open(hwnd, classList);
+    [Win32Export("OpenThemeDataEx", "OpenThemeDataForDpi")] public static nint OpenThemeDataEx(nint hwnd, char* classList, uint flagsOrDpi) => Open(hwnd, classList);
+    [Win32Export("GetWindowTheme")] public static nint GetWindowTheme(nint hwnd) => s_windowThemes.TryGetValue(hwnd, out nint t) ? t : 0;
 
-    [UnmanagedCallersOnly]
-    private static int GetCurrentThemeName(char* file, int fileMax, char* color, int colorMax, char* size, int sizeMax)
+    [Win32Export("GetCurrentThemeName")]
+    public static int GetCurrentThemeName(char* file, int fileMax, char* color, int colorMax, char* size, int sizeMax)
     {
         if (Themes == null) return E_FAIL;
         if (file != null) WriteUtf16(file, fileMax, @"C:\Windows\resources\Themes\Aero\Aero.msstyles");
@@ -205,14 +170,14 @@ public static unsafe partial class Exports
 
     // ---- drawing ---------------------------------------------------------------------------------
 
-    [UnmanagedCallersOnly]
-    private static int DrawThemeBackground(nint theme, nint hdc, int part, int state, RECT* rect, RECT* clip)
+    [Win32Export("DrawThemeBackground")]
+    public static int DrawThemeBackground(nint theme, nint hdc, int part, int state, RECT* rect, RECT* clip)
         => Themes is not { } b || theme == 0 ? E_FAIL
          : OnDc(hdc, g => b.DrawBackground(theme, g, part, state, Rect(rect), Rect(clip), clip != null));
 
     // DTBGOPTS: dwSize, dwFlags, RECT rcClip. DTBG_CLIPRECT = 1.
-    [UnmanagedCallersOnly]
-    private static int DrawThemeBackgroundEx(nint theme, nint hdc, int part, int state, RECT* rect, uint* options)
+    [Win32Export("DrawThemeBackgroundEx")]
+    public static int DrawThemeBackgroundEx(nint theme, nint hdc, int part, int state, RECT* rect, uint* options)
     {
         bool clipped = options != null && (options[1] & 1) != 0;
         Rectangle clip = clipped ? Rect((RECT*)(options + 2)) : Rectangle.Empty;
@@ -222,8 +187,8 @@ public static unsafe partial class Exports
     // DT_CALCRECT (0x400) is the caller's question, not a drawing flag.
     private const uint DT_CALCRECT = 0x400;
 
-    [UnmanagedCallersOnly]
-    private static int DrawThemeText(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, uint flags2, RECT* rect)
+    [Win32Export("DrawThemeText")]
+    public static int DrawThemeText(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, uint flags2, RECT* rect)
     {
         if (Themes is not { } b || theme == 0) return E_FAIL;
         string s = Text(text, count);
@@ -232,8 +197,8 @@ public static unsafe partial class Exports
     }
 
     // DTTOPTS: dwSize, dwFlags, crText, ... DTT_TEXTCOLOR = 1, DTT_CALCRECT = 0x200.
-    [UnmanagedCallersOnly]
-    private static int DrawThemeTextEx(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* rect, uint* options)
+    [Win32Export("DrawThemeTextEx")]
+    public static int DrawThemeTextEx(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* rect, uint* options)
     {
         if (Themes is not { } b || theme == 0) return E_FAIL;
         string s = Text(text, count);
@@ -256,8 +221,8 @@ public static unsafe partial class Exports
         return OnDc(hdc, g => b.DrawText(theme, g, part, state, s, (int)flags, Rect(rect), font, argb, hasColor, false));
     }
 
-    [UnmanagedCallersOnly]
-    private static int DrawThemeEdge(nint theme, nint hdc, int part, int state, RECT* rect, uint edge, uint flags, RECT* content)
+    [Win32Export("DrawThemeEdge")]
+    public static int DrawThemeEdge(nint theme, nint hdc, int part, int state, RECT* rect, uint edge, uint flags, RECT* content)
     {
         if (Themes is not { } b || theme == 0) return E_FAIL;
         return OnDc(hdc, g =>
@@ -275,13 +240,13 @@ public static unsafe partial class Exports
         return OnDc(hdc, g => b.DrawParentBackground(g, r, child));
     }
 
-    [UnmanagedCallersOnly] private static int DrawThemeParentBackground(nint hwnd, nint hdc, RECT* rect) => ParentBackground(hwnd, hdc, rect);
-    [UnmanagedCallersOnly] private static int DrawThemeParentBackgroundEx(nint hwnd, nint hdc, uint flags, RECT* rect) => ParentBackground(hwnd, hdc, rect);
+    [Win32Export("DrawThemeParentBackground")] public static int DrawThemeParentBackground(nint hwnd, nint hdc, RECT* rect) => ParentBackground(hwnd, hdc, rect);
+    [Win32Export("DrawThemeParentBackgroundEx")] public static int DrawThemeParentBackgroundEx(nint hwnd, nint hdc, uint flags, RECT* rect) => ParentBackground(hwnd, hdc, rect);
 
     // ---- metrics and properties -----------------------------------------------------------------
 
-    [UnmanagedCallersOnly]
-    private static int GetThemePartSize(nint theme, nint hdc, int part, int state, RECT* rect, int type, SIZE* size)
+    [Win32Export("GetThemePartSize")]
+    public static int GetThemePartSize(nint theme, nint hdc, int part, int state, RECT* rect, int type, SIZE* size)
     {
         if (Themes is not { } b || theme == 0 || size == null) return E_INVALIDARG;
         int hr = b.PartSize(theme, null, part, state, Rect(rect), rect != null, type, out Size s);
@@ -290,8 +255,8 @@ public static unsafe partial class Exports
     }
 
     // MARGINS: cxLeftWidth, cxRightWidth, cyTopHeight, cyBottomHeight.
-    [UnmanagedCallersOnly]
-    private static int GetThemeMargins(nint theme, nint hdc, int part, int state, int property, RECT* rect, int* margins)
+    [Win32Export("GetThemeMargins")]
+    public static int GetThemeMargins(nint theme, nint hdc, int part, int state, int property, RECT* rect, int* margins)
     {
         if (Themes is not { } b || theme == 0 || margins == null) return E_INVALIDARG;
         int hr = b.Margins(theme, null, part, state, property, out Forms.Padding m);
@@ -299,8 +264,8 @@ public static unsafe partial class Exports
         return hr;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetThemeBackgroundContentRect(nint theme, nint hdc, int part, int state, RECT* bounds, RECT* content)
+    [Win32Export("GetThemeBackgroundContentRect")]
+    public static int GetThemeBackgroundContentRect(nint theme, nint hdc, int part, int state, RECT* bounds, RECT* content)
     {
         if (Themes is not { } b || theme == 0 || bounds == null || content == null) return E_INVALIDARG;
         int hr = b.ContentRect(theme, null, part, state, Rect(bounds), out Rectangle r);
@@ -308,8 +273,8 @@ public static unsafe partial class Exports
         return hr;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetThemeBackgroundExtent(nint theme, nint hdc, int part, int state, RECT* content, RECT* extent)
+    [Win32Export("GetThemeBackgroundExtent")]
+    public static int GetThemeBackgroundExtent(nint theme, nint hdc, int part, int state, RECT* content, RECT* extent)
     {
         if (Themes is not { } b || theme == 0 || content == null || extent == null) return E_INVALIDARG;
         int hr = b.Extent(theme, null, part, state, Rect(content), out Rectangle r);
@@ -318,16 +283,16 @@ public static unsafe partial class Exports
     }
 
     // The renderer's parts are rectangles: the region is the part's rectangle.
-    [UnmanagedCallersOnly]
-    private static int GetThemeBackgroundRegion(nint theme, nint hdc, int part, int state, RECT* rect, nint* region)
+    [Win32Export("GetThemeBackgroundRegion")]
+    public static int GetThemeBackgroundRegion(nint theme, nint hdc, int part, int state, RECT* rect, nint* region)
     {
         if (theme == 0 || rect == null || region == null) return E_INVALIDARG;
         *region = NewGdi(new GdiObject { Kind = GdiKind.Region, Region = *rect });
         return S_OK;
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetThemeTextExtent(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* bounds, RECT* extent)
+    [Win32Export("GetThemeTextExtent")]
+    public static int GetThemeTextExtent(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* bounds, RECT* extent)
     {
         if (Themes is not { } b || theme == 0 || extent == null) return E_INVALIDARG;
         string s = Text(text, count);
@@ -341,8 +306,8 @@ public static unsafe partial class Exports
         });
     }
 
-    [UnmanagedCallersOnly]
-    private static int GetThemeColor(nint theme, int part, int state, int property, uint* color)
+    [Win32Export("GetThemeColor")]
+    public static int GetThemeColor(nint theme, int part, int state, int property, uint* color)
     {
         if (Themes is not { } b || theme == 0 || color == null) return E_INVALIDARG;
         int hr = b.ThemeColor(theme, part, state, property, out int argb);
@@ -353,14 +318,14 @@ public static unsafe partial class Exports
     }
 
     // Properties the renderer does not model: not defined, as Windows answers for a property a part lacks.
-    [UnmanagedCallersOnly] private static int GetThemeInt(nint theme, int part, int state, int property, int* value) => E_PROP_ID_UNSUPPORTED;
-    [UnmanagedCallersOnly] private static int GetThemeFilename(nint theme, int part, int state, int property, char* buffer, int max) => E_PROP_ID_UNSUPPORTED;
+    [Win32Export("GetThemeInt", "GetThemeEnumValue", "GetThemeBool")] public static int GetThemeInt(nint theme, int part, int state, int property, int* value) => E_PROP_ID_UNSUPPORTED;
+    [Win32Export("GetThemeFilename", "GetThemeString")] public static int GetThemeFilename(nint theme, int part, int state, int property, char* buffer, int max) => E_PROP_ID_UNSUPPORTED;
 
-    [UnmanagedCallersOnly] private static uint GetThemeSysColor(nint theme, int index) => SysColor(index);
+    [Win32Export("GetThemeSysColor")] public static uint GetThemeSysColor(nint theme, int index) => SysColor(index);
 
-    [UnmanagedCallersOnly] private static int IsThemePartDefined(nint theme, int part, int state) => theme != 0 && Themes is { } b && b.IsPartDefined(theme, part) ? TRUE : FALSE;
+    [Win32Export("IsThemePartDefined")] public static int IsThemePartDefined(nint theme, int part, int state) => theme != 0 && Themes is { } b && b.IsPartDefined(theme, part) ? TRUE : FALSE;
 
-    [UnmanagedCallersOnly]
-    private static int IsThemeBackgroundPartiallyTransparent(nint theme, int part, int state)
+    [Win32Export("IsThemeBackgroundPartiallyTransparent")]
+    public static int IsThemeBackgroundPartiallyTransparent(nint theme, int part, int state)
         => theme != 0 && Themes is { } b && b.IsPartiallyTransparent(theme, part, state) ? TRUE : FALSE;
 }

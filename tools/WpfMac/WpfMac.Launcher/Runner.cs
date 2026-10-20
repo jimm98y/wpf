@@ -160,10 +160,31 @@ internal sealed class Runner
         }
         process.WaitForExit();
         foreach (var r in forward) r.Dispose();
+        // macOS: an abort ends the app with status 6, quietly (the bootstrap's QuietAborts): reported here,
+        // with the status a shell shows for an abort -- unless the log says the app exited with 6 itself.
+        if (OperatingSystem.IsMacOS() && !CrashReports && process.ExitCode == 6 && !ExitedItself(p.LogPath))
+        {
+            Console.Error.WriteLine("wpfmac: the app aborted (SIGABRT); exiting without a crash report. See the compatibility log.");
+            try { File.AppendAllText(p.LogPath, "[abort] the process aborted (SIGABRT); exited with status 134 instead of crashing\n"); } catch (IOException) { }
+            return 134;
+        }
         // The whole code: a shell keeps only its low byte (0xC000007F and 127 look alike there).
         if (process.ExitCode != 0)
             Console.Error.WriteLine($"wpfmac: the app exited with code 0x{process.ExitCode:X8} ({process.ExitCode})");
         return process.ExitCode;
+    }
+
+    /// <summary>Whether the app's log ends with its own exit (QuietAborts writes it on ProcessExit).</summary>
+    private static bool ExitedItself(string log)
+    {
+        try
+        {
+            using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            fs.Seek(Math.Max(0, fs.Length - 65536), SeekOrigin.Begin);
+            string tail = new StreamReader(fs).ReadToEnd();
+            return tail.Contains("[exit] the app exited with code", StringComparison.Ordinal);
+        }
+        catch (IOException) { return false; }
     }
 
     private static string Hash(string s) =>

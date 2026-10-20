@@ -2,8 +2,8 @@
 //
 // Where .NET or macOS has the real answer it is returned (process and thread ids, memory, the time
 // zone, environment variables); where a Windows concept has no counterpart the answer is the one a
-// Windows that lacks the feature gives (no console, no package identity, no DLL other than the ones
-// libwin32shim stands in for).
+// Windows that lacks the feature gives (no console, no package identity, no native entry point in a
+// Windows DLL: the app's P/Invokes reach these functions rewritten, never through GetProcAddress).
 
 using System.Collections.Concurrent;
 using System.IO;
@@ -33,131 +33,20 @@ public static unsafe partial class Exports
     // A module "handle" for the app's own executable (GetModuleHandle(NULL)), which is not a real image.
     internal static readonly nint ExeModule = (nint)0x140000000;
 
-    private static void RegisterKernel32()
-    {
-        R((delegate* unmanaged<uint>)&GetCurrentThreadId, "GetCurrentThreadId");
-        R((delegate* unmanaged<uint>)&GetCurrentProcessId, "GetCurrentProcessId");
-        R((delegate* unmanaged<nint>)&GetCurrentProcess, "GetCurrentProcess");
-        R((delegate* unmanaged<nint>)&GetCurrentThread, "GetCurrentThread");
-        R((delegate* unmanaged<uint>)&GetLastError, "GetLastError");
-        R((delegate* unmanaged<uint, void>)&SetLastErrorExport, "SetLastError");
-        R((delegate* unmanaged<nint, int>)&CloseHandle, "CloseHandle");
-
-        R((delegate* unmanaged<uint, nuint, void*>)&LocalAlloc, "LocalAlloc", "GlobalAlloc");
-        R((delegate* unmanaged<void*, void*>)&LocalFree, "LocalFree", "GlobalFree");
-        R((delegate* unmanaged<void*, void*>)&LocalLock, "LocalLock", "GlobalLock");
-        R((delegate* unmanaged<void*, int>)&LocalUnlock, "LocalUnlock", "GlobalUnlock");
-        R((delegate* unmanaged<void*, nuint>)&LocalSize, "LocalSize", "GlobalSize");
-        R((delegate* unmanaged<void*, nuint, uint, uint, void*>)&VirtualAlloc, "VirtualAlloc");
-        R((delegate* unmanaged<void*, nuint, uint, int>)&VirtualFree, "VirtualFree");
-        R((delegate* unmanaged<void*, void*, nuint, void>)&RtlMoveMemory, "RtlMoveMemory", "RtlCopyMemory", "CopyMemory", "MoveMemory");
-        R((delegate* unmanaged<void*, nuint, void>)&RtlZeroMemory, "RtlZeroMemory", "ZeroMemory", "RtlSecureZeroMemory");
-        R((delegate* unmanaged<void*, nuint, byte, void>)&RtlFillMemory, "RtlFillMemory", "FillMemory");
-
-        R((delegate* unmanaged<long*, int>)&QueryPerformanceCounter, "QueryPerformanceCounter");
-        R((delegate* unmanaged<long*, int>)&QueryPerformanceFrequency, "QueryPerformanceFrequency");
-        R((delegate* unmanaged<uint>)&GetTickCount, "GetTickCount");
-        R((delegate* unmanaged<ulong>)&GetTickCount64, "GetTickCount64");
-        R((delegate* unmanaged<uint, void>)&Sleep, "Sleep");
-        R((delegate* unmanaged<uint, int, uint>)&SleepEx, "SleepEx");
-        R((delegate* unmanaged<long*, void>)&GetSystemTimeAsFileTime, "GetSystemTimeAsFileTime", "GetSystemTimePreciseAsFileTime");
-        R((delegate* unmanaged<ushort*, void>)&GetSystemTime, "GetSystemTime");
-        R((delegate* unmanaged<ushort*, void>)&GetLocalTime, "GetLocalTime");
-        R((delegate* unmanaged<byte*, uint>)&GetTimeZoneInformation, "GetTimeZoneInformation");
-        R((delegate* unmanaged<byte*, uint>)&GetDynamicTimeZoneInformation, "GetDynamicTimeZoneInformation");
-
-        R((delegate* unmanaged<char*, nint>)&GetModuleHandleW, "GetModuleHandleW");
-        R((delegate* unmanaged<byte*, nint>)&GetModuleHandleBare, "GetModuleHandle", "GetModuleHandleA");
-        R((delegate* unmanaged<char*, nint>)&LoadLibraryW, "LoadLibraryW");
-        R((delegate* unmanaged<byte*, nint>)&LoadLibraryBare, "LoadLibrary", "LoadLibraryA");
-        R((delegate* unmanaged<char*, nint, uint, nint>)&LoadLibraryExW, "LoadLibraryExW");
-        R((delegate* unmanaged<byte*, nint, uint, nint>)&LoadLibraryExBare, "LoadLibraryEx", "LoadLibraryExA");
-        R((delegate* unmanaged<nint, int>)&FreeLibrary, "FreeLibrary");
-        R((delegate* unmanaged<nint, byte*, nint>)&GetProcAddress, "GetProcAddress");
-        R((delegate* unmanaged<nint, char*, uint, uint>)&GetModuleFileNameW, "GetModuleFileNameW");
-        R((delegate* unmanaged<nint, byte*, uint, uint>)&GetModuleFileNameBare, "GetModuleFileName", "GetModuleFileNameA");
-        R((delegate* unmanaged<void*, int>)&ReturnTrue1, "SetDllDirectoryW", "SetDllDirectory", "SetDllDirectoryA", "SetDefaultDllDirectories", "RemoveDllDirectory",
-            "SetProcessMitigationPolicy");
-        R((delegate* unmanaged<void*, nint>)&AddDllDirectory, "AddDllDirectory");
-        R((delegate* unmanaged<uint, uint>)&SetErrorMode, "SetErrorMode");
-
-        R((delegate* unmanaged<nint, int*, int>)&IsWow64Process, "IsWow64Process");
-        R((delegate* unmanaged<nint, ushort*, ushort*, int>)&IsWow64Process2, "IsWow64Process2");
-        R((delegate* unmanaged<byte*, void>)&GetSystemInfo, "GetSystemInfo", "GetNativeSystemInfo");
-        R((delegate* unmanaged<uint*, int>)&GetVersionEx, "GetVersionExW", "GetVersionEx", "GetVersionExA");
-        R((delegate* unmanaged<uint*, int>)&RtlGetVersion, "RtlGetVersion");
-        R((delegate* unmanaged<uint>)&GetVersion, "GetVersion");
-        R((delegate* unmanaged<uint, uint, uint, uint, uint*, int>)&GetProductInfo, "GetProductInfo");
-        R((delegate* unmanaged<byte*, int>)&GlobalMemoryStatusEx, "GlobalMemoryStatusEx");
-        R((delegate* unmanaged<uint, uint>)&SetThreadExecutionState, "SetThreadExecutionState");
-        R((delegate* unmanaged<nint, nuint, nuint, int>)&SetProcessWorkingSetSize, "SetProcessWorkingSetSize");
-        R((delegate* unmanaged<void*, void*>)&IdentityPointer, "EncodePointer", "DecodePointer", "EncodeSystemPointer", "DecodeSystemPointer");
-
-        R((delegate* unmanaged<void*, void>)&InitializeCriticalSection, "InitializeCriticalSection");
-        R((delegate* unmanaged<void*, uint, uint, int>)&InitializeCriticalSectionEx, "InitializeCriticalSectionEx");
-        R((delegate* unmanaged<void*, uint, int>)&InitializeCriticalSectionAndSpinCount, "InitializeCriticalSectionAndSpinCount");
-        R((delegate* unmanaged<void*, void>)&EnterCriticalSection, "EnterCriticalSection");
-        R((delegate* unmanaged<void*, int>)&TryEnterCriticalSection, "TryEnterCriticalSection");
-        R((delegate* unmanaged<void*, void>)&LeaveCriticalSection, "LeaveCriticalSection");
-        R((delegate* unmanaged<void*, void>)&DeleteCriticalSection, "DeleteCriticalSection");
-
-        R((delegate* unmanaged<void*, int, int, char*, nint>)&CreateEventW, "CreateEventW");
-        R((delegate* unmanaged<void*, int, int, byte*, nint>)&CreateEventBare, "CreateEvent", "CreateEventA");
-        R((delegate* unmanaged<nint, int>)&SetEvent, "SetEvent");
-        R((delegate* unmanaged<nint, int>)&ResetEvent, "ResetEvent");
-        R((delegate* unmanaged<void*, int, char*, nint>)&CreateMutexW, "CreateMutexW");
-        R((delegate* unmanaged<void*, int, byte*, nint>)&CreateMutexBare, "CreateMutex", "CreateMutexA");
-        R((delegate* unmanaged<nint, int>)&ReleaseMutex, "ReleaseMutex");
-        R((delegate* unmanaged<nint, uint, uint>)&WaitForSingleObject, "WaitForSingleObject");
-        R((delegate* unmanaged<uint, nint*, int, uint, uint>)&WaitForMultipleObjects, "WaitForMultipleObjects");
-        R((delegate* unmanaged<uint, int, uint, nint>)&OpenProcess, "OpenProcess");
-
-        R((delegate* unmanaged<uint, void*, uint, uint, char*, uint, void*, uint>)&FormatMessageW, "FormatMessageW");
-        R((delegate* unmanaged<uint, void*, uint, uint, byte*, uint, void*, uint>)&FormatMessageBare, "FormatMessage", "FormatMessageA");
-        R((delegate* unmanaged<char*, int>)&lstrlenW, "lstrlenW");
-        R((delegate* unmanaged<int, int, int, int>)&MulDiv, "MulDiv");
-        R((delegate* unmanaged<uint>)&GetUserDefaultLCID, "GetUserDefaultLCID", "GetSystemDefaultLCID", "GetThreadLocale");
-        R((delegate* unmanaged<ushort>)&GetUserDefaultUILanguage, "GetUserDefaultUILanguage", "GetSystemDefaultUILanguage", "GetUserDefaultLangID", "GetSystemDefaultLangID");
-        R((delegate* unmanaged<uint>)&GetACP, "GetACP");
-        R((delegate* unmanaged<uint>)&GetOEMCP, "GetOEMCP");
-        R((delegate* unmanaged<char*, uint*, int>)&GetComputerNameW, "GetComputerNameW", "GetComputerName");
-        R((delegate* unmanaged<char*, char*, uint, uint>)&ExpandEnvironmentStringsW, "ExpandEnvironmentStringsW", "ExpandEnvironmentStrings");
-        R((delegate* unmanaged<char*, char*, uint, uint>)&GetEnvironmentVariableW, "GetEnvironmentVariableW", "GetEnvironmentVariable");
-        R((delegate* unmanaged<char*, char*, int>)&SetEnvironmentVariableW, "SetEnvironmentVariableW", "SetEnvironmentVariable");
-        R((delegate* unmanaged<uint, char*, uint>)&GetTempPathW, "GetTempPathW", "GetTempPath", "GetTempPath2W");
-        R((delegate* unmanaged<char*, uint, uint>)&GetWindowsDirectoryW, "GetWindowsDirectoryW", "GetWindowsDirectory", "GetSystemWindowsDirectoryW");
-        R((delegate* unmanaged<char*, uint, uint>)&GetSystemDirectoryW, "GetSystemDirectoryW", "GetSystemDirectory");
-        R((delegate* unmanaged<char*, char*, uint, uint>)&GetShortPathNameW, "GetShortPathNameW", "GetShortPathName", "GetLongPathNameW", "GetLongPathName");
-        R((delegate* unmanaged<char*, void>)&OutputDebugStringW, "OutputDebugStringW", "OutputDebugString");
-
-        R((delegate* unmanaged<uint, int>)&ReturnFalseU, "AttachConsole", "FreeConsole");
-        R((delegate* unmanaged<int>)&ReturnFalse0, "AllocConsole");
-        R((delegate* unmanaged<nint>)&ReturnNull0, "GetConsoleWindow");
-        R((delegate* unmanaged<uint*, char*, int>)&GetCurrentPackageFullName, "GetCurrentPackageFullName", "GetCurrentPackageId", "GetCurrentPackageFamilyName");
-        R((delegate* unmanaged<void*, void*, uint, uint, int>)&RegisterApplicationRecoveryCallback, "RegisterApplicationRecoveryCallback");
-        R((delegate* unmanaged<char*, uint, int>)&RegisterApplicationRestart, "RegisterApplicationRestart");
-        R((delegate* unmanaged<int>)&ReturnSOk0, "UnregisterApplicationRecoveryCallback", "UnregisterApplicationRestart");
-        R((delegate* unmanaged<int*, int>)&ApplicationRecoveryInProgress, "ApplicationRecoveryInProgress");
-        R((delegate* unmanaged<int, void>)&ApplicationRecoveryFinished, "ApplicationRecoveryFinished");
-        R((delegate* unmanaged<void*, nint>)&CreateActCtx, "CreateActCtxW", "CreateActCtx", "CreateActCtxA");
-        R((delegate* unmanaged<nint, nuint*, int>)&ActivateActCtx, "ActivateActCtx");
-        R((delegate* unmanaged<uint, nuint, int>)&DeactivateActCtx, "DeactivateActCtx");
-        R((delegate* unmanaged<nint, void>)&ReleaseActCtx, "ReleaseActCtx");
-    }
 
     // ---- identity ------------------------------------------------------------------------------
 
     [ThreadStatic] private static int t_lastError;
 
-    [UnmanagedCallersOnly] private static uint GetCurrentThreadId() => (uint)Environment.CurrentManagedThreadId;
-    [UnmanagedCallersOnly] private static uint GetCurrentProcessId() => (uint)Environment.ProcessId;
-    [UnmanagedCallersOnly] private static nint GetCurrentProcess() => -1;
-    [UnmanagedCallersOnly] private static nint GetCurrentThread() => -2;
-    [UnmanagedCallersOnly] private static uint GetLastError() => (uint)t_lastError;
-    [UnmanagedCallersOnly] private static void SetLastErrorExport(uint e) { t_lastError = (int)e; SetLastError((int)e); }
+    [Win32Export("GetCurrentThreadId")] public static uint GetCurrentThreadId() => (uint)Environment.CurrentManagedThreadId;
+    [Win32Export("GetCurrentProcessId")] public static uint GetCurrentProcessId() => (uint)Environment.ProcessId;
+    [Win32Export("GetCurrentProcess")] public static nint GetCurrentProcess() => -1;
+    [Win32Export("GetCurrentThread")] public static nint GetCurrentThread() => -2;
+    [Win32Export("GetLastError")] public static uint GetLastError() => (uint)t_lastError;
+    [Win32Export("SetLastError")] public static void SetLastErrorExport(uint e) { t_lastError = (int)e; SetLastError((int)e); }
 
-    [UnmanagedCallersOnly]
-    private static int CloseHandle(nint h)
+    [Win32Export("CloseHandle")]
+    public static int CloseHandle(nint h)
     {
         if (s_handles.TryRemove(h, out var o))
         {
@@ -173,8 +62,8 @@ public static unsafe partial class Exports
 
     private static readonly ConcurrentDictionary<nint, nuint> s_sizes = new();
 
-    [UnmanagedCallersOnly]
-    private static void* LocalAlloc(uint flags, nuint bytes)
+    [Win32Export("LocalAlloc", "GlobalAlloc")]
+    public static void* LocalAlloc(uint flags, nuint bytes)
     {
         // LMEM_ZEROINIT/GMEM_ZEROINIT is 0x40. Plain malloc, like Marshal.AllocHGlobal off Windows,
         // so memory either side frees is the other's to free too.
@@ -183,8 +72,8 @@ public static unsafe partial class Exports
         return p;
     }
 
-    [UnmanagedCallersOnly]
-    private static void* LocalFree(void* p)
+    [Win32Export("LocalFree", "GlobalFree")]
+    public static void* LocalFree(void* p)
     {
         if (p != null)
         {
@@ -194,14 +83,14 @@ public static unsafe partial class Exports
         return null;
     }
 
-    [UnmanagedCallersOnly] private static void* LocalLock(void* p) => p;
-    [UnmanagedCallersOnly] private static int LocalUnlock(void* p) { SetLastError(0); return FALSE; }
-    [UnmanagedCallersOnly] private static nuint LocalSize(void* p) => s_sizes.TryGetValue((nint)p, out var n) ? n : 0;
+    [Win32Export("LocalLock", "GlobalLock")] public static void* LocalLock(void* p) => p;
+    [Win32Export("LocalUnlock", "GlobalUnlock")] public static int LocalUnlock(void* p) { SetLastError(0); return FALSE; }
+    [Win32Export("LocalSize", "GlobalSize")] public static nuint LocalSize(void* p) => s_sizes.TryGetValue((nint)p, out var n) ? n : 0;
 
     private static readonly ConcurrentDictionary<nint, nuint> s_virtual = new();
 
-    [UnmanagedCallersOnly]
-    private static void* VirtualAlloc(void* address, nuint size, uint type, uint protect)
+    [Win32Export("VirtualAlloc")]
+    public static void* VirtualAlloc(void* address, nuint size, uint type, uint protect)
     {
         if (address != null && s_virtual.ContainsKey((nint)address)) return address;   // MEM_COMMIT of a reservation
         void* p = NativeMemory.AlignedAlloc(Math.Max(size, 1), 4096);
@@ -210,8 +99,8 @@ public static unsafe partial class Exports
         return p;
     }
 
-    [UnmanagedCallersOnly]
-    private static int VirtualFree(void* address, nuint size, uint type)
+    [Win32Export("VirtualFree")]
+    public static int VirtualFree(void* address, nuint size, uint type)
     {
         if ((type & 0x8000) != 0 && s_virtual.TryRemove((nint)address, out _))   // MEM_RELEASE
         {
@@ -220,21 +109,21 @@ public static unsafe partial class Exports
         return TRUE;
     }
 
-    [UnmanagedCallersOnly] private static void RtlMoveMemory(void* dst, void* src, nuint n) => Buffer.MemoryCopy(src, dst, n, n);
-    [UnmanagedCallersOnly] private static void RtlZeroMemory(void* dst, nuint n) => NativeMemory.Clear(dst, n);
-    [UnmanagedCallersOnly] private static void RtlFillMemory(void* dst, nuint n, byte fill) => NativeMemory.Fill(dst, n, fill);
+    [Win32Export("RtlMoveMemory", "RtlCopyMemory", "CopyMemory", "MoveMemory")] public static void RtlMoveMemory(void* dst, void* src, nuint n) => Buffer.MemoryCopy(src, dst, n, n);
+    [Win32Export("RtlZeroMemory", "ZeroMemory", "RtlSecureZeroMemory")] public static void RtlZeroMemory(void* dst, nuint n) => NativeMemory.Clear(dst, n);
+    [Win32Export("RtlFillMemory", "FillMemory")] public static void RtlFillMemory(void* dst, nuint n, byte fill) => NativeMemory.Fill(dst, n, fill);
 
     // ---- time ----------------------------------------------------------------------------------
 
-    [UnmanagedCallersOnly] private static int QueryPerformanceCounter(long* v) { *v = Stopwatch.GetTimestamp(); return TRUE; }
-    [UnmanagedCallersOnly] private static int QueryPerformanceFrequency(long* v) { *v = Stopwatch.Frequency; return TRUE; }
-    [UnmanagedCallersOnly] private static uint GetTickCount() => (uint)Environment.TickCount64;
-    [UnmanagedCallersOnly] private static ulong GetTickCount64() => (ulong)Environment.TickCount64;
-    [UnmanagedCallersOnly] private static void Sleep(uint ms) => Thread.Sleep(ms == uint.MaxValue ? Timeout.Infinite : (int)ms);
-    [UnmanagedCallersOnly] private static uint SleepEx(uint ms, int alertable) { Thread.Sleep(ms == uint.MaxValue ? Timeout.Infinite : (int)ms); return 0; }
-    [UnmanagedCallersOnly] private static void GetSystemTimeAsFileTime(long* ft) => *ft = DateTime.UtcNow.ToFileTimeUtc();
-    [UnmanagedCallersOnly] private static void GetSystemTime(ushort* st) => WriteSystemTime(st, DateTime.UtcNow);
-    [UnmanagedCallersOnly] private static void GetLocalTime(ushort* st) => WriteSystemTime(st, DateTime.Now);
+    [Win32Export("QueryPerformanceCounter")] public static int QueryPerformanceCounter(long* v) { *v = Stopwatch.GetTimestamp(); return TRUE; }
+    [Win32Export("QueryPerformanceFrequency")] public static int QueryPerformanceFrequency(long* v) { *v = Stopwatch.Frequency; return TRUE; }
+    [Win32Export("GetTickCount")] public static uint GetTickCount() => (uint)Environment.TickCount64;
+    [Win32Export("GetTickCount64")] public static ulong GetTickCount64() => (ulong)Environment.TickCount64;
+    [Win32Export("Sleep")] public static void Sleep(uint ms) => Thread.Sleep(ms == uint.MaxValue ? Timeout.Infinite : (int)ms);
+    [Win32Export("SleepEx")] public static uint SleepEx(uint ms, int alertable) { Thread.Sleep(ms == uint.MaxValue ? Timeout.Infinite : (int)ms); return 0; }
+    [Win32Export("GetSystemTimeAsFileTime", "GetSystemTimePreciseAsFileTime")] public static void GetSystemTimeAsFileTime(long* ft) => *ft = DateTime.UtcNow.ToFileTimeUtc();
+    [Win32Export("GetSystemTime")] public static void GetSystemTime(ushort* st) => WriteSystemTime(st, DateTime.UtcNow);
+    [Win32Export("GetLocalTime")] public static void GetLocalTime(ushort* st) => WriteSystemTime(st, DateTime.Now);
 
     private static void WriteSystemTime(ushort* st, DateTime t)
     {
@@ -280,31 +169,62 @@ public static unsafe partial class Exports
         st[4] = (ushort)t.TimeOfDay.Hour; st[5] = (ushort)t.TimeOfDay.Minute; st[6] = (ushort)t.TimeOfDay.Second;
     }
 
-    [UnmanagedCallersOnly] private static uint GetTimeZoneInformation(byte* tzi) => WriteTimeZone(tzi, false);
-    [UnmanagedCallersOnly] private static uint GetDynamicTimeZoneInformation(byte* tzi) => WriteTimeZone(tzi, true);
+    [Win32Export("GetTimeZoneInformation")] public static uint GetTimeZoneInformation(byte* tzi) => WriteTimeZone(tzi, false);
+    [Win32Export("GetDynamicTimeZoneInformation")] public static uint GetDynamicTimeZoneInformation(byte* tzi) => WriteTimeZone(tzi, true);
 
     // ---- modules -------------------------------------------------------------------------------
 
-    /// <summary>The library that stands in for every Windows DLL; set by the bootstrap.</summary>
-    public static nint ShimHandle { get; set; }
+    // A Windows DLL has no file here: its functions are reached by the app's rewritten P/Invokes. What
+    // LoadLibrary and GetModuleHandle hand out for one is a handle of its own, as Windows does (each DLL
+    // an address, 64 KB aligned), so a check that the DLL is there passes; GetProcAddress on it finds no
+    // native entry point (there is none to find), as on a Windows whose DLL lacks the function.
+    private static readonly Dictionary<string, nint> s_systemModules = new(StringComparer.OrdinalIgnoreCase);
+    private static HashSet<string>? s_windowsModules;
+    private const long SystemModuleBase = 0x7FF800000000;
 
-    /// <summary>The Windows DLL names libwin32shim covers (lower case, no .dll); set by the bootstrap.</summary>
-    public static Func<string, bool>? CoversModule { get; set; }
+    /// <summary>The Windows DLL names (lower case, no .dll), from the export table embedded here.</summary>
+    private static HashSet<string> WindowsModules()
+    {
+        if (s_windowsModules != null) return s_windowsModules;
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var s = typeof(Exports).Assembly.GetManifestResourceStream("win32_exports.tsv"))
+        {
+            if (s != null)
+            {
+                using var r = new StreamReader(s);
+                for (string? line; (line = r.ReadLine()) != null;)
+                    if (line.EndsWith("\t*", StringComparison.Ordinal)) set.Add(line[..^2]);
+            }
+        }
+        return s_windowsModules = set;
+    }
+
+    private static string? SystemModuleName(nint h)
+    {
+        lock (s_systemModules) { foreach (var (n, v) in s_systemModules) if (v == h) return n; }
+        return null;
+    }
 
     private static nint ModuleHandleFor(string? name, bool load)
     {
         if (name == null) return ExeModule;
-        string file = Path.GetFileName(name);
+        string file = Path.GetFileName(name.Replace('\\', '/'));
         string bare = file.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? file[..^4] : file;
         string exe = Path.GetFileNameWithoutExtension(AppExePath());
         if (string.Equals(bare, exe, StringComparison.OrdinalIgnoreCase) || string.Equals(file, exe + ".exe", StringComparison.OrdinalIgnoreCase))
         {
             return ExeModule;
         }
-        // A Windows system DLL: hand out the library that stands in for it, so that GetProcAddress
-        // on the result finds the same functions a DllImport does.
-        if (ShimHandle != 0 && CoversModule?.Invoke(bare.ToLowerInvariant()) == true) return ShimHandle;
-        if (load && NativeLibrary.TryLoad(name, out nint h)) return h;
+        if (WindowsModules().Contains(bare))
+        {
+            lock (s_systemModules)
+            {
+                if (!s_systemModules.TryGetValue(bare, out nint h))
+                    s_systemModules[bare] = h = (nint)(SystemModuleBase + 0x10000L * (s_systemModules.Count + 1));
+                return h;
+            }
+        }
+        if (load && NativeLibrary.TryLoad(name, out nint lib)) return lib;
         SetLastError(126);   // ERROR_MOD_NOT_FOUND
         return 0;
     }
@@ -316,16 +236,16 @@ public static unsafe partial class Exports
         return Path.Combine(dir, name + ".exe");
     }
 
-    [UnmanagedCallersOnly] private static nint GetModuleHandleW(char* name) => ModuleHandleFor(ReadUtf16(name), load: false);
-    [UnmanagedCallersOnly] private static nint GetModuleHandleBare(byte* name) => ModuleHandleFor(ReadEither(name), load: false);
-    [UnmanagedCallersOnly] private static nint LoadLibraryW(char* name) => ModuleHandleFor(ReadUtf16(name), load: true);
-    [UnmanagedCallersOnly] private static nint LoadLibraryBare(byte* name) => ModuleHandleFor(ReadEither(name), load: true);
-    [UnmanagedCallersOnly] private static nint LoadLibraryExW(char* name, nint file, uint flags) => ModuleHandleFor(ReadUtf16(name), load: true);
-    [UnmanagedCallersOnly] private static nint LoadLibraryExBare(byte* name, nint file, uint flags) => ModuleHandleFor(ReadEither(name), load: true);
-    [UnmanagedCallersOnly] private static int FreeLibrary(nint h) => TRUE;
+    [Win32Export("GetModuleHandleW")] public static nint GetModuleHandleW(char* name) => ModuleHandleFor(ReadUtf16(name), load: false);
+    [Win32Export("GetModuleHandle", "GetModuleHandleA")] public static nint GetModuleHandleBare(byte* name) => ModuleHandleFor(ReadEither(name), load: false);
+    [Win32Export("LoadLibraryW")] public static nint LoadLibraryW(char* name) => ModuleHandleFor(ReadUtf16(name), load: true);
+    [Win32Export("LoadLibrary", "LoadLibraryA")] public static nint LoadLibraryBare(byte* name) => ModuleHandleFor(ReadEither(name), load: true);
+    [Win32Export("LoadLibraryExW")] public static nint LoadLibraryExW(char* name, nint file, uint flags) => ModuleHandleFor(ReadUtf16(name), load: true);
+    [Win32Export("LoadLibraryEx", "LoadLibraryExA")] public static nint LoadLibraryExBare(byte* name, nint file, uint flags) => ModuleHandleFor(ReadEither(name), load: true);
+    [Win32Export("FreeLibrary")] public static int FreeLibrary(nint h) => TRUE;
 
-    [UnmanagedCallersOnly]
-    private static nint GetProcAddress(nint module, byte* name)
+    [Win32Export("GetProcAddress")]
+    public static nint GetProcAddress(nint module, byte* name)
     {
         if ((nuint)name < 0x10000 || module == ExeModule || module == 0)   // by ordinal, or the exe
         {
@@ -333,6 +253,12 @@ public static unsafe partial class Exports
             return 0;
         }
         string? n = Marshal.PtrToStringUTF8((IntPtr)name);
+        if (SystemModuleName(module) is string dll)
+        {
+            LogOnce("getproc:" + dll + "!" + n, $"win32 shim: GetProcAddress({dll}, {n}): a Windows DLL has no native entry points here; returned NULL (ERROR_PROC_NOT_FOUND)");
+            SetLastError(127);
+            return 0;
+        }
         if (n != null && NativeLibrary.TryGetExport(module, n, out nint p)) return p;
         SetLastError(127);
         return 0;
@@ -340,12 +266,14 @@ public static unsafe partial class Exports
 
     private static uint ModuleFileName(nint module, string? path, out string? value)
     {
-        value = module == 0 || module == ExeModule ? AppExePath() : path;
+        value = module == 0 || module == ExeModule ? AppExePath()
+            : SystemModuleName(module) is string dll ? @"C:\Windows\System32\" + dll + (dll.Contains('.') ? "" : ".dll")
+            : path;
         return value == null ? 0u : (uint)value.Length;
     }
 
-    [UnmanagedCallersOnly]
-    private static uint GetModuleFileNameW(nint module, char* buffer, uint size)
+    [Win32Export("GetModuleFileNameW")]
+    public static uint GetModuleFileNameW(nint module, char* buffer, uint size)
     {
         ModuleFileName(module, null, out string? path);
         if (path == null) { SetLastError(126); return 0; }
@@ -354,36 +282,36 @@ public static unsafe partial class Exports
         return (uint)n;
     }
 
-    [UnmanagedCallersOnly]
-    private static uint GetModuleFileNameBare(nint module, byte* buffer, uint size)
+    [Win32Export("GetModuleFileName", "GetModuleFileNameA")]
+    public static uint GetModuleFileNameBare(nint module, byte* buffer, uint size)
     {
         ModuleFileName(module, null, out string? path);
         if (path == null) { SetLastError(126); return 0; }
         return (uint)WriteUtf8(buffer, (int)size, path);
     }
 
-    [UnmanagedCallersOnly] private static int ReturnTrue1(void* _) => TRUE;
-    [UnmanagedCallersOnly] private static nint AddDllDirectory(void* _) => 1;
+    [Win32Export("SetDllDirectoryW", "SetDllDirectory", "SetDllDirectoryA", "SetDefaultDllDirectories", "RemoveDllDirectory", "SetProcessMitigationPolicy")] public static int ReturnTrue1(void* _) => TRUE;
+    [Win32Export("AddDllDirectory")] public static nint AddDllDirectory(void* _) => 1;
     private static uint s_errorMode;
-    [UnmanagedCallersOnly] private static uint SetErrorMode(uint mode) { uint old = s_errorMode; s_errorMode = mode; return old; }
+    [Win32Export("SetErrorMode")] public static uint SetErrorMode(uint mode) { uint old = s_errorMode; s_errorMode = mode; return old; }
 
     // ---- the system --------------------------------------------------------------------------
 
     // What this reports itself as: Windows 11 23H2 (10.0.22631), a workstation, on arm64.
     private const uint OsMajor = 10, OsMinor = 0, OsBuild = 22631;
 
-    [UnmanagedCallersOnly] private static int IsWow64Process(nint process, int* wow) { *wow = FALSE; return TRUE; }
+    [Win32Export("IsWow64Process")] public static int IsWow64Process(nint process, int* wow) { *wow = FALSE; return TRUE; }
 
-    [UnmanagedCallersOnly]
-    private static int IsWow64Process2(nint process, ushort* processMachine, ushort* nativeMachine)
+    [Win32Export("IsWow64Process2")]
+    public static int IsWow64Process2(nint process, ushort* processMachine, ushort* nativeMachine)
     {
         *processMachine = 0;   // IMAGE_FILE_MACHINE_UNKNOWN: not running under WOW64
         if (nativeMachine != null) *nativeMachine = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? (ushort)0xAA64 : (ushort)0x8664;
         return TRUE;
     }
 
-    [UnmanagedCallersOnly]
-    private static void GetSystemInfo(byte* si)
+    [Win32Export("GetSystemInfo", "GetNativeSystemInfo")]
+    public static void GetSystemInfo(byte* si)
     {
         // SYSTEM_INFO, 48 bytes on 64-bit.
         NativeMemory.Clear(si, 48);
@@ -414,13 +342,13 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly] private static int GetVersionEx(uint* v) { WriteVersion(v); return TRUE; }
-    [UnmanagedCallersOnly] private static int RtlGetVersion(uint* v) { WriteVersion(v); return 0; }
-    [UnmanagedCallersOnly] private static uint GetVersion() => OsMajor | (OsMinor << 8) | (OsBuild << 16);
-    [UnmanagedCallersOnly] private static int GetProductInfo(uint a, uint b, uint c, uint d, uint* type) { *type = 0x30; return TRUE; }   // PRODUCT_PROFESSIONAL
+    [Win32Export("GetVersionExW", "GetVersionEx", "GetVersionExA")] public static int GetVersionEx(uint* v) { WriteVersion(v); return TRUE; }
+    [Win32Export("RtlGetVersion")] public static int RtlGetVersion(uint* v) { WriteVersion(v); return 0; }
+    [Win32Export("GetVersion")] public static uint GetVersion() => OsMajor | (OsMinor << 8) | (OsBuild << 16);
+    [Win32Export("GetProductInfo")] public static int GetProductInfo(uint a, uint b, uint c, uint d, uint* type) { *type = 0x30; return TRUE; }   // PRODUCT_PROFESSIONAL
 
-    [UnmanagedCallersOnly]
-    private static int GlobalMemoryStatusEx(byte* m)
+    [Win32Export("GlobalMemoryStatusEx")]
+    public static int GlobalMemoryStatusEx(byte* m)
     {
         // MEMORYSTATUSEX: dwLength, dwMemoryLoad, then seven ULONGLONGs.
         ulong total = MacNative.SysctlU64("hw.memsize");
@@ -438,22 +366,22 @@ public static unsafe partial class Exports
     }
 
     private static uint s_executionState = 0x80000000;  // ES_CONTINUOUS
-    [UnmanagedCallersOnly] private static uint SetThreadExecutionState(uint state) { uint old = s_executionState; s_executionState = state; return old; }
-    [UnmanagedCallersOnly] private static int SetProcessWorkingSetSize(nint p, nuint min, nuint max) => TRUE;
-    [UnmanagedCallersOnly] private static void* IdentityPointer(void* p) => p;
+    [Win32Export("SetThreadExecutionState")] public static uint SetThreadExecutionState(uint state) { uint old = s_executionState; s_executionState = state; return old; }
+    [Win32Export("SetProcessWorkingSetSize")] public static int SetProcessWorkingSetSize(nint p, nuint min, nuint max) => TRUE;
+    [Win32Export("EncodePointer", "DecodePointer", "EncodeSystemPointer", "DecodeSystemPointer")] public static void* IdentityPointer(void* p) => p;
 
     // ---- synchronisation ------------------------------------------------------------------------
 
     private static readonly ConcurrentDictionary<nint, object> s_criticalSections = new();
     private static object Section(void* cs) => s_criticalSections.GetOrAdd((nint)cs, _ => new object());
 
-    [UnmanagedCallersOnly] private static void InitializeCriticalSection(void* cs) => s_criticalSections[(nint)cs] = new object();
-    [UnmanagedCallersOnly] private static int InitializeCriticalSectionEx(void* cs, uint spin, uint flags) { s_criticalSections[(nint)cs] = new object(); return TRUE; }
-    [UnmanagedCallersOnly] private static int InitializeCriticalSectionAndSpinCount(void* cs, uint spin) { s_criticalSections[(nint)cs] = new object(); return TRUE; }
-    [UnmanagedCallersOnly] private static void EnterCriticalSection(void* cs) => Monitor.Enter(Section(cs));
-    [UnmanagedCallersOnly] private static int TryEnterCriticalSection(void* cs) => Monitor.TryEnter(Section(cs)) ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static void LeaveCriticalSection(void* cs) { var o = Section(cs); if (Monitor.IsEntered(o)) Monitor.Exit(o); }
-    [UnmanagedCallersOnly] private static void DeleteCriticalSection(void* cs) => s_criticalSections.TryRemove((nint)cs, out _);
+    [Win32Export("InitializeCriticalSection")] public static void InitializeCriticalSection(void* cs) => s_criticalSections[(nint)cs] = new object();
+    [Win32Export("InitializeCriticalSectionEx")] public static int InitializeCriticalSectionEx(void* cs, uint spin, uint flags) { s_criticalSections[(nint)cs] = new object(); return TRUE; }
+    [Win32Export("InitializeCriticalSectionAndSpinCount")] public static int InitializeCriticalSectionAndSpinCount(void* cs, uint spin) { s_criticalSections[(nint)cs] = new object(); return TRUE; }
+    [Win32Export("EnterCriticalSection")] public static void EnterCriticalSection(void* cs) => Monitor.Enter(Section(cs));
+    [Win32Export("TryEnterCriticalSection")] public static int TryEnterCriticalSection(void* cs) => Monitor.TryEnter(Section(cs)) ? TRUE : FALSE;
+    [Win32Export("LeaveCriticalSection")] public static void LeaveCriticalSection(void* cs) { var o = Section(cs); if (Monitor.IsEntered(o)) Monitor.Exit(o); }
+    [Win32Export("DeleteCriticalSection")] public static void DeleteCriticalSection(void* cs) => s_criticalSections.TryRemove((nint)cs, out _);
 
     private static nint CreateEventCore(bool manualReset, bool initial, string? name)
     {
@@ -482,10 +410,10 @@ public static unsafe partial class Exports
 
     private static readonly Dictionary<string, EventWaitHandle> s_namedEvents = new(StringComparer.Ordinal);
 
-    [UnmanagedCallersOnly] private static nint CreateEventW(void* sa, int manual, int initial, char* name) => CreateEventCore(manual != 0, initial != 0, ReadUtf16(name));
-    [UnmanagedCallersOnly] private static nint CreateEventBare(void* sa, int manual, int initial, byte* name) => CreateEventCore(manual != 0, initial != 0, ReadEither(name));
-    [UnmanagedCallersOnly] private static int SetEvent(nint h) => Handle(h) is EventWaitHandle e && e.Set() ? TRUE : FALSE;
-    [UnmanagedCallersOnly] private static int ResetEvent(nint h) => Handle(h) is EventWaitHandle e && e.Reset() ? TRUE : FALSE;
+    [Win32Export("CreateEventW")] public static nint CreateEventW(void* sa, int manual, int initial, char* name) => CreateEventCore(manual != 0, initial != 0, ReadUtf16(name));
+    [Win32Export("CreateEvent", "CreateEventA")] public static nint CreateEventBare(void* sa, int manual, int initial, byte* name) => CreateEventCore(manual != 0, initial != 0, ReadEither(name));
+    [Win32Export("SetEvent")] public static int SetEvent(nint h) => Handle(h) is EventWaitHandle e && e.Set() ? TRUE : FALSE;
+    [Win32Export("ResetEvent")] public static int ResetEvent(nint h) => Handle(h) is EventWaitHandle e && e.Reset() ? TRUE : FALSE;
 
     private static nint CreateMutexCore(bool initialOwner, string? name)
     {
@@ -503,9 +431,9 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly] private static nint CreateMutexW(void* sa, int owner, char* name) => CreateMutexCore(owner != 0, ReadUtf16(name));
-    [UnmanagedCallersOnly] private static nint CreateMutexBare(void* sa, int owner, byte* name) => CreateMutexCore(owner != 0, ReadEither(name));
-    [UnmanagedCallersOnly] private static int ReleaseMutex(nint h) { if (Handle(h) is Mutex m) { try { m.ReleaseMutex(); return TRUE; } catch { } } return FALSE; }
+    [Win32Export("CreateMutexW")] public static nint CreateMutexW(void* sa, int owner, char* name) => CreateMutexCore(owner != 0, ReadUtf16(name));
+    [Win32Export("CreateMutex", "CreateMutexA")] public static nint CreateMutexBare(void* sa, int owner, byte* name) => CreateMutexCore(owner != 0, ReadEither(name));
+    [Win32Export("ReleaseMutex")] public static int ReleaseMutex(nint h) { if (Handle(h) is Mutex m) { try { m.ReleaseMutex(); return TRUE; } catch { } } return FALSE; }
 
     private const uint WAIT_OBJECT_0 = 0, WAIT_TIMEOUT = 0x102, WAIT_FAILED = 0xFFFFFFFF;
 
@@ -525,10 +453,10 @@ public static unsafe partial class Exports
         }
     }
 
-    [UnmanagedCallersOnly] private static uint WaitForSingleObject(nint h, uint ms) => Wait(Handle(h), ms);
+    [Win32Export("WaitForSingleObject")] public static uint WaitForSingleObject(nint h, uint ms) => Wait(Handle(h), ms);
 
-    [UnmanagedCallersOnly]
-    private static uint WaitForMultipleObjects(uint count, nint* handles, int waitAll, uint ms)
+    [Win32Export("WaitForMultipleObjects")]
+    public static uint WaitForMultipleObjects(uint count, nint* handles, int waitAll, uint ms)
     {
         var waits = new WaitHandle[count];
         for (int i = 0; i < count; i++)
@@ -542,8 +470,8 @@ public static unsafe partial class Exports
         return index == WaitHandle.WaitTimeout ? WAIT_TIMEOUT : (uint)index;
     }
 
-    [UnmanagedCallersOnly]
-    private static nint OpenProcess(uint access, int inherit, uint pid)
+    [Win32Export("OpenProcess")]
+    public static nint OpenProcess(uint access, int inherit, uint pid)
     {
         try { return NewHandle(Process.GetProcessById((int)pid)); }
         catch { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
@@ -594,12 +522,12 @@ public static unsafe partial class Exports
         return (uint)written;
     }
 
-    [UnmanagedCallersOnly] private static uint FormatMessageW(uint flags, void* source, uint id, uint lang, char* buffer, uint size, void* args) => FormatMessageCore(flags, id, buffer, size, true);
-    [UnmanagedCallersOnly] private static uint FormatMessageBare(uint flags, void* source, uint id, uint lang, byte* buffer, uint size, void* args) => FormatMessageCore(flags, id, buffer, size, false);
-    [UnmanagedCallersOnly] private static int lstrlenW(char* s) => s == null ? 0 : new ReadOnlySpan<char>(s, int.MaxValue).IndexOf('\0');
+    [Win32Export("FormatMessageW")] public static uint FormatMessageW(uint flags, void* source, uint id, uint lang, char* buffer, uint size, void* args) => FormatMessageCore(flags, id, buffer, size, true);
+    [Win32Export("FormatMessage", "FormatMessageA")] public static uint FormatMessageBare(uint flags, void* source, uint id, uint lang, byte* buffer, uint size, void* args) => FormatMessageCore(flags, id, buffer, size, false);
+    [Win32Export("lstrlenW")] public static int lstrlenW(char* s) => s == null ? 0 : new ReadOnlySpan<char>(s, int.MaxValue).IndexOf('\0');
 
-    [UnmanagedCallersOnly]
-    private static int MulDiv(int number, int numerator, int denominator)
+    [Win32Export("MulDiv")]
+    public static int MulDiv(int number, int numerator, int denominator)
     {
         if (denominator == 0) return -1;
         long r = (long)number * numerator;
@@ -609,14 +537,14 @@ public static unsafe partial class Exports
         return q > int.MaxValue || q < int.MinValue ? -1 : (int)q;
     }
 
-    [UnmanagedCallersOnly] private static uint GetUserDefaultLCID() => (uint)CultureInfo.CurrentCulture.LCID;
-    [UnmanagedCallersOnly] private static ushort GetUserDefaultUILanguage() => (ushort)CultureInfo.CurrentUICulture.LCID;
+    [Win32Export("GetUserDefaultLCID", "GetSystemDefaultLCID", "GetThreadLocale")] public static uint GetUserDefaultLCID() => (uint)CultureInfo.CurrentCulture.LCID;
+    [Win32Export("GetUserDefaultUILanguage", "GetSystemDefaultUILanguage", "GetUserDefaultLangID", "GetSystemDefaultLangID")] public static ushort GetUserDefaultUILanguage() => (ushort)CultureInfo.CurrentUICulture.LCID;
     // The code page "ANSI" means: UTF-8 is what .NET uses for it off Windows, so that is the truth.
-    [UnmanagedCallersOnly] private static uint GetACP() => 65001;
-    [UnmanagedCallersOnly] private static uint GetOEMCP() => 437;
+    [Win32Export("GetACP")] public static uint GetACP() => 65001;
+    [Win32Export("GetOEMCP")] public static uint GetOEMCP() => 437;
 
-    [UnmanagedCallersOnly]
-    private static int GetComputerNameW(char* buffer, uint* size)
+    [Win32Export("GetComputerNameW", "GetComputerName")]
+    public static int GetComputerNameW(char* buffer, uint* size)
     {
         // The NetBIOS name: upper case, at most 15 characters.
         string name = Environment.MachineName.ToUpperInvariant();
@@ -632,39 +560,39 @@ public static unsafe partial class Exports
         return (uint)WriteUtf16(buffer, (int)size, value);
     }
 
-    [UnmanagedCallersOnly] private static uint ExpandEnvironmentStringsW(char* src, char* dst, uint size) => CopyOut(Environment.ExpandEnvironmentVariables(ReadUtf16(src) ?? ""), dst, size) + (dst != null && size > 0 ? 1u : 0u);
+    [Win32Export("ExpandEnvironmentStringsW", "ExpandEnvironmentStrings")] public static uint ExpandEnvironmentStringsW(char* src, char* dst, uint size) => CopyOut(Environment.ExpandEnvironmentVariables(ReadUtf16(src) ?? ""), dst, size) + (dst != null && size > 0 ? 1u : 0u);
 
-    [UnmanagedCallersOnly]
-    private static uint GetEnvironmentVariableW(char* name, char* buffer, uint size)
+    [Win32Export("GetEnvironmentVariableW", "GetEnvironmentVariable")]
+    public static uint GetEnvironmentVariableW(char* name, char* buffer, uint size)
     {
         string? value = Environment.GetEnvironmentVariable(ReadUtf16(name) ?? "");
         if (value == null) { SetLastError(203); return 0; }   // ERROR_ENVVAR_NOT_FOUND
         return CopyOut(value, buffer, size);
     }
 
-    [UnmanagedCallersOnly] private static int SetEnvironmentVariableW(char* name, char* value) { Environment.SetEnvironmentVariable(ReadUtf16(name) ?? "", ReadUtf16(value)); return TRUE; }
-    [UnmanagedCallersOnly] private static uint GetTempPathW(uint size, char* buffer) => CopyOut(Path.GetTempPath(), buffer, size);
-    [UnmanagedCallersOnly] private static uint GetWindowsDirectoryW(char* buffer, uint size) => CopyOut(@"C:\Windows", buffer, size);
-    [UnmanagedCallersOnly] private static uint GetSystemDirectoryW(char* buffer, uint size) => CopyOut(@"C:\Windows\System32", buffer, size);
-    [UnmanagedCallersOnly] private static uint GetShortPathNameW(char* path, char* buffer, uint size) => CopyOut(ReadUtf16(path) ?? "", buffer, size);
-    [UnmanagedCallersOnly] private static void OutputDebugStringW(char* s) => Debug.WriteLine(ReadUtf16(s));
+    [Win32Export("SetEnvironmentVariableW", "SetEnvironmentVariable")] public static int SetEnvironmentVariableW(char* name, char* value) { Environment.SetEnvironmentVariable(ReadUtf16(name) ?? "", ReadUtf16(value)); return TRUE; }
+    [Win32Export("GetTempPathW", "GetTempPath", "GetTempPath2W")] public static uint GetTempPathW(uint size, char* buffer) => CopyOut(Path.GetTempPath(), buffer, size);
+    [Win32Export("GetWindowsDirectoryW", "GetWindowsDirectory", "GetSystemWindowsDirectoryW")] public static uint GetWindowsDirectoryW(char* buffer, uint size) => CopyOut(@"C:\Windows", buffer, size);
+    [Win32Export("GetSystemDirectoryW", "GetSystemDirectory")] public static uint GetSystemDirectoryW(char* buffer, uint size) => CopyOut(@"C:\Windows\System32", buffer, size);
+    [Win32Export("GetShortPathNameW", "GetShortPathName", "GetLongPathNameW", "GetLongPathName")] public static uint GetShortPathNameW(char* path, char* buffer, uint size) => CopyOut(ReadUtf16(path) ?? "", buffer, size);
+    [Win32Export("OutputDebugStringW", "OutputDebugString")] public static void OutputDebugStringW(char* s) => Debug.WriteLine(ReadUtf16(s));
 
     // ---- what there is no counterpart of -------------------------------------------------------
 
-    [UnmanagedCallersOnly] private static int ReturnFalseU(uint _) { SetLastError(ERROR_CALL_NOT_IMPLEMENTED); return FALSE; }
-    [UnmanagedCallersOnly] private static int ReturnFalse0() { SetLastError(ERROR_CALL_NOT_IMPLEMENTED); return FALSE; }
-    [UnmanagedCallersOnly] private static nint ReturnNull0() => 0;
-    [UnmanagedCallersOnly] private static int ReturnSOk0() => S_OK;
-    [UnmanagedCallersOnly] private static int GetCurrentPackageFullName(uint* length, char* name) { if (length != null) *length = 0; return 15700; }   // APPMODEL_ERROR_NO_PACKAGE
-    [UnmanagedCallersOnly] private static int RegisterApplicationRecoveryCallback(void* cb, void* p, uint ping, uint flags) => S_OK;
-    [UnmanagedCallersOnly] private static int RegisterApplicationRestart(char* cmd, uint flags) => S_OK;
-    [UnmanagedCallersOnly] private static int ApplicationRecoveryInProgress(int* cancelled) { *cancelled = FALSE; return S_OK; }
-    [UnmanagedCallersOnly] private static void ApplicationRecoveryFinished(int success) { }
+    [Win32Export("AttachConsole", "FreeConsole")] public static int ReturnFalseU(uint _) { SetLastError(ERROR_CALL_NOT_IMPLEMENTED); return FALSE; }
+    [Win32Export("AllocConsole")] public static int ReturnFalse0() { SetLastError(ERROR_CALL_NOT_IMPLEMENTED); return FALSE; }
+    [Win32Export("GetConsoleWindow")] public static nint ReturnNull0() => 0;
+    [Win32Export("UnregisterApplicationRecoveryCallback", "UnregisterApplicationRestart")] public static int ReturnSOk0() => S_OK;
+    [Win32Export("GetCurrentPackageFullName", "GetCurrentPackageId", "GetCurrentPackageFamilyName")] public static int GetCurrentPackageFullName(uint* length, char* name) { if (length != null) *length = 0; return 15700; }   // APPMODEL_ERROR_NO_PACKAGE
+    [Win32Export("RegisterApplicationRecoveryCallback")] public static int RegisterApplicationRecoveryCallback(void* cb, void* p, uint ping, uint flags) => S_OK;
+    [Win32Export("RegisterApplicationRestart")] public static int RegisterApplicationRestart(char* cmd, uint flags) => S_OK;
+    [Win32Export("ApplicationRecoveryInProgress")] public static int ApplicationRecoveryInProgress(int* cancelled) { *cancelled = FALSE; return S_OK; }
+    [Win32Export("ApplicationRecoveryFinished")] public static void ApplicationRecoveryFinished(int success) { }
 
     // Activation contexts select comctl32 v6 (visual styles) for the code between Activate and
     // Deactivate. There is one comctl32 here, so they are accepted and do nothing.
-    [UnmanagedCallersOnly] private static nint CreateActCtx(void* actctx) => NewHandle(new object());
-    [UnmanagedCallersOnly] private static int ActivateActCtx(nint ctx, nuint* cookie) { if (cookie != null) *cookie = 1; return TRUE; }
-    [UnmanagedCallersOnly] private static int DeactivateActCtx(uint flags, nuint cookie) => TRUE;
-    [UnmanagedCallersOnly] private static void ReleaseActCtx(nint ctx) => s_handles.TryRemove(ctx, out _);
+    [Win32Export("CreateActCtxW", "CreateActCtx", "CreateActCtxA")] public static nint CreateActCtx(void* actctx) => NewHandle(new object());
+    [Win32Export("ActivateActCtx")] public static int ActivateActCtx(nint ctx, nuint* cookie) { if (cookie != null) *cookie = 1; return TRUE; }
+    [Win32Export("DeactivateActCtx")] public static int DeactivateActCtx(uint flags, nuint cookie) => TRUE;
+    [Win32Export("ReleaseActCtx")] public static void ReleaseActCtx(nint ctx) => s_handles.TryRemove(ctx, out _);
 }

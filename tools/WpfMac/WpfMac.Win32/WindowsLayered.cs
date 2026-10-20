@@ -14,8 +14,8 @@ namespace WpfMac.Win32;
 
 public static unsafe partial class Exports
 {
-    [UnmanagedCallersOnly]
-    private static int WinUpdateLayeredWindow(nint hwnd, nint hdcDst, POINT* pptDst, int* psize, nint hdcSrc, POINT* pptSrc, uint key, void* blend, uint flags)
+    [Win32ExportOnWindows(A0, "UpdateLayeredWindow")]
+    public static int WinUpdateLayeredWindow(nint hwnd, nint hdcDst, POINT* pptDst, int* psize, nint hdcSrc, POINT* pptSrc, uint key, void* blend, uint flags)
     {
         const uint ULW_COLORKEY = 1, ULW_ALPHA = 2;
         object? o = Resolve(hwnd);

@@ -1,12 +1,11 @@
 <Project Sdk="WpfWebGpu.Sdk">
 
   <!--
-    Managed implementations of Windows API functions, for libwin32shim on macOS.
-
-    The bootstrap loads this assembly by name and calls Exports.RegisterAll, which points each
-    implemented export's slot in libwin32shim at an [UnmanagedCallersOnly] method here. Built with the
-    WebGPU SDK because the window functions are implemented against the stack's own windows: a WPF
-    Window behind its HwndSource, a WinForms Control behind its handle.
+    Managed implementations of Windows API functions, which an app's Windows P/Invokes reach rewritten
+    (WpfMac.ComRewrite's P/Invoke rewriter, Documentation/pinvoke-rewriter.md): each [Win32Export]
+    method here is called directly by every P/Invoke of a function it names. Built with the WebGPU SDK
+    because the window functions are implemented against the stack's own windows: a WPF Window behind
+    its HwndSource, a WinForms Control behind its handle.
 
     Generic: nothing here knows about any particular app. Semantics follow the Windows documentation;
     where macOS has the answer (screen geometry, cursor position, key state, memory) it is the real
@@ -32,6 +31,24 @@
   <Target Name="WpfMacNoNativeBackend" BeforeTargets="AssignTargetPaths">
     <ItemGroup>
       <None Remove="@(None)" Condition="$([System.String]::new('%(FullPath)').Contains('/native/')) or $([System.String]::new('%(FullPath)').Contains('\native\'))" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Every Windows export (module, name, failure value), generated from the Windows API metadata by
+       win32shim-gen and embedded: what the P/Invoke rewriter reads (from this assembly's metadata) to know
+       every Windows function, and what LoadLibrary and GetModuleHandle here know as Windows DLLs. -->
+  <Target Name="WpfMacWin32ExportTable" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <_Win32GenDir>$(MSBuildThisFileDirectory)../WpfMac.Win32Native/</_Win32GenDir>
+      <_Win32GenOut>$(ProjectDir)$(IntermediateOutputPath)win32gen/</_Win32GenOut>
+    </PropertyGroup>
+    <MSBuild Projects="$(_Win32GenDir)WpfMac.Win32Native.Generator.csproj" Targets="Build" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_Win32Gen" />
+    </MSBuild>
+    <Exec Condition="!Exists('$(_Win32GenOut)win32_exports.tsv') or $([System.IO.File]::GetLastWriteTime('$(_Win32GenDir)Generator.cs').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_Win32GenOut)win32_exports.tsv').Ticks) or $([System.IO.File]::GetLastWriteTime('$(_Win32GenDir)extra-exports.txt').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_Win32GenOut)win32_exports.tsv').Ticks)"
+          Command="dotnet &quot;@(_Win32Gen)&quot; &quot;$(_Win32GenOut)&quot; &quot;&quot; &quot;$(_Win32GenDir)extra-exports.txt&quot;" StandardOutputImportance="low" />
+    <ItemGroup>
+      <EmbeddedResource Include="$(_Win32GenOut)win32_exports.tsv" LogicalName="win32_exports.tsv" />
     </ItemGroup>
   </Target>
 

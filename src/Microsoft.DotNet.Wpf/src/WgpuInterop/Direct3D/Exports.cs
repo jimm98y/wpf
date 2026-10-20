@@ -3,8 +3,8 @@
 
 //
 // The exports of the d3d11 / dxgi shim (Documentation/d3d11-webgpu-shim.md, section 1): what an app's
-// [DllImport("d3d11.dll")] reaches through the launcher's export images (Windows) or libwin32shim
-// (elsewhere). The launcher finds Register by name and points the exports at these functions.
+// [DllImport("d3d11.dll")] reaches, rewritten by wpfmac's P/Invoke rewriter (Documentation/
+// pinvoke-rewriter.md) into a call of the method tagged with its name.
 //
 
 using System;
@@ -12,6 +12,23 @@ using System.Runtime.InteropServices;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 {
+    /// <summary>The exports a method implements, for the P/Invoke rewriter (Documentation/pinvoke-rewriter.md;
+    /// matched by name, as WpfMac.Win32's).</summary>
+    [AttributeUsage(AttributeTargets.Method, AllowMultiple = true, Inherited = false)]
+    internal sealed class Win32ExportAttribute : Attribute
+    {
+        public Win32ExportAttribute(params string[] names) => Names = names;
+        public string[] Names { get; }
+    }
+
+    [AttributeUsage(AttributeTargets.Method, AllowMultiple = true, Inherited = false)]
+    internal sealed class Win32ExportOnWindowsAttribute : Attribute
+    {
+        public Win32ExportOnWindowsAttribute(int mask, params string[] names) { Mask = mask; Names = names; }
+        public int Mask { get; }
+        public string[] Names { get; }
+    }
+
     internal static class Win32Events
     {
         [DllImport("kernel32", EntryPoint = "SetEvent", ExactSpelling = true)]
@@ -23,38 +40,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (handle == IntPtr.Zero) return;
             if (OperatingSystem.IsWindows()) SetEventNative(handle);
-            else s_setEvent?.Invoke(handle);
+            else (s_setEvent ??= AppContext.GetData("WpfMac.SetEvent") as Action<IntPtr>)?.Invoke(handle);
         }
 
-        internal static Action<IntPtr>? s_setEvent;
+        /// <summary>The Win32 shim's SetEvent (WpfMac.Win32 publishes it).</summary>
+        private static Action<IntPtr>? s_setEvent;
     }
 
-    internal static unsafe class Exports
+    public static unsafe class Exports
     {
+        // Every call, on Windows too (the user's decision, 2026-10-19: one implementation everywhere).
+        private const int Always = 1 << 15;
+
         private const int D3D11_SDK_VERSION = 7;
         private const uint D3D11_CREATE_DEVICE_DEBUG = 0x2;
 
-        /// <summary>For the launcher: registers every export it can route here. <paramref name="add"/>
-        /// takes (module, export name, function pointer).</summary>
-        public static int Register(Action<string, string, IntPtr> add, Action<string, string>? logOnce)
-        {
-            if (logOnce != null) D3DLog.LogOnce = logOnce;
-            add("d3d11", "D3D11CreateDevice", (IntPtr)(delegate* unmanaged<IntPtr, uint, IntPtr, uint, uint*, uint, uint, IntPtr*, uint*, IntPtr*, int>)&D3D11CreateDevice);
-            add("dxgi", "CreateDXGIFactory", (IntPtr)(delegate* unmanaged<Guid*, IntPtr*, int>)&CreateDXGIFactory);
-            add("dxgi", "CreateDXGIFactory1", (IntPtr)(delegate* unmanaged<Guid*, IntPtr*, int>)&CreateDXGIFactory1);
-            add("dxgi", "CreateDXGIFactory2", (IntPtr)(delegate* unmanaged<uint, Guid*, IntPtr*, int>)&CreateDXGIFactory2);
-            add("dxgi", "DXGIGetDebugInterface1", (IntPtr)(delegate* unmanaged<uint, Guid*, IntPtr*, int>)&DXGIGetDebugInterface1);
-            add("d3d9", "Direct3DCreate9Ex", (IntPtr)(delegate* unmanaged<uint, IntPtr*, int>)&Direct3DCreate9Ex);
-            add("d3d9", "Direct3DCreate9", (IntPtr)(delegate* unmanaged<uint, IntPtr>)&Direct3DCreate9);
-            // d3dcompiler_47: ours on every OS, Windows too (the user's decision, 2026-10-19: one
-            // implementation everywhere). Reflection is managed, over the blob's own chunks; run-time
-            // HLSL compilation is not there yet (section 9), and answers E_FAIL with one line saying so.
-            add("d3dcompiler_47", "D3DCompile", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompile);
-            add("d3dcompiler_47", "D3DCompile2", (IntPtr)(delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, uint, void*, nuint, IntPtr*, IntPtr*, int>)&D3DCompile2);
-            add("d3dcompiler_47", "D3DCompileFromFile", (IntPtr)(delegate* unmanaged<char*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int>)&D3DCompileFromFile);
-            add("d3dcompiler_47", "D3DReflect", (IntPtr)(delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int>)&D3DReflect);
-            return 11;
-        }
+        // d3dcompiler_47: ours on every OS, Windows too (the user's decision, 2026-10-19: one
+        // implementation everywhere). Reflection is managed, over the blob's own chunks; run-time
+        // HLSL compilation is not there yet (section 9), and answers E_FAIL with one line saying so.
 
         private static int NoCompiler(byte* entry, byte* target, IntPtr* code, IntPtr* errors)
         {
@@ -65,44 +68,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return unchecked((int)0x80004005);
         }
 
-        [UnmanagedCallersOnly]
-        private static int D3DCompile(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
+        [Win32Export("D3DCompile")] [Win32ExportOnWindows(Always, "D3DCompile")]
+        public static int D3DCompile(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
             => NoCompiler(entry, target, code, errors);
 
-        [UnmanagedCallersOnly]
-        private static int D3DCompile2(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, uint secondaryFlags, void* secondary, nuint secondarySize, IntPtr* code, IntPtr* errors)
+        [Win32Export("D3DCompile2")] [Win32ExportOnWindows(Always, "D3DCompile2")]
+        public static int D3DCompile2(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, uint secondaryFlags, void* secondary, nuint secondarySize, IntPtr* code, IntPtr* errors)
             => NoCompiler(entry, target, code, errors);
 
-        [UnmanagedCallersOnly]
-        private static int D3DCompileFromFile(char* file, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
+        [Win32Export("D3DCompileFromFile")] [Win32ExportOnWindows(Always, "D3DCompileFromFile")]
+        public static int D3DCompileFromFile(char* file, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
             => NoCompiler(entry, target, code, errors);
 
-        [UnmanagedCallersOnly]
-        private static int D3DReflect(void* src, nuint size, Guid* iid, IntPtr* reflector)
+        [Win32Export("D3DReflect")] [Win32ExportOnWindows(Always, "D3DReflect")]
+        public static int D3DReflect(void* src, nuint size, Guid* iid, IntPtr* reflector)
         {
             try { return D3DShaderReflection.Reflect(src, size, iid, reflector); }
             catch (Exception e) { D3DLog.Error("D3DReflect", e); if (reflector != null) *reflector = IntPtr.Zero; return HResult.E_FAIL; }
         }
 
-        internal static delegate* unmanaged<void*, nuint, Guid*, IntPtr*, int> ReflectPointer => &D3DReflect;
-        internal static delegate* unmanaged<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int> CompilePointer => &D3DCompile;
+        internal static delegate*<void*, nuint, Guid*, IntPtr*, int> ReflectPointer => &D3DReflect;
+        internal static delegate*<void*, nuint, byte*, void*, void*, byte*, byte*, uint, uint, IntPtr*, IntPtr*, int> CompilePointer => &D3DCompile;
 
         /// <summary>The managed entry point, for callers in this process (tests): the same function
         /// the export reaches.</summary>
-        internal static delegate* unmanaged<IntPtr, uint, IntPtr, uint, uint*, uint, uint, IntPtr*, uint*, IntPtr*, int> CreateDevicePointer => &D3D11CreateDevice;
-        internal static delegate* unmanaged<Guid*, IntPtr*, int> CreateFactory1Pointer => &CreateDXGIFactory1;
-        internal static delegate* unmanaged<uint, IntPtr*, int> Create9ExPointer => &Direct3DCreate9Ex;
+        internal static delegate*<IntPtr, uint, IntPtr, uint, uint*, uint, uint, IntPtr*, uint*, IntPtr*, int> CreateDevicePointer => &D3D11CreateDevice;
+        internal static delegate*<Guid*, IntPtr*, int> CreateFactory1Pointer => &CreateDXGIFactory1;
+        internal static delegate*<uint, IntPtr*, int> Create9ExPointer => &Direct3DCreate9Ex;
 
-        [UnmanagedCallersOnly]
-        private static int Direct3DCreate9Ex(uint sdk, IntPtr* d3d)
+        [Win32Export("Direct3DCreate9Ex")] [Win32ExportOnWindows(Always, "Direct3DCreate9Ex")]
+        public static int Direct3DCreate9Ex(uint sdk, IntPtr* d3d)
         {
             if (d3d == null) return D3D9Const.D3DERR_INVALIDCALL;
             try { *d3d = Direct3D9.Create(ex: true).Pointer; return HResult.S_OK; }
             catch (Exception e) { D3DLog.Error("Direct3DCreate9Ex", e); *d3d = IntPtr.Zero; return D3D9Const.D3DERR_NOTAVAILABLE; }
         }
 
-        [UnmanagedCallersOnly]
-        private static IntPtr Direct3DCreate9(uint sdk)
+        [Win32Export("Direct3DCreate9")] [Win32ExportOnWindows(Always, "Direct3DCreate9")]
+        public static IntPtr Direct3DCreate9(uint sdk)
         {
             try { return Direct3D9.Create(ex: false).Pointer; }
             catch (Exception e) { D3DLog.Error("Direct3DCreate9", e); return IntPtr.Zero; }
@@ -110,8 +113,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private static readonly D3D_FEATURE_LEVEL[] s_defaultLevels = { D3D_FEATURE_LEVEL.L11_0, D3D_FEATURE_LEVEL.L10_1, D3D_FEATURE_LEVEL.L10_0, D3D_FEATURE_LEVEL.L9_3, D3D_FEATURE_LEVEL.L9_2, D3D_FEATURE_LEVEL.L9_1 };
 
-        [UnmanagedCallersOnly]
-        private static int D3D11CreateDevice(IntPtr adapter, uint driverType, IntPtr software, uint flags, uint* levels, uint levelCount, uint sdk, IntPtr* device, uint* level, IntPtr* context)
+        [Win32Export("D3D11CreateDevice")] [Win32ExportOnWindows(Always, "D3D11CreateDevice")]
+        public static int D3D11CreateDevice(IntPtr adapter, uint driverType, IntPtr software, uint flags, uint* levels, uint levelCount, uint sdk, IntPtr* device, uint* level, IntPtr* context)
         {
             if (device != null) *device = IntPtr.Zero;
             if (context != null) *context = IntPtr.Zero;
@@ -162,12 +165,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             catch (Exception e) { D3DLog.Error("CreateDXGIFactory", e); return HResult.E_FAIL; }
         }
 
-        [UnmanagedCallersOnly] private static int CreateDXGIFactory(Guid* riid, IntPtr* pp) => Factory(riid, pp);
-        [UnmanagedCallersOnly] private static int CreateDXGIFactory1(Guid* riid, IntPtr* pp) => Factory(riid, pp);
-        [UnmanagedCallersOnly] private static int CreateDXGIFactory2(uint flags, Guid* riid, IntPtr* pp) => Factory(riid, pp);
+        [Win32Export("CreateDXGIFactory")] [Win32ExportOnWindows(Always, "CreateDXGIFactory")] public static int CreateDXGIFactory(Guid* riid, IntPtr* pp) => Factory(riid, pp);
+        [Win32Export("CreateDXGIFactory1")] [Win32ExportOnWindows(Always, "CreateDXGIFactory1")] public static int CreateDXGIFactory1(Guid* riid, IntPtr* pp) => Factory(riid, pp);
+        [Win32Export("CreateDXGIFactory2")] [Win32ExportOnWindows(Always, "CreateDXGIFactory2")] public static int CreateDXGIFactory2(uint flags, Guid* riid, IntPtr* pp) => Factory(riid, pp);
 
-        [UnmanagedCallersOnly]
-        private static int DXGIGetDebugInterface1(uint flags, Guid* riid, IntPtr* pp)
+        [Win32Export("DXGIGetDebugInterface1")] [Win32ExportOnWindows(Always, "DXGIGetDebugInterface1")]
+        public static int DXGIGetDebugInterface1(uint flags, Guid* riid, IntPtr* pp)
         {
             if (pp != null) *pp = IntPtr.Zero;
             return HResult.E_NOINTERFACE;              // as on a machine without the graphics tools
