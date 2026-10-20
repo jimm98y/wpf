@@ -81,8 +81,6 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - An entry leaves the list in its own commit once its gate passes.
      - `WPF_COMIMPORT_FORCE` overrides it.
      - Now listed:
-       - Telerik.Windows.Controls.FileDialogs: a Telerik file dialog opened and cancelled (GraphWorX
-         File > Open);
        - Telerik.Windows.Controls: GraphWorX and Workbench smoke runs with it rewritten, and a Telerik
          dialog;
        - MediaFoundation (MF.Net) and Telerik.Windows.MediaFoundation: a GraphWorX display playing a
@@ -113,6 +111,12 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
          COM: `Window.ShowDialog` -> HwndSource -> `CreateWindowEx` "Invalid window handle", from Telerik's
          chromeless window host. That is a WPF-over-WinForms owner bug of the port, not the rewriter.
          FileDialogs stays held until that is fixed and the dialog has been opened.
+       - **Telerik.Windows.Controls.FileDialogs: gated and released (2026-10-20).** The owner bug was
+         fixed (ca27b227e: a WPF window owned by a WinForms driver handle is owned by the form's
+         native host window). Then, in GraphWorX with FileDialogs rewritten (04:27, after a fresh
+         IcoFwxServer restart), Telerik's RadOpenFileDialog opened over C:\Windows\Media, browsed
+         its folder tree, and was cancelled. No exceptions beyond GraphWorX's usual ones and the
+         tree's access-denied probes of protected folders; no settings change.
    - Cost for GraphWorX (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
