@@ -40,20 +40,25 @@ public static partial class ComRewriter
         /// <summary>I.ComCcw for <paramref name="iface"/>, whose methods (declaration order) start at slot
         /// <paramref name="first"/>.</summary>
         private void EmitCcw(TypeDefinition iface, int first, List<MethodDefinition> methods)
+            => EmitCcw(iface, iface, iface, first, methods.Select(m => (m, (MethodReference)m)).ToList());
+
+        /// <summary>The CCW of <paramref name="iface"/>, nested in <paramref name="nestIn"/> (a BCL interface's in its
+        /// generated ComImpl); each stub classifies by the first of the pair and calls the second.</summary>
+        private TypeDefinition EmitCcw(TypeReference iface, TypeDefinition nestIn, TypeDefinition key, int first, List<(MethodDefinition Decl, MethodReference Call)> methods)
         {
             ImportCcw();
             var ccw = new TypeDefinition("", "ComCcw", TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, _object);
-            iface.NestedTypes.Add(ccw);
+            nestIn.NestedTypes.Add(ccw);
             var refused = new List<string>();
             var stubs = new List<MethodDefinition>();
-            foreach (var md in methods)
+            foreach (var (md, call) in methods)
             {
-                var stub = Stub(iface, md, out string? why);
+                var stub = Stub(iface, md, out string? why, call);
                 if (why != null) refused.Add($"{md.Name}: {why}");
                 ccw.Methods.Add(stub);
                 stubs.Add(stub);
             }
-            _ccwRefused[iface] = refused;
+            _ccwRefused[key] = refused;
 
             // static IntPtr Vtable(): made once
             var field = new FieldDefinition("s_vtable", FieldAttributes.Private | FieldAttributes.Static, _intPtr);
@@ -84,11 +89,12 @@ public static partial class ComRewriter
             il.Emit(OpCodes.Stsfld, field);
             il.Append(done);
             il.Emit(OpCodes.Ret);
+            return ccw;
         }
 
         /// <summary>The stub for <paramref name="md"/>: native arguments in, I's method called, HRESULT out.
         /// <paramref name="why"/>: what it could not convert (the stub then returns E_NOTIMPL).</summary>
-        private MethodDefinition Stub(TypeDefinition iface, MethodDefinition md, out string? why)
+        private MethodDefinition Stub(TypeReference iface, MethodDefinition md, out string? why, MethodReference? call = null)
         {
             why = null;
             bool preserve = md.IsPreserveSig;
@@ -106,7 +112,7 @@ public static partial class ComRewriter
             if (why == null && !isVoid)
             {
                 ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
-                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant || (preserve && ret.Kind == Kind.Variant))
+                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant or Kind.FormattedClass or Kind.StructByValue or Kind.Enumerable || (preserve && ret.Kind == Kind.Variant))
                     why = $"return {w ?? md.ReturnType.Name}";
             }
 
@@ -162,17 +168,25 @@ public static partial class ComRewriter
                     case Kind.LPStructBlit:
                         loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldobj, a.Iface!); });
                         break;
+                    case Kind.StructByValue:
+                        loads.Add(() =>
+                        {
+                            il.Emit(OpCodes.Ldarga, stub.Parameters[n]); il.Emit(OpCodes.Conv_U);
+                            il.Emit(OpCodes.Ldc_I4, ShadowSize(a.Native)); il.Emit(OpCodes.Ldtoken, a.Iface!);
+                            il.Emit(OpCodes.Call, _structFromShadow); il.Emit(OpCodes.Unbox_Any, a.Iface!);
+                        });
+                        break;
                     case Kind.BlitArray: case Kind.StructArray: case Kind.ElemArray:
                     {
                         // the length: SizeParamIndex's argument (+ SizeConst), or SizeConst
-                        var t = prm.ParameterType;
+                        var t = StripMods(prm.ParameterType);
                         var len = Local(stub, _int32);
                         if (a.SizeParam >= 0)
                         {
                             il.Emit(OpCodes.Ldarg, a.SizeParam + 1); il.Emit(OpCodes.Conv_I4);
                             if (a.SizeConst > 0) { il.Emit(OpCodes.Ldc_I4, a.SizeConst); il.Emit(OpCodes.Add); }
                         }
-                        else il.Emit(OpCodes.Ldc_I4, a.SizeConst);
+                        else il.Emit(OpCodes.Ldc_I4, a.SizeConst >= 0 ? a.SizeConst : 1);
                         il.Emit(OpCodes.Stloc, len);
                         var l = Local(stub, t);
                         il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldloc, len);
@@ -231,13 +245,13 @@ public static partial class ComRewriter
                     }
                     case Kind.SafeArray:
                     {
-                        var t = prm.ParameterType;
+                        var t = StripMods(prm.ParameterType);
                         loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _fromSafeArray); il.Emit(OpCodes.Castclass, t); });
                         break;
                     }
                     case Kind.RefSafeArray:
                     {
-                        var elem = ((ByReferenceType)prm.ParameterType).ElementType;
+                        var elem = ((ByReferenceType)StripMods(prm.ParameterType)).ElementType;
                         var l = Local(stub, elem);
                         if (!outOnly) { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldind_I); il.Emit(OpCodes.Ldtoken, elem); il.Emit(OpCodes.Call, _fromSafeArray); il.Emit(OpCodes.Castclass, elem); il.Emit(OpCodes.Stloc, l); }
                         loads.Add(() => il.Emit(OpCodes.Ldloca, l));
@@ -255,7 +269,7 @@ public static partial class ComRewriter
                     }
                     case Kind.OutIface:
                     {
-                        var elem = ((ByReferenceType)prm.ParameterType).ElementType;
+                        var elem = ((ByReferenceType)StripMods(prm.ParameterType)).ElementType;
                         var l = Local(stub, elem);
                         if (!outOnly) { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldind_I); il.Emit(OpCodes.Call, _wrap!); if (a.Iface != null) il.Emit(OpCodes.Castclass, a.Iface); il.Emit(OpCodes.Stloc, l); }
                         loads.Add(() => il.Emit(OpCodes.Ldloca, l));
@@ -323,7 +337,7 @@ public static partial class ComRewriter
             }
             il.Emit(OpCodes.Ldloc, target);
             foreach (var l in loads) l();
-            il.Emit(OpCodes.Callvirt, md);
+            il.Emit(OpCodes.Callvirt, call ?? md);
             if (ret != null)
             {
                 var managed = Local(stub, md.ReturnType);
@@ -377,6 +391,8 @@ public static partial class ComRewriter
             });
             return stub;
         }
+
+        private int ShadowSize(TypeReference shadow) => _shadowSizes.TryGetValue(shadow, out int n) ? n : 0;
 
         private static string ReverseWhyOf(Kind k) => k switch
         {

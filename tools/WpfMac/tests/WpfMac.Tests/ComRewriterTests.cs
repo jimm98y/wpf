@@ -170,7 +170,7 @@ public sealed unsafe class ComRewriterTests
 
     /// <summary>A native stream or enumerator: { vtable, refs, length, position } (Obj's first fields).</summary>
     [StructLayout(LayoutKind.Sequential)]
-    private struct Cursor { public IntPtr* Vtbl; public int Refs; public int Len; public int Pos; }
+    private struct Cursor { public IntPtr* Vtbl; public int Refs; public int Len; public int Pos; public int Value0() => 0; }
 
     /// <summary>STATSTG as native code lays it out.</summary>
     [StructLayout(LayoutKind.Sequential)]
@@ -773,6 +773,252 @@ public sealed unsafe class ComRewriterTests
         finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_carrVt[2])(o); }
     }
 
+    // ---- shapes: IShapes, native -------------------------------------------------------------------
+
+    private static readonly Guid IID_IShapes = new("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A11");
+    private static readonly IntPtr* s_shapesVt = BuildShapes();
+
+    [StructLayout(LayoutKind.Sequential)] private struct NThumb { public fixed byte Key[16]; }
+    [StructLayout(LayoutKind.Sequential)] private struct NNamed { public IntPtr S; public int N; }
+    [StructLayout(LayoutKind.Sequential)] private struct NHolder { public IntPtr O; public int N; }
+
+    private static IntPtr* BuildShapes()
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed(14, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&ShapesQueryInterface;
+        vt[11] = (IntPtr)(delegate* unmanaged<Obj*, int*, Guid**, int>)&ShapesModes;
+        vt[12] = (IntPtr)(delegate* unmanaged<Obj*, int*>)&ShapesPeek;
+        vt[13] = (IntPtr)(delegate* unmanaged<Obj*, int*, int>)&ShapesFetch;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, NThumb, int>)&ShapesThumb;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, NNamed, int>)&ShapesNamed;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, int, NNamed*, int>)&ShapesMake;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, int**, int>)&ShapesGrow;
+        vt[7] = (IntPtr)(delegate* unmanaged<Obj*, char**, int>)&ShapesIcon;
+        vt[8] = (IntPtr)(delegate* unmanaged<Obj*, NHolder*, int>)&ShapesHold;
+        vt[9] = (IntPtr)(delegate* unmanaged<IntPtr, int>)&NotImpl;
+        vt[10] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, IntPtr*, int>)&ShapesUseSink;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int ShapesQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        if (*iid == IID_IUnknown || *iid == IID_IShapes) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    [UnmanagedCallersOnly]
+    private static int ShapesModes(Obj* self, int* n, Guid** modes)
+    {
+        *n = 2;
+        *modes = (Guid*)Marshal.AllocCoTaskMem(2 * sizeof(Guid));
+        (*modes)[0] = new Guid("00000001-0000-0000-0000-000000000000");
+        (*modes)[1] = new Guid("00000007-0000-0000-0000-000000000000");
+        return 0;
+    }
+
+    private static readonly int* s_peek = Peeked();
+    private static int* Peeked() { var p = (int*)NativeMemory.Alloc(8); p[0] = 7; p[1] = 8; return p; }
+    [UnmanagedCallersOnly] private static int* ShapesPeek(Obj* self) => s_peek;
+    [UnmanagedCallersOnly] private static int ShapesFetch(Obj* self, int* box) { box[0] = 5; box[1] = 6; return 0; }
+
+    [UnmanagedCallersOnly] private static int ShapesThumb(Obj* self, NThumb t) { int s = 0; for (int i = 0; i < 16; i++) s += t.Key[i]; return s; }
+    [UnmanagedCallersOnly] private static int ShapesNamed(Obj* self, NNamed n) => Marshal.PtrToStringUni(n.S)!.Length * 100 + n.N;
+    [UnmanagedCallersOnly] private static int ShapesMake(Obj* self, int n, NNamed* r) { r->S = Marshal.StringToCoTaskMemUni("made" + n); r->N = n; return 0; }
+    [UnmanagedCallersOnly] private static int ShapesGrow(Obj* self, int** box) { (*box)[0] *= 10; (*box)[1] = 99; return 0; }
+
+    /// <summary>char**: the callee writes into the buffer it points at.</summary>
+    [UnmanagedCallersOnly]
+    private static int ShapesIcon(Obj* self, char** s)
+    {
+        string v = "ico:" + new string(*s);
+        for (int i = 0; i < v.Length; i++) (*s)[i] = v[i];
+        (*s)[v.Length] = '\0';
+        return 0;
+    }
+
+    /// <summary>A struct with an interface: its Value, then the interface replaced by a native one (the old released).</summary>
+    [UnmanagedCallersOnly]
+    private static int ShapesHold(Obj* self, NHolder* h)
+    {
+        int v = ((delegate* unmanaged<IntPtr, int>)(*(IntPtr**)h->O)[3])(h->O);
+        ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)h->O)[2])(h->O);
+        h->O = (IntPtr)New(s_otherVt, 5);
+        h->N = 9;
+        return v;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int ShapesUseSink(Obj* self, IntPtr sink, IntPtr* r)
+    {
+        IntPtr* vt = *(IntPtr**)sink;
+        NThumb t;
+        for (int i = 0; i < 16; i++) t.Key[i] = 2;
+        int a = ((delegate* unmanaged<IntPtr, NThumb, int>)vt[3])(sink, t);
+        var n = new NNamed { S = Marshal.StringToCoTaskMemUni("abc"), N = 7 };
+        int b = ((delegate* unmanaged<IntPtr, NNamed, int>)vt[4])(sink, n);
+        Marshal.FreeCoTaskMem(n.S);
+        *r = Marshal.StringToBSTR($"{a}|{b}");
+        return 0;
+    }
+
+    private static T WithShapes<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_shapesVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_shapesVt[2])(o); }
+    }
+
+    // ---- IData: a native IDataObject, IEnumFORMATETC, IEnumVARIANT, an IDispatch enumerable ----------
+
+    private static readonly Dictionary<IntPtr, Guid> s_iids = new();
+    private static readonly IntPtr* s_dataVt = BuildData();
+    private static readonly IntPtr* s_dataObjVt = BuildDataObj();
+    private static readonly IntPtr* s_fmtEnumVt = BuildFmtEnum();
+    private static readonly IntPtr* s_varEnumVt = BuildVarEnum();
+    private static readonly IntPtr* s_newEnumVt = BuildNewEnum();
+
+    [StructLayout(LayoutKind.Sequential)] private struct NFormat { public short Cf; public IntPtr Ptd; public int Aspect, Lindex, Tymed; }
+    [StructLayout(LayoutKind.Sequential)] private struct NStg { public int Tymed; public IntPtr Union; public IntPtr Unk; }
+
+    private static IntPtr* Vt(int n, Guid iid)
+    {
+        var vt = (IntPtr*)NativeMemory.AllocZeroed((nuint)n, (nuint)sizeof(IntPtr));
+        vt[0] = (IntPtr)(delegate* unmanaged<Obj*, Guid*, IntPtr*, int>)&KeyedQueryInterface;
+        vt[1] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&AddRef;
+        vt[2] = (IntPtr)(delegate* unmanaged<Obj*, uint>)&Release;
+        for (int k = 3; k < n; k++) vt[k] = (IntPtr)(delegate* unmanaged<IntPtr, int>)&NotImpl;
+        lock (s_iids) s_iids[(IntPtr)vt] = iid;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int KeyedQueryInterface(Obj* self, Guid* iid, IntPtr* ppv)
+    {
+        Guid own; lock (s_iids) own = s_iids[(IntPtr)self->Vtbl];
+        if (*iid == IID_IUnknown || *iid == own) { self->Refs++; *ppv = (IntPtr)self; return 0; }
+        *ppv = IntPtr.Zero;
+        return unchecked((int)0x80004002);
+    }
+
+    private static IntPtr* BuildData()
+    {
+        var vt = Vt(7, new Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A13"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DataMake;
+        vt[4] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr, int>)&DataUse;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DataItems;
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, IntPtr*, int>)&DataItems2;
+        return vt;
+    }
+
+    private static IntPtr* BuildDataObj()
+    {
+        var vt = Vt(12, new Guid("0000010e-0000-0000-C000-000000000046"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Obj*, NFormat*, NStg*, int>)&DoGetData;
+        vt[5] = (IntPtr)(delegate* unmanaged<Obj*, NFormat*, int>)&DoQueryGetData;
+        vt[8] = (IntPtr)(delegate* unmanaged<Obj*, int, IntPtr*, int>)&DoEnumFormatEtc;
+        return vt;
+    }
+
+    private static IntPtr* BuildFmtEnum()
+    {
+        var vt = Vt(7, new Guid("00000103-0000-0000-C000-000000000046"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Cursor*, int, NFormat*, int*, int>)&FmtNext;
+        return vt;
+    }
+
+    private static IntPtr* BuildVarEnum()
+    {
+        var vt = Vt(7, new Guid("00020404-0000-0000-C000-000000000046"));
+        vt[3] = (IntPtr)(delegate* unmanaged<Cursor*, uint, WpfMac.ComInterop.ComVariant*, uint*, int>)&VarNext;
+        return vt;
+    }
+
+    private static IntPtr* BuildNewEnum()
+    {
+        var vt = Vt(7, IID_IDispatch);
+        vt[6] = (IntPtr)(delegate* unmanaged<Obj*, int, Guid*, int, ushort, WpfMac.ComInterop.ComDispParams*, WpfMac.ComInterop.ComVariant*, WpfMac.ComInterop.ComExcepInfo*, uint*, int>)&NewEnumInvoke;
+        return vt;
+    }
+
+    [UnmanagedCallersOnly] private static int DataMake(Obj* self, IntPtr* r) { *r = (IntPtr)New(s_dataObjVt, 0); return 0; }
+    [UnmanagedCallersOnly] private static int DataItems(Obj* self, IntPtr* r) { *r = (IntPtr)NewCursor(s_varEnumVt, 3, 0); return 0; }
+    [UnmanagedCallersOnly] private static int DataItems2(Obj* self, IntPtr* r) { *r = (IntPtr)New(s_newEnumVt, 0); return 0; }
+
+    [UnmanagedCallersOnly]
+    private static int DoGetData(Obj* self, NFormat* f, NStg* m)
+    {
+        if (f->Cf != 13) return unchecked((int)0x80040064);
+        *m = new NStg { Tymed = 1, Union = Marshal.StringToCoTaskMemUni("native data") };
+        return 0;
+    }
+
+    [UnmanagedCallersOnly] private static int DoQueryGetData(Obj* self, NFormat* f) => f->Cf == 13 ? 0 : unchecked((int)0x80040064);
+    [UnmanagedCallersOnly] private static int DoEnumFormatEtc(Obj* self, int dir, IntPtr* r) { *r = (IntPtr)NewCursor(s_fmtEnumVt, 1, 0); return 0; }
+
+    [UnmanagedCallersOnly]
+    private static int FmtNext(Cursor* c, int celt, NFormat* f, int* fetched)
+    {
+        int n = 0;
+        for (; n < celt && c->Pos < c->Len; n++, c->Pos++) f[n] = new NFormat { Cf = 13, Aspect = 1, Lindex = -1, Tymed = 1 };
+        if (fetched != null) *fetched = n;
+        return n == celt ? 0 : 1;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int VarNext(Cursor* c, uint celt, WpfMac.ComInterop.ComVariant* v, uint* fetched)
+    {
+        uint n = 0;
+        for (; n < celt && c->Pos < c->Len; n++) WpfMac.ComInterop.Com.ToVariant(++c->Pos + c->Value0(), (IntPtr)(&v[n]));
+        if (fetched != null) *fetched = n;
+        return n == celt ? 0 : 1;
+    }
+
+    /// <summary>IDispatch only: DISPID_NEWENUM gives an IEnumVARIANT of 4, 5.</summary>
+    [UnmanagedCallersOnly]
+    private static int NewEnumInvoke(Obj* self, int id, Guid* riid, int lcid, ushort flags, WpfMac.ComInterop.ComDispParams* dp, WpfMac.ComInterop.ComVariant* res, WpfMac.ComInterop.ComExcepInfo* ex, uint* argErr)
+    {
+        if (id != -4) return unchecked((int)0x80020003);
+        var e = NewCursor(s_varEnumVt, 5, 3);
+        *res = default;
+        res->Vt = 13;
+        res->Data1 = (IntPtr)e;
+        return 0;
+    }
+
+    /// <summary>Native code calling a managed IDataObject (the generated CCW): QueryGetData, GetData, EnumFormatEtc -> Next.</summary>
+    [UnmanagedCallersOnly]
+    private static int DataUse(Obj* self, IntPtr d)
+    {
+        IntPtr* vt = *(IntPtr**)d;
+        var f = new NFormat { Cf = 13, Aspect = 1, Lindex = -1, Tymed = 1 };
+        int q = ((delegate* unmanaged<IntPtr, NFormat*, int>)vt[5])(d, &f);
+        NStg m;
+        int hr = ((delegate* unmanaged<IntPtr, NFormat*, NStg*, int>)vt[3])(d, &f, &m);
+        if (hr != 0) return hr;
+        int len = Marshal.PtrToStringUni(m.Union)!.Length;
+        Marshal.FreeCoTaskMem(m.Union);
+        IntPtr e;
+        hr = ((delegate* unmanaged<IntPtr, int, IntPtr*, int>)vt[8])(d, 1, &e);
+        if (hr != 0) return hr;
+        var got = stackalloc NFormat[1];
+        int fetched = 0;
+        int nhr = ((delegate* unmanaged<IntPtr, int, NFormat*, int*, int>)(*(IntPtr**)e)[3])(e, 1, got, &fetched);
+        if (nhr < 0) return nhr;
+        ((delegate* unmanaged<IntPtr, uint>)(*(IntPtr**)e)[2])(e);
+        return len + 100 * fetched + (q == 0 ? 1000 : 0) + (got[0].Cf == 13 ? 10000 : 0);
+    }
+
+    private static T WithData<T>(Func<IntPtr, T> body)
+    {
+        var o = New(s_dataVt, 0);
+        try { return body((IntPtr)o); }
+        finally { GC.Collect(); GC.WaitForPendingFinalizers(); ((delegate* unmanaged<Obj*, uint>)s_dataVt[2])(o); }
+    }
+
     private static T WithStreams<T>(Func<IntPtr, T> body)
     {
         var o = New(s_streamsVt, 0);
@@ -781,6 +1027,10 @@ public sealed unsafe class ComRewriterTests
     }
 
     // ---- the rewritten fixture ------------------------------------------------------------------
+
+    /// <summary>ComUserFixture: no COM types of its own, ComImportFixture's used through an RCW it makes itself.</summary>
+    internal static string UserFixtureFile => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(FixtureFile)!, "..", "..", "..", "..", "ComUserFixture", "bin",
+        Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(FixtureFile))!)!, "net10.0", "ComUserFixture.dll"));
 
     internal static string FixtureFile => typeof(ComRewriterTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().First(a => a.Key == "ComImportFixture").Value!;
 
@@ -792,6 +1042,7 @@ public sealed unsafe class ComRewriterTests
         string file = Path.Combine(dir, "ComImportFixture.dll");
         File.Copy(FixtureFile, file);
         File.Copy(Path.Combine(Path.GetDirectoryName(FixtureFile)!, "LocationAskerFixture.dll"), Path.Combine(dir, "LocationAskerFixture.dll"));
+        File.Copy(UserFixtureFile, Path.Combine(dir, "ComUserFixture.dll"));
         if (File.Exists(Path.ChangeExtension(FixtureFile, ".pdb"))) File.Copy(Path.ChangeExtension(FixtureFile, ".pdb"), Path.ChangeExtension(file, ".pdb"));
         if (OperatingSystem.IsWindows()) File.Copy(Path.Combine(Environment.SystemDirectory, "version.dll"), Path.Combine(dir, "fixturenative.dll"));
         return file;
@@ -807,12 +1058,16 @@ public sealed unsafe class ComRewriterTests
         {
             ["ComImportFixture"] = s_original.Value,
             ["LocationAskerFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "LocationAskerFixture.dll"),
+            ["ComUserFixture"] = Path.Combine(Path.GetDirectoryName(s_original.Value)!, "ComUserFixture.dll"),
         }, new[] { AppContext.BaseDirectory }, null);
         var alc = new AssemblyLoadContext("comimport-fixture");
         loader.Install(alc);
         var asm = alc.LoadFromAssemblyName(new AssemblyName("ComImportFixture"));
+        s_user = alc.LoadFromAssemblyName(new AssemblyName("ComUserFixture")).GetType("ComUserFixture.User", throwOnError: true);
         return (asm.GetType("ComImportFixture.Scenario", throwOnError: true)!, result);
     });
+
+    private static Type? s_user;
 
     private static object? Run(string method, params object[] args)
     {
@@ -833,12 +1088,13 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(17, r.Interfaces);
+        Assert.Equal(20 + 6, r.Interfaces);     // 20 of the fixture's, 6 generated BCL ones (IDataObject, IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker, IEnumMoniker)
+        Assert.True(r.BuiltInCannot.Any(x => x.Contains("IShapes.Paint") && x.Contains("Color")), r.ToString() + " | " + string.Join("; ", r.Unsupported) + " | " + string.Join("; ", r.BuiltInCannot));
         Assert.Equal(1, r.EventInterfaces);
         Assert.Equal(2, r.PInvokes);
         string u = Assert.Single(r.Unsupported);
         Assert.Contains("Arrays", u);
-        Assert.Equal(1, r.Delegates);
+        Assert.Equal(2, r.Delegates);
     }
 
     [Fact]
@@ -985,6 +1241,113 @@ public sealed unsafe class ComRewriterTests
         => Assert.Equal("6|0/1/4/9|s0/s1|managed|3:2/4:bb", WithCArrays(p => (string)Run("CArraysSink", p)!));
 
     [Fact]
+    public void Shapes_StructsByValue_Retvals_RefClasses_InterfaceFields()
+        // 1+..+16; a string struct by value (4*100+4); a struct retval; Box** (the same object, written in place);
+        // char** written in place; a struct's interface field used and replaced; Color refused as built-in interop does
+        => Assert.Equal("136|404|made3:3|20,99,True|ico:old|77:9:5|refused", WithShapes(p => (string)Run("ShapesAll", p)!));
+
+    [Fact]
+    public void Shapes_CalleeArrays_AndClassReturns()
+        // out T[] sized by an out parameter (the callee's CoTaskMem); a PreserveSig T*; an [out, retval] T*
+        => Assert.Equal("2:2:7|7,8|5,6", WithShapes(p => (string)Run("ShapesReturns", p)!));
+
+    [Fact]
+    public void Shapes_ByValueStructs_ToAManagedObject()
+        => Assert.Equal("32|307", WithShapes(p => (string)Run("ShapesSink", p)!));
+
+    [Fact]
+    public void GeneratedBclInterfaces_IDataObject_BothWays()
+    {
+        // a native IDataObject: QueryGetData, GetData (STGMEDIUM out), EnumFormatEtc -> a native IEnumFORMATETC
+        Assert.Equal("0|native data|1:13", WithData(p => (string)Run("DataNative", p)!));
+        // a managed IDataObject called by native code through the generated CCWs (and its IEnumFORMATETC's)
+        Assert.Equal(12 + 100 + 1000 + 10000, WithData(p => (int)Run("DataManaged", p)!));
+    }
+
+    [Fact]
+    public void IEnumerableReturns_AreIEnumVARIANT()
+        // straight from IEnumVARIANT; through IDispatch's DISPID_NEWENUM
+        => Assert.Equal("1,2,3|4,5", WithData(p => (string)Run("DataItems", p)!));
+
+    [Fact]
+    public void AGroupMember_WithoutComTypes_IsRewrittenWithThem()
+    {
+        // ComUserFixture makes its own RCW (Marshal.GetObjectForIUnknown) and casts it to ComImportFixture's
+        // ICalc: rewritten with the group, that is a ComObject; left alone, a built-in RCW (Windows) that no
+        // longer casts to the rewritten interface
+        _ = s_fixture.Value;
+        Assert.Equal(5, WithCalc(0, p => (int)s_user!.GetMethod("Add")!.Invoke(null, new object[] { p, 2, 3 })!));
+    }
+
+    [Fact]
+    public void PropVariantClearAndCopy_AsOle32()
+    {
+        // the shim's ole32/oleaut32 exports off Windows: what a PROPVARIANT owns is copied deeply and freed
+        var a = stackalloc WpfMac.ComInterop.ComVariant[1];
+        var b = stackalloc WpfMac.ComInterop.ComVariant[1];
+        IntPtr pa = (IntPtr)a, pb = (IntPtr)b;
+        string Str(WpfMac.ComInterop.ComVariant* v) => Marshal.PtrToStringUni(v->Data1)!;
+
+        // VT_LPWSTR: copied, not shared
+        *a = default; a->Vt = 31; a->Data1 = Marshal.StringToCoTaskMemUni("lpwstr");
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantCopy(pb, pa));
+        Assert.NotEqual(a->Data1, b->Data1);
+        Assert.Equal("lpwstr", Str(b));
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pa));
+        Assert.Equal(0, a->Vt);
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pb));
+
+        // VT_BSTR
+        *a = default; a->Vt = 8; a->Data1 = Marshal.StringToBSTR("bstr");
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal("bstr", Marshal.PtrToStringBSTR(b->Data1));
+        WpfMac.ComInterop.Com.PropVariantClear(pa); WpfMac.ComInterop.Com.PropVariantClear(pb);
+
+        // VT_VECTOR | VT_LPWSTR: { cElems, pElems }
+        var elems = (IntPtr*)Marshal.AllocCoTaskMem(2 * IntPtr.Size);
+        elems[0] = Marshal.StringToCoTaskMemUni("x"); elems[1] = Marshal.StringToCoTaskMemUni("yy");
+        *a = default; a->Vt = 0x1000 | 31; *(uint*)&a->Data1 = 2; a->Data2 = (IntPtr)elems;
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        var copied = (IntPtr*)b->Data2;
+        Assert.Equal(2u, *(uint*)&b->Data1);
+        Assert.Equal("yy", Marshal.PtrToStringUni(copied[1]));
+        Assert.NotEqual(elems[1], copied[1]);
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pa));
+        Assert.Equal(0, WpfMac.ComInterop.Com.PropVariantClear(pb));
+
+        // VT_UNKNOWN: a copy AddRefs, a clear Releases
+        var o = New(s_otherVt, 3);
+        *a = default; a->Vt = 13; a->Data1 = (IntPtr)o;
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal(2, o->Refs);
+        WpfMac.ComInterop.Com.PropVariantClear(pb);
+        Assert.Equal(1, o->Refs);
+        WpfMac.ComInterop.Com.PropVariantClear(pa);           // the last reference: the object is gone
+
+        // VT_BLOB: { cbSize, pBlobData }
+        var blob = (byte*)Marshal.AllocCoTaskMem(3); blob[0] = 1; blob[1] = 2; blob[2] = 3;
+        *a = default; a->Vt = 65; *(uint*)&a->Data1 = 3; a->Data2 = (IntPtr)blob;
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal(3, ((byte*)b->Data2)[2]);
+        Assert.NotEqual(a->Data2, b->Data2);
+        WpfMac.ComInterop.Com.PropVariantClear(pa); WpfMac.ComInterop.Com.PropVariantClear(pb);
+
+        // VT_ARRAY | VT_I4
+        *a = default; a->Vt = 0x2000 | 3; a->Data1 = WpfMac.ComInterop.Com.ToSafeArray(new[] { 4, 5 }, 0);
+        WpfMac.ComInterop.Com.PropVariantCopy(pb, pa);
+        Assert.Equal(new[] { 4, 5 }, (int[])WpfMac.ComInterop.Com.FromSafeArray(b->Data1, typeof(int[]).TypeHandle)!);
+        Assert.NotEqual(a->Data1, b->Data1);
+        WpfMac.ComInterop.Com.PropVariantClear(pa); WpfMac.ComInterop.Com.PropVariantClear(pb);
+
+        // VariantClear refuses what only a PROPVARIANT holds; an unknown type is left as it is
+        *a = default; a->Vt = 31;
+        Assert.Equal(unchecked((int)0x80020008), WpfMac.ComInterop.Com.VariantClear(pa));
+        *a = default; a->Vt = 0x0FFF;
+        Assert.Equal(unchecked((int)0x80020008), WpfMac.ComInterop.Com.PropVariantClear(pa));
+        Assert.Equal(0x0FFF, a->Vt);
+    }
+
+    [Fact]
     public void ComEvents_ProviderConnectionPointAndSource()
         // the client side (event interface -> tlbimp's provider -> IConnectionPointContainer/IConnectionPoint ->
         // a sink helper's IDispatch) and the server side ([ComSourceInterfaces]: its .NET events call the
@@ -1030,6 +1393,19 @@ public sealed unsafe class ComRewriterTests
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), "ole32's CreateBindCtx");
         Assert.Equal("2|True|notimpl|0|True", (string)Run("BclBindCtx")!);
+    }
+
+    [Fact]
+    public void ADelegateWithMarshalAsInterface_IsRetypedCleanly()
+        // the interface parameter becomes a pointer: its old [MarshalAs(Interface)] must not survive (Cecil wrote the
+        // original FieldMarshal row again), or GetDelegateForFunctionPointer refuses the delegate (Telerik's WMI)
+        => Assert.Equal(1000 + 21, WithCalc(21, p => (int)Run("ThroughMarshalAsDelegate", p)!));
+
+    [Fact]
+    public void ACoClass_MadeByNewOrByActivator_IsACOMObject()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "a registered COM class");
+        Assert.Equal("True|True|StringBuilder", (string)Run("CoClasses")!);
     }
 
     [Fact]
@@ -1101,7 +1477,7 @@ public sealed class ComImportStepTests
     private static System.Text.Json.Nodes.JsonObject Deps() => System.Text.Json.Nodes.JsonNode.Parse("""
         {
           "runtimeTarget": { "name": "T" },
-          "targets": { "T": { "App/1.0.0": { "runtime": { "ComImportFixture.dll": {}, "LocationAskerFixture.dll": {}, "Other.dll": {} } } } },
+          "targets": { "T": { "App/1.0.0": { "runtime": { "ComImportFixture.dll": {}, "LocationAskerFixture.dll": {}, "ComUserFixture.dll": {}, "Other.dll": {} } } } },
           "libraries": { "App/1.0.0": { "type": "package", "path": "app" } }
         }
         """)!.AsObject();
@@ -1111,6 +1487,7 @@ public sealed class ComImportStepTests
         string app = TestEnvironment.NewDirectory("comstep-app");
         File.Copy(Fixture, Path.Combine(app, "ComImportFixture.dll"));
         File.Copy(Path.Combine(Path.GetDirectoryName(Fixture)!, "LocationAskerFixture.dll"), Path.Combine(app, "LocationAskerFixture.dll"));
+        File.Copy(ComRewriterTests.UserFixtureFile, Path.Combine(app, "ComUserFixture.dll"));
         string cache = TestEnvironment.NewDirectory("comstep-cache");
         var deps = Deps();
         var notes = new List<string>();
@@ -1136,14 +1513,25 @@ public sealed class ComImportStepTests
     [ThreadStatic] private static List<string>? s_lastList;
 
     [Fact]
+    public void AnAssemblyMakingRcwsOfAGroupsTypes_IsJudgedWithTheGroup()
+    {
+        // off Windows: rewritten with ComImportFixture; on Windows: left with it (ComImportFixture is left there)
+        var (_, notes) = Apply(windows: false);
+        Assert.Contains(notes, n => n.Contains("ComUserFixture: rewritten in memory at load") && n.Contains("uses the COM types of ComImportFixture"));
+        (_, notes) = Apply(windows: true);
+        Assert.Contains(notes, n => n.Contains("ComUserFixture: left on built-in COM") && n.Contains("(left with them)"));
+    }
+
+    [Fact]
     public void OffWindows_TheSupportedPart_IsRewritten_AndLeavesTheDepsForTheLoader()
     {
         var (deps, notes) = Apply(windows: false);
         Assert.Contains(notes, n => n.Contains("ComImportFixture: rewritten in memory"));
         Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComImportFixture.dll"]);
         Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["Other.dll"]);
-        Assert.Equal(2, s_lastList!.Count);
+        Assert.Equal(3, s_lastList!.Count);       // the fixture, its group member ComUserFixture, the location asker
         Assert.Contains(s_lastList, e => e.StartsWith("ComImportFixture|") && e.EndsWith("ComImportFixture.dll"));
+        Assert.Contains(s_lastList, e => e.StartsWith("ComUserFixture|") && !e.EndsWith("|location"));
         // the helper it calls asks its callers where they are: rewritten for that (caller rewriting)
         Assert.Contains(s_lastList, e => e.StartsWith("LocationAskerFixture|"));
         Assert.Contains(notes, n => n.Contains("LocationAskerFixture: its location calls rewritten") && n.Contains("GetCallingAssembly"));

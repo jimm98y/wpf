@@ -4278,6 +4278,9 @@ namespace System.Windows
         /// <param name="ownerHandle">IntPtr of the parent window</param>
         private void SetOwnerHandle(IntPtr ownerHandle)
         {
+            // a WinForms driver handle (this stack's Control.Handle is not an OS window): the native
+            // window its form is presented in, which CreateWindowEx and GWL_HWNDPARENT accept
+            ownerHandle = ForeignOwnerWindow.Resolve(ownerHandle);
             // Note:
             // "SetWindowLong failed.  Error = 1400" appears in console when setting
             // Window.Owner to a Window hasn't been shown (chk build)

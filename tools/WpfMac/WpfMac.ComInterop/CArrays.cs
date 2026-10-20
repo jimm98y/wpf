@@ -98,7 +98,7 @@ public static unsafe partial class Com
         Type t = Type.GetTypeFromHandle(arrayType)!;
         if (p == IntPtr.Zero) return null;
         var a = Array.CreateInstance(t.GetElementType()!, Math.Max(0, n));
-        int bytes = Buffer.ByteLength(a);
+        int bytes = BlitSize(t.GetElementType()!) * a.Length;
         if (bytes > 0) fixed (byte* d = &MemoryMarshal.GetArrayDataReference(a)) Buffer.MemoryCopy((void*)p, d, bytes, bytes);
         return a;
     }
@@ -107,10 +107,14 @@ public static unsafe partial class Com
     public static void BlitArrayToNative(Array? a, IntPtr p, int n)
     {
         if (a == null || p == IntPtr.Zero) return;
-        int elem = a.Length == 0 ? 0 : Buffer.ByteLength(a) / a.Length;
+        int elem = BlitSize(a.GetType().GetElementType()!);
         int bytes = elem * Math.Min(Math.Max(0, n), a.Length);
         if (bytes > 0) fixed (byte* s = &MemoryMarshal.GetArrayDataReference(a)) Buffer.MemoryCopy(s, (void*)p, bytes, bytes);
     }
+
+    /// <summary>A blittable element's size (an enum's underlying type's; a char is UTF-16).</summary>
+    private static int BlitSize(Type e) => e.IsEnum ? BlitSize(Enum.GetUnderlyingType(e)) : e == typeof(char) ? 2 : e == typeof(bool) ? 1
+        : e.IsPrimitive ? Buffer.ByteLength(Array.CreateInstance(e, 1)) : Marshal.SizeOf(e);
 
     /// <summary>Native elements (<paramref name="n"/>) as a managed array; the buffer stays the caller's.</summary>
     public static Array? ElemArrayFromNativeN(IntPtr p, int n, int kind, RuntimeTypeHandle arrayType, bool outOnly)
@@ -153,7 +157,7 @@ public static unsafe partial class Com
         Type t = a.GetType().GetElementType()!;
         int size = Marshal.SizeOf(t);
         for (int i = 0; i < Math.Min(Math.Max(0, n), a.Length); i++)
-            if (a.GetValue(i) is { } e) Marshal.StructureToPtr(e, p + i * size, fDeleteOld: true);
+            if (a.GetValue(i) is { } e) WriteStruct(e, p + i * size, t, deleteOld: true);
     }
 
     // ---- a CCW's StringBuilder ---------------------------------------------------------------

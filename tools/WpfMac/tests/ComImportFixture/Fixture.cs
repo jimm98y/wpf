@@ -4,6 +4,8 @@ using System;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ComUserFixture")]
+
 namespace ComImportFixture
 {
     [StructLayout(LayoutKind.Sequential)]
@@ -65,6 +67,10 @@ namespace ComImportFixture
     /// <summary>A call through a function pointer read from the vtable, as Ab3d.DXEngine.Wpf calls D3D9.</summary>
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate int GetOtherFn(ICalc self, out IOther other);
+
+    /// <summary>A delegate whose interface parameter says [MarshalAs(Interface)], as WMI's BlessIWbemServices does.</summary>
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    internal delegate int ValueOfFn(IntPtr self, [MarshalAs(UnmanagedType.Interface)] IOther other, out int r);
 
     /// <summary>IBindCtx, declared by the app (Windows' ole32 makes one).</summary>
     [ComImport, Guid("0000000e-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -328,6 +334,90 @@ namespace ComImportFixture
         public int Tags(Tag[] t, int n) { int s = 0; for (int i = 0; i < t.Length; i++) { s += t[i].N; t[i].N *= 2; } return s; }
     }
 
+    // ---- structs by value (shadows), struct retvals, ref classes, interface fields ----
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ThumbId { [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)] public byte[] Key; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Named { [MarshalAs(UnmanagedType.LPWStr)] public string S; public int N; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Holder { public IOther O; public int N; }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A11"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShapes
+    {
+        [PreserveSig] int Thumb(ThumbId id);                                    // slot 3: 16 bytes by value
+        [PreserveSig] int Named2(Named n);                                     // slot 4: a struct with a string by value
+        Named Make(int n);                                                     // slot 5: a struct retval
+        void Grow(ref Box b);                                                  // slot 6: a formatted class by reference (Box**)
+        void Icon([MarshalAs(UnmanagedType.LPWStr)] ref System.Text.StringBuilder sb);   // slot 7: StringBuilder by reference (char**)
+        [PreserveSig] int Hold(ref Holder h);                                  // slot 8: a struct with an interface field
+        [PreserveSig] int Paint(System.Drawing.Color c);                       // slot 9: built-in interop refuses it too
+        string UseSink(IShapesSink sink);                                      // slot 10
+        void Modes(out int n, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] out Guid[] modes);   // slot 11: the callee's array
+        [PreserveSig] Box Peek();                                              // slot 12: a returned T* (the callee's)
+        Box Fetch();                                                           // slot 13: [out, retval] T* (the caller's buffer)
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A12"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShapesSink
+    {
+        [PreserveSig] int Take(ThumbId id);                                     // slot 3
+        [PreserveSig] int TakeNamed(Named n);                                  // slot 4
+    }
+
+    internal sealed class ManagedShapesSink : IShapesSink
+    {
+        public int Take(ThumbId id) { int s = 0; foreach (byte b in id.Key) s += b; return s; }
+        public int TakeNamed(Named n) => n.S.Length * 100 + n.N;
+    }
+
+    // ---- generated BCL interfaces (IDataObject, IEnumFORMATETC) and IEnumerable returns ----
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A13"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IData
+    {
+        System.Runtime.InteropServices.ComTypes.IDataObject Make();                          // slot 3: a native IDataObject
+        [PreserveSig] int Use(System.Runtime.InteropServices.ComTypes.IDataObject d);        // slot 4: native code calls a managed one
+        [return: MarshalAs(UnmanagedType.Interface)] System.Collections.IEnumerable Items(); // slot 5: an IEnumVARIANT
+        [return: MarshalAs(UnmanagedType.Interface)] System.Collections.IEnumerable Items2();// slot 6: IDispatch, DISPID_NEWENUM
+    }
+
+    internal sealed class ManagedData : System.Runtime.InteropServices.ComTypes.IDataObject
+    {
+        public void GetData(ref FORMATETC format, out STGMEDIUM medium)
+            => medium = new STGMEDIUM { tymed = TYMED.TYMED_HGLOBAL, unionmember = Marshal.StringToCoTaskMemUni("managed data") };
+        public void GetDataHere(ref FORMATETC format, ref STGMEDIUM medium) => throw new NotImplementedException();
+        public int QueryGetData(ref FORMATETC format) => format.cfFormat == 13 ? 0 : unchecked((int)0x80040064);
+        public int GetCanonicalFormatEtc(ref FORMATETC formatIn, out FORMATETC formatOut) { formatOut = formatIn; return 0; }
+        public void SetData(ref FORMATETC formatIn, ref STGMEDIUM medium, bool release) => throw new NotImplementedException();
+        public IEnumFORMATETC EnumFormatEtc(DATADIR direction) => new ManagedFormats();
+        public int DAdvise(ref FORMATETC pFormatetc, ADVF advf, IAdviseSink adviseSink, out int connection) { connection = 0; return unchecked((int)0x80040003); }
+        public void DUnadvise(int connection) => throw new NotImplementedException();
+        public int EnumDAdvise(out IEnumSTATDATA enumAdvise) { enumAdvise = null!; return unchecked((int)0x80040003); }
+    }
+
+    internal sealed class ManagedFormats : IEnumFORMATETC
+    {
+        private int _at;
+        public int Next(int celt, FORMATETC[] rgelt, int[] pceltFetched)
+        {
+            int n = 0;
+            if (_at == 0 && celt > 0) { rgelt[0] = new FORMATETC { cfFormat = 13, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = -1, tymed = TYMED.TYMED_HGLOBAL }; n = 1; _at = 1; }
+            if (pceltFetched != null && pceltFetched.Length > 0) pceltFetched[0] = n;
+            return n == celt ? 0 : 1;
+        }
+        public int Skip(int celt) { _at += celt; return 0; }
+        public int Reset() { _at = 0; return 0; }
+        public void Clone(out IEnumFORMATETC newEnum) => newEnum = new ManagedFormats { _at = _at };
+    }
+
+    /// <summary>A COM class (Windows' StdComponentCategoriesMgr, registered on every Windows), as tlbimp declares one.</summary>
+    [ComImport, Guid("0002E005-0000-0000-C000-000000000046")]
+    internal class ComponentCategoriesClass { }
+
     /// <summary>A managed IStream over bytes, handed to native code.</summary>
     internal sealed class ManagedStream : IStream
     {
@@ -474,6 +564,80 @@ namespace ComImportFixture
         }
         public static string CArraysSink(IntPtr p) => CArr(p).UseSink(new ManagedArrayCcwSink());
 
+        // ---- COM classes ----
+        /// <summary>A COM class made with new, and with Activator.CreateInstance(Type) as System.Management's MTAHelper
+        /// makes WbemDefPath: both are COM objects.</summary>
+        public static string CoClasses()
+        {
+            object byNew = new ComponentCategoriesClass();
+            object byActivator = Activator.CreateInstance(typeof(ComponentCategoriesClass))!;
+            object plain = Activator.CreateInstance(typeof(System.Text.StringBuilder))!;
+            return $"{Marshal.IsComObject(byNew)}|{Marshal.IsComObject(byActivator)}|{plain.GetType().Name}";
+        }
+
+        // ---- shapes ----
+        private static IShapes Shapes(IntPtr p) => (IShapes)Marshal.GetObjectForIUnknown(p);
+        public static string ShapesAll(IntPtr p)
+        {
+            var s = Shapes(p);
+            var key = new byte[16]; for (int i = 0; i < 16; i++) key[i] = (byte)(i + 1);
+            var parts = new System.Collections.Generic.List<string>();
+            parts.Add(s.Thumb(new ThumbId { Key = key }).ToString());
+            parts.Add(s.Named2(new Named { S = "four", N = 4 }).ToString());
+            var made = s.Make(3);
+            parts.Add($"{made.S}:{made.N}");
+            var box = new Box { A = 2, B = 3 };
+            var same = box;
+            s.Grow(ref box);
+            parts.Add($"{box.A},{box.B},{ReferenceEquals(box, same)}");
+            var sb = new System.Text.StringBuilder("old", 16);
+            s.Icon(ref sb);
+            parts.Add(sb.ToString());
+            var h = new Holder { O = new ManagedOther(), N = 1 };
+            int v = s.Hold(ref h);
+            parts.Add($"{v}:{h.N}:{h.O.Value()}");
+            string paint;
+            try { s.Paint(System.Drawing.Color.Red); paint = "no exception"; }
+            catch (NotSupportedException) { paint = "refused"; }
+            parts.Add(paint);
+            return string.Join("|", parts);
+        }
+        public static string ShapesSink(IntPtr p) => Shapes(p).UseSink(new ManagedShapesSink());
+        public static string ShapesReturns(IntPtr p)
+        {
+            var s = Shapes(p);
+            s.Modes(out int n, out Guid[] modes);
+            var peek = s.Peek();
+            var fetch = s.Fetch();
+            return $"{n}:{modes.Length}:{modes[1].ToByteArray()[0]}|{peek.A},{peek.B}|{fetch.A},{fetch.B}";
+        }
+
+        // ---- data ----
+        private static IData DataOf(IntPtr p) => (IData)Marshal.GetObjectForIUnknown(p);
+        public static string DataNative(IntPtr p)
+        {
+            var d = DataOf(p).Make();
+            var f = new FORMATETC { cfFormat = 13, dwAspect = DVASPECT.DVASPECT_CONTENT, lindex = -1, tymed = TYMED.TYMED_HGLOBAL };
+            int q = d.QueryGetData(ref f);
+            d.GetData(ref f, out STGMEDIUM m);
+            string s = Marshal.PtrToStringUni(m.unionmember)!;
+            Marshal.FreeCoTaskMem(m.unionmember);
+            var e = d.EnumFormatEtc(DATADIR.DATADIR_GET);
+            var arr = new FORMATETC[2];
+            var fetched = new int[1];
+            e.Next(2, arr, fetched);
+            return $"{q}|{s}|{fetched[0]}:{arr[0].cfFormat}";
+        }
+        public static int DataManaged(IntPtr p) => DataOf(p).Use(new ManagedData());
+        public static string DataItems(IntPtr p)
+        {
+            var a = new System.Collections.Generic.List<string>();
+            foreach (object o in DataOf(p).Items()) a.Add(o.ToString()!);
+            var b = new System.Collections.Generic.List<string>();
+            foreach (object o in DataOf(p).Items2()) b.Add(o.ToString()!);
+            return string.Join(",", a) + "|" + string.Join(",", b);
+        }
+
         // ---- events ----
         /// <summary>A managed event source seen as a COM object (its CCW, wrapped back): subscribed through the
         /// event interface, which goes provider -> FindConnectionPoint -> Advise(sink helper) over vtables, and
@@ -608,6 +772,21 @@ namespace ComImportFixture
         public static bool CastsToMissing(IntPtr p) => Wrap(p) is INotThere;
         public static bool SameObject(IntPtr p) => ReferenceEquals(Marshal.GetObjectForIUnknown(p), Marshal.GetObjectForIUnknown(p));
         public static int Release(IntPtr p) { var c = Wrap(p); c.Add(1, 1); return Marshal.ReleaseComObject(c); }
+
+        /// <summary>A delegate for slot 7 (ValueOf) whose interface parameter is [MarshalAs(Interface)].</summary>
+        public static int ThroughMarshalAsDelegate(IntPtr p)
+        {
+            ICalc c = Wrap(p);
+            IntPtr itf = Marshal.GetComInterfaceForObject(c, typeof(ICalc));
+            try
+            {
+                var d = Marshal.GetDelegateForFunctionPointer<ValueOfFn>(Marshal.ReadIntPtr(Marshal.ReadIntPtr(itf), 7 * IntPtr.Size));
+                c.GetOther(out IOther other);
+                int hr = d(itf, other, out int r);
+                return hr < 0 ? hr : r;
+            }
+            finally { Marshal.Release(itf); }
+        }
 
         /// <summary>DXEngine's way: the slot through GetComInterfaceForObject, the call through a delegate.</summary>
         public static int ThroughDelegate(IntPtr p)

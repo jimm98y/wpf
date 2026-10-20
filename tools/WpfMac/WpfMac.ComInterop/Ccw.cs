@@ -64,6 +64,7 @@ public static unsafe partial class Com
                 Type? ccw = i.GetNestedType("ComCcw", BindingFlags.Public | BindingFlags.NonPublic);
                 if (ccw?.GetMethod("Vtable", BindingFlags.Public | BindingFlags.Static) is { } vt) list.Add((i.GUID, (IntPtr)vt.Invoke(null, null)!));
                 else if (BclComTypes.VtableOf(i) is var bcl && bcl != IntPtr.Zero) list.Add((i.GUID, bcl));
+                else if (Generated.TryGetValue(i, out var g) && g.Ccw.GetMethod("Vtable", BindingFlags.Public | BindingFlags.Static) is { } gv) list.Add((i.GUID, (IntPtr)gv.Invoke(null, null)!));
             }
             // an event source ([ComSourceInterfaces]): IConnectionPointContainer, its connection points made on demand
             if (EventSource.SourceInterfaces(type) != null && !list.Exists(e => e.Iid == IID_IConnectionPointContainer))

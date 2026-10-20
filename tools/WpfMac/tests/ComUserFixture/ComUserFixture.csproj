@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- An app-like assembly that declares no COM types but uses ComImportFixture's and makes an RCW of its own
+       (Marshal.GetObjectForIUnknown): the launcher's judge makes it a forced member of ComImportFixture's group,
+       rewritten with it (ComRewriterTests). -->
+  <PropertyGroup>
+    <AssemblyName>ComUserFixture</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ComImportFixture/ComImportFixture.csproj" />
+  </ItemGroup>
+</Project>

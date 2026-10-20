@@ -286,6 +286,18 @@ namespace MS.Win32
             // fail (for that reason).
             _classAtom = UnsafeNativeMethods.RegisterClassEx(wc_d);
 
+            // An owned (not child) window whose owner is a WinForms driver handle -- this stack's
+            // Control.Handle is not an OS window -- is owned by the native window its form is presented
+            // in (published by WinForms in AppContext; see PresentationFramework's ForeignOwnerWindow).
+            if (parent != IntPtr.Zero && (style & 0x40000000 /* WS_CHILD */) == 0
+                && !UnsafeNativeMethods.IsWindow(new HandleRef(null, parent))
+                && AppContext.GetData("WinFormsWebGpu.HostWindowOf") is Func<IntPtr, IntPtr> hostWindowOf)
+            {
+                IntPtr host = IntPtr.Zero;
+                try { host = hostWindowOf(parent); } catch { }
+                if (host != IntPtr.Zero) parent = host;
+            }
+
             // call CreateWindow
             _isInCreateWindow = true;
             try {
