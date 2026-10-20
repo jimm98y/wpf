@@ -395,8 +395,15 @@ fails the translation and names itself.
     distance is negative and 1 when not, interpolated linear and centroid. Over a primitive where
     every vertex sent 0 that is exactly 0 (a sum of zeros), and inside any other it is above 0, so
     the pixel shader discards where it is 0. That culls the whole primitives D3D culls and keeps
-    whole the ones it keeps. Not applied, with a log line, without a pixel shader or with no
-    inter-stage variable left. A clip or cull distance the pixel shader reads is linked like any
+    whole the ones it keeps. Without a pixel shader, or with no inter-stage variable left (WebGPU
+    counts front_facing, sample_index and primitive_index against the 16, so front_facing is now
+    declared only when read), each cull distance becomes a clip distance of -1 at a vertex whose
+    distance is negative and +1e30 at any other: a primitive whose vertices are all negative is
+    clipped away whole, and any other keeps everything but a sliver within 1e-30 of its negative
+    vertices, which in float is nothing. That needs the clip-distances feature and at most 8 clip
+    and cull distances together; past that it is not applied, with a log line. WARP tests: no pixel
+    shader (a depth-only pass, from the vertex shader and from a geometry shader), and a pixel
+    shader with 16 inputs. A clip or cull distance the pixel shader reads is linked like any
     value.
 - **Stages.**
   - VS, PS and CS natively.

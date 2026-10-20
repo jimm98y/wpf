@@ -156,7 +156,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             // interpolation keeps it inside), so the pixel shader discards where it is 0.
             int cull = rasterized == null ? 0 : CullComponents(rasterized, stream).Count;
             int cullElements = (cull + 3) / 4;
-            if (cullElements > 0 && list.Count + cullElements <= MaxInterStageVariables)
+            // WebGPU counts the fragment builtins front_facing, sample_index and primitive_index against
+            // the same limit (with none left, AppendVertexOutput culls through clip distances)
+            int builtins = pixelShader.Inputs.Count(e => e.SystemValue is SvIsFrontFace or SvSampleIndex or SvPrimitiveId
+                || e.SemanticName.ToUpperInvariant() is "SV_ISFRONTFACE" or "SV_SAMPLEINDEX" or "SV_PRIMITIVEID");
+            if (cullElements > 0 && list.Count + cullElements + builtins <= MaxInterStageVariables)
                 for (int k = 0; k < cullElements; k++)
                     list.Add(new LinkedElement { Semantic = CullSemantic, Index = k, Location = list.Count, ComponentType = 3, ComponentCount = 4, Interpolation = 5 });
             return list;

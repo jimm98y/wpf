@@ -89,6 +89,36 @@ void main(triangle V v[3], inout TriangleStream<V> s)
     [unroll] for (int k = 0; k < 3; k++) s.Append(v[k]);
 }";
 
+        // SV_CullDistance with every inter-stage variable WebGPU has taken by the pixel shader's sixteen inputs
+        private const string CullFullVs = @"
+struct O { float4 pos : SV_Position; float4 t0 : TEXCOORD0; float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float4 t4 : TEXCOORD4; float4 t5 : TEXCOORD5; float4 t6 : TEXCOORD6; float4 t7 : TEXCOORD7; float4 t8 : TEXCOORD8; float4 t9 : TEXCOORD9; float4 t10 : TEXCOORD10; float4 t11 : TEXCOORD11; float4 t12 : TEXCOORD12; float4 t13 : TEXCOORD13; float4 t14 : TEXCOORD14; float4 t15 : TEXCOORD15; float2 cull : SV_CullDistance0; };
+O main(float3 p : POSITION, float4 inst : TEXCOORD6, uint iid : SV_InstanceID)
+{
+    O o;
+    o.pos = float4(p.xy * 0.45 + inst.xy, p.z, 1);
+    o.t0 = o.pos.xyxy * 1 * 0.1 + float4(0, iid, 0.5, 1) * 0.01; o.t1 = o.pos.xyxy * 2 * 0.1 + float4(1, iid, 0.5, 1) * 0.01; o.t2 = o.pos.xyxy * 3 * 0.1 + float4(2, iid, 0.5, 1) * 0.01; o.t3 = o.pos.xyxy * 4 * 0.1 + float4(3, iid, 0.5, 1) * 0.01; o.t4 = o.pos.xyxy * 5 * 0.1 + float4(4, iid, 0.5, 1) * 0.01; o.t5 = o.pos.xyxy * 6 * 0.1 + float4(5, iid, 0.5, 1) * 0.01; o.t6 = o.pos.xyxy * 7 * 0.1 + float4(6, iid, 0.5, 1) * 0.01; o.t7 = o.pos.xyxy * 8 * 0.1 + float4(7, iid, 0.5, 1) * 0.01; o.t8 = o.pos.xyxy * 9 * 0.1 + float4(8, iid, 0.5, 1) * 0.01; o.t9 = o.pos.xyxy * 10 * 0.1 + float4(9, iid, 0.5, 1) * 0.01; o.t10 = o.pos.xyxy * 11 * 0.1 + float4(10, iid, 0.5, 1) * 0.01; o.t11 = o.pos.xyxy * 12 * 0.1 + float4(11, iid, 0.5, 1) * 0.01; o.t12 = o.pos.xyxy * 13 * 0.1 + float4(12, iid, 0.5, 1) * 0.01; o.t13 = o.pos.xyxy * 14 * 0.1 + float4(13, iid, 0.5, 1) * 0.01; o.t14 = o.pos.xyxy * 15 * 0.1 + float4(14, iid, 0.5, 1) * 0.01; o.t15 = o.pos.xyxy * 16 * 0.1 + float4(15, iid, 0.5, 1) * 0.01;
+    o.cull = float2(o.pos.x - 0.45, iid == 1 ? -1 : 1);
+    return o;
+}";
+
+        private const string CullFullPs = @"
+struct V { float4 pos : SV_Position; float4 t0 : TEXCOORD0; float4 t1 : TEXCOORD1; float4 t2 : TEXCOORD2; float4 t3 : TEXCOORD3; float4 t4 : TEXCOORD4; float4 t5 : TEXCOORD5; float4 t6 : TEXCOORD6; float4 t7 : TEXCOORD7; float4 t8 : TEXCOORD8; float4 t9 : TEXCOORD9; float4 t10 : TEXCOORD10; float4 t11 : TEXCOORD11; float4 t12 : TEXCOORD12; float4 t13 : TEXCOORD13; float4 t14 : TEXCOORD14; float4 t15 : TEXCOORD15; };
+float4 main(V v) : SV_Target0 { return (v.t0 + v.t1 + v.t2 + v.t3 + v.t4 + v.t5 + v.t6 + v.t7 + v.t8 + v.t9 + v.t10 + v.t11 + v.t12 + v.t13 + v.t14 + v.t15) * 0.02; }";
+
+        /// <summary>SV_CullDistance when the pixel shader's inputs leave no inter-stage variable to carry
+        /// it: culled through clip distances instead.</summary>
+        [Fact]
+        public void CullDistances_WithNoInterStageVariableLeft_CullAsWarp() => DrawsAsWarp(geometry: false, stride: 44, CullFullVs, null, culls: true, psSource: CullFullPs);
+
+        /// <summary>SV_CullDistance with no pixel shader: a depth-only pass with the cull distances, then the
+        /// plain draw where its depth is equal -- what the depth pass wrote, as WARP wrote it.</summary>
+        [Fact]
+        public void CullDistances_WithoutAPixelShader_CullAsWarp() => DrawsAsWarp(geometry: false, stride: 44, Vs, null, culls: true, depthOnlyVs: CullVs);
+
+        /// <summary>The same, the cull distances from a geometry shader with no pixel shader.</summary>
+        [Fact]
+        public void CullDistances_FromAGeometryShader_WithoutAPixelShader_CullAsWarp() => DrawsAsWarp(geometry: false, stride: 44, Vs, null, culls: true, depthOnlyVs: CullVs, depthOnlyGs: CullGs);
+
         /// <summary>SV_CullDistance from the vertex shader: whole primitives culled as WARP culls them.</summary>
         [Fact]
         public void CullDistances_CullWholePrimitivesAsWarp() => DrawsAsWarp(geometry: false, stride: 44, CullVs, null, culls: true);
@@ -97,12 +127,19 @@ void main(triangle V v[3], inout TriangleStream<V> s)
         [Fact]
         public void CullDistances_FromAGeometryShader_CullAsWarp() => DrawsAsWarp(geometry: true, stride: 44, CullVs, CullGs, culls: true);
 
-        private void DrawsAsWarp(bool geometry, int stride, string? vsSource = null, string? gsSource = null, bool culls = false)
+        private void DrawsAsWarp(bool geometry, int stride, string? vsSource = null, string? gsSource = null, bool culls = false, string? psSource = null,
+                                 string? depthOnlyVs = null, string? depthOnlyGs = null)
         {
             Assert.SkipUnless(OperatingSystem.IsWindows(), "real Direct3D 11 (WARP) and the HLSL compiler exist on Windows only");
             Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
-            byte[] vs = Compile(vsSource ?? Vs, "vs_5_0", out string? e1), gs = Compile(gsSource ?? Gs, "gs_5_0", out string? e2), ps = Compile(Ps, "ps_5_0", out string? e3);
+            byte[] vs = Compile(vsSource ?? Vs, "vs_5_0", out string? e1), gs = Compile(gsSource ?? Gs, "gs_5_0", out string? e2), ps = Compile(psSource ?? Ps, "ps_5_0", out string? e3);
             Assert.True(vs.Length > 0 && gs.Length > 0 && ps.Length > 0, e1 + e2 + e3);
+            DepthOnly? depthOnly = null;
+            if (depthOnlyVs != null)
+            {
+                depthOnly = new DepthOnly { Vs = Compile(depthOnlyVs, "vs_5_0", out string? e4), Gs = depthOnlyGs == null ? null : Compile(depthOnlyGs, "gs_5_0", out string? e5) };
+                Assert.True(depthOnly.Vs.Length > 0, "depth-only vertex shader");
+            }
 
             IntPtr wDev, wCtx, sDev, sCtx;
             uint level, want = 0xb000;
@@ -110,15 +147,15 @@ void main(triangle V v[3], inout TriangleStream<V> s)
             Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &sDev, &level, &sCtx) >= 0, "shim");
             try
             {
-                var warp = Draw(wDev, wCtx, vs, geometry ? gs : null, ps, stride);
-                var shim = Draw(sDev, sCtx, vs, geometry ? gs : null, ps, stride);
+                var warp = Draw(wDev, wCtx, vs, geometry ? gs : null, ps, stride, depthOnly);
+                var shim = Draw(sDev, sCtx, vs, geometry ? gs : null, ps, stride, depthOnly);
                 int covered = Covered(warp);
                 Assert.True(covered > (culls ? 15 : 30), $"WARP covers {covered} pixels");
                 if (culls)
                 {
                     // the cull distances cull something, and not everything
                     byte[] plain = Compile(Vs, "vs_5_0", out _);
-                    int all = Covered(Draw(wDev, wCtx, plain, null, ps, stride));
+                    int all = Covered(Draw(wDev, wCtx, plain, null, ps, stride, depthOnly == null ? null : new DepthOnly { Vs = plain }));
                     Assert.True(covered < all * 3 / 4, $"WARP covers {covered} of {all} pixels with the cull distances");
                 }
                 var (count, first) = Compare(warp, shim);
@@ -269,7 +306,10 @@ void main(triangle V v[3], uint prim : SV_PrimitiveID, inout TriangleStream<L> s
 
         /// <summary>Two instances of an indexed 16-bit triangle strip of five vertices (three
         /// triangles), from a base vertex, through the pass-through geometry shader.</summary>
-        private static List<float[]> Draw(IntPtr dev, IntPtr ctx, byte[] vsBlob, byte[]? gsBlob, byte[] psBlob, int Stride)
+        /// <summary>A depth-only pass (no pixel shader) before the draw, which then draws where the depth is equal.</summary>
+        private sealed class DepthOnly { public byte[] Vs = Array.Empty<byte>(); public byte[]? Gs; }
+
+        private static List<float[]> Draw(IntPtr dev, IntPtr ctx, byte[] vsBlob, byte[]? gsBlob, byte[] psBlob, int Stride, DepthOnly? depthOnly = null)
         {
             var made = new List<IntPtr>();
             IntPtr Keep(IntPtr p) { made.Add(p); return p; }
@@ -369,6 +409,38 @@ void main(triangle V v[3], uint prim : SV_PrimitiveID, inout TriangleStream<L> s
                 fixed (IntPtr* r = rts) ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 6, r, IntPtr.Zero);
                 var vp = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
                 ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
+                if (depthOnly != null)
+                {
+                    // the depth pass: no pixel shader, depth written where the draw is not culled
+                    var td = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 1, Format = DXGI_FORMAT.D32_FLOAT, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.DEPTH_STENCIL };
+                    IntPtr dt, dsv, dvs, dgs = IntPtr.Zero, write, equal;
+                    Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &td, null, &dt), "CreateTexture2D depth");
+                    Keep(dt);
+                    Check(((delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateDepthStencilView))(dev, dt, null, &dsv), "CreateDepthStencilView");
+                    Keep(dsv);
+                    ((delegate* unmanaged<IntPtr, IntPtr, uint, float, byte, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearDepthStencilView))(ctx, dsv, 1, 1f, 0);
+                    var dd = D3D11_DEPTH_STENCIL_DESC.Default();
+                    Check(((delegate* unmanaged<IntPtr, D3D11_DEPTH_STENCIL_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateDepthStencilState))(dev, &dd, &write), "CreateDepthStencilState");
+                    Keep(write);
+                    dd.DepthWriteMask = 0; dd.DepthFunc = 3;        // EQUAL
+                    Check(((delegate* unmanaged<IntPtr, D3D11_DEPTH_STENCIL_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateDepthStencilState))(dev, &dd, &equal), "CreateDepthStencilState");
+                    Keep(equal);
+                    fixed (byte* v = depthOnly.Vs) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateVertexShader))(dev, v, (nuint)depthOnly.Vs.Length, IntPtr.Zero, &dvs), "CreateVertexShader depth");
+                    Keep(dvs);
+                    if (depthOnly.Gs != null) { fixed (byte* g = depthOnly.Gs) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateGeometryShader))(dev, g, (nuint)depthOnly.Gs.Length, IntPtr.Zero, &dgs), "CreateGeometryShader depth"); Keep(dgs); }
+                    ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 0, null, dsv);
+                    ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetDepthStencilState))(ctx, write, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.VSSetShader))(ctx, dvs, null, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.GSSetShader))(ctx, dgs, null, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, IntPtr.Zero, null, 0);
+                    ((delegate* unmanaged<IntPtr, uint, uint, uint, int, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DrawIndexedInstanced))(ctx, 5, 2, 1, 2, 1);
+                    // then the draw itself, where the depth pass wrote
+                    fixed (IntPtr* r = rts) ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 6, r, dsv);
+                    ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetDepthStencilState))(ctx, equal, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.VSSetShader))(ctx, vs, null, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.GSSetShader))(ctx, gs, null, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, psh, null, 0);
+                }
                 // DrawIndexedInstanced(indexCount 5, instances 2, start index 1, base vertex 2, start instance 1)
                 ((delegate* unmanaged<IntPtr, uint, uint, uint, int, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DrawIndexedInstanced))(ctx, 5, 2, 1, 2, 1);
                 return tex.Select(t => ReadTarget(dev, ctx, t, Keep)).ToList();
