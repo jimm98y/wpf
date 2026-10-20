@@ -238,6 +238,65 @@ namespace ComImportFixture
         public void Run(int n) { for (int i = 1; i <= n; i++) Tick?.Invoke(i); Done?.Invoke("ran " + n); }
     }
 
+    // ---- formatted types, custom marshalers, StringBuilder ----
+
+    /// <summary>A blittable formatted class (built-in interop pins it: the callee's writes show).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public class Box { public int A; public int B; }
+
+    /// <summary>A formatted class with a string: copied in, and back only when [Out].</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public class Person { [MarshalAs(UnmanagedType.LPWStr)] public string Name = ""; public int Age; }
+
+    /// <summary>A struct with a string, by reference and in C arrays.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Tag { [MarshalAs(UnmanagedType.LPWStr)] public string Text; public int N; }
+
+    /// <summary>An app's custom marshaler (as MediaFoundation's PVMarshaler): native {A, B}, written back into
+    /// the same object.</summary>
+    public sealed class BoxMarshaler : ICustomMarshaler
+    {
+        private static readonly BoxMarshaler s_one = new();
+        private Box? _last;
+        public static ICustomMarshaler GetInstance(string cookie) => s_one;
+        public IntPtr MarshalManagedToNative(object o) { _last = (Box)o; IntPtr p = Marshal.AllocCoTaskMem(8); Marshal.WriteInt32(p, _last.A); Marshal.WriteInt32(p, 4, _last.B); return p; }
+        public object MarshalNativeToManaged(IntPtr p) { var b = _last ?? new Box(); b.A = Marshal.ReadInt32(p); b.B = Marshal.ReadInt32(p, 4); return b; }
+        public void CleanUpNativeData(IntPtr p) => Marshal.FreeCoTaskMem(p);
+        public void CleanUpManagedData(object o) { }
+        public int GetNativeDataSize() => 8;
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IFormatted
+    {
+        [PreserveSig] int GuidSum([In, MarshalAs(UnmanagedType.LPStruct)] Guid g);                       // slot 3
+        [PreserveSig] int Fill(Box b);                                                                  // slot 4
+        [PreserveSig] int Named([In] Person p);                                                         // slot 5
+        void Rename(ref Tag t);                                                                         // slot 6
+        void Text([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder sb, int cch);        // slot 7
+        [PreserveSig] int Custom([In, Out, MarshalAs(UnmanagedType.CustomMarshaler, MarshalTypeRef = typeof(BoxMarshaler))] Box b);   // slot 8
+        [PreserveSig] int Tags([In, Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] Tag[] tags, int n);                    // slot 9
+        [PreserveSig] int Chars([MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] char[] c, int n);                              // slot 10
+        string UseSink(IFormattedSink sink);                                                            // slot 11
+    }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A0E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IFormattedSink
+    {
+        [PreserveSig] int Area(Box b);                                                                  // slot 3
+        void Retag(ref Tag t);                                                                          // slot 4
+        [PreserveSig] int First([In, MarshalAs(UnmanagedType.LPStruct)] Guid g);                       // slot 5
+        [PreserveSig] int Older([In, Out] Person p);                                                    // slot 6
+    }
+
+    internal sealed class ManagedFormattedSink : IFormattedSink
+    {
+        public int Area(Box b) { int r = b.A * b.B; b.A = 5; return r; }
+        public void Retag(ref Tag t) { t.Text += "?"; t.N += 10; }
+        public int First(Guid g) => g.ToByteArray()[0];
+        public int Older(Person p) { p.Age++; p.Name += " Sr."; return p.Name.Length; }
+    }
+
     /// <summary>A managed IStream over bytes, handed to native code.</summary>
     internal sealed class ManagedStream : IStream
     {
@@ -346,6 +405,32 @@ namespace ComImportFixture
         }
         public static int SafeWeighted(IntPtr p) => Arrays2(p).Weighted(new int[,] { { 1, 2, 3 }, { 4, 5, 6 } });
         public static string SafeSink(IntPtr p) => Arrays2(p).UseSink(new ManagedArraySink());
+
+        // ---- formatted ----
+        private static IFormatted Fmt(IntPtr p) => (IFormatted)Marshal.GetObjectForIUnknown(p);
+        public static string Formatted(IntPtr p)
+        {
+            var f = Fmt(p);
+            var parts = new System.Collections.Generic.List<string>();
+            parts.Add(f.GuidSum(new Guid("01020304-0506-0708-090a-0b0c0d0e0f10")).ToString());
+            var box = new Box { A = 1, B = 21 };
+            parts.Add($"{f.Fill(box)}:{box.A}");
+            var person = new Person { Name = "Ada", Age = 36 };
+            parts.Add($"{f.Named(person)}:{person.Age}");
+            var tag = new Tag { Text = "abc", N = 1 };
+            f.Rename(ref tag);
+            parts.Add($"{tag.Text}:{tag.N}");
+            var sb = new System.Text.StringBuilder(8);
+            f.Text(sb, 8);
+            parts.Add(sb.ToString());
+            var cb = new Box { A = 3, B = 4 };
+            parts.Add($"{f.Custom(cb)}:{cb.A},{cb.B}");
+            var tags = new[] { new Tag { Text = "x", N = 1 }, new Tag { Text = "yy", N = 2 } };
+            parts.Add($"{f.Tags(tags, 2)}:{tags[0].N},{tags[1].N}");
+            parts.Add(f.Chars("AB".ToCharArray(), 2).ToString());
+            return string.Join("|", parts);
+        }
+        public static string FormattedSink(IntPtr p) => Fmt(p).UseSink(new ManagedFormattedSink());
 
         // ---- events ----
         /// <summary>A managed event source seen as a COM object (its CCW, wrapped back): subscribed through the

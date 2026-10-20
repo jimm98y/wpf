@@ -52,7 +52,15 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
    - The judge is a pure metadata/IL scan (`ComRewriter.Analyze`): it runs the rewrite's checks
      without generating any code. Code is generated only at load.
    - Verdicts are cached in `comimport-verdicts.json` beside `merge-report.txt`. Each is keyed by
-     the assembly's SHA-256 plus the rewriter version. Only verdicts are cached, never DLLs.
+     the assembly's SHA-256 plus the rewriter build (the step's version and the rewriter module's
+     MVID, so every changed rewriter re-judges). Only verdicts are cached, never DLLs.
+   - **Awaiting a gate.** `ComImportStep.AwaitingGate` lists assemblies that are rewritable but whose
+     first rewrite on Windows waits for an app run that exercises them; the smoke runs do not.
+     - They stay on built-in COM, and the verdict says "rewritable, awaiting its gate: ...".
+     - An entry leaves the list in its own commit once its gate passes.
+     - `WPF_COMIMPORT_FORCE` overrides it.
+     - Now listed: Telerik.Windows.Controls.FileDialogs (a Telerik file dialog opened and cancelled,
+       app File > Open).
    - Cost for app (355 assemblies, 14 with ComImport):
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
@@ -205,7 +213,9 @@ adapter.
   - a struct in a dispinterface member (it would travel in a VARIANT as VT_RECORD); type information
     (IDispatch::GetTypeInfo answers E_NOTIMPL, as a built-in CCW without a type library);
   - `ref` interfaces;
-  - formatted classes passed by reference, `StringBuilder`;
+  - a custom marshaler, a StringBuilder, or an array of unknown length given to a CCW (its stub
+    answers E_NOTIMPL and names it); arrays of strings or interfaces as C arrays; a formatted class
+    with a field of class type;
   - the BCL's other `ComTypes`: in app, ITypeInfo (WebView2.Core) and IDataObject (RibbonView,
     WindowsAPICodePack.Shell).
   - Two more cases are left alone on Windows, because a built-in RCW could reach them and would not
@@ -256,6 +266,28 @@ adapter.
       blamed on Ab3d.DXEngine, which is in fact fine rewritten: 0 px against the build before the
       rewriter.
   - `WPF_COMIMPORT_FORCE=<names>` (diagnostics): those are rewritten whatever the verdict.
+  - **Formatted types, custom marshalers, StringBuilder** (`Formatted.cs`), as built-in interop
+    marshals them in a COM method.
+    - `[MarshalAs(LPStruct)]` on a blittable value type is a pointer to a copy. This fixed a real bug:
+      MediaFoundation's `Guid guidKey` had been passed by value, which works only by accident on x64.
+    - **Formatted classes** (sequential or explicit layout, base classes included) go as a pointer to
+      their native layout. They are copied in, and copied back into the same object when `[Out]` or
+      blittable (built-in interop pins those, so the callee's writes show).
+    - **Non-blittable structs by reference** go through Marshal.StructureToPtr/PtrToStructure, which
+      convert strings and nested structs without COM. The buffer is destroyed after the call; a CCW
+      writes back with `fDeleteOld`.
+    - **C arrays of formatted elements** become one buffer of their layouts.
+    - **`char[]`** is UTF-16 in a COM method.
+    - **`ICustomMarshaler`** (MediaFoundation's PVMarshaler) follows built-in interop's order:
+      GetInstance(cookie) once per type, ManagedToNative, the call, NativeToManaged for an out (by
+      value: into the marshaler's remembered object), CleanUpNativeData.
+    - **StringBuilder** gets a buffer of its capacity. It is copied in unless `[Out]` alone, and read
+      back up to the terminator. UTF-16, or ANSI for `LPStr`.
+    - Tests cover every kind forward, and in a CCW where the kind is defined there.
+    - app, unsupported members before -> after: MediaFoundation 328 -> 174 (162 of them
+      "used by other assemblies"), WindowsAPICodePack.Shell 69 -> 29, RibbonView 18 -> 3,
+      Telerik.Windows.Controls 22 -> 9, WebView2.Wpf 1 -> 0 (it stays with WebView2.Core).
+      Telerik.Windows.Controls.FileDialogs becomes rewritable and is held for its gate.
   - **COM events** (`ConnectionPoints.cs`).
     - The BCL's IConnectionPointContainer, IConnectionPoint, IEnumConnectionPoints and
       IEnumConnections are written by hand both ways, as IStream is.

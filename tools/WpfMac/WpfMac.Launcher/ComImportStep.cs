@@ -29,8 +29,17 @@ internal static class ComImportStep
     /// <summary>Where an earlier wpfmac kept rewritten copies on disk (now removed when found).</summary>
     public const string Folder = "comimport";
     public const string VerdictFile = "comimport-verdicts.json";
-    /// <summary>Bumped when the judge's verdicts change, so cached ones are judged again.</summary>
-    private const string Version = "6";
+    /// <summary>The verdicts' version: the step's own, and the rewriter build that judged them (its module's
+    /// MVID, new with every build), so a changed rewriter never reuses an old verdict.</summary>
+    private static readonly string Version = "7/" + typeof(WpfMac.ComRewrite.ComRewriter).Assembly.ManifestModule.ModuleVersionId.ToString("N");
+
+    /// <summary>Assemblies the judge finds rewritable whose first rewrite on Windows waits for its own gate
+    /// (an app run that exercises them; the smoke runs do not): left on built-in COM, with the gate named.
+    /// An entry leaves this list, in its own commit, when its gate passes. WPF_COMIMPORT_FORCE overrides it.</summary>
+    internal static readonly IReadOnlyDictionary<string, string> AwaitingGate = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Telerik.Windows.Controls.FileDialogs"] = "a Telerik file dialog opened and cancelled (app File > Open)",
+    };
 
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
     internal static Func<string, bool> Scope(string? setting)
@@ -147,7 +156,8 @@ internal static class ComImportStep
         }
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
-        var chosen = candidates.Where(c => partial || c.Verdict!.Unsupported == 0 || force(c.Name)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        bool Held(AppFile c) => !partial && !force(c.Name) && AwaitingGate.ContainsKey(c.Name);
+        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
         {
             for (bool changed = true; changed;)
@@ -193,7 +203,8 @@ internal static class ComImportStep
         foreach (var c in candidates)
         {
             bool rewrite = chosen.ContainsKey(c.Name);
-            string why = c.Verdict!.Summary + (!rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
+            string why = c.Verdict!.Summary + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
+                : !rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
             if (rewrite) Take(c, list);
             notes.Add($"comimport {c.Name}: {(rewrite ? "rewritten in memory at load" : "left on built-in COM")} -- {why}");
         }

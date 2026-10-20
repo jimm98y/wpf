@@ -96,16 +96,15 @@ public static partial class ComRewriter
             foreach (var p in md.Parameters)
             {
                 var a = Classify(p.ParameterType, p.MarshalInfo, comDefaults: true, out string? w);
-                if (a == null || a.Kind is Kind.BlitArray) { why = $"parameter {p.Name}: {w ?? "an array of unknown length"}"; break; }
-                args.Add(a);
+                if (a == null || BadReverseParam(a.Kind)) { why = $"parameter {p.Name}: {w ?? ReverseWhyOf(a!.Kind)}"; break; }
+                args.Add(WithDirection(a, p));
             }
             Arg? ret = null;
             bool isVoid = md.ReturnType.FullName == "System.Void";
             if (why == null && !isVoid)
             {
                 ret = Classify(md.ReturnType, md.MethodReturnType.MarshalInfo, comDefaults: true, out string? w);
-                if (ret == null || ret.Kind is Kind.ByRefBlit or Kind.OutIface or Kind.BlitArray or Kind.RefBool1 or Kind.RefBool2 or Kind.RefBool4 or Kind.RefStrB or Kind.RefStrW or Kind.RefVariant or Kind.StrA
-                    || (preserve && ret.Kind == Kind.Variant))
+                if (ret == null || BadReturn(ret.Kind) || ret.Kind is Kind.RefVariant || (preserve && ret.Kind == Kind.Variant))
                     why = $"return {w ?? md.ReturnType.Name}";
             }
 
@@ -158,6 +157,29 @@ public static partial class ComRewriter
                     case Kind.StrA: loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Call, _strFromAnsi!); }); break;
                     case Kind.StrB: loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Call, _strFromBstr!); }); break;
                     case Kind.Variant: loads.Add(() => { il.Emit(OpCodes.Ldarga, stub.Parameters[n]); il.Emit(OpCodes.Conv_U); il.Emit(OpCodes.Call, _fromVariant); }); break;
+                    case Kind.LPStructBlit:
+                        loads.Add(() => { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldobj, a.Iface!); });
+                        break;
+                    case Kind.FormattedClass:
+                    {
+                        var t = a.Iface!;
+                        var l = Local(stub, t);
+                        il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _structFromNative!); il.Emit(OpCodes.Castclass, t); il.Emit(OpCodes.Stloc, l);
+                        loads.Add(() => il.Emit(OpCodes.Ldloc, l));
+                        if ((a.Vt & CopyBack) != 0)
+                            after.Add(() => { il.Emit(OpCodes.Ldloc, l); il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _structBack!); });
+                        break;
+                    }
+                    case Kind.RefStruct:
+                    {
+                        var t = a.Iface!;
+                        var l = Local(stub, t);
+                        if ((a.Vt & OutOnly) == 0)
+                        { il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _structFromNative!); il.Emit(OpCodes.Unbox_Any, t); il.Emit(OpCodes.Stloc, l); }
+                        loads.Add(() => il.Emit(OpCodes.Ldloca, l));
+                        after.Add(() => { il.Emit(OpCodes.Ldloc, l); il.Emit(OpCodes.Box, t); il.Emit(OpCodes.Ldarg, n); il.Emit(OpCodes.Ldtoken, t); il.Emit(OpCodes.Call, _structBack!); });
+                        break;
+                    }
                     case Kind.SafeArray:
                     {
                         var t = prm.ParameterType;
@@ -306,6 +328,15 @@ public static partial class ComRewriter
             });
             return stub;
         }
+
+        private static string ReverseWhyOf(Kind k) => k switch
+        {
+            Kind.BlitArray => "an array of unknown length",
+            Kind.Custom or Kind.RefCustom => "a custom marshaler (in a CCW)",
+            Kind.StringBuilder => "a StringBuilder (its buffer's size is unknown to a CCW)",
+            Kind.StructArray => "an array of structs of unknown length",
+            _ => k.ToString(),
+        };
 
         /// <summary>The managed value on the stack as its native form (for a return or retval).</summary>
         private void ToNativeValue(ILProcessor il, Arg a)
