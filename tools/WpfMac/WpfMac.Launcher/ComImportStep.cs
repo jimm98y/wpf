@@ -38,8 +38,6 @@ internal static class ComImportStep
     /// An entry leaves this list, in its own commit, when its gate passes. WPF_COMIMPORT_FORCE overrides it.</summary>
     internal static readonly IReadOnlyDictionary<string, string> AwaitingGate = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
-        ["MediaFoundation"] = "a GraphWorX display playing a video through Telerik's media player (MF.Net, not SharpMediaFoundationInterop)",
-        ["Telerik.Windows.MediaFoundation"] = "with MediaFoundation: a GraphWorX display playing a video",
         ["IcoServices"] = "Workbench with it rewritten, and its Active Directory picker",
     };
 
