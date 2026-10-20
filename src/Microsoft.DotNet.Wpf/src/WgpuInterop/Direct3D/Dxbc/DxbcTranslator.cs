@@ -128,7 +128,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>The pixel shader's linkage: one location per non-system-value input element (and
         /// per clip or cull distance it reads), then -- when <paramref name="rasterized"/>, the stage
         /// before the rasterizer, writes SV_CullDistance -- the elements that cull with them.</summary>
-        public static List<LinkedElement> LinkageOf(DxbcShader? pixelShader, DxbcShader? rasterized = null)
+        public static List<LinkedElement> LinkageOf(DxbcShader? pixelShader, DxbcShader? rasterized = null, int stream = 0)
         {
             var list = new List<LinkedElement>();
             if (pixelShader == null) return list;
@@ -154,7 +154,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             // negative and 1 when not; interpolated over the primitive that is exactly 0 everywhere
             // when every vertex sent 0 (a sum of zeros), and above 0 inside it otherwise (centroid
             // interpolation keeps it inside), so the pixel shader discards where it is 0.
-            int cull = rasterized == null ? 0 : CullComponents(rasterized).Count;
+            int cull = rasterized == null ? 0 : CullComponents(rasterized, stream).Count;
             int cullElements = (cull + 3) / 4;
             if (cullElements > 0 && list.Count + cullElements <= MaxInterStageVariables)
                 for (int k = 0; k < cullElements; k++)
@@ -162,11 +162,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             return list;
         }
 
-        /// <summary>The stage's stream-0 cull-distance components, in register order (register, component).</summary>
-        internal static List<(int Register, int Component)> CullComponents(DxbcShader s)
+        /// <summary>The stage's cull-distance components of <paramref name="stream"/>, in register order (register, component).</summary>
+        internal static List<(int Register, int Component)> CullComponents(DxbcShader s, int stream = 0)
         {
             var list = new List<(int, int)>();
-            foreach (var e in s.Outputs.Where(e => e.Stream == 0 && e.SystemValue == SvCullDistance).OrderBy(e => e.Register).ThenBy(e => e.Mask))
+            foreach (var e in s.Outputs.Where(e => e.Stream == stream && e.SystemValue == SvCullDistance).OrderBy(e => e.Register).ThenBy(e => e.Mask))
                 for (int c = 0; c < 4; c++) if ((e.Mask & (1 << c)) != 0) list.Add((e.Register, c));
             return list;
         }

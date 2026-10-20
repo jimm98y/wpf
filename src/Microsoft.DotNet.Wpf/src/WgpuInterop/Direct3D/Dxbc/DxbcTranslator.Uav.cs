@@ -51,6 +51,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>A geometry shader after tessellation: primitive p's vertex k is dx_vin[p * V + k]
         /// (the tessellator's indices), from the domain shader's outputs.</summary>
         public bool IndexedInput;
+        /// <summary>The geometry shader's stream the pass-through hands to the pixel shader (a GS made
+        /// with stream output names it; 0 otherwise).</summary>
+        public int RasterizedStream;
     }
 
     internal sealed partial class DxbcTranslator

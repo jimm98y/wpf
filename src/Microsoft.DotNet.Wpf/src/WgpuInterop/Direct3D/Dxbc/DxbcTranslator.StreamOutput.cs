@@ -14,9 +14,14 @@
 // sizes moved on), so_write (per invocation: its primitives at their places). A vertex shader's
 // primitives need no count: the topology says where each is.
 //
-// Bindings, in group 1 next to the geometry plumbing: 7 the counts (and prefix), 9 the scan's
-// results (primitives that fit; each buffer's filled size before the draw), 10 + slot the SO buffers
-// (as words), 14 + slot each buffer's filled size (bytes).
+// Streams: each stream writes its own slots (D3D binds a slot to one stream) from its own index
+// segments (GeometryInfo.Lanes), with its own count, prefix and fit -- a stream that overflows its
+// buffers stops only itself (measured on WARP).
+//
+// Bindings, in group 1 next to the geometry plumbing: 7 the counts (and prefix; stream s's at
+// s * invocations), 9 the scan's results (stream s's primitives that fit at FitWord(s); each
+// buffer's filled size before the draw at 1 + slot), 10 + slot the SO buffers (as words), 14 + slot
+// each buffer's filled size (bytes).
 //
 
 using System;
@@ -53,6 +58,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 
         private StreamOutputDesc? StreamOut => _options.StreamOutput;
 
+        /// <summary>Where so_scan leaves how many of stream <paramref name="s"/>'s primitives fit (words 1..4
+        /// hold the slots' filled sizes).</summary>
+        private static int FitWord(int s) => s == 0 ? 0 : 8 + s;
+
+        private static IEnumerable<int> SlotsOf(StreamOutputDesc so, int stream) => so.Entries.Where(e => e.Stream == stream).Select(e => e.Slot).Distinct().OrderBy(s => s);
+
+        private static IEnumerable<int> StreamsOf(StreamOutputDesc so) => so.Entries.Select(e => e.Stream).Distinct().OrderBy(s => s);
+
         private static void AppendStreamOutBindings(StringBuilder w, StreamOutputDesc so, bool counts)
         {
             if (counts) w.Append($"@group({PlumbingGroup}) @binding({PlumbingSoCounts}) var<storage, read_write> dx_socount: array<u32>;\n");
@@ -64,33 +77,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             }
         }
 
-        /// <summary>so_scan's tail: how many of <paramref name="total"/> primitives fit in every buffer,
-        /// and each buffer's filled size before and after.</summary>
-        private static void AppendStreamOutFit(StringBuilder w, StreamOutputDesc so, int vertices, string total)
+        /// <summary>so_scan's tail for <paramref name="stream"/>: how many of <paramref name="total"/> primitives
+        /// fit in every buffer of its slots, and each buffer's filled size before and after.</summary>
+        private static void AppendStreamOutFit(StringBuilder w, StreamOutputDesc so, int vertices, string total, int stream = 0)
         {
-            w.Append($"    var fit = {total};\n");
-            foreach (int s in so.Slots)
+            w.Append($"    {{\n    var fit = {total};\n");
+            foreach (int s in SlotsOf(so, stream))
             {
                 uint stride = Math.Max(4, so.Strides[s]);
                 // a slot with no buffer bound (dx_p[3].y, a bit per slot) limits nothing; its writes are dropped
                 w.Append($"    if ((dx_p[3].y & {1u << s}u) != 0u) {{ let cap = arrayLength(&dx_so{s}) * 4u; let used = min(dx_sofill{s}[0], cap); fit = min(fit, (cap - used) / {(uint)vertices * stride}u); }}\n");
             }
-            w.Append("    dx_sostate[0] = fit;\n");
-            foreach (int s in so.Slots)
+            w.Append($"    dx_sostate[{FitWord(stream)}] = fit;\n");
+            foreach (int s in SlotsOf(so, stream))
                 w.Append($"    dx_sostate[1u + {s}u] = dx_sofill{s}[0];\n    dx_sofill{s}[0] = dx_sofill{s}[0] + fit * {(uint)vertices * Math.Max(4, so.Strides[s])}u;\n");
+            w.Append("    }\n");
         }
 
         /// <summary>Statements writing vertex <paramref name="vertex"/> (0-based in its primitive) of
         /// primitive <paramref name="prim"/>, its registers read by <paramref name="reg"/>(register).</summary>
-        private static void AppendStreamOutVertex(StringBuilder w, StreamOutputDesc so, List<SignatureElement> outputs, int vertices, string prim, int vertex, Func<int, string> reg, string indent)
+        private static void AppendStreamOutVertex(StringBuilder w, StreamOutputDesc so, List<SignatureElement> outputs, int vertices, string prim, int vertex, Func<int, string> reg, string indent, int stream = 0)
         {
             var offsets = new Dictionary<int, int>();
-            foreach (var e in so.Entries.Where(e => e.Stream == 0))
+            foreach (var e in so.Entries.Where(e => e.Stream == stream))
             {
                 int at = offsets.TryGetValue(e.Slot, out int o) ? o : 0;
                 offsets[e.Slot] = at + e.Count * 4;
                 if (e.Semantic == null) continue;
-                var el = outputs.FirstOrDefault(x => x.Stream == 0 && x.SemanticName.Equals(e.Semantic, StringComparison.OrdinalIgnoreCase) && x.SemanticIndex == e.Index);
+                var el = outputs.FirstOrDefault(x => x.Stream == stream && x.SemanticName.Equals(e.Semantic, StringComparison.OrdinalIgnoreCase) && x.SemanticIndex == e.Index);
                 if (el == null) continue;
                 uint stride = Math.Max(4, so.Strides[e.Slot]);
                 w.Append($"{indent}{{ let b = (dx_sostate[1u + {e.Slot}u] + ({prim} * {vertices}u + {vertex}u) * {stride}u + {at}u) / 4u; let v = bitcast<vec4<u32>>({reg(el.Register)});\n");
@@ -100,13 +114,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             }
         }
 
-        /// <summary>A GS invocation's segment walked as list primitives: <paramref name="emit"/>(vertex
-        /// index expressions) for each, the count in <c>n</c>.</summary>
-        private static void AppendSegmentWalk(StringBuilder w, GeometryInfo g, Func<string[], string> emit)
+        /// <summary>A GS invocation's segment of stream <paramref name="lane"/> walked as list primitives:
+        /// <paramref name="emit"/>(vertex index expressions) for each, the count in <c>n</c>.</summary>
+        private static void AppendSegmentWalk(StringBuilder w, GeometryInfo g, Func<string[], string> emit, int lane = 0)
         {
             int per = g.IndicesPerInvocation;
             w.Append("    var n = 0u;\n    var run = 0u;\n    var pa = 0u;\n    var pb = 0u;\n");
-            w.Append($"    for (var j = 0u; j < {per}u; j = j + 1u) {{\n        let x = dx_gsidx[i * {per}u + j];\n        if (x == 0xFFFFFFFFu) {{ run = 0u; continue; }}\n");
+            w.Append($"    for (var j = 0u; j < {per}u; j = j + 1u) {{\n        let x = dx_gsidx[({lane}u * dx_p[3].x + i) * {per}u + j];\n        if (x == 0xFFFFFFFFu) {{ run = 0u; continue; }}\n");
             switch (g.OutputTopology)
             {
                 case 1:
@@ -132,32 +146,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             AppendStreamOutBindings(w, so, counts: true);
             var outputs = _s.Outputs;
 
+            var streams = StreamsOf(so).Where(s => s < g.Lanes(so)).ToList();
+
             w.Append("\n@compute @workgroup_size(64)\nfn so_count(@builtin(global_invocation_id) gid: vec3<u32>) {\n");
             w.Append($"    let i = gid.x + gid.y * {InvocationsPerRow}u;\n    if (i >= dx_p[3].x) {{ return; }}\n");
-            AppendSegmentWalk(w, g, _ => "");
-            w.Append("    dx_socount[i] = n;\n}\n");
+            foreach (int s in streams)
+            {
+                w.Append("    {\n");
+                AppendSegmentWalk(w, g, _ => "", s);
+                w.Append($"    dx_socount[{s}u * dx_p[3].x + i] = n;\n    }}\n");
+            }
+            w.Append("}\n");
 
-            w.Append("\n@compute @workgroup_size(1)\nfn so_scan() {\n    var total = 0u;\n");
-            w.Append("    for (var i = 0u; i < dx_p[3].x; i = i + 1u) { let c = dx_socount[i]; dx_socount[i] = total; total = total + c; }\n");
-            AppendStreamOutFit(w, so, v, "total");
+            w.Append("\n@compute @workgroup_size(1)\nfn so_scan() {\n");
+            foreach (int s in streams)
+            {
+                w.Append($"    {{\n    var total = 0u;\n    let at = {s}u * dx_p[3].x;\n");
+                w.Append("    for (var i = 0u; i < dx_p[3].x; i = i + 1u) { let c = dx_socount[at + i]; dx_socount[at + i] = total; total = total + c; }\n");
+                AppendStreamOutFit(w, so, v, "total", s);
+                w.Append("    }\n");
+            }
             w.Append("}\n");
 
             w.Append("\n@compute @workgroup_size(64)\nfn so_write(@builtin(global_invocation_id) gid: vec3<u32>) {\n");
-            w.Append($"    let i = gid.x + gid.y * {InvocationsPerRow}u;\n    if (i >= dx_p[3].x) {{ return; }}\n    let first = dx_socount[i];\n");
-            int calls = 0;
-            AppendSegmentWalk(w, g, idx =>
+            w.Append($"    let i = gid.x + gid.y * {InvocationsPerRow}u;\n    if (i >= dx_p[3].x) {{ return; }}\n");
+            foreach (int s in streams)
             {
-                var sb = new StringBuilder($"if (first + n < dx_sostate[0]) {{ ");
-                for (int k = 0; k < idx.Length; k++)
+                w.Append($"    {{\n    let first = dx_socount[{s}u * dx_p[3].x + i];\n");
+                AppendSegmentWalk(w, g, idx =>
                 {
-                    string x = idx[k];
-                    var inner = new StringBuilder();
-                    AppendStreamOutVertex(inner, so, outputs, v, "(first + n)", k, r => $"dx_gsout[{x} * {regs}u + {r}u]", "");
-                    sb.Append(inner.ToString().Replace("\n", " "));
-                }
-                calls++;
-                return sb.Append("}").ToString();
-            });
+                    var sb = new StringBuilder($"if (first + n < dx_sostate[{FitWord(s)}]) {{ ");
+                    for (int k = 0; k < idx.Length; k++)
+                    {
+                        string x = idx[k];
+                        var inner = new StringBuilder();
+                        AppendStreamOutVertex(inner, so, outputs, v, "(first + n)", k, r => $"dx_gsout[{x} * {regs}u + {r}u]", "", s);
+                        sb.Append(inner.ToString().Replace("\n", " "));
+                    }
+                    return sb.Append("}").ToString();
+                }, s);
+                w.Append("    }\n");
+            }
             w.Append("}\n");
         }
 

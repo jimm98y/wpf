@@ -54,6 +54,26 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
 
         private const string Ps = "struct O { float4 pos : SV_Position; float4 c : COLOR0; };\nfloat4 main(O o) : SV_Target { return o.c * 0.05; }\n";
 
+        // two point streams, interleaved emits: stream 0 the vertices as they came, stream 1 a different
+        // signature (its registers overlap stream 0's) with integer components
+        private const string GsStreams = @"
+struct A { float4 pos : SV_Position; float4 c : COLOR0; };
+struct B { float4 pos : SV_Position; float4 q : TEXCOORD0; uint2 k : TEXCOORD1; };
+[maxvertexcount(6)]
+void main(triangle A v[3], uint prim : SV_PrimitiveID, inout PointStream<A> s0, inout PointStream<B> s1)
+{
+    [unroll] for (int k = 0; k < 3; k++)
+    {
+        A a = v[k]; a.c.w = prim; s0.Append(a);
+        if (k < 2 || (prim & 1) != 0)
+        {
+            B b; b.pos = float4(v[k].pos.yx * 0.5, 0.25, 1); b.q = v[k].c * 3 + prim; b.k = uint2(prim * 10 + k, 0xABC0 + k); s1.Append(b);
+        }
+    }
+}";
+
+        private const string PsStream1 = "struct B { float4 pos : SV_Position; float4 q : TEXCOORD0; nointerpolation uint2 k : TEXCOORD1; };\nfloat4 main(B b) : SV_Target { return float4(b.q.xy * 0.01, b.k.x * 0.02, (b.k.y & 15) * 0.1); }\n";
+
         private static IntPtr Fresh(IntPtr dev, int bytes, D3D11_BIND bind, Func<IntPtr, IntPtr> keep, byte fill = 0xFF, uint misc = 0)
         {
             var data = Enumerable.Repeat(fill, bytes).ToArray();
@@ -110,6 +130,12 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
             public int[] SoBytes = { 4096 };
             public bool Append;                  // a second draw appending to the first
             public (string? Semantic, int Start, int Count, int Slot)[] Decl = { ("SV_POSITION", 0, 4, 0), ("COLOR", 0, 4, 0) };
+            /// <summary>Each declaration entry's stream (null: all stream 0).</summary>
+            public uint[]? Streams;
+            /// <summary>The rasterized stream (D3D11_SO_NO_RASTERIZED_STREAM for none).</summary>
+            public uint Rasterized = 0xFFFFFFFF;
+            /// <summary>A pixel shader: the rasterized stream drawn into a target, read back as the last result.</summary>
+            public string? Ps;
         }
 
         /// <summary>The case drawn on the device with SO targets: every SO buffer's words.</summary>
@@ -124,13 +150,40 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
                 IntPtr v, gs, layout;
                 fixed (byte* p = vs) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateVertexShader))(dev, p, (nuint)vs.Length, IntPtr.Zero, &v), "CreateVertexShader");
                 Keep(v);
-                var decl = c.Decl.Select(d => new SoEntry { SemanticName = d.Semantic == null ? null : Name(d.Semantic), StartComponent = (byte)d.Start, ComponentCount = (byte)d.Count, OutputSlot = (byte)d.Slot }).ToArray();
+                // "TEXCOORD1": semantic TEXCOORD, index 1
+                static (string, uint) Split(string n) { int k = n.Length; while (k > 0 && char.IsDigit(n[k - 1])) k--; return (n[..k], k < n.Length ? uint.Parse(n[k..]) : 0u); }
+                var decl = c.Decl.Select((d, i) => new SoEntry { Stream = c.Streams?[i] ?? 0, SemanticName = d.Semantic == null ? null : Name(Split(d.Semantic).Item1), SemanticIndex = d.Semantic == null ? 0 : Split(d.Semantic).Item2, StartComponent = (byte)d.Start, ComponentCount = (byte)d.Count, OutputSlot = (byte)d.Slot }).ToArray();
                 byte[] code = gsCode ?? vs;
                 fixed (byte* p = code)
                 fixed (SoEntry* e = decl)
                     Check(((delegate* unmanaged<IntPtr, byte*, nuint, SoEntry*, uint, uint*, uint, uint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateGeometryShaderWithStreamOutput))
-                        (dev, p, (nuint)code.Length, e, (uint)decl.Length, null, 0, 0xFFFFFFFF, IntPtr.Zero, &gs), "CreateGeometryShaderWithStreamOutput");
+                        (dev, p, (nuint)code.Length, e, (uint)decl.Length, null, 0, c.Rasterized, IntPtr.Zero, &gs), "CreateGeometryShaderWithStreamOutput");
                 Keep(gs);
+                IntPtr tex = IntPtr.Zero;
+                if (c.Ps != null)
+                {
+                    byte[] psCode = Compile(c.Ps, "ps_5_0", out string? perr);
+                    if (psCode.Length == 0) throw new InvalidOperationException(perr);
+                    IntPtr ps, rtv, rs;
+                    fixed (byte* q = psCode) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreatePixelShader))(dev, q, (nuint)psCode.Length, IntPtr.Zero, &ps), "CreatePixelShader");
+                    Keep(ps);
+                    var td = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 1, Format = DXGI_FORMAT.R16G16B16A16_FLOAT, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET };
+                    Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &td, null, &tex), "CreateTexture2D");
+                    Keep(tex);
+                    Check(((delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRenderTargetView))(dev, tex, null, &rtv), "CreateRenderTargetView");
+                    Keep(rtv);
+                    float* clear = stackalloc float[] { 0.25f, 0.5f, 0.75f, 1f };
+                    ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
+                    var rd = D3D11_RASTERIZER_DESC.Default();
+                    rd.CullMode = 1;
+                    Check(((delegate* unmanaged<IntPtr, D3D11_RASTERIZER_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRasterizerState))(dev, &rd, &rs), "CreateRasterizerState");
+                    Keep(rs);
+                    var vp = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
+                    ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, ps, null, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetState))(ctx, rs);
+                    ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 1, &rtv, IntPtr.Zero);
+                    ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
+                }
                 var el = new D3D11_INPUT_ELEMENT_DESC { SemanticName = Name("POSITION"), Format = DXGI_FORMAT.R32G32B32_FLOAT };
                 fixed (byte* p = vs) Check(((delegate* unmanaged<IntPtr, D3D11_INPUT_ELEMENT_DESC*, uint, byte*, nuint, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateInputLayout))(dev, &el, 1, p, (nuint)vs.Length, &layout), "CreateInputLayout");
                 Keep(layout);
@@ -160,7 +213,9 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
                 }
                 IntPtr none = IntPtr.Zero;
                 ((delegate* unmanaged<IntPtr, uint, IntPtr*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.SOSetTargets))(ctx, 1, &none, offs);
-                return sos.Select((b, i) => Words(dev, ctx, b, c.SoBytes[i], Keep)).ToList();
+                var result = sos.Select((b, i) => Words(dev, ctx, b, c.SoBytes[i], Keep)).ToList();
+                if (tex != IntPtr.Zero) result.Add(ReadTarget(dev, ctx, tex, Keep).Select(BitConverter.SingleToUInt32Bits).ToArray());
+                return result;
             }
             finally
             {
@@ -184,6 +239,14 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
             new Case { Name = "vs triangle strip, instanced", Topology = 5, Vertices = 7, Instances = 2 },
             new Case { Name = "vs line strip, indexed", Topology = 3, Vertices = 6, Indexed = true },
             new Case { Name = "vs points, appending, overflow", Topology = 1, Vertices = 9, Append = true, SoBytes = new[] { 32 * 13 } },
+            // streams above 0: each stream to its own slots, with its own fit
+            new Case { Name = "gs two streams, one slot each", Gs = GsStreams, Instances = 2, SoBytes = new[] { 4096, 4096 },
+                       Decl = new (string?, int, int, int)[] { ("SV_POSITION", 0, 4, 0), ("COLOR", 0, 4, 0), ("TEXCOORD", 0, 4, 1), ("SV_POSITION", 1, 2, 1), ("TEXCOORD1", 0, 2, 1) }, Streams = new uint[] { 0, 0, 1, 1, 1 } },
+            new Case { Name = "gs stream 1 alone, rasterizing stream 0", Gs = GsStreams, SoBytes = new[] { 4096 },
+                       Decl = new (string?, int, int, int)[] { ("TEXCOORD", 0, 4, 0), (null, 0, 1, 0), ("TEXCOORD1", 1, 1, 0) }, Streams = new uint[] { 1, 1, 1 }, Rasterized = 0, Ps = Ps },
+            new Case { Name = "gs stream 1 rasterized, stream 0 written", Gs = GsStreams, Topology = 5, Vertices = 7, Indexed = true, SoBytes = new[] { 4096 }, Streams = new uint[] { 0, 0 }, Rasterized = 1, Ps = PsStream1 },
+            new Case { Name = "gs two streams, stream 1 overflows, appending", Gs = GsStreams, Append = true, SoBytes = new[] { 4096, 16 * 7 },
+                       Decl = new (string?, int, int, int)[] { ("SV_POSITION", 0, 4, 0), ("TEXCOORD", 0, 4, 1) }, Streams = new uint[] { 0, 1 } },
         };
 
         private static bool Same(uint a, uint b)
@@ -211,10 +274,20 @@ void main(point O v[1], uint prim : SV_PrimitiveID, inout LineStream<O> s)
                 {
                     byte[]? gs = c.Gs == null ? null : Compile(c.Gs, "gs_5_0", out string? gerr);
                     if (gs != null && gs.Length == 0) { failures.Add($"{c.Name}: compile"); continue; }
-                    var warp = Run(wDev, wCtx, c, vs, gs);
-                    var shim = Run(sDev, sCtx, c, vs, gs);
+                    List<uint[]> warp, shim;
+                    try { warp = Run(wDev, wCtx, c, vs, gs); } catch (InvalidOperationException e) { failures.Add($"{c.Name}: WARP {e.Message}"); continue; }
+                    try { shim = Run(sDev, sCtx, c, vs, gs); } catch (InvalidOperationException e) { failures.Add($"{c.Name}: shim {e.Message}"); continue; }
                     for (int b = 0; b < warp.Count; b++)
                     {
+                        if (c.Ps != null && b == warp.Count - 1)
+                        {
+                            var wp = new List<float[]> { warp[b].Select(BitConverter.UInt32BitsToSingle).ToArray() };
+                            var sp = new List<float[]> { shim[b].Select(BitConverter.UInt32BitsToSingle).ToArray() };
+                            var (count, first) = Compare(wp, sp);
+                            if (Covered(wp) == 0) failures.Add($"{c.Name}: WARP draws nothing");
+                            else if (count > 0) failures.Add($"{c.Name}: the target differs in {DifferingPixels(wp, sp)} pixels (WARP covers {Covered(wp)}, the shim {Covered(sp)}); {first}");
+                            continue;
+                        }
                         // a float may differ by an ulp or two: this GL driver (over Metal) reassociates float adds
                         int at = Enumerable.Range(0, warp[b].Length).FirstOrDefault(i => !Same(warp[b][i], shim[b][i]), -1);
                         int written = warp[b].Count(w => w != 0xFFFFFFFF);

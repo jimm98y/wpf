@@ -53,6 +53,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public int OutputTopology = 5;
         public int MaxVertices;
         public int Instances = 1;
+        /// <summary>Streams the shader declares or emits to (1 + the highest stream index).</summary>
+        public int Streams = 1;
+
+        /// <summary>Index segments per invocation: with stream output, one per stream (each stream's emits
+        /// apart, stream-major: lane l of invocation i at (l * invocations + i) * IndicesPerInvocation);
+        /// without, one, which every stream's emits share (WARP rasterizes them all).</summary>
+        public int Lanes(StreamOutputDesc? so) => so == null ? 1 : Streams;
 
         public bool Strip => OutputTopology != 1;
         /// <summary>Indices one invocation owns: each emit and at most one restart after it, and a final restart.</summary>
@@ -69,6 +76,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     case Opcode.DclGsOutputTopology: g.OutputTopology = (int)(ins.Control & 0x7F); break;
                     case Opcode.DclMaxOutputVertexCount: g.MaxVertices = ins.Extra.Length > 0 ? (int)ins.Extra[0] : 0; break;
                     case Opcode.DclGsInstanceCount: g.Instances = ins.Extra.Length > 0 ? Math.Max(1, (int)ins.Extra[0]) : 1; break;
+                    case Opcode.DclStream:
+                    case Opcode.EmitStream: case Opcode.CutStream: case Opcode.EmitThenCutStream:
+                        if (ins.Operands.Length > 0) g.Streams = Math.Max(g.Streams, Math.Min(4, ins.Operands[0].Index0 + 1));
+                        break;
                 }
             }
             g.InputVertices = g.InputPrimitive switch
@@ -150,13 +161,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         {
             if (_form != StageForm.GeometryCompute) throw new NotSupportedException("geometry shader instruction outside a geometry shader");
             int stream = ins.Op is Opcode.EmitStream or Opcode.CutStream or Opcode.EmitThenCutStream && ins.Operands.Length > 0 ? ins.Operands[0].Index0 : 0;
-            if (stream != 0 && StreamOut != null) { Approximate("stream output from geometry shader streams above 0: not written (stream 0 is)"); return; }
-            if (stream != 0) Approximate("geometry shader streams above 0: rasterized with stream 0 (as WARP draws a GS made without stream output)");
+            // with stream output each stream keeps its own segment (its own SO slots, the rasterized stream's
+            // drawn); without, every stream's vertices are rasterized, as WARP draws them
+            int lane = StreamOut != null ? Math.Min(3, stream) : 0;
             switch (ins.Op)
             {
-                case Opcode.Emit: case Opcode.EmitStream: Line("dx_emit();"); break;
-                case Opcode.Cut: case Opcode.CutStream: Line("dx_cut();"); break;
-                default: Line("dx_emit();"); Line("dx_cut();"); break;
+                case Opcode.Emit: case Opcode.EmitStream: Line($"dx_emit({lane}u);"); break;
+                case Opcode.Cut: case Opcode.CutStream: Line($"dx_cut({lane}u);"); break;
+                default: Line($"dx_emit({lane}u);"); Line($"dx_cut({lane}u);"); break;
             }
         }
 
@@ -315,15 +327,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (_options.StripCut) AppendStripCutScan(w, g.InputVertices);
             if (_options.IndexedInput) w.Append($"@group({PlumbingGroup}) @binding({PlumbingInputIndices}) var<storage, read> dx_vin: array<u32>;\n");
             w.Append($"var<private> dx_gv: array<array<vec4<f32>, {inRegs}>, {g.InputVertices}>;\n");
-            w.Append("var<private> dx_n: u32;\nvar<private> dx_k: u32;\nvar<private> dx_vbase: u32;\nvar<private> dx_ibase: u32;\nvar<private> dx_open: bool;\n\n");
+            int lanes = g.Lanes(StreamOut);
+            w.Append("var<private> dx_n: u32;\nvar<private> dx_k: array<u32, 4>;\nvar<private> dx_vbase: u32;\nvar<private> dx_ibase: u32;\nvar<private> dx_open: array<bool, 4>;\n\n");
+            // lane l's segment of this invocation (DxbcTranslator.Geometry: GeometryInfo.Lanes)
+            w.Append($"fn dx_seg(l: u32) -> u32 {{ return dx_ibase + l * dx_p[3].x * {per}u; }}\n");
 
-            // emit: the output registers into the invocation's next vertex, its index into the segment
-            w.Append($"fn dx_emit() {{\n    if (dx_n >= {max}u) {{ return; }}\n    let b = (dx_vbase + dx_n) * {regs}u;\n");
+            // emit: the output registers into the invocation's next vertex (the vertices of every stream
+            // share the invocation's dcl_maxout), its index into its stream's segment
+            w.Append($"fn dx_emit(l: u32) {{\n    if (dx_n >= {max}u) {{ return; }}\n    let b = (dx_vbase + dx_n) * {regs}u;\n");
             foreach (int r in _outputRegs.OrderBy(r => r)) w.Append($"    dx_gsout[b + {r}u] = {OutReg(r)};\n");
-            w.Append("    dx_gsidx[dx_ibase + dx_k] = dx_vbase + dx_n;\n    dx_k = dx_k + 1u;\n    dx_n = dx_n + 1u;\n    dx_open = true;\n}\n");
+            w.Append("    dx_gsidx[dx_seg(l) + dx_k[l]] = dx_vbase + dx_n;\n    dx_k[l] = dx_k[l] + 1u;\n    dx_n = dx_n + 1u;\n    dx_open[l] = true;\n}\n");
             w.Append(g.Strip
-                ? "fn dx_cut() {\n    if (dx_open) { dx_gsidx[dx_ibase + dx_k] = 0xFFFFFFFFu; dx_k = dx_k + 1u; dx_open = false; }\n}\n"
-                : "fn dx_cut() { }\n");
+                ? "fn dx_cut(l: u32) {\n    if (dx_open[l]) { dx_gsidx[dx_seg(l) + dx_k[l]] = 0xFFFFFFFFu; dx_k[l] = dx_k[l] + 1u; dx_open[l] = false; }\n}\n"
+                : "fn dx_cut(l: u32) { }\n");
             w.Append("\nfn dx_body() {\n").Append(_body).Append("}\n\n");
 
             w.Append("@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n");
@@ -334,7 +350,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             {
                 // an indexed strip with cuts: the primitive's first vertex and parity from the table;
                 // the invocations past the strips' primitives own empty segments
-                w.Append($"    if (prim >= dx_tab[0]) {{ for (var j = 0u; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_ibase + j] = 0xFFFFFFFFu; }} return; }}\n");
+                w.Append($"    if (prim >= dx_tab[0]) {{ for (var l = 0u; l < {lanes}u; l = l + 1u) {{ for (var j = 0u; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_seg(l) + j] = 0xFFFFFFFFu; }} }} return; }}\n");
                 w.Append("    let start = dx_tab[1u + 2u * prim];\n    let odd = dx_tab[2u + 2u * prim];\n");
             }
             // the primitive's vertices: lists step by the primitive's size, strips by one, a triangle
@@ -377,7 +393,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     : "    vPrim = bitcast<vec4<f32>>(vec4<u32>(prim, 0u, 0u, 0u));\n");
             if (_builtins.Contains("vGSInstanceID")) w.Append("    vGSInstanceID = bitcast<vec4<f32>>(vec4<u32>(gsi, 0u, 0u, 0u));\n");
             w.Append("    dx_body();\n");
-            w.Append($"    for (var j = dx_k; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_ibase + j] = 0xFFFFFFFFu; }}\n}}\n");
+            w.Append($"    for (var l = 0u; l < {lanes}u; l = l + 1u) {{ for (var j = dx_k[l]; j < {per}u; j = j + 1u) {{ dx_gsidx[dx_seg(l) + j] = 0xFFFFFFFFu; }} }}\n}}\n");
             if (StreamOut != null) AppendGeometryStreamOut(w);
         }
 
@@ -403,7 +419,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public bool SelectsLayer => SelectElement(SvRenderTargetArrayIndex) != null;
         public bool SelectsViewport => SelectElement(SvViewportArrayIndex) != null;
 
-        private SignatureElement? SelectElement(int sv) => _s.Outputs.FirstOrDefault(e => e.Stream == 0 && e.SystemValue == sv && _outputRegs.Contains(e.Register));
+        private SignatureElement? SelectElement(int sv) => _s.Outputs.FirstOrDefault(e => e.Stream == _options.RasterizedStream && e.SystemValue == sv && _outputRegs.Contains(e.Register));
 
         private void AssemblePassThrough(StringBuilder w)
         {

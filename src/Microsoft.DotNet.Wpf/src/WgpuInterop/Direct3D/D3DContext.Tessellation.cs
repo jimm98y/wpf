@@ -366,8 +366,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     var dsc = DxbcTranslator.TranslateDomain(ds.Code, _hs.Shader!.Code, tt.CpRegs, tt.PcRegs, Array.Empty<LinkedElement>(), compute: true);
                     t.So = gs.StreamOutput;
                     var g = DxbcTranslator.TranslateGeometryCompute(gs.Code, ds.Code, dsc.OutputRegisters, new TranslationOptions { IndexedInput = true, StreamOutput = t.So });
-                    var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code);
-                    var pass = DxbcTranslator.PassThrough(gs.Code, link);
+                    int rs = Math.Max(0, t.So?.RasterizedStream ?? 0);
+                    var link = DxbcTranslator.LinkageOf(ps?.Code, gs.Code, rs);
+                    var pass = DxbcTranslator.PassThrough(gs.Code, link, new TranslationOptions { RasterizedStream = rs });
                     t.SelectsLayer = pass.SelectsLayer;
                     t.SelectsViewport = pass.SelectsViewport;
                     t.DsRegs = dsc.OutputRegisters;
@@ -441,8 +442,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             ulong prims = indexCount / (ulong)t.Info.InputVertices;
             if (prims == 0) { DrawsIssued++; return; }
             ulong gsTotal = prims * (ulong)t.Info.Instances;
-            uint per = (uint)t.Info.IndicesPerInvocation, max = (uint)Math.Max(1, t.Info.MaxVertices);
-            ulong dsBytes = pointCount * (ulong)t.DsRegs * 16, gsBytes = gsTotal * max * (ulong)t.GsRegs * 16, idxBytes = gsTotal * per * 4;
+            uint per = (uint)t.Info.IndicesPerInvocation, max = (uint)Math.Max(1, t.Info.MaxVertices), lanes = (uint)t.Info.Lanes(t.So);
+            ulong dsBytes = pointCount * (ulong)t.DsRegs * 16, gsBytes = gsTotal * max * (ulong)t.GsRegs * 16, idxBytes = gsTotal * per * lanes * 4;
             if (dsBytes > MaxScratch || gsBytes > MaxScratch || idxBytes > MaxScratch) { D3DLog.Once("tsgsbig", "a geometry shader draw after tessellation too large for its scratch buffers was skipped"); DrawsSkipped++; return; }
             IntPtr dsOut = Scratch(ref _gsVsOut, ref _gsVsOutSize, dsBytes, 0);
             IntPtr gsOut = Scratch(ref _gsOut, ref _gsOutSize, gsBytes, 0);
@@ -450,7 +451,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var p32 = new uint[DxbcTranslator.ParamVec4s * 4];
             p32[9] = (uint)prims; p32[12] = (uint)gsTotal;          // count 0: no draw instances to step over
             var soEntries = new List<WGPUBindGroupEntry>();
-            if (t.So != null) p32[13] = AddStreamOutGroup(soEntries, t.So, Scratch(ref _soCounts, ref _soCountsSize, gsTotal * 4, 0), gsTotal * 4);
+            if (t.So != null) p32[13] = AddStreamOutGroup(soEntries, t.So, Scratch(ref _soCounts, ref _soCountsSize, gsTotal * lanes * 4, 0), gsTotal * lanes * 4);
             var bytes = new byte[p32.Length * 4];
             Buffer.BlockCopy(p32, 0, bytes, 0, bytes.Length);
             ulong at = ArenaWrite(bytes);
@@ -487,7 +488,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             // stream output alone (no rasterized stream, or nothing to rasterize to) draws nothing
             bool targets = _dsv != null || _rtv.Any(r => r != null);
-            bool render = (t.So == null || t.So.RasterizedStream == 0) && (targets || t.So == null);
+            bool render = (t.So == null || (t.So.RasterizedStream >= 0 && t.So.RasterizedStream < lanes)) && (targets || t.So == null);
             IntPtr pipeline = render ? Pipeline(t.Draw, ds, _ps.Shader, out _, t.Pipeline) : IntPtr.Zero;
             if (render && pipeline == IntPtr.Zero) { foreach (IntPtr g in groups) wgpuBindGroupRelease(g); DrawsSkipped++; return; }
             EndPass();
@@ -513,7 +514,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             wgpuComputePassEncoderEnd(cpass);
             wgpuComputePassEncoderRelease(cpass);
-            bool drew = !render || DrawExpanded(pipeline, t.Draw.VsLayout, groups[4], gsOut, gsBytes, gsIdx, idxBytes, (uint)(gsTotal * per), t.SelectsLayer, t.SelectsViewport);
+            ulong lane = t.So == null ? 0 : (ulong)t.So.RasterizedStream * gsTotal * per * 4;
+            bool drew = !render || DrawExpanded(pipeline, t.Draw.VsLayout, groups[4], gsOut, gsBytes, gsIdx, idxBytes, (uint)(gsTotal * per), t.SelectsLayer, t.SelectsViewport, lane);
             foreach (IntPtr g in groups) wgpuBindGroupRelease(g);
             if (!drew) { DrawsSkipped++; return; }
             DrawsIssued++;

@@ -100,7 +100,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// shader and the pass-through after a geometry shader (its stream-0 outputs).</summary>
         private void AppendVertexOutput(StringBuilder w)
         {
-            var outputs = _s.Outputs.Where(e => e.Stream == 0).ToList();
+            var outputs = _s.Outputs.Where(e => e.Stream == _options.RasterizedStream).ToList();
             int posReg = -1;
             var clip = new List<string>();             // each clip-distance component, in register order
             foreach (var e in outputs.OrderBy(e => e.Register).ThenBy(e => e.Mask))
@@ -109,7 +109,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 if (e.SystemValue == SvClipDistance && _outputRegs.Contains(e.Register))
                     for (int c = 0; c < 4; c++) if ((e.Mask & (1 << c)) != 0) clip.Add($"{OutReg(e.Register)}.{"xyzw"[c]}");
             }
-            var cull = CullComponents(_s);
+            var cull = CullComponents(_s, _options.RasterizedStream);
             if (cull.Count > 0 && !_link.Any(l => l.Semantic == CullSemantic))
                 Approximate(_link.Count + (cull.Count + 3) / 4 > MaxInterStageVariables
                     ? "SV_CullDistance: not applied (no inter-stage variable left to carry it); primitives it would cull are drawn"
