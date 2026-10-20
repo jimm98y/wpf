@@ -54,6 +54,18 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
    - Verdicts are cached in `comimport-verdicts.json` beside `merge-report.txt`. Each is keyed by
      the assembly's SHA-256 plus the rewriter build (the step's version and the rewriter module's
      MVID, so every changed rewriter re-judges). Only verdicts are cached, never DLLs.
+   - **"Used by other assemblies"** (Windows): such an interface might receive built-in RCWs from
+     those assemblies. Two kinds of referrer are no longer held against it:
+     - an assembly that uses its COM types: it is rewritten with it or left with it. If such a
+       "trusted" user is left, the interface's assembly is left too, by the same fixpoint.
+     - a clean referrer: it declares no COM types and has no way to make an RCW of its own. That
+       means no Marshal RCW maker (GetObjectForIUnknown and kin, Get(Delegate|Function)For...), no
+       Type.GetTypeFromCLSID/ProgID, and no P/Invoke whose signature names a COM-declaring
+       assembly's types or one of its own delegates. Such a referrer only ever holds the rewritten
+       assembly's own objects.
+     - app: MediaFoundation's 162 such verdicts are gone (Telerik.Windows.MediaFoundation is
+       trusted, Telerik.Windows.Controls.Media is clean). Its 12 remaining reasons are fields of
+       class, interface or array type, a System.Drawing.Color by value, and interface or Guid arrays.
    - **Awaiting a gate.** `ComImportStep.AwaitingGate` lists assemblies that are rewritable but whose
      first rewrite on Windows waits for an app run that exercises them; the smoke runs do not.
      - They stay on built-in COM, and the verdict says "rewritable, awaiting its gate: ...".

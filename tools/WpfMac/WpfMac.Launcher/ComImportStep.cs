@@ -55,6 +55,14 @@ internal static class ComImportStep
     private sealed class AppFile
     {
         public required string File, Name;
+        /// <summary>Windows: the assemblies using its COM types whose references to them were not held against it
+        /// (they are rewritten with it or it is left): if one of them is left, so is it.</summary>
+        public List<string> Trusts = new();
+        /// <summary>Ways it could make built-in RCWs of its own (it declares no COM types): Marshal's RCW makers,
+        /// Type.GetTypeFromCLSID/ProgID, a P/Invoke passing a delegate; and the assemblies whose types its
+        /// P/Invokes' signatures name.</summary>
+        public bool RcwApis, PInvokeDelegates;
+        public HashSet<string> PInvokeScopes = new(StringComparer.OrdinalIgnoreCase);
         /// <summary>Its entries in the deps (an assembly can be listed by more than one library).</summary>
         public List<(JsonObject Runtime, string Asset)> Entries = new();
         public string Hash = "";
@@ -133,15 +141,22 @@ internal static class ComImportStep
         bool dirty = false;
 
         // what of each candidate the other app assemblies reference by name
-        var external = ExternalReferences(files.Select(f => f.File), candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        var external = ExternalReferences(files, candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
+        // a referrer that declares no COM types and has no way to make built-in RCWs only ever holds the
+        // rewritten assemblies' own objects: its references do not count against them
+        var byName = files.GroupBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var comNames = candidates.Select(c => c.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool Clean(string referrer) => byName.TryGetValue(referrer, out var r) && !r.DeclaresCom && !r.RcwApis && !r.PInvokeDelegates && !r.PInvokeScopes.Overlaps(comNames);
+        HashSet<string> RefsOf(AppFile c, ICollection<string>? except) =>
+            !external.TryGetValue(c.Name, out var byReferrer) ? new HashSet<string>(StringComparer.Ordinal)
+            : byReferrer.Where(kv => (except == null || !except.Contains(kv.Key)) && (partial || !Clean(kv.Key))).SelectMany(kv => kv.Value).ToHashSet(StringComparer.Ordinal);
 
         // 1. judge
         int judged = 0;
-        foreach (var c in candidates)
+        void Judge(AppFile c, HashSet<string> refs)
         {
-            var refs = external.TryGetValue(c.Name, out var r) ? r : new HashSet<string>();
             string key = $"{c.Hash}|{HashText(string.Join("\n", refs.Order(StringComparer.Ordinal)))}|{(partial ? "p" : "w")}";
-            if (cache.Verdicts.TryGetValue(key, out var v)) { c.Verdict = v; continue; }
+            if (cache.Verdicts.TryGetValue(key, out var v)) { c.Verdict = v; return; }
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
@@ -154,6 +169,20 @@ internal static class ComImportStep
             dirty = true;
             judged++;
         }
+        foreach (var c in candidates) Judge(c, RefsOf(c, null));
+        // Windows: a COM interface other assemblies use may receive their built-in RCWs -- but not from an
+        // assembly that uses its COM types, which is rewritten with it or left with it (the fixpoint below);
+        // judged again without those references, trusting them
+        if (!partial)
+            foreach (var c in candidates)
+            {
+                var users = candidates.Where(u => u != c && u.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase)).Select(u => u.Name).ToList();
+                if (users.Count == 0 || c.Verdict!.Unsupported == 0) continue;
+                var before = c.Verdict;
+                Judge(c, RefsOf(c, users));
+                if (c.Verdict!.Unsupported < before.Unsupported) c.Trusts = users;
+                else c.Verdict = before;
+            }
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
         bool Held(AppFile c) => !partial && !force(c.Name) && AwaitingGate.ContainsKey(c.Name);
@@ -164,7 +193,8 @@ internal static class ComImportStep
             {
                 changed = false;
                 foreach (var c in chosen.Values.ToList())
-                    if (!force(c.Name) && c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u))) { chosen.Remove(c.Name); changed = true; }
+                    if (!force(c.Name) && (c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u)) || c.Trusts.Any(u => !chosen.ContainsKey(u))))
+                    { chosen.Remove(c.Name); changed = true; }
             }
         }
 
@@ -203,7 +233,7 @@ internal static class ComImportStep
         foreach (var c in candidates)
         {
             bool rewrite = chosen.ContainsKey(c.Name);
-            string why = c.Verdict!.Summary + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
+            string why = c.Verdict!.Summary + (c.Trusts.Count > 0 ? $" (its interfaces' users {string.Join(", ", c.Trusts)} go with it)" : "") + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
                 : !rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");
             if (rewrite) Take(c, list);
             notes.Add($"comimport {c.Name}: {(rewrite ? "rewritten in memory at load" : "left on built-in COM")} -- {why}");
@@ -244,9 +274,77 @@ internal static class ComImportStep
                 if ((md.GetTypeDefinition(h).Attributes & System.Reflection.TypeAttributes.Import) != 0) { f.DeclaresCom = true; break; }
             f.MayReadLocations = LocationCallers.MayRead(md);
             f.References = md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToList();
+            ScanRcwMakers(md, f);
             return true;
         }
         catch (Exception e) when (e is BadImageFormatException or IOException or InvalidOperationException) { return false; }
+    }
+
+    private static readonly HashSet<string> s_rcwMarshal = new(StringComparer.Ordinal)
+    {
+        "GetObjectForIUnknown", "GetTypedObjectForIUnknown", "GetUniqueObjectForIUnknown", "GetObjectForNativeVariant",
+        "GetObjectsForNativeVariants", "CreateWrapperOfType", "BindToMoniker", "GetActiveObject", "GetDelegateForFunctionPointer",
+        "GetFunctionPointerForDelegate",
+    };
+
+    /// <summary>How <paramref name="f"/> could make built-in RCWs without declaring COM types (AppFile.RcwApis, ...).</summary>
+    private static void ScanRcwMakers(MetadataReader md, AppFile f)
+    {
+        foreach (var h in md.MemberReferences)
+        {
+            var mr = md.GetMemberReference(h);
+            if (mr.Parent.Kind != HandleKind.TypeReference) continue;
+            var tr = md.GetTypeReference((TypeReferenceHandle)mr.Parent);
+            string type = md.GetString(tr.Namespace) + "." + md.GetString(tr.Name), name = md.GetString(mr.Name);
+            if ((type == "System.Runtime.InteropServices.Marshal" && s_rcwMarshal.Contains(name))
+                || (type == "System.Type" && name is "GetTypeFromCLSID" or "GetTypeFromProgID"))
+            { f.RcwApis = true; break; }
+        }
+        var provider = new ScopeCollector(md);
+        foreach (var h in md.MethodDefinitions)
+        {
+            var m = md.GetMethodDefinition(h);
+            if ((m.Attributes & System.Reflection.MethodAttributes.PinvokeImpl) == 0) continue;
+            try { m.DecodeSignature(provider, null); }
+            catch (BadImageFormatException) { f.PInvokeDelegates = true; }
+        }
+        f.PInvokeScopes.UnionWith(provider.Scopes);
+        if (provider.Delegates) f.PInvokeDelegates = true;
+    }
+
+    /// <summary>A signature's types: the assemblies of those it references, and whether one is a delegate of
+    /// the file's own (a callback native code may call with interface pointers).</summary>
+    private sealed class ScopeCollector : ISignatureTypeProvider<int, object?>
+    {
+        private readonly MetadataReader _md;
+        public readonly HashSet<string> Scopes = new(StringComparer.OrdinalIgnoreCase);
+        public bool Delegates;
+        public ScopeCollector(MetadataReader md) { _md = md; }
+        public int GetTypeFromReference(MetadataReader r, TypeReferenceHandle h, byte k)
+        {
+            var scope = r.GetTypeReference(h).ResolutionScope;
+            while (scope.Kind == HandleKind.TypeReference) scope = r.GetTypeReference((TypeReferenceHandle)scope).ResolutionScope;
+            if (scope.Kind == HandleKind.AssemblyReference) Scopes.Add(r.GetString(r.GetAssemblyReference((AssemblyReferenceHandle)scope).Name));
+            return 0;
+        }
+        public int GetTypeFromDefinition(MetadataReader r, TypeDefinitionHandle h, byte k)
+        {
+            var b = r.GetTypeDefinition(h).BaseType;
+            if (b.Kind == HandleKind.TypeReference && r.GetString(r.GetTypeReference((TypeReferenceHandle)b).Name) is "MulticastDelegate" or "Delegate") Delegates = true;
+            return 0;
+        }
+        public int GetTypeFromSpecification(MetadataReader r, object? c, TypeSpecificationHandle h, byte k) => r.GetTypeSpecification(h).DecodeSignature(this, c);
+        public int GetPrimitiveType(PrimitiveTypeCode t) => 0;
+        public int GetSZArrayType(int e) => 0;
+        public int GetArrayType(int e, ArrayShape s) => 0;
+        public int GetByReferenceType(int e) => 0;
+        public int GetPointerType(int e) => 0;
+        public int GetPinnedType(int e) => 0;
+        public int GetGenericInstantiation(int g, System.Collections.Immutable.ImmutableArray<int> a) => 0;
+        public int GetGenericMethodParameter(object? c, int i) => 0;
+        public int GetGenericTypeParameter(object? c, int i) => 0;
+        public int GetFunctionPointerType(MethodSignature<int> s) => 0;
+        public int GetModifiedType(int m, int u, bool r) => 0;
     }
 
     private static Cache Load(string? path)
@@ -263,13 +361,14 @@ internal static class ComImportStep
         return new Cache { Version = Version };
     }
 
-    /// <summary>For each of <paramref name="targets"/>: the names of its types (Namespace.Name, or Name for a
-    /// nested one) that the other files reference.</summary>
-    private static Dictionary<string, HashSet<string>> ExternalReferences(IEnumerable<string> files, HashSet<string> targets)
+    /// <summary>For each of <paramref name="targets"/>, by referencing assembly: the names of its types
+    /// (Namespace.Name, or Name for a nested one) that the other files reference.</summary>
+    private static Dictionary<string, Dictionary<string, HashSet<string>>> ExternalReferences(IEnumerable<AppFile> files, HashSet<string> targets)
     {
-        var result = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (string f in files)
+        var result = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var af in files)
         {
+            string f = af.File;
             try
             {
                 using var fs = File.OpenRead(f);
@@ -287,7 +386,8 @@ internal static class ComImportStep
                     if (scope.Kind != HandleKind.AssemblyReference) continue;
                     string asm = md.GetString(md.GetAssemblyReference((AssemblyReferenceHandle)scope).Name);
                     if (!targets.Contains(asm)) continue;
-                    if (!result.TryGetValue(asm, out var set)) result[asm] = set = new HashSet<string>(StringComparer.Ordinal);
+                    if (!result.TryGetValue(asm, out var byReferrer)) result[asm] = byReferrer = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+                    if (!byReferrer.TryGetValue(af.Name, out var set)) byReferrer[af.Name] = set = new HashSet<string>(StringComparer.Ordinal);
                     set.Add(nested || ns.Length == 0 ? name : ns + "." + name);
                 }
             }
