@@ -975,6 +975,7 @@ internal sealed class CocoaHost : IWinFormsHost
             IntPtr window = host._window;
             if (window == IntPtr.Zero || host._closed) return;
             bool iconic = (nint)Send(window, Sel("isMiniaturized")) != 0, zoomed = (nint)Send(window, Sel("isZoomed")) != 0;
+            if (s_traceFrames) Console.WriteLine($"frame: '{host._form.Text}' state {state} requested; iconic={iconic} zoomed={zoomed}");
             if (state == FormWindowState.Minimized && !iconic) SendVoidPtr(window, Sel("miniaturize:"), IntPtr.Zero);
             else if (state == FormWindowState.Maximized)
             {
@@ -993,6 +994,8 @@ internal sealed class CocoaHost : IWinFormsHost
     // here, the driver kept the state the application last SET -- Minimized, after its own minimize
     // button -- once the window was back from the Dock, and the form went on as a minimized one.
     private FormWindowState _reportedState = FormWindowState.Normal;
+
+    private static readonly bool s_traceFrames = Environment.GetEnvironmentVariable("WF_TRACE_FRAMES") == "1";
 
     private void ReportWindowState()
     {
@@ -1013,11 +1016,18 @@ internal sealed class CocoaHost : IWinFormsHost
 
         Rectangle native = NativeBounds();
         if (native.Width <= 0 || native.Height <= 0) return;
+        if (s_traceFrames && (native != _knownBounds || _form.Bounds != _knownBounds))
+            Console.WriteLine($"frame: '{_form.Text}' native={native} known={_knownBounds} form={_form.Bounds} zoomed={(nint)Send(_window, Sel("isZoomed")) != 0}");
         if (native != _knownBounds)
         {
-            // Moved or resized by the user (or by AppKit placing it): the form follows.
+            // Moved or resized by the user (or by AppKit placing it, or zooming it): the form follows,
+            // as a Win32 window the system moved does -- the window's position changes and the form
+            // hears WM_WINDOWPOSCHANGED (UpdateBounds). Not through Form.Bounds, which is the
+            // application moving its own window (SetBoundsCore): DotNetBar's ribbon form takes the
+            // Win32 frame off a size set that way while maximized, so a zoomed window was set back
+            // 16 x 39 smaller than the screen, and no longer zoomed, it could not be restored.
             _knownBounds = native;
-            if (_form.Bounds != native) _form.Bounds = native;
+            if (_form.Bounds != native) XplatUI.SetWindowPos(_form.Handle, native.X, native.Y, native.Width, native.Height);
             return;
         }
 
