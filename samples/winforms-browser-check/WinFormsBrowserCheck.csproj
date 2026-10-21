@@ -1,0 +1,23 @@
+<!--
+  A plain WinForms app, built through the packaged SDK for the browser head: a form with controls, a
+  dialog and a message box. On the browser a form is a window of the page and Application.Run and
+  ShowDialog return at once (the page's thread cannot block); the app reports what it saw ("winforms:"
+  lines on the console) and drives itself a little so a headless run shows it working.
+
+      dotnet publish -f net10.0 -p:WpfPlatform=browser
+-->
+<Project Sdk="WpfWebGpu.Sdk/0.1.1">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>WinFormsBrowserCheck</AssemblyName>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+</Project>

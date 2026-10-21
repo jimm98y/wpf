@@ -274,6 +274,10 @@ export function setScissorRect(passId, x, y, width, height) {
     get(passId).setScissorRect(x, y, width, height);
 }
 
+export function setViewport(passId, x, y, width, height, minDepth, maxDepth) {
+    get(passId).setViewport(x, y, width, height, minDepth, maxDepth);
+}
+
 export function endPass(passId) {
     get(passId).end();
 }

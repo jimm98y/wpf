@@ -1539,10 +1539,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             BuildGeometryBuffers(lp.Data, out IntPtr vbuf, out IntPtr ibuf, out bool hasGeometry);
             RgbaColor clear = lp.ClearTransparent ? new RgbaColor(0, 0, 0, 0) : lp.ClearColor;
             IntPtr pass = lp.LoadPreserve ? BeginLoadPass(encoder, lp.TargetView) : BeginClearPass(encoder, lp.TargetView, clear);
-#if !WGPU_BROWSER
             if (lp.ViewportW > 0 && lp.ViewportH > 0)
                 wgpuRenderPassEncoderSetViewport(pass, 0f, 0f, lp.ViewportW, lp.ViewportH, 0f, 1f);
-#endif
             if (hasGeometry)
             {
                 IntPtr atlasBindGroup = IntPtr.Zero;

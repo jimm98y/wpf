@@ -107,6 +107,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [JSImport("setScissorRect", ModuleName)]
         internal static partial void SetScissorRect(int pass, int x, int y, int width, int height);
 
+
+        [JSImport("setViewport", ModuleName)]
+        internal static partial void SetViewport(int pass, float x, float y, float width, float height, float minDepth, float maxDepth);
+
         [JSImport("endPass", ModuleName)]
         internal static partial void EndPass(int pass);
 

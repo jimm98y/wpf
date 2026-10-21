@@ -751,13 +751,34 @@ namespace System.Windows.Forms
 		// Common-Controls, has no other way to get it.
 		internal static void RunLoop (bool Modal, ApplicationContext context)
 		{
+			RunLoop (Modal, context, null);
+		}
+
+		/// <summary>
+		/// A message loop, and what follows it once it is over (<paramref name="after"/>: Form.ShowDialog's
+		/// own ending). On the browser head the page's thread cannot block, so a loop does not run here
+		/// at all: it is begun, the browser pump steps it (BrowserLoops), and it ends -- <paramref name="after"/>
+		/// with it -- when its form is gone, after this call has long returned (LoopsReturnAtOnce).
+		/// </summary>
+		internal static void RunLoop (bool Modal, ApplicationContext context, Action after)
+		{
+			if (LoopsReturnAtOnce) {
+				BrowserLoops.Begin (BeginLoop (Modal, context), after);
+				return;
+			}
 			IntPtr theming = Win32ThemingScope.Enter ();
 			try {
 				RunLoopCore (Modal, context);
 			} finally {
 				Win32ThemingScope.Leave (theming);
 			}
+			after?.Invoke ();
 		}
+
+		/// <summary>Whether a message loop returns at once and runs on without blocking: the browser
+		/// head, whose page thread cannot block (as WPF's dispatcher there). ShowDialog then returns
+		/// DialogResult.None while its dialog is still up.</summary>
+		internal static bool LoopsReturnAtOnce => OperatingSystem.IsBrowser ();
 
 		/// <summary>The innermost message loop on this thread has a form and that form is gone --
 		/// disposed, its window destroyed, or (a modal loop) hidden. That loop is finished whether or not
@@ -771,19 +792,38 @@ namespace System.Windows.Forms
 			return form.IsDisposed || !form.IsHandleCreated || (form.is_modal && !form.Visible);
 		}
 
+		/// <summary>One message loop's state, from BeginLoop to EndLoop.</summary>
+		internal sealed class LoopState
+		{
+			public bool Modal;
+			public ApplicationContext Context;
+			public Queue TopLevels;
+			public MWFThread Thread;
+			public ApplicationContext PreviousContext;
+			public object QueueId;
+			public bool Quit;
+		}
+
 		private static void RunLoopCore (bool Modal, ApplicationContext context)
+		{
+			LoopState s = BeginLoop (Modal, context);
+			MSG msg = new MSG ();
+			while (!s.Quit && XplatUI.GetMessage (s.QueueId, ref msg, IntPtr.Zero, 0, 0)) {
+				if (!StepLoop (s, ref msg))
+					break;
+			}
+			EndLoop (s);
+		}
+
+		/// <summary>A message loop starts: its form shown and activated, the other forms disabled for a
+		/// modal one.</summary>
+		internal static LoopState BeginLoop (bool Modal, ApplicationContext context)
 		{
 			// The message loop is starting, so there is now a form tree to inspect. Starts the
 			// CDP inspector when WPF_DEVTOOLS is set; does nothing at all otherwise.
 			DevToolsBootstrap.EnsureStarted ();
 
-			Queue		toplevels;
-			MSG		msg;
-			Object		queue_id;
-			MWFThread	thread;
-			ApplicationContext previous_thread_context;
-			
-			thread = MWFThread.Current;
+			var s = new LoopState { Modal = Modal, Thread = MWFThread.Current };
 
 			/*
 			 * There is a NotWorking test for this, but since we are using this method both for Form.ShowDialog as for ApplicationContexts we'll
@@ -793,13 +833,12 @@ namespace System.Windows.Forms
 			//        throw new InvalidOperationException ("Starting a second message loop on a single thread is not a valid operation. Use Form.ShowDialog instead.");
 			//}
 
-			msg = new MSG();
-
 			if (context == null)
 				context = new ApplicationContext();
+			s.Context = context;
 		
-			previous_thread_context = thread.Context;
-			thread.Context = context;
+			s.PreviousContext = s.Thread.Context;
+			s.Thread.Context = context;
 
 			if (context.MainForm != null) {
 				context.MainForm.is_modal = Modal;
@@ -817,8 +856,8 @@ namespace System.Windows.Forms
 			#endif
 
 			if (Modal) {
-				toplevels = new Queue ();
-				DisableFormsForModalLoop (toplevels, context);
+				s.TopLevels = new Queue ();
+				DisableFormsForModalLoop (s.TopLevels, context);
 				
 				// FIXME - need activate?
 				/* make sure the MainForm is enabled */
@@ -826,139 +865,148 @@ namespace System.Windows.Forms
 					XplatUI.EnableWindow (context.MainForm.Handle, true);
 					XplatUI.SetModal(context.MainForm.Handle, true);
 				}
-			} else {
-				toplevels = null;
 			}
 
-			queue_id = XplatUI.StartLoop(Thread.CurrentThread);
-			thread.MessageLoop = true;
+			s.QueueId = XplatUI.StartLoop(Thread.CurrentThread);
+			s.Thread.MessageLoop = true;
+			return s;
+		}
 
-			bool quit = false;
-
-			while (!quit && XplatUI.GetMessage(queue_id, ref msg, IntPtr.Zero, 0, 0)) {
-				Message m = Message.Create(msg.hwnd, (int)msg.message, msg.wParam, msg.lParam);
-				if (KeyTrace.On && KeyTrace.IsKey (m.Msg))
-					KeyTrace.Log ($"loop {KeyTrace.Describe (m.Msg, m.WParam, m.HWnd)} focus={InputTrace.Describe (XplatUI.GetFocus ())} capture={keyboard_capture?.GetType ().Name}");
+		/// <summary>One message of a loop, as its loop dispatches it. False when the loop is over.</summary>
+		internal static bool StepLoop (LoopState s, ref MSG msg)
+		{
+			ApplicationContext context = s.Context;
+			Message m = Message.Create(msg.hwnd, (int)msg.message, msg.wParam, msg.lParam);
+			if (KeyTrace.On && KeyTrace.IsKey (m.Msg))
+				KeyTrace.Log ($"loop {KeyTrace.Describe (m.Msg, m.WParam, m.HWnd)} focus={InputTrace.Describe (XplatUI.GetFocus ())} capture={keyboard_capture?.GetType ().Name}");
+			
+			if (Application.FilterMessage (ref m))
+				return true;
 				
-				if (Application.FilterMessage (ref m))
-					continue;
-					
-				switch((Msg)msg.message) {
-				case Msg.WM_KEYDOWN:
-				case Msg.WM_SYSKEYDOWN:
-				case Msg.WM_CHAR:
-				case Msg.WM_SYSCHAR:
-				case Msg.WM_KEYUP:
-				case Msg.WM_SYSKEYUP:
-					Control c = Control.FromHandle(msg.hwnd);
+			switch((Msg)msg.message) {
+			case Msg.WM_KEYDOWN:
+			case Msg.WM_SYSKEYDOWN:
+			case Msg.WM_CHAR:
+			case Msg.WM_SYSCHAR:
+			case Msg.WM_KEYUP:
+			case Msg.WM_SYSKEYUP:
+				Control c = Control.FromHandle(msg.hwnd);
 
-					// If we have a control with keyboard capture (usually a *Strip)
-					// give it the message, and then drop the message
-					if (keyboard_capture != null) {
-						// WM_SYSKEYUP does not make it into ProcessCmdKey, so do it here
-						if ((Msg)m.Msg == Msg.WM_SYSKEYDOWN)
-							if (m.WParam.ToInt32() == (int)Keys.Menu) {
-								keyboard_capture.GetTopLevelToolStrip ().Dismiss (ToolStripDropDownCloseReason.Keyboard);
-								continue;
-							}
-
-						m.HWnd = keyboard_capture.Handle;
-
-						switch (keyboard_capture.PreProcessControlMessageInternal (ref m)) {
-							case PreProcessControlState.MessageProcessed:
-								continue;
-							case PreProcessControlState.MessageNeeded:
-							case PreProcessControlState.MessageNotNeeded:
-								if (((m.Msg == (int)Msg.WM_KEYDOWN || m.Msg == (int)Msg.WM_CHAR) && !keyboard_capture.ProcessControlMnemonic ((char)m.WParam))) {
-									if (c == null || !ControlOnToolStrip (c))
-										continue;
-									else
-										m.HWnd = msg.hwnd;
-								} else
-									continue;
-								
-								break;
+				// If we have a control with keyboard capture (usually a *Strip)
+				// give it the message, and then drop the message
+				if (keyboard_capture != null) {
+					// WM_SYSKEYUP does not make it into ProcessCmdKey, so do it here
+					if ((Msg)m.Msg == Msg.WM_SYSKEYDOWN)
+						if (m.WParam.ToInt32() == (int)Keys.Menu) {
+							keyboard_capture.GetTopLevelToolStrip ().Dismiss (ToolStripDropDownCloseReason.Keyboard);
+							return true;
 						}
+
+					m.HWnd = keyboard_capture.Handle;
+
+					switch (keyboard_capture.PreProcessControlMessageInternal (ref m)) {
+						case PreProcessControlState.MessageProcessed:
+							return true;
+						case PreProcessControlState.MessageNeeded:
+						case PreProcessControlState.MessageNotNeeded:
+							if (((m.Msg == (int)Msg.WM_KEYDOWN || m.Msg == (int)Msg.WM_CHAR) && !keyboard_capture.ProcessControlMnemonic ((char)m.WParam))) {
+								if (c == null || !ControlOnToolStrip (c))
+									return true;
+								else
+									m.HWnd = msg.hwnd;
+							} else
+								return true;
+							
+							break;
 					}
-
-					if (((c != null) && c.PreProcessControlMessageInternal (ref m) != PreProcessControlState.MessageProcessed) ||
-						(c == null)) {
-						goto default;
-					} 
-					break;
-
-				case Msg.WM_LBUTTONDOWN:
-				case Msg.WM_MBUTTONDOWN:
-				case Msg.WM_RBUTTONDOWN:
-					if (keyboard_capture != null) {
-						Control c2 = Control.FromHandle (msg.hwnd);
-						var menuStrip = keyboard_capture.GetTopLevelToolStrip () as ToolStrip;
-
-						// The target is not a winforms control (an embedded control, perhaps), so
-						// release everything
-						if (c2 == null) {
-							ToolStripManager.FireAppClicked ();
-							goto default;
-						}
-
-						// Skip clicks on owner windows, eg. expanded ComboBox
-						if (Control.IsChild (keyboard_capture.Handle, msg.hwnd)) {
-							goto default;
-						}
-
-						// Close any active toolstrips drop-downs if we click outside of them,
-						// but also don't close them all if we click outside of the top-most
-						// one, but into its owner.
-						Point c2_point = c2.PointToScreen (new Point (
-							(int)(short)(m.LParam.ToInt32() & 0xffff),
-							(int)(short)(m.LParam.ToInt32() >> 16)));
-						while (keyboard_capture != null && !keyboard_capture.ClientRectangle.Contains (keyboard_capture.PointToClient (c2_point))) {
-							keyboard_capture.Dismiss ();
-						}
-
-						var iter_OwnerItem = (c2 as ToolStripDropDown)?.OwnerItem;
-						while (iter_OwnerItem != null && iter_OwnerItem.Owner != menuStrip) {
-							iter_OwnerItem = iter_OwnerItem.OwnerItem;
-						}
-						var menuStripIsOwnerOf_c2 = (iter_OwnerItem != null);
-						
-						if (c2 != menuStrip && !menuStripIsOwnerOf_c2)
-							menuStrip.Dismiss ();
-					}
-					goto default;
-
-				case Msg.WM_NULL:
-					// An idle heartbeat: nothing to dispatch, but fall through to the exit check below
-					// so a form that closed itself outside the message stream is still noticed.
-					break;
-
-				case Msg.WM_QUIT:
-					quit = true; // make sure we exit
-					break;
-				default:
-					XplatUI.TranslateMessage (ref msg);
-					XplatUI.DispatchMessage (ref msg);
-					break;
 				}
 
-				// If our Form doesn't have a handle anymore, it means it was destroyed and we need to *wait* for WM_QUIT.
-				if ((context.MainForm != null) && (!context.MainForm.IsHandleCreated))
-					continue;
+				if (((c != null) && c.PreProcessControlMessageInternal (ref m) != PreProcessControlState.MessageProcessed) ||
+					(c == null)) {
+					goto default;
+				} 
+				break;
 
-				// Handle exit, Form might have received WM_CLOSE and set 'closing' in response.
-				if ((context.MainForm != null) && (context.MainForm.closing || (Modal && !context.MainForm.Visible))) {
-					if (!Modal) {
-						XplatUI.PostQuitMessage (0);
-					} else {
-						break;
+			case Msg.WM_LBUTTONDOWN:
+			case Msg.WM_MBUTTONDOWN:
+			case Msg.WM_RBUTTONDOWN:
+				if (keyboard_capture != null) {
+					Control c2 = Control.FromHandle (msg.hwnd);
+					var menuStrip = keyboard_capture.GetTopLevelToolStrip () as ToolStrip;
+
+					// The target is not a winforms control (an embedded control, perhaps), so
+					// release everything
+					if (c2 == null) {
+						ToolStripManager.FireAppClicked ();
+						goto default;
 					}
+
+					// Skip clicks on owner windows, eg. expanded ComboBox
+					if (Control.IsChild (keyboard_capture.Handle, msg.hwnd)) {
+						goto default;
+					}
+
+					// Close any active toolstrips drop-downs if we click outside of them,
+					// but also don't close them all if we click outside of the top-most
+					// one, but into its owner.
+					Point c2_point = c2.PointToScreen (new Point (
+						(int)(short)(m.LParam.ToInt32() & 0xffff),
+						(int)(short)(m.LParam.ToInt32() >> 16)));
+					while (keyboard_capture != null && !keyboard_capture.ClientRectangle.Contains (keyboard_capture.PointToClient (c2_point))) {
+						keyboard_capture.Dismiss ();
+					}
+
+					var iter_OwnerItem = (c2 as ToolStripDropDown)?.OwnerItem;
+					while (iter_OwnerItem != null && iter_OwnerItem.Owner != menuStrip) {
+						iter_OwnerItem = iter_OwnerItem.OwnerItem;
+					}
+					var menuStripIsOwnerOf_c2 = (iter_OwnerItem != null);
+					
+					if (c2 != menuStrip && !menuStripIsOwnerOf_c2)
+						menuStrip.Dismiss ();
+				}
+				goto default;
+
+			case Msg.WM_NULL:
+				// An idle heartbeat: nothing to dispatch, but fall through to the exit check below
+				// so a form that closed itself outside the message stream is still noticed.
+				break;
+
+			case Msg.WM_QUIT:
+				s.Quit = true; // make sure we exit
+				break;
+			default:
+				XplatUI.TranslateMessage (ref msg);
+				XplatUI.DispatchMessage (ref msg);
+				break;
+			}
+
+			// If our Form doesn't have a handle anymore, it means it was destroyed and we need to *wait* for WM_QUIT.
+			if ((context.MainForm != null) && (!context.MainForm.IsHandleCreated))
+				return true;
+
+			// Handle exit, Form might have received WM_CLOSE and set 'closing' in response.
+			if ((context.MainForm != null) && (context.MainForm.closing || (s.Modal && !context.MainForm.Visible))) {
+				if (!s.Modal) {
+					XplatUI.PostQuitMessage (0);
+				} else {
+					return false;
 				}
 			}
+			return true;
+		}
+
+		/// <summary>A message loop is over: the forms a modal one disabled enabled again, the thread's
+		/// previous loop context back, and the thread exits after its main loop.</summary>
+		internal static void EndLoop (LoopState s)
+		{
+			ApplicationContext context = s.Context;
+			bool Modal = s.Modal;
 			#if DebugRunLoop
 				Console.WriteLine ("   RunLoop loop left");
 			#endif
 
-			thread.MessageLoop = false;
+			s.Thread.MessageLoop = false;
 			XplatUI.EndLoop (Thread.CurrentThread);
 
 			if (Modal) {
@@ -966,7 +1014,7 @@ namespace System.Windows.Forms
 
 				context.MainForm = null;
 
-				EnableFormsForModalLoop (toplevels, context);
+				EnableFormsForModalLoop (s.TopLevels, context);
 				
 				if (old != null && old.IsHandleCreated) {
 					XplatUI.SetModal (old.Handle, false);
@@ -988,10 +1036,10 @@ namespace System.Windows.Forms
 				context.MainForm = null;
 			}
 
-			thread.Context = previous_thread_context;
+			s.Thread.Context = s.PreviousContext;
 
 			if (!Modal)
-				thread.Exit();
+				s.Thread.Exit();
 		}
 
 		#endregion	// Public Static Methods

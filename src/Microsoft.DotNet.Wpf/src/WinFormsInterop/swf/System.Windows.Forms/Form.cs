@@ -1769,8 +1769,14 @@ namespace System.Windows.Forms {
 			}
 #endif
 
-			Application.RunLoop(true, new ApplicationContext(this));
+			// What follows the loop: once it is over here, and when the dialog closes on the browser head,
+			// where the loop does not block and ShowDialog returns while the dialog is still up.
+			Application.RunLoop(true, new ApplicationContext(this), EndShowDialog);
+			return Application.LoopsReturnAtOnce ? DialogResult.None : DialogResult;
+		}
 
+		private void EndShowDialog ()
+		{
 			if (this.owner != null) {
 				// Cannot use Activate(), it has a check for the current active window...
 				XplatUI.Activate(this.owner.window.Handle);
@@ -1783,8 +1789,6 @@ namespace System.Windows.Forms {
 			if (DialogResult == DialogResult.None) {
 				DialogResult = DialogResult.Cancel;
 			}
-			
-			return DialogResult;
 		}
 
 		public override string ToString() {
