@@ -236,26 +236,31 @@ implementation. The DUCE commands `MILCMD_D3DIMAGE` and `MILCMD_D3DIMAGE_PRESENT
 primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty rectangle.
 
 - **The surface is the shim's** (`IDirect3DSurface9` from section 7): **zero-copy.**
-  - **Decided (2026-10-19, the user, replacing "the copy path stays"): device sharing, per UI thread**
-    (`Composition/ThreadGpu.cs`). Each UI thread has one WebGPU device, and these all use it:
-    - the thread's WPF sink. The sink asks for the device from its render thread, but it is
-      the owner UI thread's device, and it is made on the UI thread when the sink is constructed;
-    - the thread's WinForms windows and popups, which also composite an ElementHost's WPF scene;
-    - the Direct3D shim devices made on the thread (`D3D11CreateDevice`, `CreateDeviceEx` of
-      Direct3D9Ex).
-  - A thread that composites nothing (a decoder's worker) uses the primary device for its shim
-    devices: that is the first WPF sink thread's device. Its shared handles then still meet the
-    D3DImage on the UI thread.
-  - Shared resources never cross devices. `OpenSharedResource` and the D3D9 shared-handle open
-    refuse a texture of another device, with a log line. A shim surface shown on another thread's
-    compositor takes the copy path.
-  - Every device is made as the shim wants it (`D3DDevice.CreateGpu`): the adapter's limits, the
+  - **Decided (2026-10-21, the user, replacing the device per UI thread): one WebGPU device for the
+    process, on every head** (`Composition/ProcessGpu.cs`). Everything uses it:
+    - every WPF sink, whatever its UI thread. It is made on a UI thread (the first sink's, when it
+      is constructed), not on a render thread;
+    - every WinForms window and popup, which also composite an ElementHost's WPF scene;
+    - every Direct3D shim device (`D3D11CreateDevice`, `CreateDeviceEx` of Direct3D9Ex), whatever
+      thread makes it.
+  - A shim surface is therefore always on the device of the compositor showing it, and a D3DImage
+    frame is always a GPU copy. Shared handles always meet. `OpenSharedResource` and the D3D9
+    shared-handle open still refuse a texture of another device, which the shim no longer makes.
+  - The device is made as the shim wants it (`D3DDevice.CreateGpu`): the adapter's limits, the
     features D3D11 takes for granted, and validation errors logged rather than fatal. The last user
-    of a device lets go of it.
-  - `WPF_D3DIMAGE_SHARE=0` gives the shim devices a device of their own.
-  - This replaced a first version in which the first compositor to ask took the shim's single
-    device. In GraphWorX that was the splash screen's thread, so DXEngine's frames, made on the main
-    thread, never shared a device with the window that showed them.
+    lets go of it, and the next makes a new one. The browser has one device anyway, from
+    `navigator.gpu`.
+  - wgpu's device and queue are used from more than one thread (a splash screen's UI thread, a
+    decoder's D3D11 device). They are thread-safe, and each window keeps its own renderer. On wgpu's
+    GL backend a context belongs to the thread that made it, which is why the device is made on a UI
+    thread.
+  - History:
+    - A first version had the first compositor to ask take the shim's single device. In GraphWorX
+      that was the splash screen's thread, so DXEngine's frames, made on the main thread, never
+      shared a device with the window that showed them.
+    - A second had a device per UI thread (`ThreadGpu`). A shim surface shown on another thread's
+      compositor took the copy path, and a WinForms window drawing with another thread's device
+      turned the zero-copy path off.
   - A present (`IMilCompositionSink.SendSurface`, made under D3DImage's lock) flushes the shim's
     immediate context, then on the one queue runs a pass that un-premultiplies (to the integer, as the
     copy path does) or, for X8R8G8B8, makes the surface opaque. The pass writes into a scratch texture,
@@ -268,13 +273,9 @@ primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty r
     - it is let go of when no resource shows it at the end of a batch, or on a resize.
   - A synchronous channel (RenderTargetBitmap, printing) always takes the whole back buffer, as
     `CopyBackBuffer` does, and leaves the dirty rectangle to the window's channel.
-  - **Inside an ElementHost** the WinForms window draws the hosted WPF scene itself, on its thread's
-    device, which is the WPF sink's device too. Two rules keep this safe:
-    - While some WinForms window draws with another thread's device (a splash screen still up),
-      `SendSurface` and `SendBitmapRegion` decline, and D3DImage sends the whole bitmap, which any
-      device can upload.
-    - The renderer draws an `ExternalImage` only on the device that made it (`ExternalImage.Device`),
-      and draws its transparent placeholder anywhere else.
+  - **Inside an ElementHost** the WinForms window draws the hosted WPF scene itself, on the process's
+    device, which is the WPF sink's device too. The renderer draws an `ExternalImage` only on the
+    device that made it (`ExternalImage.Device`), and draws its transparent placeholder anywhere else.
     - Before these rules, GraphWorX with `WPF_D3D11_SHIM=0` aborted in wgpu ("TextureView no longer
       alive"), and with the shim its 3D view stayed white.
   - The scene carries the texture itself (`ImageBrush.External`, with a version), so there is no

@@ -2,12 +2,11 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// D3DImage over a Direct3D shim surface (Documentation/d3d11-webgpu-shim.md, section 8): a UI thread's
-// compositor and the shim devices made for it share one GPU device (ThreadGpu.cs), so a frame is a GPU
-// copy -- no readback -- and shows exactly what the copy path shows; another UI thread's compositor has
-// its own thread's device and takes the copy path; and the app letting go of its surface with a frame in
-// flight is harmless. (The surfaces here are made on the test's thread, which composites nothing: its
-// shim devices use the first WPF thread's device.)
+// D3DImage over a Direct3D shim surface (Documentation/d3d11-webgpu-shim.md, section 8): every compositor
+// and every shim device share the process's GPU device (ProcessGpu.cs), so a frame is a GPU copy -- no
+// readback -- and shows exactly what the copy path shows, whichever UI thread composites it and whichever
+// thread made the surface; and the app letting go of its surface with a frame in flight is harmless. (The
+// surfaces here are made on the test's thread, which composites nothing.)
 //
 // The shim's Direct3D 9Ex is reached the way an app's d3d9 import reaches it under the launcher: its
 // Direct3D9 object, here by reflection (Microsoft.Wpf.Interop.WebGpu's Direct3D types are internal).
@@ -116,7 +115,7 @@ namespace Wpf.Window.Tests
             Assert.SkipUnless(OperatingSystem.IsWindows(), "the test makes its surface through a desktop window handle");
             object? sink = UiThread.Invoke(() => { Render(new D3DImage(), 1, 1); return Sink(); });
             Assert.SkipWhen(sink == null, "managed composition is not running in this process");
-            Assert.SkipUnless(UiThread.Invoke(() => Shares(Sink()!)), "the compositor does not share its thread's device with the Direct3D shim (WPF_D3DIMAGE_SHARE=0)");
+            Assert.SkipUnless(UiThread.Invoke(() => Shares(Sink()!)), "the compositor does not share the process's device with the Direct3D shim");
         }
 
         /// <summary>A frame of a shim surface: no readback, a zero-copy present, the surface's colour;
@@ -292,11 +291,12 @@ namespace Wpf.Window.Tests
             finally { Release(surface); Release(device); Release(d3d); }
         }
 
-        /// <summary>A second UI thread's compositor has its own thread's GPU device: its D3DImage of a shim
-        /// surface made elsewhere (here: on a thread that composites nothing, whose shim devices use the
-        /// first WPF thread's device) takes the copy path (a readback), and shows the same.</summary>
+        /// <summary>A second UI thread's compositor is on the same GPU device as every other: its D3DImage of
+        /// a shim surface made elsewhere (here: on a thread that composites nothing) is a GPU copy too (no
+        /// readback), and shows the same. With a device per UI thread it was read back, and a splash screen's
+        /// thread made the first device, which DXEngine's frames on the main thread never shared.</summary>
         [Fact]
-        public void AnotherUiThread_TakesTheCopyPath()
+        public void AnotherUiThread_SharesTheDevice()
         {
             SkipUnlessSharing();
             var (d3d, device, surface) = ShimSurface(0xFF336699);
@@ -318,7 +318,7 @@ namespace Wpf.Window.Tests
                 thread.Start();
                 Assert.True(thread.Join(30000), "the second UI thread did not finish");
                 if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
-                Assert.True(Readbacks() > readbacks, "the second thread's frame was not read back");
+                Assert.True(Readbacks() == readbacks, "the second thread's frame was read back rather than copied on the GPU");
                 Assert.Equal(0xFF336699u, pixel);
             }
             finally { Release(surface); Release(device); Release(d3d); }

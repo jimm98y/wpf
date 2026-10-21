@@ -294,7 +294,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             Parent = parent;
             parent.AddRef();
-            Device11 = new D3DDevice(Composition.ThreadGpu.AcquireForShim(), ownsGpu: true, D3D_FEATURE_LEVEL.L11_0, 0, null);
+            Device11 = new D3DDevice(Composition.ProcessGpu.Acquire(), ownsGpu: true, D3D_FEATURE_LEVEL.L11_0, 0, null);
         }
 
         protected override void OnFinalRelease()

@@ -468,7 +468,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         /// <summary>GL backend: work that wrote storage buffers was submitted on this device (the Direct3D
-        /// shim's, Composition/ThreadGpu.cs), so wgpu-hal may have left a storage buffer bound to
+        /// shim's, Composition/ProcessGpu.cs), so wgpu-hal may have left a storage buffer bound to
         /// GL_PIXEL_UNPACK_BUFFER, and a queue.writeTexture would then read it instead of its data
         /// (D3DContext.ResetGlUnpackBinding). An uploader clears it first with <see cref="ResetGlUnpack"/>.</summary>
         internal volatile bool GlUnpackSuspect;

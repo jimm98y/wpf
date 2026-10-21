@@ -134,11 +134,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             t_current = this;
             s_last = this;
             System.Threading.Interlocked.Increment(ref s_liveCount);
-#if !WGPU_BROWSER
-            // the UI thread's device, made on the UI thread (ThreadGpu.Prepare)
-            try { ThreadGpu.Prepare(); }
-            catch (Exception ex) { Log($"thread device not made now ({ex.GetType().Name}: {ex.Message}); the render thread will try"); }
-#endif
+            // the process's device, made on a UI thread if it is not there yet (ProcessGpu.Prepare)
+            try { ProcessGpu.Prepare(); }
+            catch (Exception ex) { Log($"device not made now ({ex.GetType().Name}: {ex.Message}); the render thread will try"); }
             // Resolve WPF glyph runs to real fonts so text renders. The run carries a
             // managed font descriptor (file path + face index + style simulations from
             // GlyphTypeface), so this is fully cross-platform -- no COM / DirectWrite.
@@ -1553,11 +1551,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _surfaces.Clear();
             _renderer?.Dispose();
             _renderer = null;
-#if WGPU_BROWSER
-            _ctx?.Dispose();
-#else
-            if (_ctx != null) ThreadGpu.Release(_ctx);      // the thread's device: the last of its users disposes it
-#endif
+            if (_ctx != null) ProcessGpu.Release(_ctx);      // the process's device: the last of its users disposes it
             _ctx = null;
             ForgetExternals();     // the renderer, gone, had them
             // Never bring a device back up for a disposed sink (EnsureGpu skips a headless one).

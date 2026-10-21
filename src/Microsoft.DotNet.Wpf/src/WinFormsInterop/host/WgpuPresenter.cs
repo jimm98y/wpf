@@ -70,8 +70,8 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     /// frame checks it is still there. Zero when the host does not say.</summary>
     internal IntPtr NativeWindow { get; }
 
-    /// <param name="threadDevice">the device is the thread's (ThreadGpu.cs), shared with its other windows, its
-    /// WPF compositor and its Direct3D shim devices: released, not disposed, with the window.</param>
+    /// <param name="threadDevice">the device is the process's (ProcessGpu.cs), shared with the other windows,
+    /// the WPF compositors and the Direct3D shim devices: released, not disposed, with the window.</param>
     internal WgpuPresenter(WgpuContext ctx, IntPtr surface, int width, int height, double scale = 1.0, bool srgb = false, IntPtr nativeWindow = default, bool threadDevice = false)
     {
         _ctx = ctx;
@@ -598,7 +598,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             _partial?.Dispose();
             _renderer?.Dispose();
             if (_surface != IntPtr.Zero) { wgpuSurfaceRelease(_surface); _surface = IntPtr.Zero; }
-            if (_threadDevice) Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.Release(_ctx, hostWindow: true);
+            if (_threadDevice) Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Release(_ctx);
             else _ctx?.Dispose();
         }
     }

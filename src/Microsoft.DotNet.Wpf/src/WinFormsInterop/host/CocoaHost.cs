@@ -288,7 +288,7 @@ internal sealed class CocoaHost : IWinFormsHost
             _popupView = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = content.w, h = content.h });
             SendVoidBool(_popupView, Sel("setWantsLayer:"), true);
             SendVoidPtr(_popupWindow, Sel("setContentView:"), _popupView);
-            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Acquire();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _popupView);
             SendVoidBool(Send(_popupView, Sel("layer")), Sel("setOpaque:"), false);
             double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_popupView);
@@ -459,8 +459,8 @@ internal sealed class CocoaHost : IWinFormsHost
                 {
                     try
                     {
-                        // the creating thread's device (ThreadGpu.cs), though the window presents off it
-                        var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
+                        // the process's device (ProcessGpu.cs), though the window presents off the main thread
+                        var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Acquire();
                         IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, nv);
                         _pendingScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(nv);
                         if (_transparent) SendVoidBool(Send(nv, Sel("layer")), Sel("setOpaque:"), false);
@@ -511,8 +511,8 @@ internal sealed class CocoaHost : IWinFormsHost
         // HWND source, the browser a canvas), then present each composite as a textured quad.
         if (UseWebGpu)
         {
-            // the UI thread's device (ThreadGpu.cs), shared with its WPF compositor and Direct3D shim devices
-            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
+            // the process's device (ProcessGpu.cs), shared with the WPF compositors and the Direct3D shim devices
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Acquire();
             // Cross-platform surface creation: NativePlatform dispatches to the CAMetalLayer (mac),
             // HWND (Windows), Xlib (Linux) or canvas (browser) source by detected OS. Here we pass the
             // NSView*; a Win32 host passes its HWND. The present path below is identical everywhere.
