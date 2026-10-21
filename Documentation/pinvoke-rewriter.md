@@ -1,7 +1,7 @@
 # The P/Invoke rewriter
 
 An unmodified Windows app P/Invokes user32, kernel32, gdi32, uxtheme, d3d11 and the rest of Windows.
-The stack implements those functions in managed code: `tools/WpfMac/WpfMac.Win32` for the Win32 API,
+The stack implements those functions in managed code: `tools/WpfWebGpu/WpfWebGpu.Win32` for the Win32 API,
 and `Microsoft.Wpf.Interop.WebGpu`'s `Direct3D/Exports.cs` for Direct3D. The P/Invoke rewriter
 connects the two. Each of an app's P/Invokes of a Windows DLL becomes a managed method that marshals
 its arguments as the runtime would and calls the implementation directly.
@@ -11,7 +11,7 @@ what lets the same rewrite run on every head:
 
 | head | when | how |
 |---|---|---|
-| macOS, Linux, Windows (wpfmac) | when the assembly loads | `ComImportLoader`, in memory; the result is cached in the app's cache folder |
+| macOS, Linux, Windows (wpfrun) | when the assembly loads | `ComImportLoader`, in memory; the result is cached in the app's cache folder |
 | iOS, Android, the browser (AOT) | at build | the same `ComRewriter.RewriteToMemory`, over the app's assemblies before AOT compilation (not wired into those builds yet) |
 
 It replaces two mechanisms:
@@ -44,7 +44,7 @@ ones, after the drawing a `Graphics` has pending on the DC has been written to i
 
 ## Every Windows export
 
-`WpfMac.Win32` embeds `win32_exports.tsv`, which `WpfMac.Win32Native` (win32shim-gen) generates from
+`WpfWebGpu.Win32` embeds `win32_exports.tsv`, which `WpfWebGpu.Win32Native` (win32shim-gen) generates from
 the Windows API metadata plus `extra-exports.txt`. It lists every export (module, name and failure
 value) and every DLL name. The rewriter reads the table from the assembly's metadata.
 `LoadLibrary`/`GetModuleHandle` read it at run time to recognize Windows DLLs.
@@ -123,7 +123,7 @@ DLL lacks the function.
 
 ## Tests
 
-`tools/WpfMac/tests/WpfMac.Tests/PInvokeRewriterTests.cs` rewrites `PInvokeFixture` onto
+`tools/WpfWebGpu/tests/WpfWebGpu.Tests/PInvokeRewriterTests.cs` rewrites `PInvokeFixture` onto
 `PInvokeImplFixture`, which has its own small export table, and runs the result. The tests cover the
 entry-point lookup, every marshalling kind above, the failure values, `EntryPointNotFoundException`,
 and the Windows routing to both the implementation and the real function.

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Implementations of made-up Windows exports, as WpfWebGpu.Win32 implements real ones, with an export
+       table of their own: what PInvokeRewriterTests rewrite PInvokeFixture's P/Invokes onto. -->
+  <PropertyGroup>
+    <AssemblyName>PInvokeImplFixture</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="win32_exports.tsv" LogicalName="win32_exports.tsv" />
+  </ItemGroup>
+</Project>

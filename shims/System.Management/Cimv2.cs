@@ -219,14 +219,14 @@ namespace System.Management
         };
     }
 
-    /// <summary>Reports to wpfmac's compatibility log, when the process has one.</summary>
+    /// <summary>Reports to wpfrun's compatibility log, when the process has one.</summary>
     internal static class ShimLog
     {
         public static void Once(string key, string message)
         {
             try
             {
-                (AppContext.GetData("WpfMac.LogOnce") as Action<string, string>)?.Invoke(key, message);
+                (AppContext.GetData("WpfWebGpu.LogOnce") as Action<string, string>)?.Invoke(key, message);
             }
             catch
             {

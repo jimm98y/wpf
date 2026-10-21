@@ -2,7 +2,7 @@
 //
 // Logs and sources: HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<log>\<source>, as on Windows,
 // through Microsoft.Win32.Registry; when no registry is available, in memory. Entries: in memory,
-// per log, for this process; each one also goes to wpfmac's compatibility log.
+// per log, for this process; each one also goes to wpfrun's compatibility log.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -151,7 +151,7 @@ namespace System.Diagnostics
             EventLogEntry entry = Log(log, create: true).Add(index => new EventLogEntry(index, source, machine, type, instanceId, category, data, strings, message));
             try
             {
-                (AppContext.GetData("WpfMac.Log") as Action<string>)?.Invoke($"EventLog {log}/{source} {type} {instanceId}: {message}");
+                (AppContext.GetData("WpfWebGpu.Log") as Action<string>)?.Invoke($"EventLog {log}/{source} {type} {instanceId}: {message}");
             }
             catch
             {

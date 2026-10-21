@@ -9,12 +9,12 @@ the interface marshaller, and `GetComInterfaceForObject`. Off Windows every one 
 `PlatformNotSupportedException`, even when the object behind the pointer is one of ours, such as the
 Direct3D shim's D3D9 device.
 
-wpfmac therefore rewrites such assemblies when it loads them. Their COM calls then go through
+wpfrun therefore rewrites such assemblies when it loads them. Their COM calls then go through
 `ComWrappers` and plain vtable calls, which work on every OS. The rewrite applies on Windows too, so
 there is one implementation everywhere. The user approved it (2026-10-19).
 
-- **The rewrite only ever happens in wpfmac.** The app's folder is never written. The rewritten
-  image goes to wpfmac's cache.
+- **The rewrite only ever happens in wpfrun.** The app's folder is never written. The rewritten
+  image goes to wpfrun's cache.
 - **`WPF_COMIMPORT_REWRITE`** chooses what is rewritten:
   - `on` (the default): every app assembly that declares one;
   - `off`: none;
@@ -44,7 +44,7 @@ take that away. So each assembly is all or nothing:
 The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the user's decision,
 2026-10-19).
 
-1. **Judge, at prepare time.** `wpfmac run`/`prepare` merges the app's deps (DepsMerger), and
+1. **Judge, at prepare time.** `wpfrun run`/`prepare` merges the app's deps (DepsMerger), and
    `ComImportStep` then judges every app assembly that has a `TypeAttributes.Import` type. The
    check is a `System.Reflection.Metadata` scan, cheap for the others.
    - The verdict for each (rewritten, or left and why) goes to `merge-report.txt`. Nothing else is
@@ -152,8 +152,8 @@ The rewrite happens **in memory**. No rewritten DLL is ever written to disk (the
      - before this step, judging alone: 3.9 s per prepare;
      - now: 9.2 s on a cold cache (hashing and scanning everything once), 0.93-1.0 s warm.
    - A chosen assembly leaves the deps (so it is not on the TPA list). Its name and original path go
-     to the app's runtimeconfig as `WpfMac.ComImport`.
-   - What an earlier wpfmac wrote (`<cache>/comimport/`) is deleted.
+     to the app's runtimeconfig as `WpfWebGpu.ComImport`.
+   - What an earlier wpfrun wrote (`<cache>/comimport/`) is deleted.
 2. **Load, at the first request.** The startup hook installs `ComImportLoader` on the default load
    context's `Resolving` event. Every load by name reaches it, because the assembly is on no list
    the runtime probes first: the app's own references, `Assembly.Load`, `Type.GetType` with an
@@ -205,7 +205,7 @@ For each `[ComImport]` interface `I` (with `Guid` G):
   assembly sees a change of type identity.
 - **Generate `I.Impl`**, a nested `[DynamicInterfaceCastableImplementation]` interface, `I.Impl : I`.
   It holds one default method per method of `I`, explicitly implementing it. Each body:
-  1. asks `WpfMac.ComInterop` for `this`'s native pointer for G. A wrapper keeps a QueryInterface
+  1. asks `WpfWebGpu.ComInterop` for `this`'s native pointer for G. A wrapper keeps a QueryInterface
      result per Guid.
   2. loads the arguments marshalled as built-in COM interop would marshal them (below);
   3. `calli unmanaged stdcall` through vtable slot *k*. *k* is 3 + the method's index in declaration
@@ -230,7 +230,7 @@ For each `[ComImport]` interface `I` (with `Guid` G):
 
 ## 3. Objects
 
-- **`WpfMac.ComInterop.Wrappers : ComWrappers`.** `GetOrCreateObjectForComInstance` gives one managed
+- **`WpfWebGpu.ComInterop.Wrappers : ComWrappers`.** `GetOrCreateObjectForComInstance` gives one managed
   object per native identity, a `ComObject : IDynamicInterfaceCastable`.
   - Its `IsInterfaceImplemented(I)` finds `I.Impl` (registered by the rewritten assembly's module
     initializer, with I's Guid) and QueryInterfaces for G.
@@ -258,7 +258,7 @@ For each `[ComImport]` interface `I` (with `Guid` G):
 
 ## 4. Tests
 
-- **Synthetic** (`tools/WpfMac/tests`): a test assembly with ComImport interfaces is rewritten and
+- **Synthetic** (`tools/WpfWebGpu/tests`): a test assembly with ComImport interfaces is rewritten and
   run against:
   - a small COM object of our own (an `UnmanagedCallersOnly` vtable);
   - the Direct3D shim's D3D9.
@@ -280,8 +280,8 @@ adapter.
 ## 6. Status (2026-10-20)
 
 - **Built:**
-  - `WpfMac.ComRewrite` (the rewriter, with Mono.Cecil);
-  - `WpfMac.ComInterop` (the runtime, shipped in the overlay);
+  - `WpfWebGpu.ComRewrite` (the rewriter, with Mono.Cecil);
+  - `WpfWebGpu.ComInterop` (the runtime, shipped in the overlay);
   - the launcher step (`ComImportStep`). Its verdicts go to `merge-report.txt` and are cached in
     `comimport-verdicts.json`.
 - **Supported:**
@@ -328,7 +328,7 @@ adapter.
       stubs. A stub finds the object behind the pointer, converts every supported kind the other way
       round, calls the method, and returns the HRESULT. An exception's own HRESULT is returned, as
       built-in COM does.
-    - `WpfMac.ComInterop`'s ComWrappers answers with one entry per rewritten interface the object
+    - `WpfWebGpu.ComInterop`'s ComWrappers answers with one entry per rewritten interface the object
       implements.
     - A dual interface's IDispatch slots answer by reflection (see IDispatch below).
     - A method whose signature a stub cannot convert answers E_NOTIMPL. Its class's verdict names it.
@@ -378,7 +378,7 @@ adapter.
     hand-written ones, is covered, together with those their signatures reach (IDataObject reaches
     IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker and IEnumMoniker; ITypeInfo reaches ITypeComp
     and ITypeLib).
-    - Each gets a ComImpl and a ComCcw generated in the rewritten module (`WpfMac.BclComImpl.*Impl`),
+    - Each gets a ComImpl and a ComCcw generated in the rewritten module (`WpfWebGpu.BclComImpl.*Impl`),
       through the same marshalling as the app's own interfaces. Its signature is imported into the
       module, keeping its marshalling.
     - They are registered with `Com.RegisterGenerated` from the module initializer. ComObject casts
@@ -410,7 +410,7 @@ adapter.
     loaded and never judged, and nothing of WebView2 is rewritten.
   - **Structs by value, struct retvals, `ref` classes, interface fields.**
     - A non-blittable struct by value is passed as a generated blittable shadow
-      (`WpfMac.Shadows.*`).
+      (`WpfWebGpu.Shadows.*`).
       - The shadow has the struct's native size and alignment, computed from the metadata as built-in
         struct marshalling lays it out. Its fields are integers of the alignment's width, so the ABI
         classifies it as the native aggregate.
@@ -537,11 +537,11 @@ adapter.
     - Tests: native code reads the descriptor raw (VT_I4 and FADF_HAVEVARTYPE, a 2-D array's
       column-major order), BSTR retvals, a VARIANT array replaced by reference, a 2x3 VT_R8 matrix in
       a VARIANT, and a managed object's CCW. They run once through oleaut32 and once through the
-      managed layout (the AppContext switch `WpfMac.ComInterop.ManagedSafeArrays`).
+      managed layout (the AppContext switch `WpfWebGpu.ComInterop.ManagedSafeArrays`).
     - GraphWorX: nothing flips (Telerik.Windows.Controls' `string[]` by reference is now
       supported, and it still has other reasons).
   - **The BCL's IStream, IBindCtx and IEnumString** (System.Runtime.InteropServices.ComTypes).
-    - The rewriter cannot nest a ComImpl or ComCcw in a BCL type, so `WpfMac.ComInterop/ComTypes.cs`
+    - The rewriter cannot nest a ComImpl or ComCcw in a BCL type, so `WpfWebGpu.ComInterop/ComTypes.cs`
       writes both by hand: a `[DynamicInterfaceCastableImplementation]` interface per type, and a
       vtable of `[UnmanagedCallersOnly]` stubs. `ComObject.ImplOf` and the ComWrappers fall back to
       them.
@@ -552,7 +552,7 @@ adapter.
       - `object` parameters go as IUnknown.
     - `Com.SupportedBclComTypes` is the list the rewriter reads.
     - A rewritten assembly may use these types in its own signatures, P/Invokes (SignatureHasCom)
-      and classes (their CCW is WpfMac.ComInterop's).
+      and classes (their CCW is WpfWebGpu.ComInterop's).
     - A built-in RCW passed where an interface is expected (Windows) now gives its own native pointer.
     - IBindCtx.GetRunningObjectTable's result casts only when IRunningObjectTable is supported, which
       it is not yet. Otherwise a NotSupportedException names it.
@@ -575,7 +575,7 @@ adapter.
     HRESULT exceptions, an unsupported member, casts and identity, Release, and DXEngine's
     delegate-through-a-slot call. They run against a native object of the test's own.
   - `ComImportStepTests`: all or nothing on Windows, partial elsewhere, the switch, nothing written
-    under the cache, an earlier wpfmac's copies removed.
+    under the cache, an earlier wpfrun's copies removed.
   - The in-memory load: the fixture reports its original `Location`, `CodeBase`, `EscapedCodeBase`,
     `GetName().CodeBase` and module names. `typeof(X).Assembly == Assembly.Load(name) ==
     GetExecutingAssembly()` holds, and a P/Invoke finds a library beside the original.

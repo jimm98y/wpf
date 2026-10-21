@@ -1,0 +1,78 @@
+<Project Sdk="WpfWebGpu.Sdk">
+
+  <!--
+    THE OVERLAY wpfrun runs an unmodified app on.
+
+    This is a WPF + WinForms app that is never started. Publishing it for a RID produces exactly the
+    set of files WpfWebGpu.Sdk would deploy beside a rebuilt app on that head: the fork's WPF, the Mono
+    WinForms and System.Drawing, WebView2, the renderer and wgpu-native for the RID, the fonts (macOS),
+    and the SDK's per-OS choice between the cross-platform shims and the real Windows packages. Its
+    deps.json is the manifest wpfrun merges into an app's own.
+
+    Building the overlay with the SDK, instead of listing its contents a second time in the launcher,
+    is what keeps the two from drifting: whatever the SDK decides a head needs, wpfrun runs with.
+
+    On top of the SDK's payload:
+      - the members of Microsoft.WindowsDesktop.App that are not WPF or WinForms. wpfrun drops that
+        framework from an app's runtimeconfig (it is where stock WPF comes from), and these are the
+        assemblies an app then no longer gets from it. All of them have cross-platform builds.
+      - WpfWebGpu.Bootstrap, the startup hook.
+
+    Published by tools/WpfWebGpu/build.sh (or .cmd) into artifacts/wpfrun/<rid>/overlay/wpfrun.payload/.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>WpfWebGpu.Payload</AssemblyName>
+    <SelfContained>false</SelfContained>
+    <WpfWebGpuExtrasVersion>10.0.10</WpfWebGpuExtrasVersion>
+    <!-- Nothing in this project is ever trimmed or run; the warnings about the payload's own code
+         being empty are noise. -->
+    <NoWarn>$(NoWarn);NU1603;CS7022</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WpfWebGpu.Bootstrap/WpfWebGpu.Bootstrap.csproj" />
+    <!-- The implementations of Windows exports the rewritten P/Invokes call; initialized by the bootstrap by name. -->
+    <ProjectReference Include="../WpfWebGpu.Win32/WpfWebGpu.Win32.csproj" />
+    <!-- Runtime detours for what CoreLib refuses off Windows; loaded by the bootstrap by name. -->
+    <ProjectReference Include="../WpfWebGpu.Detours/WpfWebGpu.Detours.csproj" />
+    <!-- What app assemblies the launcher rewrote off built-in COM call (Documentation/comimport-rewriter.md). -->
+    <ProjectReference Include="../WpfWebGpu.ComInterop/WpfWebGpu.ComInterop.csproj" />
+    <!-- ...and the rewriter itself (COM, P/Invokes): the startup hook rewrites them as they load. -->
+    <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+  </ItemGroup>
+
+  <!-- Microsoft.WindowsDesktop.App, minus what the SDK already supplies: WPF, WinForms,
+       Microsoft.Win32.SystemEvents (its shim on macOS, the real package on Windows), and the support
+       packages Sdk.targets references for WPF itself (ConfigurationManager, EventLog, IO.Packaging,
+       Cryptography.Xml, Windows.Extensions, Formats.Nrbf, Security.Permissions, Drawing.Common). -->
+  <ItemGroup>
+    <PackageReference Include="System.CodeDom" Version="$(WpfWebGpuExtrasVersion)" />
+    <PackageReference Include="System.DirectoryServices" Version="$(WpfWebGpuExtrasVersion)" />
+    <PackageReference Include="System.Resources.Extensions" Version="$(WpfWebGpuExtrasVersion)" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="$(WpfWebGpuExtrasVersion)" />
+    <PackageReference Include="Microsoft.Win32.Registry.AccessControl" Version="$(WpfWebGpuExtrasVersion)" />
+  </ItemGroup>
+
+  <!-- Windows: the real packages, so the WebGPU instance differs from the stock one in its UI stack
+       only. macOS: replacements for the Windows-only packages whose own non-Windows builds throw
+       PlatformNotSupportedException (repo shims/). Each has the package's identity and surface at a
+       higher version, so it also replaces the copy an app deploys itself (System.Management and
+       ServiceController are app-local packages, not framework members). -->
+  <PropertyGroup>
+    <_WpfWebGpuShims>$(MSBuildThisFileDirectory)../../../shims/</_WpfWebGpuShims>
+  </PropertyGroup>
+  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('osx'))">
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfWebGpuExtrasVersion)" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfWebGpuExtrasVersion)" />
+  </ItemGroup>
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Management/System.Management.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
+  </ItemGroup>
+
+</Project>

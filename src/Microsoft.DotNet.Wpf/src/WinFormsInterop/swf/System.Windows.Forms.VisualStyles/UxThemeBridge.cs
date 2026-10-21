@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 //
 // uxtheme for native callers. An application that P/Invokes uxtheme itself -- DotNetBar's themed
-// parts, a control that calls DrawThemeBackground on the HDC of its paint Graphics -- reaches wpfmac's
+// parts, a control that calls DrawThemeBackground on the HDC of its paint Graphics -- reaches wpfrun's
 // Win32 implementations (its P/Invokes rewritten), not this assembly. They answer through here, so a theme handle a native
 // caller holds is this backend's (VisualStylesWin11) and what it draws is what WinForms draws: one
 // Windows 11 look, whichever way a part is asked for.

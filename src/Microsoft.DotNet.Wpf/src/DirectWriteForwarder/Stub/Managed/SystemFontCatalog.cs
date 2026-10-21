@@ -192,7 +192,7 @@ namespace MS.Internal.Text.TextInterface.Managed
             foreach (string dir in PlatformFontDirectories()) yield return dir;
 
             // Fonts that travel with the STACK rather than with the app: a launcher that runs a
-            // prebuilt app on this stack (wpfmac) keeps them beside its own copy of the stack, since
+            // prebuilt app on this stack (wpfrun) keeps them beside its own copy of the stack, since
             // it never writes into the app's folder. Probed after the app's own.
             if (AppContext.GetData("WpfWebGpu.FontDirectory") is string extra && extra.Length > 0)
             {

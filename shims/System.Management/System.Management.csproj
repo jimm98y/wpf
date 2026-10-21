@@ -9,7 +9,7 @@
 
        The public surface is the package's, generated (Surface.g.cs, see ../Surface/gen-surface.sh)
        less the members listed in implemented.txt, which the other files implement. Same identity as
-       the package, AssemblyVersion above it so it wins over the copy an app ships (wpfmac's overlay
+       the package, AssemblyVersion above it so it wins over the copy an app ships (wpfrun's overlay
        references it for macOS RIDs only). -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

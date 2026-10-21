@@ -5,7 +5,7 @@
        exist; sources and the logs they create are registered where Windows registers them,
        HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<log>\<source>, so they persist when the
        registry does (the Microsoft.Win32.Registry shim's file store). Entries are kept for the
-       process's lifetime (a log reads back what this process wrote) and mirrored to wpfmac's
+       process's lifetime (a log reads back what this process wrote) and mirrored to wpfrun's
        compatibility log. The Eventing.Reader API stays unsupported.
 
        Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity

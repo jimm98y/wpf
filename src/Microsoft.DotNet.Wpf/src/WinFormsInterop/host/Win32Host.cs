@@ -550,7 +550,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             if (_hwnd != IntPtr.Zero) s_byHwnd[_hwnd] = this;
             // Which WinForms window this real one shows: what an app asking Windows about its own
             // windows (EnumWindows, GetForegroundWindow, Process.MainWindowHandle) is answered with,
-            // since the form's Handle is the stack's and not this HWND (WpfMac.Win32, Windows.cs).
+            // since the form's Handle is the stack's and not this HWND (WpfWebGpu.Win32, Windows.cs).
             if (_hwnd != IntPtr.Zero && _form.IsHandleCreated) SetPropW(_hwnd, StackHandleProperty, _form.Handle);
         }
         finally { s_creating = null; Marshal.FreeHGlobal(title); }

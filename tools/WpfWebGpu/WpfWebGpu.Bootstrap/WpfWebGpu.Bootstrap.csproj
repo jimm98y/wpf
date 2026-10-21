@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runs inside the launched app, before its Main, as a startup hook (STARTUP_HOOKS in the
+       runtimeconfig wpfrun generates; never an environment variable, so a process the app starts
+       does not inherit it). Everything it does is generic: nothing here knows which app it is in. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.Bootstrap</AssemblyName>
+    <RootNamespace>WpfWebGpu.Bootstrap</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

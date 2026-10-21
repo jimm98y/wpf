@@ -1,43 +1,43 @@
-# Running prebuilt apps with wpfmac
+# Running prebuilt apps with wpfrun
 
-`wpfmac` runs an existing .NET 10 WPF and/or WinForms app on the WPF-on-WebGPU stack **without
+`wpfrun` runs an existing .NET 10 WPF and/or WinForms app on the WPF-on-WebGPU stack **without
 rebuilding it and without changing a file in its folder**. Point it at the app's `.dll`, `.exe` or
 folder:
 
 ```
-dotnet artifacts/wpfmac/osx-arm64/launcher/wpfmac.dll run ~/Apps/Contoso/Contoso.dll
+dotnet artifacts/wpfrun/osx-arm64/launcher/wpfrun.dll run ~/Apps/Contoso/Contoso.dll
 ```
 
 It is the counterpart of [porting-an-app.md](porting-an-app.md), which is about rebuilding an app
-against `WpfWebGpu.Sdk`. Use wpfmac when you have only the binaries, or want to see how far an app
+against `WpfWebGpu.Sdk`. Use wpfrun when you have only the binaries, or want to see how far an app
 gets before porting it.
 
 - **macOS** is the target. The app runs natively on arm64 (AnyCPU assemblies, which is nearly all of
   them), on the fork's WPF, Mono WinForms and the WebGPU renderer, with shims for the Windows
   services it calls.
 - **Windows** is the comparison platform. The app's own `.exe` keeps running stock WPF, and
-  `wpfmac compare` starts it next to the WebGPU instance, side by side.
+  `wpfrun compare` starts it next to the WebGPU instance, side by side.
 
-Nothing in wpfmac is specific to an app.
+Nothing in wpfrun is specific to an app.
 
 ## Build
 
-wpfmac is built from this repo, on top of the SDK package:
+wpfrun is built from this repo, on top of the SDK package:
 
 ```
 eng/build-sdk.sh                  # once: builds the stack and packs WpfWebGpu.Sdk into artifacts/local-feed
-tools/WpfMac/build.sh             # macOS / Linux   (tools\WpfMac\build.cmd on Windows)
+tools/WpfWebGpu/build.sh             # macOS / Linux   (tools\WpfWebGpu\build.cmd on Windows)
 ```
 
-The output is `artifacts/wpfmac/<rid>/`:
+The output is `artifacts/wpfrun/<rid>/`:
 
 ```
-launcher/                 wpfmac itself (portable: dotnet launcher/wpfmac.dll ...)
-overlay/wpfmac.payload/   the stack an app runs on: WPF, WinForms, System.Drawing, the renderer,
+launcher/                 wpfrun itself (portable: dotnet launcher/wpfrun.dll ...)
+overlay/wpfrun.payload/   the stack an app runs on: WPF, WinForms, System.Drawing, the renderer,
                           wgpu-native, fonts, the shims, the startup hook, the rewriters
 ```
 
-After changing stack code, `tools/WpfMac/build.sh --repack` repacks the SDK from the existing build
+After changing stack code, `tools/WpfWebGpu/build.sh --repack` repacks the SDK from the existing build
 outputs and rebuilds the overlay in seconds. Build the changed project first. Never `dotnet publish`
 a single project into the overlay folder: an incremental clean of that folder deletes the native
 libraries.
@@ -46,13 +46,13 @@ libraries.
 
 | command | what it does |
 |---|---|
-| `wpfmac run [options] <app> [-- app args]` | run the app on the WebGPU stack |
-| `wpfmac compare [options] <app>` | Windows: stock `.exe` and WebGPU instance side by side |
-| `wpfmac audit [--out report.md] <app>` | what the app needs that the stack on this OS lacks |
-| `wpfmac prepare <app>` | write the generated files and print the command, without running |
-| `wpfmac reg import <file.reg>` / `reg export <key> <file.reg>` | macOS: move registry state in or out |
-| `wpfmac clean [--all]` | delete generated files; `--all` also logs and shim state |
-| `wpfmac where` | print every location wpfmac uses |
+| `wpfrun run [options] <app> [-- app args]` | run the app on the WebGPU stack |
+| `wpfrun compare [options] <app>` | Windows: stock `.exe` and WebGPU instance side by side |
+| `wpfrun audit [--out report.md] <app>` | what the app needs that the stack on this OS lacks |
+| `wpfrun prepare <app>` | write the generated files and print the command, without running |
+| `wpfrun reg import <file.reg>` / `reg export <key> <file.reg>` | macOS: move registry state in or out |
+| `wpfrun clean [--all]` | delete generated files; `--all` also logs and shim state |
+| `wpfrun where` | print every location wpfrun uses |
 
 Options come **before** the app; everything after the app goes to the app.
 
@@ -72,7 +72,7 @@ Options come **before** the app; everything after the app goes to the app.
 
 ## What happens to the app
 
-The app's folder is only ever read. wpfmac writes a generated `runtimeconfig.json` and `deps.json`
+The app's folder is only ever read. wpfrun writes a generated `runtimeconfig.json` and `deps.json`
 into its cache and runs:
 
 ```
@@ -89,8 +89,8 @@ dotnet exec --runtimeconfig <cache>/App.runtimeconfig.json --depsfile <cache>/Ap
   stack owns (WPF, WinForms, the shims) replaces the app's copy whatever its version. Between two
   ordinary packages the newer one wins. Package assets the app lists for this platform but did not
   deploy (a `SkiaSharp.NativeAssets.macOS`, say) are fetched from the NuGet cache or nuget.org into
-  wpfmac's cache.
-- **startup hook** (`WpfMac.Bootstrap`), before `Main`:
+  wpfrun's cache.
+- **startup hook** (`WpfWebGpu.Bootstrap`), before `Main`:
   - puts `AppContext.BaseDirectory` back to the app's folder;
   - maps the app's .NET 10 WinForms references to the stack's;
   - starts the compatibility log;
@@ -119,11 +119,11 @@ pretending to be a particular Windows machine, so an app takes its own "not inst
 
 | assembly | on macOS |
 |---|---|
-| `Microsoft.Win32.Registry` | a persistent per-user store in wpfmac's state, shared by every app run through wpfmac, like the real registry. `wpfmac reg import` seeds it from a regedit export. |
+| `Microsoft.Win32.Registry` | a persistent per-user store in wpfrun's state, shared by every app run through wpfrun, like the real registry. `wpfrun reg import` seeds it from a regedit export. |
 | `Microsoft.Win32.SystemEvents` | handlers are accepted and never raised (macOS has no setting-change broadcast to translate) |
 | `System.Management` (WMI) | WQL `SELECT ... WHERE` over `root\cimv2` with this Mac's data: `Win32_ComputerSystem[Product]`, `_BaseBoard`, `_BIOS`, `_Processor`, `_OperatingSystem`, `_LogicalDisk`, `_NetworkAdapter[Configuration]`, `_VideoController`, `_PhysicalMemory`, `_Process`. `Win32_Service` is empty. Other built-in namespaces return nothing, and a product's namespace (SQL Server's, say) is `InvalidNamespace`. Values have WMI's types (`uint32`, `uint64`, ...). |
 | `System.ServiceProcess.ServiceController` | a service manager with no services: Windows' "service not found" errors |
-| `System.Security.Cryptography.ProtectedData` | DPAPI's contract with AES-GCM under per-user and per-machine keys in wpfmac's state. Blobs protected on Windows cannot be read here, just as between two Windows machines. |
+| `System.Security.Cryptography.ProtectedData` | DPAPI's contract with AES-GCM under per-user and per-machine keys in wpfrun's state. Blobs protected on Windows cannot be read here, just as between two Windows machines. |
 | `System.Diagnostics.PerformanceCounter` | counters the app creates work in-process; Processor, Memory, Process and System report live values |
 | `System.Diagnostics.EventLog` | Application, System and Security exist; sources are registered in the registry where Windows keeps them; entries are kept for the process and copied to the compatibility log |
 
@@ -131,7 +131,7 @@ pretending to be a particular Windows machine, so an app takes its own "not inst
 about 18,000 exports across 364 DLLs, is known, and the app's P/Invokes of them are rewritten into
 managed calls. No native library is involved. Each function is one of two things:
 
-- a managed implementation, in `tools/WpfMac/WpfMac.Win32`: window, DC and GDI functions over the
+- a managed implementation, in `tools/WpfWebGpu/WpfWebGpu.Win32`: window, DC and GDI functions over the
   stack's own windows and `System.Drawing`, plus system metrics, `kernel32` basics, `dwmapi`,
   `uxtheme` and others;
 - otherwise, a stub that logs the call once and returns the function's failure value (`FALSE`,
@@ -141,7 +141,7 @@ A name no Windows DLL exports throws `EntryPointNotFoundException`, as on Window
 
 **Runtime detours.** Named `EventWaitHandle`, `Semaphore` and `MemoryMappedFile` objects, which .NET
 refuses on Unix, work. `CommonApplicationData` and the other machine-wide folders are mapped into
-wpfmac's state.
+wpfrun's state.
 
 ## What does not work (yet)
 
@@ -160,8 +160,8 @@ wpfmac's state.
 
 ## Logs and diagnostics
 
-Every run writes a compatibility log, `~/Library/Logs/WpfMac/<App>.log` (Windows:
-`%LOCALAPPDATA%\WpfMac\logs`). It records:
+Every run writes a compatibility log, `~/Library/Logs/WpfWebGpu/<App>.log` (Windows:
+`%LOCALAPPDATA%\WpfWebGpu\logs`). It records:
 
 - the first occurrence of each exception that means "this platform or stack lacks something"
   (`PlatformNotSupportedException`, `DllNotFoundException`, `EntryPointNotFoundException`,
@@ -172,7 +172,7 @@ Every run writes a compatibility log, `~/Library/Logs/WpfMac/<App>.log` (Windows
 - unhandled exceptions;
 - repeat counts, at exit.
 
-`wpfmac audit` gives the same picture statically before the app runs: missing assemblies, types and
+`wpfrun audit` gives the same picture statically before the app runs: missing assemblies, types and
 members, P/Invokes (marked ✓/✗ by whether the stack implements the function), non-AnyCPU and C++/CLI
 assemblies, named kernel objects, hard-coded paths, and Windows-only APIs such as WMI and DPAPI.
 A referenced assembly that stock cannot load either (it is neither in the app's folder nor in the
@@ -182,13 +182,13 @@ read for this, on any OS: the overlay, which carries every member of it, stands 
 the app names that is not installed on this machine makes the split unknown, and every miss then still
 counts as a gap.
 
-On macOS, `WPFMAC_DUMP_WINDOWS=1` with `--screenshots` also logs which WinForms windows the host
+On macOS, `WPFRUN_DUMP_WINDOWS=1` with `--screenshots` also logs which WinForms windows the host
 composites for each form.
 
 ## When the app crashes
 
 On macOS every `abort()` normally leaves a crash report and queues a "dotnet quit unexpectedly"
-dialog, one per crash. Under wpfmac, an app that dies of an unhandled exception, an uncaught
+dialog, one per crash. Under wpfrun, an app that dies of an unhandled exception, an uncaught
 Objective-C exception or a native panic instead:
 
 - notes it in the compatibility log and on stderr;
@@ -200,10 +200,10 @@ Pass `--crash-reports` to keep the system's behaviour, for the native backtraces
 ## Windows: side by side
 
 ```
-dotnet artifacts\wpfmac\win-arm64\launcher\wpfmac.dll compare --screenshot shots --size 1900x1150 C:\Apps\Contoso\Contoso.exe
+dotnet artifacts\wpfrun\win-arm64\launcher\wpfrun.dll compare --screenshot shots --size 1900x1150 C:\Apps\Contoso\Contoso.exe
 ```
 
-This starts `Contoso.exe` as usual (stock WPF and WinForms) and the same folder through wpfmac
+This starts `Contoso.exe` as usual (stock WPF and WinForms) and the same folder through wpfrun
 (WebGPU), and places the two main windows side by side at the same size.
 
 - `--screenshot <dir>` waits `--seconds`, brings each window to the front, makes both inactive and
@@ -225,7 +225,7 @@ On Windows the stack's WinForms controls are not Windows windows: `Control.Handl
 stack made up. An app that passes one to user32 (`GetWindowDC(control.Handle)`, `SendMessage`,
 `BeginPaint`, `SetWindowPos`, ...) would reach a Windows that has never heard of it. So the P/Invoke
 rewriter rewrites the app's P/Invokes of the functions that have a Windows implementation
-(`[Win32ExportOnWindows]`, `WpfMac.Win32/Windows*.cs`); every other P/Invoke is left as it is:
+(`[Win32ExportOnWindows]`, `WpfWebGpu.Win32/Windows*.cs`); every other P/Invoke is left as it is:
 
 - the implementation runs when a handle argument is one of the stack's windows; the real function
   (the original import, kept beside it) runs for every other handle: WPF windows, the windows forms
@@ -237,40 +237,40 @@ rewriter rewrites the app's P/Invokes of the functions that have a Windows imple
 
 The stack's own assemblies and the runtime's are not rewritten.
 
-## Removing wpfmac
+## Removing wpfrun
 
-wpfmac installs nothing: no shared framework, no persisted environment variables, no file
+wpfrun installs nothing: no shared framework, no persisted environment variables, no file
 associations, and it never writes to an app's folder. To remove it:
 
 ```
-dotnet artifacts/wpfmac/<rid>/launcher/wpfmac.dll clean --all
-rm -rf artifacts/wpfmac
+dotnet artifacts/wpfrun/<rid>/launcher/wpfrun.dll clean --all
+rm -rf artifacts/wpfrun
 ```
 
-`clean --all` deletes everything wpfmac created. `wpfmac where` lists the locations:
+`clean --all` deletes everything wpfrun created. `wpfrun where` lists the locations:
 
 | | macOS | Windows |
 |---|---|---|
-| cache (generated files, fetched packages) | `~/Library/Caches/WpfMac` | `%LOCALAPPDATA%\WpfMac\cache` |
-| logs | `~/Library/Logs/WpfMac` | `%LOCALAPPDATA%\WpfMac\logs` |
-| state (registry, DPAPI keys, mapped machine folders) | `~/Library/Application Support/WpfMac` | not used: the real registry and folders are |
+| cache (generated files, fetched packages) | `~/Library/Caches/WpfWebGpu` | `%LOCALAPPDATA%\WpfWebGpu\cache` |
+| logs | `~/Library/Logs/WpfWebGpu` | `%LOCALAPPDATA%\WpfWebGpu\logs` |
+| state (registry, DPAPI keys, mapped machine folders) | `~/Library/Application Support/WpfWebGpu` | not used: the real registry and folders are |
 
 The app is then exactly as before: its folder was never written to, and on Windows its `.exe` never
 stopped running on stock WPF.
 
-What the app itself wrote while it ran under wpfmac stays where it wrote it: settings in its own
+What the app itself wrote while it ran under wpfrun stays where it wrote it: settings in its own
 `~/Library/...` folders, files it saved. Writes to machine-wide folders and the registry went into
-wpfmac's state and are gone.
+wpfrun's state and are gone.
 
-`WPFMAC_CACHE`, `WPFMAC_LOGS`, `WPFMAC_STATE` and `WPFMAC_OVERLAY` move these locations, for example
+`WPFRUN_CACHE`, `WPFRUN_LOGS`, `WPFRUN_STATE` and `WPFRUN_OVERLAY` move these locations, for example
 to try an app in a throwaway sandbox.
 
-## Testing wpfmac
+## Testing wpfrun
 
 ```
-dotnet test tools/WpfMac/tests/WpfMac.Tests                # unit tests: merge, rewrite, .reg, shims, ...
-tools/WpfMac/tests/fixtures/build-fixtures.sh              # stock net10.0-windows test apps
-dotnet artifacts/wpfmac/osx-arm64/launcher/wpfmac.dll run artifacts/wpfmac-fixtures/MixedFixture/MixedFixture.dll -- --seconds 3
+dotnet test tools/WpfWebGpu/tests/WpfWebGpu.Tests                # unit tests: merge, rewrite, .reg, shims, ...
+tools/WpfWebGpu/tests/fixtures/build-fixtures.sh              # stock net10.0-windows test apps
+dotnet artifacts/wpfrun/osx-arm64/launcher/wpfrun.dll run artifacts/wpfrun-fixtures/MixedFixture/MixedFixture.dll -- --seconds 3
 ```
 
 Each fixture prints `fixture: PASS` and exits 0:
@@ -281,7 +281,7 @@ Each fixture prints `fixture: PASS` and exits 0:
 | `WinFormsFixture` | the .NET WinForms template, plus `System.Drawing` type identities |
 | `MixedFixture` | WinForms hosting WPF and WPF hosting WinForms, plus the registry, event log, WMI and user32 |
 
-Run on Windows, each fixture must behave the same both as its own `.exe` and through wpfmac.
+Run on Windows, each fixture must behave the same both as its own `.exe` and through wpfrun.
 
 A changed shim must keep its surface:
 
