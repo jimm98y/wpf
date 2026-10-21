@@ -1,0 +1,41 @@
+<!-- Pack-only project for WpfWebGpu.Win32: the stack's managed implementations of the Windows API
+     (WpfWebGpu.Win32, WpfWebGpu.ComInterop) and the build-time rewriter that points an app's Windows
+     P/Invokes and COM types at them (wpf-rewrite, BuildRewrite.cs). Documentation/pinvoke-rewriter.md.
+
+     A package of its own, not part of WpfWebGpu.Sdk, because it is built WITH that SDK: WpfWebGpu.Win32
+     implements the window functions against the stack's WPF and WinForms windows. WpfWebGpu.Sdk
+     PackageReferences it on the heads that bundle the app and compile it ahead of time (the browser),
+     where the rewrite happens when the app is published; wpfrun carries the same assemblies in its
+     overlay and rewrites when the app is started.
+
+     tools/WpfWebGpu/build.sh packs it, from the overlay it has just built (the same files wpfrun runs)
+     and the published rewriter. -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>WpfWebGpu.Win32</PackageId>
+    <Version>0.1.1</Version>
+    <Authors>wpf-webgpu</Authors>
+    <Description>Managed implementations of the Windows API for the WPF-on-WebGPU stack, and the build-time rewriter that points an app's Windows P/Invokes and COM interop at them. Consumed by WpfWebGpu.Sdk through $(WpfWebGpuWin32Root).</Description>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <!-- NU5100/NU5128: assemblies outside lib/<tfm> (deliberate: the SDK decides per head what to do with them) -->
+    <NoWarn>$(NoWarn);NU5100;NU5128</NoWarn>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="build/WpfWebGpu.Win32.props" Pack="true" PackagePath="build/" />
+    <None Include="$(WpfWebGpuPayloadDir)/WpfWebGpu.Win32.dll;$(WpfWebGpuPayloadDir)/WpfWebGpu.Win32.pdb;$(WpfWebGpuPayloadDir)/WpfWebGpu.ComInterop.dll;$(WpfWebGpuPayloadDir)/WpfWebGpu.ComInterop.pdb"
+          Pack="true" PackagePath="lib/" />
+    <None Include="$(WpfWebGpuRewriteDir)/**" Pack="true" PackagePath="tools/rewrite/" />
+  </ItemGroup>
+
+  <Target Name="WpfWebGpuWin32ValidateInputs" BeforeTargets="GenerateNuspec">
+    <Error Condition="!Exists('$(WpfWebGpuPayloadDir)/WpfWebGpu.Win32.dll')" Text="WpfWebGpu.Win32: no WpfWebGpu.Win32.dll in WpfWebGpuPayloadDir ('$(WpfWebGpuPayloadDir)'); pack it with tools/WpfWebGpu/build.sh." />
+    <Error Condition="!Exists('$(WpfWebGpuRewriteDir)/wpf-rewrite.dll')" Text="WpfWebGpu.Win32: no wpf-rewrite.dll in WpfWebGpuRewriteDir ('$(WpfWebGpuRewriteDir)'); pack it with tools/WpfWebGpu/build.sh." />
+  </Target>
+
+</Project>

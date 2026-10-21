@@ -328,43 +328,15 @@ public static unsafe partial class Exports
     [Win32Export("GetCursorPos", "GetPhysicalCursorPos")]
     public static int GetCursorPos(POINT* p)
     {
-        CGPoint c = MacNative.CursorPosition();
-        p->X = (int)Math.Round(c.X);
-        p->Y = (int)Math.Round(c.Y);
+        if (!Platform.Cursor(out int x, out int y)) { p->X = p->Y = 0; return FALSE; }
+        p->X = x;
+        p->Y = y;
         return TRUE;
     }
 
-    [Win32Export("SetCursorPos", "SetPhysicalCursorPos")] public static int SetCursorPos(int x, int y) => MacNative.CGWarpMouseCursorPosition(new CGPoint { X = x, Y = y }) == 0 ? TRUE : FALSE;
+    [Win32Export("SetCursorPos", "SetPhysicalCursorPos")] public static int SetCursorPos(int x, int y) => Platform.SetCursor(x, y) ? TRUE : FALSE;
 
-    // Windows virtual-key codes to macOS key codes (kVK_*), for the keys apps actually poll.
-    private static readonly Dictionary<int, ushort> s_vkToMac = new()
-    {
-        [0x08] = 0x33, [0x09] = 0x30, [0x0D] = 0x24, [0x1B] = 0x35, [0x20] = 0x31,
-        [0x21] = 0x74, [0x22] = 0x79, [0x23] = 0x77, [0x24] = 0x73, [0x25] = 0x7B, [0x26] = 0x7E, [0x27] = 0x7C, [0x28] = 0x7D,
-        [0x2E] = 0x75, [0x70] = 0x7A, [0x71] = 0x78, [0x72] = 0x63, [0x73] = 0x76, [0x74] = 0x60, [0x75] = 0x61,
-        [0x76] = 0x62, [0x77] = 0x64, [0x78] = 0x65, [0x79] = 0x6D, [0x7A] = 0x67, [0x7B] = 0x6F,
-        ['A'] = 0x00, ['S'] = 0x01, ['D'] = 0x02, ['F'] = 0x03, ['H'] = 0x04, ['G'] = 0x05, ['Z'] = 0x06, ['X'] = 0x07,
-        ['C'] = 0x08, ['V'] = 0x09, ['B'] = 0x0B, ['Q'] = 0x0C, ['W'] = 0x0D, ['E'] = 0x0E, ['R'] = 0x0F, ['Y'] = 0x10,
-        ['T'] = 0x11, ['1'] = 0x12, ['2'] = 0x13, ['3'] = 0x14, ['4'] = 0x15, ['6'] = 0x16, ['5'] = 0x17, ['9'] = 0x19,
-        ['7'] = 0x1A, ['8'] = 0x1C, ['0'] = 0x1D, ['O'] = 0x1F, ['U'] = 0x20, ['I'] = 0x22, ['P'] = 0x23, ['L'] = 0x25,
-        ['J'] = 0x26, ['K'] = 0x28, ['N'] = 0x2D, ['M'] = 0x2E,
-    };
-
-    private static bool KeyDown(int vk)
-    {
-        ulong flags = MacNative.CGEventSourceFlagsState(MacNative.CombinedSessionState);
-        switch (vk)
-        {
-            case 0x10: case 0xA0: case 0xA1: return (flags & 0x20000) != 0;   // shift
-            case 0x11: case 0xA2: case 0xA3: return (flags & 0x100000) != 0;  // control <- Command, as the stack maps it
-            case 0x12: case 0xA4: case 0xA5: return (flags & 0x80000) != 0;   // alt <- Option
-            case 0x14: return (flags & 0x10000) != 0;                          // caps lock
-            case 0x01: return MacNative.CGEventSourceButtonState(MacNative.CombinedSessionState, 0);
-            case 0x02: return MacNative.CGEventSourceButtonState(MacNative.CombinedSessionState, 1);
-            case 0x04: return MacNative.CGEventSourceButtonState(MacNative.CombinedSessionState, 2);
-        }
-        return s_vkToMac.TryGetValue(vk, out ushort key) && MacNative.CGEventSourceKeyState(MacNative.CombinedSessionState, key);
-    }
+    private static bool KeyDown(int vk) => Platform.KeyDown(vk);
 
     [Win32Export("GetKeyState", "GetAsyncKeyState")]
     public static short GetKeyState(int vk)
@@ -461,18 +433,7 @@ internal static class Screens
         long now = Environment.TickCount64;
         if (s_cache != null && now - s_cachedAt < 500) return s_cache;
         var list = new List<Screen>();
-        foreach (var (_, bounds) in MacNative.Displays())
-        {
-            RECT b = new()
-            {
-                Left = (int)bounds.Origin.X, Top = (int)bounds.Origin.Y,
-                Right = (int)(bounds.Origin.X + bounds.Size.Width), Bottom = (int)(bounds.Origin.Y + bounds.Size.Height),
-            };
-            // The menu bar takes the top of the main display; the Dock's share is not known from here.
-            RECT w = b;
-            if (list.Count == 0) w.Top += 25;
-            list.Add(new Screen(b, w));
-        }
+        foreach (var (b, w) in Platform.Displays()) list.Add(new Screen(b, w));
         s_cache = list;
         s_cachedAt = now;
         return list;

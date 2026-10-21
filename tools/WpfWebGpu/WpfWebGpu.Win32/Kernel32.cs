@@ -351,7 +351,7 @@ public static unsafe partial class Exports
     public static int GlobalMemoryStatusEx(byte* m)
     {
         // MEMORYSTATUSEX: dwLength, dwMemoryLoad, then seven ULONGLONGs.
-        ulong total = MacNative.SysctlU64("hw.memsize");
+        ulong total = Platform.PhysicalMemory();
         var gc = GC.GetGCMemoryInfo();
         ulong avail = gc.TotalAvailableMemoryBytes > 0 ? Math.Min(total, (ulong)Math.Max(0, gc.TotalAvailableMemoryBytes - gc.MemoryLoadBytes)) : total / 2;
         *(uint*)(m + 4) = total == 0 ? 0u : (uint)(100 - avail * 100 / total);

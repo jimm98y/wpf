@@ -12,7 +12,8 @@ what lets the same rewrite run on every head:
 | head | when | how |
 |---|---|---|
 | macOS, Linux, Windows (wpfrun) | when the assembly loads | `ComImportLoader`, in memory; the result is cached in the app's cache folder |
-| iOS, Android, the browser (AOT) | at build | the same `ComRewriter.RewriteToMemory`, over the app's assemblies before AOT compilation (not wired into those builds yet) |
+| the browser | when the app is published | `wpf-rewrite` (`BuildRewrite`), over the app's assemblies before they are trimmed and compiled ahead of time |
+| iOS, Android | at build | the same `BuildRewrite` (not wired into those builds yet) |
 
 It replaces two mechanisms:
 
@@ -41,6 +42,16 @@ The methods are `public static` and take the function's raw signature: pointers,
 
 A mask with device-context bits alone names no implementation. Those GDI functions stay the real
 ones, after the drawing a `Graphics` has pending on the DC has been written to it.
+
+## The platform
+
+A few functions ask the platform itself rather than the stack's windows: where the pointer is,
+which keys and buttons are down, what displays there are, and how much memory there is
+(`WpfWebGpu.Win32/Platform.cs`). macOS answers for the whole session (CoreGraphics, sysctl), as
+Windows does. The other heads answer from what the stack's WPF knows: its mouse and keyboard
+devices and its screen metrics. In the browser the screen is the page. `GetCursorPos` fails when
+the pointer is over none of the app's windows, and `SetCursorPos` fails because a page may not
+move the pointer.
 
 ## Every Windows export
 
@@ -112,6 +123,30 @@ own (64 KB aligned, as Windows' are), so a check that the DLL is present passes,
 `GetModuleFileName` returns `C:\Windows\System32\user32.dll`. `GetProcAddress` on such a handle finds
 no native entry point and returns `NULL` with `ERROR_PROC_NOT_FOUND`, logged, as on a Windows whose
 DLL lacks the function.
+
+## The browser head
+
+`WpfWebGpu.Sdk` does the rewrite when a browser app is published (`Sdk.targets`,
+`_WpfWebGpuRewriteForBundle`):
+
+1. The rewriter and the implementations come in the `WpfWebGpu.Win32` package, which
+   `tools/WpfWebGpu/build.sh` packs into `artifacts/local-feed`. Its `tools/rewrite/wpf-rewrite.dll`
+   is the rewriter, and its `lib/` holds `WpfWebGpu.Win32` and `WpfWebGpu.ComInterop`.
+2. After publish has listed the assemblies to postprocess, every app assembly is offered:
+   the app's own, its packages' and its project references'. The runtime's and the stack's are not.
+   The same choice as off Windows applies (`BuildRewrite`). Location calls are not rewritten,
+   because a rewritten assembly is a file of the bundle. The entry assembly is rewritten too.
+3. Each rewritten copy replaces the original in the publish list, keeping its metadata, so the
+   trimmer and the AOT compiler take it. The trimmer's root for the app's own assembly is the copy.
+4. The implementations are in the build's output on the browser head (copy-local, never a compile
+   reference), with the stack's WinForms under them, since the window functions are implemented
+   against its windows. They stay in the bundle only when something was rewritten. They are
+   rooted for the trimmer, and `WpfWebGpu.Win32` and `System.Windows.Forms` stay on the interpreter.
+5. `WasmBoot` initializes `WpfWebGpu.Win32` when it is in the bundle. Its notes (a function the
+   stack does not implement) go to the browser console.
+
+`-p:WpfWebGpuWin32=false` turns all of this off. `samples/wpf-pinvoke-check` is an app whose own
+code P/Invokes user32 and kernel32 and prints what each call answered.
 
 ## Not covered
 

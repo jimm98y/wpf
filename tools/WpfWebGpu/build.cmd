@@ -49,5 +49,14 @@ echo ^>^> launcher -^> %OUT%\%LNAME%
 dotnet publish "%HERE%WpfWebGpu.Launcher" -c Release -o "%OUT%\%LNAME%" -nologo -v q || (popd & exit /b 1)
 echo ^>^> overlay (%RID%) -^> %OUT%\%ONAME%\wpfrun.payload
 dotnet publish "%HERE%WpfWebGpu.Payload" -c Release -r %RID% --self-contained false -o "%OUT%\%ONAME%\wpfrun.payload" -nologo -v q -clp:NoSummary -nowarn:MSB3277 || (popd & exit /b 1)
+rem The same implementations, and the build-time rewriter, for the heads that bundle the app
+rem (WpfWebGpu.Sdk's browser head): the WpfWebGpu.Win32 package, from the overlay just built.
+echo ^>^> WpfWebGpu.Win32 package -^> artifacts\local-feed
+set "REWRITE=%OUT%\rewrite"
+if exist "%REWRITE%" rmdir /s /q "%REWRITE%"
+dotnet publish "%HERE%WpfWebGpu.Rewrite" -c Release -o "%REWRITE%" -nologo -v q || (popd & exit /b 1)
+if exist "%REPO%\artifacts\local-feed\WpfWebGpu.Win32.*.nupkg" del /q "%REPO%\artifacts\local-feed\WpfWebGpu.Win32.*.nupkg"
+dotnet pack "%HERE%WpfWebGpu.Win32.Package\WpfWebGpu.Win32.Package.csproj" -c Release -o "%REPO%\artifacts\local-feed" -p:WpfWebGpuPayloadDir="%OUT%\%ONAME%\wpfrun.payload" -p:WpfWebGpuRewriteDir="%REWRITE%" -nologo -v q || (popd & exit /b 1)
+if exist "%NUGETROOT%\wpfwebgpu.win32" rmdir /s /q "%NUGETROOT%\wpfwebgpu.win32"
 echo ^>^> done: dotnet %OUT%\%LNAME%\wpfrun.dll compare ^<App.dll^>
 popd

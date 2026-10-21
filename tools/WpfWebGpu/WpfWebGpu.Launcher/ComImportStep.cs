@@ -321,101 +321,22 @@ internal static class ComImportStep
         list.Add($"{f.Name}|{f.File}|{string.Join(",", names)}");
     }
 
-    /// <summary>The file's hash, what it references, whether it declares COM types and may read locations.</summary>
+    /// <summary>The file's hash, what it references, whether it declares COM types and may read locations
+    /// (AssemblyScan, which the build of a bundled head reads too).</summary>
     private static bool ReadMetadata(AppFile f)
     {
-        try
-        {
-            byte[] bytes = File.ReadAllBytes(f.File);
-            f.Hash = Convert.ToHexString(SHA256.HashData(bytes))[..24].ToLowerInvariant();
-            using var pe = new PEReader(new MemoryStream(bytes));
-            if (!pe.HasMetadata) return false;
-            var md = pe.GetMetadataReader();
-            if (!md.IsAssembly) return false;
-            f.ILOnly = (pe.PEHeaders.CorHeader?.Flags & CorFlags.ILOnly) != 0;
-            f.Name = md.GetString(md.GetAssemblyDefinition().Name);
-            foreach (var h in md.TypeDefinitions)
-                if ((md.GetTypeDefinition(h).Attributes & System.Reflection.TypeAttributes.Import) != 0) { f.DeclaresCom = true; break; }
-            f.MayReadLocations = LocationCallers.MayRead(md);
-            f.References = md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToList();
-            ScanRcwMakers(md, f);
-            return true;
-        }
-        catch (Exception e) when (e is BadImageFormatException or IOException or InvalidOperationException) { return false; }
-    }
-
-    private static readonly HashSet<string> s_rcwMarshal = new(StringComparer.Ordinal)
-    {
-        "GetObjectForIUnknown", "GetTypedObjectForIUnknown", "GetUniqueObjectForIUnknown", "GetObjectForNativeVariant",
-        "GetObjectsForNativeVariants", "CreateWrapperOfType", "BindToMoniker", "GetActiveObject", "GetDelegateForFunctionPointer",
-        "GetFunctionPointerForDelegate",
-    };
-
-    private static readonly HashSet<string> s_comObjectMarshal = new(StringComparer.Ordinal)
-    {
-        "ReleaseComObject", "FinalReleaseComObject", "IsComObject", "GetIUnknownForObject", "GetComInterfaceForObject",
-    };
-
-    /// <summary>How <paramref name="f"/> could make built-in RCWs without declaring COM types (AppFile.RcwApis, ...).</summary>
-    private static void ScanRcwMakers(MetadataReader md, AppFile f)
-    {
-        foreach (var h in md.MemberReferences)
-        {
-            var mr = md.GetMemberReference(h);
-            if (mr.Parent.Kind != HandleKind.TypeReference) continue;
-            var tr = md.GetTypeReference((TypeReferenceHandle)mr.Parent);
-            string type = md.GetString(tr.Namespace) + "." + md.GetString(tr.Name), name = md.GetString(mr.Name);
-            if ((type == "System.Runtime.InteropServices.Marshal" && s_rcwMarshal.Contains(name))
-                || (type == "System.Type" && name is "GetTypeFromCLSID" or "GetTypeFromProgID"))
-                f.RcwApis = true;
-            else if (type == "System.Runtime.InteropServices.Marshal" && s_comObjectMarshal.Contains(name))
-                f.ComObjectApis = true;
-        }
-        var provider = new ScopeCollector(md);
-        foreach (var h in md.MethodDefinitions)
-        {
-            var m = md.GetMethodDefinition(h);
-            if ((m.Attributes & System.Reflection.MethodAttributes.PinvokeImpl) == 0) continue;
-            try { m.DecodeSignature(provider, null); }
-            catch (BadImageFormatException) { f.PInvokeDelegates = true; }
-        }
-        f.PInvokeScopes.UnionWith(provider.Scopes);
-        if (provider.Delegates) f.PInvokeDelegates = true;
-    }
-
-    /// <summary>A signature's types: the assemblies of those it references, and whether one is a delegate of
-    /// the file's own (a callback native code may call with interface pointers).</summary>
-    private sealed class ScopeCollector : ISignatureTypeProvider<int, object?>
-    {
-        private readonly MetadataReader _md;
-        public readonly HashSet<string> Scopes = new(StringComparer.OrdinalIgnoreCase);
-        public bool Delegates;
-        public ScopeCollector(MetadataReader md) { _md = md; }
-        public int GetTypeFromReference(MetadataReader r, TypeReferenceHandle h, byte k)
-        {
-            var scope = r.GetTypeReference(h).ResolutionScope;
-            while (scope.Kind == HandleKind.TypeReference) scope = r.GetTypeReference((TypeReferenceHandle)scope).ResolutionScope;
-            if (scope.Kind == HandleKind.AssemblyReference) Scopes.Add(r.GetString(r.GetAssemblyReference((AssemblyReferenceHandle)scope).Name));
-            return 0;
-        }
-        public int GetTypeFromDefinition(MetadataReader r, TypeDefinitionHandle h, byte k)
-        {
-            var b = r.GetTypeDefinition(h).BaseType;
-            if (b.Kind == HandleKind.TypeReference && r.GetString(r.GetTypeReference((TypeReferenceHandle)b).Name) is "MulticastDelegate" or "Delegate") Delegates = true;
-            return 0;
-        }
-        public int GetTypeFromSpecification(MetadataReader r, object? c, TypeSpecificationHandle h, byte k) => r.GetTypeSpecification(h).DecodeSignature(this, c);
-        public int GetPrimitiveType(PrimitiveTypeCode t) => 0;
-        public int GetSZArrayType(int e) => 0;
-        public int GetArrayType(int e, ArrayShape s) => 0;
-        public int GetByReferenceType(int e) => 0;
-        public int GetPointerType(int e) => 0;
-        public int GetPinnedType(int e) => 0;
-        public int GetGenericInstantiation(int g, System.Collections.Immutable.ImmutableArray<int> a) => 0;
-        public int GetGenericMethodParameter(object? c, int i) => 0;
-        public int GetGenericTypeParameter(object? c, int i) => 0;
-        public int GetFunctionPointerType(MethodSignature<int> s) => 0;
-        public int GetModifiedType(int m, int u, bool r) => 0;
+        if (AssemblyScan.Read(f.File) is not { } scan) return false;
+        f.Name = scan.Name;
+        f.Hash = scan.Hash;
+        f.ILOnly = scan.ILOnly;
+        f.DeclaresCom = scan.DeclaresCom;
+        f.MayReadLocations = scan.MayReadLocations;
+        f.References = scan.References.ToList();
+        f.RcwApis = scan.RcwApis;
+        f.ComObjectApis = scan.ComObjectApis;
+        f.PInvokeDelegates = scan.PInvokeDelegates;
+        f.PInvokeScopes.UnionWith(scan.PInvokeScopes);
+        return true;
     }
 
     private static Cache Load(string? path)
