@@ -602,9 +602,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
         if (_gpuRaster)
         {
-            // the UI thread's device (ThreadGpu.cs): an ElementHost's WPF scene drawn here can show its
+            // the process's device (ProcessGpu.cs): an ElementHost's WPF scene drawn here can show its
             // D3DImage textures as they are
-            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ThreadGpu.AcquireForHostWindow();
+            var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Acquire();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _hwnd);
             if (surface == IntPtr.Zero) throw new InvalidOperationException("NativePlatform.CreateWindowSurface returned null");
             _wgpu = new WgpuPresenter(ctx, surface, _form.ClientSize.Width, _form.ClientSize.Height, _scale, srgb: true, nativeWindow: _hwnd, threadDevice: true);

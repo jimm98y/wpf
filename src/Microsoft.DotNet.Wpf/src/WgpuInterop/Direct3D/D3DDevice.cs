@@ -178,7 +178,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Adapter.Release();
             if (OwnsGpu)
             {
-                if (Composition.ThreadGpu.Manages(Gpu)) Composition.ThreadGpu.Release(Gpu);
+                if (Composition.ProcessGpu.Manages(Gpu)) Composition.ProcessGpu.Release(Gpu);
                 else Gpu.Dispose();
             }
         }
@@ -238,11 +238,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>A WebGPU device of its own for a D3D11 device: the features D3D11 at feature level
         /// 11 takes for granted where the adapter has them, and validation errors logged rather than
         /// fatal (wgpu-native aborts on an uncaptured error).</summary>
-        /// <summary>The calling thread's WebGPU device (Composition/ThreadGpu.cs): its compositors' and the
-        /// shim devices made on it, so a texture shared between devices (a D3D9 surface of a D3D11
+        /// <summary>The process's WebGPU device (Composition/ProcessGpu.cs): the compositors' and the
+        /// shim devices', so a texture shared between devices (a D3D9 surface of a D3D11
         /// texture, a shared handle) is one WebGPU texture, and a D3DImage of it is a GPU copy. No
         /// reference is taken: for descriptions and tests.</summary>
-        public static WgpuContext SharedGpu => Composition.ThreadGpu.Peek();
+        public static WgpuContext SharedGpu => Composition.ProcessGpu.Peek();
 
         public static WgpuContext CreateGpu()
         {
@@ -392,9 +392,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         /// <summary>OpenSharedResource(1): a shim handle names a texture (made shared by D3D11 or
-        /// D3D9); a device on the same WebGPU device (Composition/ThreadGpu.cs: made on the same thread,
-        /// or on threads that composite nothing) opens that same texture. A texture of another WebGPU
-        /// device cannot be opened.</summary>
+        /// D3D9); every shim device is on the process's WebGPU device (Composition/ProcessGpu.cs), so it
+        /// opens that same texture. A texture of another WebGPU device cannot be opened.</summary>
         [UnmanagedCallersOnly]
         private static int OpenSharedResource(IntPtr self, IntPtr handle, Guid* iid, IntPtr* resource)
         {

@@ -6,7 +6,7 @@
 // (ExternalImage.cs), kept across frames of the same size and written in place.
 //
 // - Zero-copy (SendSurface): the back buffer is a Direct3D shim surface on THIS compositor's device -- a
-//   UI thread's compositors and the shim devices made on it share the thread's device (ThreadGpu.cs) --
+//   compositors and the shim devices share the process's device (ProcessGpu.cs) --
 //   so the frame is a GPU copy, on the one queue, after the app's Direct3D work: a pass that
 //   un-premultiplies (as the copy path does, to the integer) or makes the surface opaque, then a copy.
 //   No readback.
@@ -52,22 +52,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Frames that took the zero-copy path, and frames written from pixels (tests).</summary>
         public int ZeroCopyPresents, CopyPresents;
 
-        /// <summary>Whether this compositor's device is its thread's (ThreadGpu.cs), the one the shim devices
-        /// made on its thread use.</summary>
+        /// <summary>Whether this compositor's device is the one the shim devices use: the process's
+        /// (Composition/ProcessGpu.cs), always.</summary>
         public bool SharesShimDevice { get; private set; }
 
-        /// <summary>The device for this compositor: its UI thread's (Composition/ThreadGpu.cs), shared with the
-        /// thread's WinForms windows and the Direct3D shim devices made on it.</summary>
+        /// <summary>The device for this compositor: the process's (Composition/ProcessGpu.cs), shared with
+        /// every WinForms window and the Direct3D shim devices.</summary>
         private WgpuContext CreateOrShareContext()
         {
-#if WGPU_BROWSER
-            // the browser: one device of its own, and no Direct3D shim to share it with
-            return WgpuContext.Create();
-#else
-            SharesShimDevice = !ThreadGpu.Unshared;
-            // the UI thread's, though this may run on the render thread
-            return ThreadGpu.Acquire(_ownerThreadId, wpfSink: true);
-#endif
+            SharesShimDevice = true;
+            return ProcessGpu.Acquire();
         }
 
         /// <summary>The back buffer <paramref name="key"/>'s front buffer at this size, made, kept or replaced
@@ -189,7 +183,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 #else
             var ctx = _ctx;
             if (s_trace && (_tracedSend++ < 3 || _tracedSend % 100 == 0))
-                Log($"d3dimage: send h{handle} shares={SharesShimDevice} hosted={HostedWpfContent.Any} shim surface={(ComObject.From(surface) is Direct3DSurface9 s9 ? (ReferenceEquals(s9.Gpu?.Device.Gpu, ctx) ? "this device" : "another device") : "no")} foreign={ForeignRenderer} thread {Environment.CurrentManagedThreadId} {ThreadGpu.Describe()}");
+                Log($"d3dimage: send h{handle} shares={SharesShimDevice} hosted={HostedWpfContent.Any} shim surface={(ComObject.From(surface) is Direct3DSurface9 s9 ? (ReferenceEquals(s9.Gpu?.Device.Gpu, ctx) ? "this device" : "another device") : "no")} foreign={ForeignRenderer} thread {Environment.CurrentManagedThreadId} {ProcessGpu.Describe()}");
             if (ctx == null || ForeignRenderer) return false;
             if (ComObject.From(surface) is not Direct3DSurface9 { OnCpuSide: false } s || !ReferenceEquals(s.Gpu!.Device.Gpu, ctx)) return false;
             if (s.Width != width || s.Height != height) return false;
@@ -241,15 +235,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return true;
         }
 
-        /// <summary>Whether a renderer on another device may draw this compositor's scenes: an ElementHost's
-        /// WPF scene is drawn by its WinForms window, with that window's thread's device. While a WinForms
-        /// window draws with another device than this compositor's (another UI thread's: a splash screen),
-        /// the frame goes as pixels, which any device can upload.</summary>
-#if WGPU_BROWSER
-        private bool ForeignRenderer => false;   // one device for everything
-#else
-        private bool ForeignRenderer => HostedWpfContent.Any && _ctx is { } c && ThreadGpu.HostWindowsOffDevice(c);
-#endif
+        /// <summary>Whether a renderer on another device may draw this compositor's scenes: never, since every
+        /// renderer is on the process's device (ProcessGpu.cs), an ElementHost's WinForms window included.</summary>
+        private bool ForeignRenderer => false;
 
         private static void Clip(ref int x, ref int y, ref int w, ref int h, int width, int height)
         {
