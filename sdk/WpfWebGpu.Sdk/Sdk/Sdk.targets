@@ -668,6 +668,109 @@
   </Target>
 
   <!--
+    The app's Windows P/Invokes and COM types, rewritten onto the stack's managed implementations
+    (Documentation/pinvoke-rewriter.md) when the browser head is published: before the assemblies are
+    trimmed and compiled ahead of time, which is the only point a bundled head can do it: the launcher
+    rewrites when an app is started, and nothing here loads assemblies from files or generates code.
+
+    The rewriter and the implementations come in the WpfWebGpu.Win32 package (packed by
+    tools/WpfWebGpu/build.sh). Every app assembly is offered: the app's own, its packages', its project
+    references'; not the runtime's and not the stack's. A P/Invoke of a function the stack implements
+    then calls it; one it does not logs once and fails as on a Windows without it; without the rewrite
+    each was a DllNotFoundException, the first time the app asked user32 anything.
+
+    The implementations reach the bundle only when something was rewritten. They implement the window
+    functions against the stack's WPF and WinForms windows, so the stack's WinForms comes with them; it
+    stays on the interpreter, as in the WinForms browser host. WpfWebGpuWin32=false turns it all off.
+  -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false'">
+    <PackageReference Include="WpfWebGpu.Win32" Version="0.1.1" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- In the build's output (copy-local, never a compile reference: a WPF app's System.Drawing is not
+       Mono's), because the bundle is made of the build's assets and a publish only promotes them; the
+       publish below keeps them where something was rewritten and drops them where nothing was. -->
+  <Target Name="_WpfWebGpuWin32CopyLocal" AfterTargets="ResolveAssemblyReferences"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuWin32Runtime Include="$(WpfWebGpuWin32Root)lib/WpfWebGpu.Win32.dll;$(WpfWebGpuWin32Root)lib/WpfWebGpu.ComInterop.dll" />
+      <_WpfWebGpuWin32Runtime Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll;$(WpfWebGpuSdkRoot)lib/wpf-winforms/Mono.System.Drawing.dll" />
+      <_WpfWebGpuWin32Runtime Remove="@(ReferenceCopyLocalPaths)" />
+      <ReferenceCopyLocalPaths Include="@(_WpfWebGpuWin32Runtime)" DestinationSubDirectory="" CopyLocal="true" AssetType="runtime" WpfWebGpuWin32Runtime="true" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="_WpfWebGpuRewriteForBundle"
+          AfterTargets="_ComputeAssembliesToPostprocessOnPublish"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
+    <PropertyGroup>
+      <_WpfWebGpuRewriteDir>$([MSBuild]::NormalizeDirectory('$(ProjectDir)$(IntermediateOutputPath)wpf-rewrite'))</_WpfWebGpuRewriteDir>
+      <_WpfWebGpuRewriteRsp>$(ProjectDir)$(IntermediateOutputPath)wpf-rewrite.rsp</_WpfWebGpuRewriteRsp>
+      <_WpfWebGpuDotnet>$(DOTNET_HOST_PATH)</_WpfWebGpuDotnet>
+      <_WpfWebGpuDotnet Condition="'$(_WpfWebGpuDotnet)' == ''">dotnet</_WpfWebGpuDotnet>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WpfWebGpuRewriteInput Include="@(ResolvedFileToPublish->WithMetadataValue('PostprocessAssembly', 'true'))"
+                              Exclude="@(_ManagedRuntimePackAssembly);@(_WpfWebGpuWin32Runtime)"
+                              Condition="'%(Extension)' == '.dll' and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuWin32Root)'))" />
+      <_WpfWebGpuRewriteArg Include="--out;$(_WpfWebGpuRewriteDir)" />
+      <!-- references: the stack, the implementations, the runtime pack -->
+      <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/wpf-browser;--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
+      <_WpfWebGpuRewriteArg Include="@(_ManagedRuntimePackAssembly->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
+      <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuRewriteInput->'%(FullPath)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_WpfWebGpuRewriteRsp)" Lines="@(_WpfWebGpuRewriteArg)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Exec Command="&quot;$(_WpfWebGpuDotnet)&quot; &quot;$(WpfWebGpuWin32Root)tools/rewrite/wpf-rewrite.dll&quot; @&quot;$(_WpfWebGpuRewriteRsp)&quot;"
+          StandardOutputImportance="normal" />
+
+    <!-- each assembly with a copy in the rewrite folder is replaced by it, with its metadata (where it
+         goes in the bundle, that the linker and AOT take it), its symbols too -->
+    <ItemGroup>
+      <_WpfWebGpuRewriteCandidate Include="@(_WpfWebGpuRewriteInput->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" WpfWebGpuOriginal="%(FullPath)" />
+      <_WpfWebGpuRewritten Include="@(_WpfWebGpuRewriteCandidate)" Condition="Exists('%(FullPath)')" />
+      <_WpfWebGpuRewrittenPdb Include="@(ResolvedFileToPublish)"
+                              Condition="'%(Extension)' == '.pdb' and '@(_WpfWebGpuRewritten)' != '' and Exists('$(_WpfWebGpuRewriteDir)%(Filename).pdb') and Exists('$(_WpfWebGpuRewriteDir)%(Filename).dll')" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuRewritten->'%(WpfWebGpuOriginal)')" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuRewritten)" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuRewrittenPdb)" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuRewrittenPdb->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+
+    <!-- what the rewritten assemblies call: the implementations and, under them, the stack's WinForms
+         (in the build's output, _WpfWebGpuWin32CopyLocal); without a rewrite, nothing calls them -->
+    <ItemGroup Condition="'@(_WpfWebGpuRewritten)' == ''">
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish->WithMetadataValue('WpfWebGpuWin32Runtime', 'true'))" />
+    </ItemGroup>
+    <ItemGroup Condition="'@(_WpfWebGpuRewritten)' != ''">
+      <!-- linked with the assemblies that call them (the linker resolves the calls against them) -->
+      <ResolvedFileToPublish Condition="'%(ResolvedFileToPublish.WpfWebGpuWin32Runtime)' == 'true'">
+        <PostprocessAssembly>true</PostprocessAssembly>
+        <RelativePath Condition="'%(ResolvedFileToPublish.RelativePath)' == ''">%(Filename)%(Extension)</RelativePath>
+      </ResolvedFileToPublish>
+      <!-- reached by name (WasmBoot initializes them) and implementing through reflection -->
+      <TrimmerRootAssembly Include="WpfWebGpu.Win32;WpfWebGpu.ComInterop;System.Windows.Forms;Mono.System.Drawing" />
+      <!-- the WinForms browser host's own choice: interpreted, its legacy closure out of AOT's way -->
+      <_AOT_InternalForceInterpretAssemblies Include="WpfWebGpu.Win32.dll;System.Windows.Forms.dll" />
+    </ItemGroup>
+    <Message Importance="high" Condition="'@(_WpfWebGpuRewritten)' != ''"
+             Text="WpfWebGpu: rewrote @(_WpfWebGpuRewritten->Count()) app assemblies onto the stack's Windows API (@(_WpfWebGpuRewritten->'%(Filename)', ', '))" />
+  </Target>
+
+  <!-- The trimmer roots the app's own assembly by its path in obj/ (PrepareForILLink: RootMode=EntryPoint).
+       Rewritten, that path is a second file of the same name beside the copy it links, which it refuses
+       ("Cannot overwrite an existing assembly with a different assembly"): the root is the copy. -->
+  <Target Name="_WpfWebGpuRootRewrittenAssemblies" AfterTargets="PrepareForILLink"
+          Condition="'@(_WpfWebGpuRewritten)' != ''">
+    <ItemGroup>
+      <!-- a root given as a file (not a name) whose assembly the rewrite folder holds a copy of -->
+      <_WpfWebGpuRootSwapped Include="@(TrimmerRootAssembly)"
+                             Condition="'%(Extension)' == '.dll' and Exists('$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
+      <TrimmerRootAssembly Remove="@(_WpfWebGpuRootSwapped)" />
+      <TrimmerRootAssembly Include="@(_WpfWebGpuRootSwapped->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+
+  <!--
     A browser bundle is FLAT: every assembly becomes _framework/<name>.wasm, whatever folder it was
     published from. Real apps publish assemblies into SUBFOLDERS as well, and those are private
     payloads for something that cannot exist in a browser at all — Roslyn's out-of-process MSBuild

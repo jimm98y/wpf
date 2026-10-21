@@ -24,6 +24,7 @@ internal static class WpfWebGpuWasmBoot
         try
         {
             InstallFirstChanceLogging();
+            InitializeWin32();
 
             Console.WriteLine("WpfWebGpu: initializing WebGPU...");
             await WgpuBrowser.InitializeAsync();
@@ -48,6 +49,22 @@ internal static class WpfWebGpuWasmBoot
             Console.WriteLine($"WpfWebGpu BOOT FAILED: {ex}");
             return 1;
         }
+    }
+
+    /// <summary>
+    ///  The stack's Windows API, when the app's Windows P/Invokes were rewritten onto it at publish
+    ///  (WpfWebGpu.Win32, bundled only then): set up before the app's first call, as the launcher's
+    ///  bootstrap does on the desktop. Its once-per-function notes (a Windows function the stack does
+    ///  not implement) go to the console, the one log a page has.
+    /// </summary>
+    private static void InitializeWin32()
+    {
+        Assembly win32;
+        try { win32 = Assembly.Load(new AssemblyName("WpfWebGpu.Win32")); }
+        catch (System.IO.FileNotFoundException) { return; }   // nothing was rewritten
+        var seen = new System.Collections.Generic.HashSet<string>();
+        Action<string, string> logOnce = (key, message) => { lock (seen) if (seen.Add(key)) Console.WriteLine(message); };
+        win32.GetType("WpfWebGpu.Win32.Exports")?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, new object[] { logOnce });
     }
 
     /// <summary>

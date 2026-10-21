@@ -66,4 +66,14 @@ dotnet publish "$HERE/WpfWebGpu.Launcher" -c Release -o "$OUT/$LNAME" -nologo -v
 echo ">> overlay ($RID) -> $OUT/$ONAME/wpfrun.payload"
 dotnet publish "$HERE/WpfWebGpu.Payload" -c Release -r "$RID" --self-contained false \
   -o "$OUT/$ONAME/wpfrun.payload" -nologo -v q -clp:NoSummary -p:WarningLevel=0 -nowarn:MSB3277
+# The same implementations, and the build-time rewriter, for the heads that bundle the app
+# (WpfWebGpu.Sdk's browser head): the WpfWebGpu.Win32 package, from the overlay just built.
+echo ">> WpfWebGpu.Win32 package -> artifacts/local-feed"
+REWRITE="$OUT/rewrite"
+rm -rf "$REWRITE"
+dotnet publish "$HERE/WpfWebGpu.Rewrite" -c Release -o "$REWRITE" -nologo -v q
+rm -f "$REPO"/artifacts/local-feed/WpfWebGpu.Win32.*.nupkg
+dotnet pack "$HERE/WpfWebGpu.Win32.Package/WpfWebGpu.Win32.Package.csproj" -c Release -o "$REPO/artifacts/local-feed" \
+  -p:WpfWebGpuPayloadDir="$OUT/$ONAME/wpfrun.payload" -p:WpfWebGpuRewriteDir="$REWRITE" -nologo -v q
+rm -rf "${NUGET_PACKAGES:-$HOME/.nuget/packages}/wpfwebgpu.win32"
 echo ">> done: dotnet $OUT/$LNAME/wpfrun.dll run <App.dll>"

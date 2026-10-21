@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- wpf-rewrite: the build-time rewrite of a bundled head's app assemblies (BuildRewrite.cs,
+       Documentation/pinvoke-rewriter.md). WpfWebGpu.Sdk runs it on the browser head's publish, before
+       the app's assemblies are trimmed and compiled ahead of time; it ships in the WpfWebGpu.Win32
+       package beside the implementations it rewrites onto. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>wpf-rewrite</AssemblyName>
+    <RootNamespace>WpfWebGpu.Rewrite</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+  </ItemGroup>
+
+</Project>

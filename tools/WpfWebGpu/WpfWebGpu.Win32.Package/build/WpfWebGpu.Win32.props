@@ -1,0 +1,12 @@
+<!--
+  Imported by NuGet into every project that references WpfWebGpu.Win32. It only says where the package
+  is: WpfWebGpu.Sdk decides what to do with it (the browser head rewrites the app's assemblies with
+  tools/rewrite/wpf-rewrite.dll when it is published, and bundles lib/ beside them).
+-->
+<Project>
+
+  <PropertyGroup>
+    <WpfWebGpuWin32Root>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)..'))</WpfWebGpuWin32Root>
+  </PropertyGroup>
+
+</Project>
