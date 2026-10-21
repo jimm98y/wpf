@@ -73,6 +73,9 @@
     <UseWPF>false</UseWPF>
     <_WpfWebGpuUseWinForms>$(UseWindowsForms)</_WpfWebGpuUseWinForms>
     <UseWindowsForms>false</UseWindowsForms>
+    <!-- In the browser a form is a window of the page's window manager, which is WPF's (and so are the
+         boot shim and the page): a WinForms app there takes the WPF payload too. -->
+    <_WpfWebGpuUseWpf Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWinForms)' == 'true'">true</_WpfWebGpuUseWpf>
   </PropertyGroup>
 
   <!-- (WPF markup-compilation inputs + default XAML item globbing live in Sdk.props now, so a
@@ -182,7 +185,7 @@
        the real WinForms loaded, and anything mixing the two died at runtime (MissingMethodException:
        Control.set_BackColor, the two WinForms disagreeing about System.Drawing.Color). Every head
        gets exactly the same assemblies. -->
-  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+  <ItemGroup Condition="'$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/*.dll" Private="true" />
   </ItemGroup>
 
@@ -233,7 +236,7 @@
        facade and resolved to System.Drawing.Common's types instead of the ones this WinForms
        draws with. -->
   <Target Name="_WpfWebGpuStripFrameworkDrawing" AfterTargets="ResolveAssemblyReferences"
-          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
                      Condition="('%(FileName)' == 'System.Drawing' or '%(FileName)' == 'System.Drawing.Common')
@@ -640,6 +643,14 @@
     <_AOT_InternalForceInterpretAssemblies Include="System.Printing.dll" />
     <_AOT_InternalForceInterpretAssemblies Include="System.Drawing.Common.dll" />
     <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
+  </ItemGroup>
+
+  <!-- WinForms in the browser (host/BrowserFormHost.cs in the fork's System.Windows.Forms): its driver is
+       reached by reflection and its legacy closure is out of the AOT compiler's reach, as in the WinForms
+       browser host: rooted, and interpreted. -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWinForms)' == 'true' and '$(TargetFramework)' != ''">
+    <TrimmerRootAssembly Include="System.Windows.Forms;Mono.System.Drawing" />
+    <_AOT_InternalForceInterpretAssemblies Include="System.Windows.Forms.dll" />
   </ItemGroup>
 
   <!-- Root EVERY assembly the app publishes, so the trimmer cannot drop one that is only ever

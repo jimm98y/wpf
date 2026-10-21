@@ -1787,6 +1787,15 @@ namespace System.Windows.Forms
 		/// <summary>A message for this thread was handled (one of the driver's, or the OS's input).</summary>
 		internal static void NoteMessageHandled() => t_idleOwed = true;
 
+		/// <summary>Whether Application.Idle is owed (messages were handled since it was last raised),
+		/// clearing the debt: the browser pump raises it as GetMessage does when the queue drains.</summary>
+		internal static bool TakeIdleOwed()
+		{
+			bool owed = t_idleOwed;
+			t_idleOwed = false;
+			return owed;
+		}
+
 		internal override bool GetMessage(object queue_id, ref MSG msg, IntPtr hWnd, int wFilterMin, int wFilterMax)
 		{
 			MsgQueue q = CurrentQueue;

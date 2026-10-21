@@ -424,10 +424,17 @@ namespace System.Windows.Forms
                 IWinFormsHost host;
                 if (OperatingSystem.IsWindows()) host = new Win32Host(form);
                 else if (OperatingSystem.IsMacOS()) host = new CocoaHost(form);
+                else if (OperatingSystem.IsBrowser()) host = CreateBrowserHost(form);
                 else return;                             // no windowing shell for this OS yet
                 host.Show();                             // Attach happens in the ctor
             }
         }
+
+        // Its own method, not inlined: the browser host stands on WindowsBase (the page's window manager),
+        // which a WinForms app on another head need not ship, and nothing else here may name its types.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("browser")]
+        private static IWinFormsHost CreateBrowserHost(Form form) => new BrowserFormHost(form);
 
         private static void InvalidateTree(Control c)
         {

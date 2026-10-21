@@ -498,6 +498,13 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal static void wgpuRenderPassEncoderSetScissorRect(IntPtr renderPassEncoder, uint x, uint y, uint width, uint height)
             => WgpuBrowserJs.SetScissorRect((int)renderPassEncoder, (int)x, (int)y, (int)width, (int)height);
 
+        // A pass drawing a frame into the top-left of a larger persistent target (the partial-redraw
+        // target is kept at its high-water size) maps its NDC to the frame, not to the whole texture.
+        // Without it the browser drew every partial frame stretched over the target: a WinForms window
+        // 1000x557 on a 1024x768 target had each control 38% lower than its own clip.
+        internal static void wgpuRenderPassEncoderSetViewport(IntPtr renderPassEncoder, float x, float y, float width, float height, float minDepth, float maxDepth)
+            => WgpuBrowserJs.SetViewport((int)renderPassEncoder, x, y, width, height, minDepth, maxDepth);
+
         internal static void wgpuCommandEncoderCopyTextureToBuffer(
             IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyBufferInfo* destination, WGPUExtent3D* copySize)
             => throw new NotSupportedException("GPU->CPU readback is not wired on the browser backend yet.");

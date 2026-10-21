@@ -136,6 +136,14 @@
     <!-- host/ presents through the shared WebGPU scene renderer; internals are exposed to this
          assembly by name in WgpuInterop/AssemblyInfo.cs. -->
     <ProjectReference Include="../WgpuInterop/WgpuInterop.csproj" />
+    <!-- The browser head's forms are windows of the page's window manager (host/BrowserFormHost.cs),
+         WindowsBase's MS.Internal.Interop.BrowserWindow, which WPF's windows there use too. -->
+    <!-- Aliased: WindowsBase brings System.Windows.Size and friends, which would shadow System.Drawing's
+         everywhere under System.Windows.Forms. Only the browser files name it (extern alias WindowsBase). -->
+    <Reference Include="WindowsBase">
+      <HintPath>$(MSBuildThisFileDirectory)../../../../artifacts/bin/WindowsBase/Release/net10.0/WindowsBase.dll</HintPath>
+      <Aliases>WindowsBase</Aliases>
+    </Reference>
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
     <PackageReference Include="System.CodeDom" Version="10.0.0" />
     <PackageReference Include="System.Security.Permissions" Version="10.0.0" />
