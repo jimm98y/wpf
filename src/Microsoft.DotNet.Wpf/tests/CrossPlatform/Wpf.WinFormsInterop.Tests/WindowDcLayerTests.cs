@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// A picture drawn on a window outside its paint (CreateGraphics -- what WpfMac's window DC does with
+// A picture drawn on a window outside its paint (CreateGraphics -- what WpfWebGpu's window DC does with
 // GetDC/GetWindowDC drawing) goes over what the window shows, as on a screen, and replaces the pixels
 // it covers. Each one was appended to the window's scene until the window next painted: DotNetBar
 // redraws a dock panel's frame through GetWindowDC on every resize step, so app grew by 1.7 MB

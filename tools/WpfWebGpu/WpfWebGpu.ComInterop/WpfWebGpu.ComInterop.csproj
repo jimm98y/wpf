@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The runtime half of the COM-import rewriter (Documentation/comimport-rewriter.md): what an app
+       assembly rewritten by wpfrun calls instead of built-in COM interop. Shipped in the overlay; a
+       rewritten assembly references it by name. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.ComInterop</AssemblyName>
+    <RootNamespace>WpfWebGpu.ComInterop</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

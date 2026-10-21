@@ -45,7 +45,7 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>The next window handle. On Windows a handle is skipped while it names a real
-		/// window: an app passes Control.Handle to user32 as well, and wpfmac routes a call to the
+		/// window: an app passes Control.Handle to user32 as well, and wpfrun routes a call to the
 		/// stack only when the handle is not Windows' own, so the two must never be equal.</summary>
 		private IntPtr NextHandle ()
 		{

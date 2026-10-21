@@ -121,7 +121,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 License notice for Mono.Cecil
 -----------------------------
 
-tools/WpfMac (WpfMac.ComRewrite, the launcher's COM-import rewriter) uses Mono.Cecil
+tools/WpfWebGpu (WpfWebGpu.ComRewrite, the launcher's COM-import rewriter) uses Mono.Cecil
 (https://github.com/jbevain/cecil).
 
 Copyright (c) 2008 - 2015 Jb Evain

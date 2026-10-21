@@ -3,7 +3,7 @@
 // pre-processing chain (PreProcessControlMessage, ProcessCmdKey, IsInputKey, ProcessDialogKey) and
 // what WPF made of it (the input manager's key events, ComponentDispatcher, the focused element).
 // Enough to tell where a key such as Delete stopped. The file is WF_TRACE_KEYS_LOG, or
-// %LOCALAPPDATA%\WpfMac\logs\keys-<pid>.log. Costs one static bool test when the variable is not set.
+// %LOCALAPPDATA%\WpfWebGpu\logs\keys-<pid>.log. Costs one static bool test when the variable is not set.
 
 using System;
 using System.Diagnostics;
@@ -50,7 +50,7 @@ namespace System.Windows.Forms
                         string path = Environment.GetEnvironmentVariable("WF_TRACE_KEYS_LOG");
                         if (string.IsNullOrEmpty(path))
                         {
-                            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WpfMac", "logs");
+                            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WpfWebGpu", "logs");
                             Directory.CreateDirectory(dir);
                             path = Path.Combine(dir, $"keys-{Environment.ProcessId}.log");
                         }

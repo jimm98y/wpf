@@ -1,5 +1,5 @@
 // Drawing through a window DC (GetDC, GetWindowDC, BeginPaint outside WinForms' paint) reaches a
-// window as a picture: WpfMac's window DC collects what GDI drew into a bitmap and lays it over the
+// window as a picture: WpfWebGpu's window DC collects what GDI drew into a bitmap and lays it over the
 // window (CreateGraphics -> XplatUIWebGpu.MergeIntoWindowScene). Each such drawing was APPENDED to
 // the window's scene, and only a real WM_PAINT ever replaced it. DotNetBar repaints a dock panel's
 // non-client bitmap through GetWindowDC on every size change without the panel ever repainting its

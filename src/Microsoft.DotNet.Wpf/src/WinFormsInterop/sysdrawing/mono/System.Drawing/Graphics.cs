@@ -4460,7 +4460,7 @@ namespace System.Drawing
 		// reading or writing that DC sees each drawing the moment it is made; this engine draws a copy
 		// and writes it back on Flush and Dispose. DotNetBar draws a combo box with GDI+ into a memory
 		// DC and BitBlts that DC to the window while the Graphics is still open: what it blitted was the
-		// untouched DIB, a black box. Whoever stands between an app and gdi32 (wpfmac does) calls
+		// untouched DIB, a black box. Whoever stands between an app and gdi32 (wpfrun does) calls
 		// System.Drawing.FlushHdc with each DC a GDI call is about to use.
 		static readonly Dictionary<IntPtr, List<Graphics>> s_overDc = new Dictionary<IntPtr, List<Graphics>> ();
 		static volatile int s_overDcCount;

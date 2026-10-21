@@ -26,7 +26,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
         private string? _adapterDescription;
 
-        // Which adapter and backend a process got goes to the host's compatibility log (wpfmac), once
+        // Which adapter and backend a process got goes to the host's compatibility log (wpfrun), once
         // per distinct adapter, in every run -- not only into the sink log when that is asked for: a
         // silent fall back to a software adapter (WARP) is otherwise invisible.
         private static readonly System.Collections.Generic.HashSet<string> s_loggedAdapters = new();
@@ -34,7 +34,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             if (string.IsNullOrEmpty(description)) return;
             lock (s_loggedAdapters) if (!s_loggedAdapters.Add(description)) return;
-            try { (AppContext.GetData("WpfMac.Log") as Action<string>)?.Invoke("wgpu adapter: " + description); }
+            try { (AppContext.GetData("WpfWebGpu.Log") as Action<string>)?.Invoke("wgpu adapter: " + description); }
             catch { /* logging only */ }
         }
 

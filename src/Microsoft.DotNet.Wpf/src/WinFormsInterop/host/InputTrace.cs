@@ -11,7 +11,7 @@
 //   syscmd       a system move/size loop starting and ending
 //   cursor       an application asking where the pointer is (Control.MousePosition / GetCursorPos)
 //
-// The file is WF_TRACE_INPUT_LOG, or %LOCALAPPDATA%\WpfMac\logs\input-<pid>.log. Nothing is written,
+// The file is WF_TRACE_INPUT_LOG, or %LOCALAPPDATA%\WpfWebGpu\logs\input-<pid>.log. Nothing is written,
 // and nothing costs more than one static bool test, when the variable is not set.
 
 using System;
@@ -50,7 +50,7 @@ namespace System.Windows.Forms
                         string path = Environment.GetEnvironmentVariable("WF_TRACE_INPUT_LOG");
                         if (string.IsNullOrEmpty(path))
                         {
-                            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WpfMac", "logs");
+                            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WpfWebGpu", "logs");
                             Directory.CreateDirectory(dir);
                             path = Path.Combine(dir, $"input-{Environment.ProcessId}.log");
                         }

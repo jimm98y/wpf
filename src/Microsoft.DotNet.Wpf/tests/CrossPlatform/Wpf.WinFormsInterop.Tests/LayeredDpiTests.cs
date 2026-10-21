@@ -67,7 +67,7 @@ namespace Wpf.WinFormsInterop.Tests
                 Location = new Point(8000, 80), Size = new Size(W, H), ShowInTaskbar = false,
             };
             form.Show();
-            // What UpdateLayeredWindow hands the driver (WpfMac.Win32's shim does exactly this):
+            // What UpdateLayeredWindow hands the driver (WpfWebGpu.Win32's shim does exactly this):
             // the straight picture for the scene, and the premultiplied bits for the host.
             var rgba = new byte[W * H * 4];
             var bgra = new byte[W * H * 4];

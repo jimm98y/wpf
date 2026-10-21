@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Runtime detours for the few places where the .NET runtime itself, not a replaceable assembly,
+       refuses a Windows behaviour off Windows. Loaded by the bootstrap by name; see Detours.cs. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.Detours</AssemblyName>
+    <RootNamespace>WpfWebGpu.Detours</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.6" />
+  </ItemGroup>
+
+</Project>

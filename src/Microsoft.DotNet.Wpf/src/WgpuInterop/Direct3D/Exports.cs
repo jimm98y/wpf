@@ -3,7 +3,7 @@
 
 //
 // The exports of the d3d11 / dxgi shim (Documentation/d3d11-webgpu-shim.md, section 1): what an app's
-// [DllImport("d3d11.dll")] reaches, rewritten by wpfmac's P/Invoke rewriter (Documentation/
+// [DllImport("d3d11.dll")] reaches, rewritten by wpfrun's P/Invoke rewriter (Documentation/
 // pinvoke-rewriter.md) into a call of the method tagged with its name.
 //
 
@@ -13,7 +13,7 @@ using System.Runtime.InteropServices;
 namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 {
     /// <summary>The exports a method implements, for the P/Invoke rewriter (Documentation/pinvoke-rewriter.md;
-    /// matched by name, as WpfMac.Win32's).</summary>
+    /// matched by name, as WpfWebGpu.Win32's).</summary>
     [AttributeUsage(AttributeTargets.Method, AllowMultiple = true, Inherited = false)]
     internal sealed class Win32ExportAttribute : Attribute
     {
@@ -40,10 +40,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (handle == IntPtr.Zero) return;
             if (OperatingSystem.IsWindows()) SetEventNative(handle);
-            else (s_setEvent ??= AppContext.GetData("WpfMac.SetEvent") as Action<IntPtr>)?.Invoke(handle);
+            else (s_setEvent ??= AppContext.GetData("WpfWebGpu.SetEvent") as Action<IntPtr>)?.Invoke(handle);
         }
 
-        /// <summary>The Win32 shim's SetEvent (WpfMac.Win32 publishes it).</summary>
+        /// <summary>The Win32 shim's SetEvent (WpfWebGpu.Win32 publishes it).</summary>
         private static Action<IntPtr>? s_setEvent;
     }
 

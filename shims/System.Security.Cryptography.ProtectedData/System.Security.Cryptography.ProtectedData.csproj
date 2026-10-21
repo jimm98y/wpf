@@ -4,7 +4,7 @@
        macOS, where the package throws PlatformNotSupportedException. It keeps DPAPI's contract:
        data protected for the current user (or the machine) round-trips, optional entropy must match,
        tampered or foreign data is refused with CryptographicException, using AES-GCM under a key
-       of its own: 32 random bytes per scope in WPFWEBGPU_DPAPI_DIR (wpfmac points that at its state
+       of its own: 32 random bytes per scope in WPFWEBGPU_DPAPI_DIR (wpfrun points that at its state
        folder), else ~/Library/Application Support/WpfWebGpu/DataProtection, readable by the user
        only. Blobs are not Windows DPAPI blobs: what a Windows machine protected cannot be read here,
        which is also true between two Windows machines.
