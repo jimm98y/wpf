@@ -160,7 +160,7 @@ namespace System.Xaml.MS.Impl
                 return result;
             }
 
-            if (assembly.ReflectionOnly)
+            if (!assembly.IsDynamic && assembly.ReflectionOnly)
             {
                 EnsureReflectionOnlyAttributeData();
                 foreach (var cad in _attributeData)
@@ -251,7 +251,7 @@ namespace System.Xaml.MS.Impl
                 return result;
             }
 
-            if (assembly.ReflectionOnly)
+            if (!assembly.IsDynamic && assembly.ReflectionOnly)
             {
                 EnsureReflectionOnlyAttributeData();
                 foreach (var cad in _attributeData)
@@ -309,7 +309,7 @@ namespace System.Xaml.MS.Impl
                 return result;
             }
 
-            if (assembly.ReflectionOnly)
+            if (!assembly.IsDynamic && assembly.ReflectionOnly)
             {
                 EnsureReflectionOnlyAttributeData();
 
@@ -362,7 +362,7 @@ namespace System.Xaml.MS.Impl
                 return result;
             }
 
-            if (assembly.ReflectionOnly)
+            if (!assembly.IsDynamic && assembly.ReflectionOnly)
             {
                 EnsureReflectionOnlyAttributeData();
 
@@ -412,7 +412,7 @@ namespace System.Xaml.MS.Impl
                 return null;
             }
 
-            if (assembly.ReflectionOnly)
+            if (!assembly.IsDynamic && assembly.ReflectionOnly)
             {
                 EnsureReflectionOnlyAttributeData();
 

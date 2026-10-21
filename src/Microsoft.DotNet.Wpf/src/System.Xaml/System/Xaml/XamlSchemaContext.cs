@@ -1005,7 +1005,7 @@ namespace System.Xaml
             }
             else
             {
-                isReferenced = !assembly.ReflectionOnly &&
+                isReferenced = (assembly.IsDynamic || !assembly.ReflectionOnly) &&
                     typeof(object).Assembly.GetType().IsAssignableFrom(assembly.GetType());
             }
 
@@ -1089,9 +1089,13 @@ namespace System.Xaml
 
         private void SchemaContextAssemblyLoadEventHandler(object sender, AssemblyLoadEventArgs args)
         {
+            // A dynamic assembly is never reflection-only, and is not asked: Mono's AssemblyBuilder (the
+            // browser, iOS and Android heads) throws NotImplementedException for ReflectionOnly, and this
+            // handler sees every assembly the process defines -- the one a DynamicMethod lives in, too, so
+            // each compiled expression tree (a `dynamic` call site, a LINQ provider) failed in it.
             lock (_syncAccessingUnexaminedAssemblies)
             {
-                if (!args.LoadedAssembly.ReflectionOnly && !_unexaminedAssemblies.Contains(args.LoadedAssembly))
+                if ((args.LoadedAssembly.IsDynamic || !args.LoadedAssembly.ReflectionOnly) && !_unexaminedAssemblies.Contains(args.LoadedAssembly))
                 {
                     _unexaminedAssemblies.Add(args.LoadedAssembly);
                     if (args.LoadedAssembly.IsDynamic)

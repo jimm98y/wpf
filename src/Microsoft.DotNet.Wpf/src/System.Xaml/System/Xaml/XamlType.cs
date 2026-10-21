@@ -442,7 +442,7 @@ namespace System.Xaml
                 Type curUnderlyingType = curType.UnderlyingType;
                 if (baseUnderlyingType is not null && curUnderlyingType is not null)
                 {
-                    if (curUnderlyingType.Assembly.ReflectionOnly &&
+                    if ((!curUnderlyingType.Assembly.IsDynamic && curUnderlyingType.Assembly.ReflectionOnly) &&
                         baseUnderlyingType.Assembly == typeof(XamlType).Assembly)
                     {
                         // Need to be version-tolerant of reference to built-in XAML language types,

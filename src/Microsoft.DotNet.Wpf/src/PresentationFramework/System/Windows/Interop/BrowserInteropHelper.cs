@@ -16,6 +16,7 @@ namespace System.Windows.Interop
         /// <summary>
         /// Returns the IOleClientSite interface
         /// </summary>
+        /// <remarks>An OLE interface of the browser that hosted an XBAP: no host has one now.</remarks>
         public static object ClientSite => null;
 
         /// <summary>
@@ -24,20 +25,24 @@ namespace System.Windows.Interop
         /// is hosted in a frame.
         /// </summary>
         /// <remarks>
-        /// Starting .NET Core 3.0, XBAP's are not supported - <see cref="HostScript"/> will always return <code>null</code>
+        /// On the browser head, where the application runs in a page, the page's window object
+        /// (MS.Internal.Interop.BrowserHostScript): the application's script calls reach the page as an
+        /// XBAP's did. Everywhere else <code>null</code>, as for any application that is not browser hosted.
         /// </remarks>
-        public static dynamic HostScript => null;
+        public static dynamic HostScript => OperatingSystem.IsBrowser() ? MS.Internal.Interop.BrowserHostScript.Window : null;
 
         /// <summary>
         /// Returns true if the app is a browser hosted app.
         /// </summary>
-        public static bool IsBrowserHosted => false;
-        
+        /// <remarks>True on the browser head: the application runs in a page, which is what an app asks
+        /// this to know (an XBAP's code takes its browser paths).</remarks>
+        public static bool IsBrowserHosted => OperatingSystem.IsBrowser();
+
         /// <summary>
         /// Returns the Uri used to launch the application.
         /// </summary>
-        public static Uri Source => null;
+        /// <remarks>On the browser head, the address of the page.</remarks>
+        public static Uri Source => OperatingSystem.IsBrowser() ? MS.Internal.Interop.BrowserHostScript.PageUri : null;
 
     }
 }
-
