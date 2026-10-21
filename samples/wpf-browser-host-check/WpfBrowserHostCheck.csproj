@@ -1,0 +1,24 @@
+<!--
+  An app written the way XBAP-era code talks to its page: BrowserInteropHelper.IsBrowserHosted to take
+  its browser paths, Source for its address, and HostScript (the page's window object, through dynamic)
+  to set the page title and call page script. Built through the packaged SDK; prints what each answered
+  ("host:" lines on the console) and shows them in its window.
+
+      dotnet publish -f net10.0 -p:WpfPlatform=browser     # WebAssembly: browser hosted
+      dotnet build                                          # this machine's desktop head: not
+-->
+<Project Sdk="WpfWebGpu.Sdk/0.1.1">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>WpfBrowserHostCheck</AssemblyName>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <AnalysisLevel>none</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+</Project>

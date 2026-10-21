@@ -192,7 +192,7 @@ namespace MS.Internal.AppModel
             // We do not care about assemblies loaded into the reflection-only context or the GACed assemblies.
             // For example, in Sparkle whenever a project is built all dependent assemblies will be loaded reflection only.
             // We do no care about those. Only when a assembly is loaded into the execution context, we will need to update the cache. 
-            if (!assembly.ReflectionOnly)
+            if (assembly.IsDynamic || !assembly.ReflectionOnly)
             {
                 ReadOnlySpan<char> assemblyName = ReflectionUtils.GetAssemblyPartialName(assembly);
                 ReflectionUtils.GetAssemblyVersionPlusToken(assembly, out ReadOnlySpan<char> assemblyVersion, out ReadOnlySpan<char> assemblyToken);

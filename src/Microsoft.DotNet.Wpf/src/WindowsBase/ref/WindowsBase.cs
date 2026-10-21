@@ -289,6 +289,20 @@ namespace MS.Internal.Interop
         public static string ReserveSavePath(string suggestedName) { throw null; }
         public static System.Threading.Tasks.Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory) { throw null; }
     }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
+    public sealed partial class BrowserHostScript : System.Dynamic.DynamicObject
+    {
+        internal BrowserHostScript() { }
+        public static System.Uri PageUri { get { throw null; } }
+        public static object Window { get { throw null; } }
+        public override string ToString() { throw null; }
+        public override bool TryGetIndex(System.Dynamic.GetIndexBinder binder, object[] indexes, out object result) { throw null; }
+        public override bool TryGetMember(System.Dynamic.GetMemberBinder binder, out object result) { throw null; }
+        public override bool TryInvoke(System.Dynamic.InvokeBinder binder, object[] args, out object result) { throw null; }
+        public override bool TryInvokeMember(System.Dynamic.InvokeMemberBinder binder, object[] args, out object result) { throw null; }
+        public override bool TrySetIndex(System.Dynamic.SetIndexBinder binder, object[] indexes, object value) { throw null; }
+        public override bool TrySetMember(System.Dynamic.SetMemberBinder binder, object value) { throw null; }
+    }
     public partial interface IAndroidAccessibilityHost
     {
         void InvalidateAccessibilityNode(System.IntPtr handle, int nodeId);

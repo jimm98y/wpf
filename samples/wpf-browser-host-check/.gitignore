@@ -1,0 +1,5 @@
+# The SDK scaffolds the browser host page, its scripts and the fonts here on every browser build
+# (Sdk.targets); this sample does not customize them.
+wwwroot/
+bin/
+obj/

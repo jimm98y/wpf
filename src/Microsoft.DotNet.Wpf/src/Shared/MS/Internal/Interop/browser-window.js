@@ -1107,3 +1107,13 @@ export function printDocument(jobName, bytes) {
         return false;
     }
 }
+
+// BrowserInteropHelper.HostScript (BrowserHostScript.cs): a call of a page object's member, as an
+// XBAP's script object made it -- HostScript.alert("x"), HostScript.document.getElementById("id").
+// A JSObject reads and writes properties by itself; calling a function needs this.
+export function scriptInvoke(target, name, args) {
+    const member = target[name];
+    if (typeof member !== 'function') throw new TypeError(`${name} is not a function`);
+    const result = member.apply(target, args || []);
+    return result === undefined ? null : result;
+}

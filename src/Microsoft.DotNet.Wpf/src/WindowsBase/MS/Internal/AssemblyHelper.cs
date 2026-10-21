@@ -227,7 +227,7 @@ namespace MS.Internal
             // to do this simultaneously, the same outcome results.
 
             // ignore reflection-only assemblies - we care about running code from the assembly
-            if (assembly.ReflectionOnly)
+            if (!assembly.IsDynamic && assembly.ReflectionOnly)
                 return;
 
             // see if the assembly matches one of the uncommon assemblies
