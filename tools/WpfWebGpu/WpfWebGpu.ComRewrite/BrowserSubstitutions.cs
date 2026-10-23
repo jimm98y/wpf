@@ -14,6 +14,7 @@ public sealed class BrowserSubstitutions
     private static readonly HashSet<string> s_types = new(StringComparer.Ordinal)
     {
         "System.Net.WebSockets.ClientWebSocketOptions", "System.Net.ServicePointManager", "System.Runtime.InteropServices.Marshal",
+        "System.Environment",
     };
 
     private readonly ModuleDefinition _apis;

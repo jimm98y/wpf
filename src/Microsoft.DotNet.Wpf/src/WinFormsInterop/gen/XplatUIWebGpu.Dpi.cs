@@ -28,6 +28,19 @@ namespace System.Windows.Forms {
 			systemDpi = 0;
 			if (PlatformAwareness != null)
 				return PlatformAwareness(out systemDpi);
+			// macOS: every window has its display's backing scale, and the host renders a per-monitor
+			// application's device pixels 1:1 and tells it when the scale changes (CocoaHost)
+			if (OperatingSystem.IsMacOS())
+			{
+				systemDpi = CocoaHost.MainDisplayDpi();
+				return systemDpi > 0 ? 2 : 0;
+			}
+			// the browser: the page's devicePixelRatio, which a canvas draws 1:1 (BrowserFormHost)
+			if (OperatingSystem.IsBrowser())
+			{
+				systemDpi = BrowserFormHost.PageDpi();
+				return systemDpi > 0 ? 2 : 0;
+			}
 			if (!OperatingSystem.IsWindows())
 				return 0;
 			try

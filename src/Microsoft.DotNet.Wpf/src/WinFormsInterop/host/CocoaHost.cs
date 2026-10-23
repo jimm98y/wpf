@@ -50,6 +50,52 @@ internal sealed class CocoaHost : IWinFormsHost
     private bool _lastCaretOn, _lastPresentOk;
     private readonly string _tempPng = Path.Combine(Path.GetTempPath(), "wf-host-" + Guid.NewGuid().ToString("N") + ".png");
 
+    // ---- points and the driver's units -------------------------------------------------------
+    //
+    // An application that is not per-monitor aware lays out at 96 dpi, and a point is one of its
+    // pixels: the driver's units are the window's points, and the presenter scales them to the
+    // backing's pixels. A per-monitor-aware one (ScaleHelper.HostSourceDpi 0) lays out in device
+    // pixels, as on Windows: a driver unit is a pixel of the window's display, _k of them to a point
+    // (the backing scale), and the presenter draws them 1:1; a window that moves to a display with
+    // another backing scale is told as Windows tells it, WM_DPICHANGED (FollowBacking). Positions on
+    // the screen -- a window's origin, the displays' bounds, the pointer -- are in the main display's
+    // pixels (ScreenScale), as Windows' physical coordinates are in its monitors' pixels.
+    private double _k = 1;
+
+    private static bool PerMonitor => ScaleHelper.IsDeviceScaled && ScaleHelper.HostSourceDpi == 0;
+
+    /// <summary>Driver units per point for screen positions; 1 until the application's DPI mode is
+    /// settled (asking settles it, which is the application's first control's to do).</summary>
+    private static double ScreenScale => !ScaleHelper.IsResolved ? 1
+        : PerMonitor ? ScaleHelper.InitialSystemDpi / 96.0 : ScaleHelper.HostSourceDpi / 96.0;
+
+    /// <summary>Driver units per point of a window about to be made: the DPI its form is laid out at.</summary>
+    private double InitialUnitsPerPoint()
+        => PerMonitor && _form.IsHandleCreated && _driver is XplatUIWebGpu d ? d.WindowDpi(_form.Handle) / 96.0 : ScreenScale;
+
+    /// <summary>The window's backing scale (<paramref name="backing"/>) for a per-monitor application:
+    /// the driver learns its window's DPI, and when it is not the one the form is laid out at, the form
+    /// is told, as Windows tells a window that moved to another monitor (WM_DPICHANGED with the
+    /// window's new rectangle): the same size in points, in the new DPI's pixels.</summary>
+    private void FollowBacking(double backing)
+    {
+        if (!PerMonitor || backing <= 0 || !_form.IsHandleCreated || _form.IsDisposed || _driver is not XplatUIWebGpu d) return;
+        int dpi = (int)Math.Round(96 * backing);
+        if (Math.Abs(backing - _k) < 0.001)
+        {
+            if (d.WindowDpi(_form.Handle) != dpi) d.SetWindowDpi(_form.Handle, dpi);
+            return;
+        }
+        NSRect content = ContentScreenRect();
+        _k = backing;
+        var suggested = new Rectangle(_form.Location, new Size((int)Math.Round(content.w * backing), (int)Math.Round(content.h * backing)));
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' to {dpi} dpi, suggested {suggested}");
+        _knownBounds = suggested;
+        if (ScaleHelper.IsThreadPerMonitorV2Aware) d.HostDpiChanged(_form.Handle, dpi, suggested);
+        else d.SetWindowDpi(_form.Handle, dpi);
+        _lastVer = -1;
+    }
+
     internal CocoaHost(Form form)
     {
         _form = form;
@@ -264,10 +310,11 @@ internal sealed class CocoaHost : IWinFormsHost
             ShowPopupLayer();
             // The popups are placed against the form; the layer is the display, in Win32 coordinates
             // its origin is (layer.x, primary height - top).
-            int lx = (int)Math.Round(_popupFrame.x), ly = (int)Math.Round(PrimaryScreenHeight() - _popupFrame.y - _popupFrame.h);
+            double ss = ScreenScale;
+            int lx = (int)Math.Round(_popupFrame.x * ss), ly = (int)Math.Round((PrimaryScreenHeight() - _popupFrame.y - _popupFrame.h) * ss);
             var placed = new System.Collections.Generic.List<(object, int, int)>(popups.Count);
             foreach (var (scene, x, y) in popups) placed.Add((scene, x + ox - lx, y + oy - ly));
-            if (_popupWgpu != null) _popupWgpu.PresentScenes(placed, null, (int)_popupFrame.w, (int)_popupFrame.h);
+            if (_popupWgpu != null) _popupWgpu.PresentScenes(placed, null, (int)(_popupFrame.w * _k), (int)(_popupFrame.h * _k));
         }
         catch (Exception e)
         {
@@ -292,7 +339,7 @@ internal sealed class CocoaHost : IWinFormsHost
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _popupView);
             SendVoidBool(Send(_popupView, Sel("layer")), Sel("setOpaque:"), false);
             double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_popupView);
-            _popupWgpu = new WgpuPresenter(ctx, surface, (int)content.w, (int)content.h, scale, srgb: _gpuRaster, threadDevice: true);
+            _popupWgpu = new WgpuPresenter(ctx, surface, (int)(content.w * _k), (int)(content.h * _k), scale / _k, srgb: _gpuRaster, threadDevice: true);
             _popupWgpu.SetTransparent(true);
             _popupWgpu.Tag = " popups";
             _popupFrame = content;
@@ -326,7 +373,7 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         if (!_popupShown) return;
         _popupShown = false;
-        try { _popupWgpu?.PresentScenes(new System.Collections.Generic.List<(object, int, int)>(), null, (int)_popupFrame.w, (int)_popupFrame.h); }
+        try { _popupWgpu?.PresentScenes(new System.Collections.Generic.List<(object, int, int)>(), null, (int)(_popupFrame.w * _k), (int)(_popupFrame.h * _k)); }
         catch { }
         SendVoidDouble(_popupWindow, Sel("setAlphaValue:"), 0.0);
         SendVoidBool(_popupWindow, Sel("setIgnoresMouseEvents:"), true);
@@ -440,12 +487,14 @@ internal sealed class CocoaHost : IWinFormsHost
             {
                 if (_closed) return;
                 EnsureApp();
+                _k = InitialUnitsPerPoint();
+                NSRect r = CocoaRect(fx, fy, fw, fh);
                 IntPtr nw = SendInitWindow(Send(Cls("NSWindow"), Sel("alloc")), Sel("initWithContentRect:styleMask:backing:defer:"),
-                    CocoaRect(fx, fy, fw, fh), style, (nuint)2, false);
+                    r, style, (nuint)2, false);
                 if (_transparent) MakeTransparent(nw);
                 HideTitleBar(nw);
                 SendVoidPtr(nw, Sel("setTitle:"), NSStr(title));
-                IntPtr nv = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = fw, h = fh });
+                IntPtr nv = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = r.w, h = r.h });
                 SendVoidBool(nv, Sel("setWantsLayer:"), true);
                 SendVoidPtr(nw, Sel("setContentView:"), nv);
                 _imageView = nv;
@@ -483,6 +532,7 @@ internal sealed class CocoaHost : IWinFormsHost
         EnsureApp();
         double w = _form.Width, h = _form.Height;
         IntPtr win = Send(Cls("NSWindow"), Sel("alloc"));
+        _k = InitialUnitsPerPoint();
         var rect = CocoaRect(_form.Left, _form.Top, w, h);
         _transparent = IsLayered();
         _ownCaption = DrawsOwnCaption();
@@ -492,7 +542,7 @@ internal sealed class CocoaHost : IWinFormsHost
         SendVoidPtr(win, Sel("setTitle:"), NSStr(_form.Text ?? "WinForms"));
 
         IntPtr view = Send(Cls("NSView"), Sel("alloc"));
-        view = SendInitRect(view, Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = w, h = h });
+        view = SendInitRect(view, Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = rect.w, h = rect.h });
         SendVoidBool(view, Sel("setWantsLayer:"), true);   // layer-backed: we set layer.contents = CGImage
         SendVoidPtr(win, Sel("setContentView:"), view);
 
@@ -500,6 +550,8 @@ internal sealed class CocoaHost : IWinFormsHost
         // What the form asked for. AppKit may constrain it (below the menu bar, onto the screen);
         // the first Pump then hands the real frame back to the form.
         _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
+        // the display it came up on: the driver's DPI for the window, and the form's if it is another
+        FollowBacking(Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView));
         ObserveLiveResize();
         s_live.Add(this);
         _form.VisibleChanged += OnFormVisibleChanged;
@@ -524,7 +576,7 @@ internal sealed class CocoaHost : IWinFormsHost
             double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
             // Scene path uses an sRGB surface so the renderer's gamma-correct glyph coverage kicks in
             // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
-            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale, srgb: _gpuRaster, threadDevice: true);
+            _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale / _k, srgb: _gpuRaster, threadDevice: true);
             if (_transparent)
             {
                 SendVoidBool(Send(_imageView, Sel("layer")), Sel("setOpaque:"), false);
@@ -534,7 +586,7 @@ internal sealed class CocoaHost : IWinFormsHost
                 Console.Error.WriteLine($"WebGPU present path active (surface 0x{surface:x}, format {_wgpu.Format}, scale {scale})");
             // Let embedded non-WinForms content (an ElementHost's WPF tree) reach the real window and
             // its backing scale now that both exist. Inert when nothing is embedded.
-            EmbeddedScenes.PublishHostWindow(_imageView, (float)scale, _form);
+            EmbeddedScenes.PublishHostWindow(_imageView, (float)(scale / _k), _form);
         }
 
         Present();
@@ -548,11 +600,14 @@ internal sealed class CocoaHost : IWinFormsHost
             // (e.g. the window moved to a Retina/non-Retina display, or the startup value was stale),
             // resync the CAMetalLayer contentsScale + resize the swap chain so text stays crisp
             // (a wrong 1x on a 2x display would upscale to a pixelated result).
+            // A per-monitor application is told of the new DPI and lays itself out for it instead.
             double curScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
-            if ((float)curScale != _wgpu.Scale)
+            FollowBacking(curScale);
+            if ((float)(curScale / _k) != _wgpu.Scale)
             {
                 Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.SetContentsScale(_imageView, curScale);
-                _wgpu.SetScale(curScale);
+                _wgpu.SetScale(curScale / _k);
+                EmbeddedScenes.PublishHostWindow(_imageView, (float)(curScale / _k), _form);
                 _lastVer = -1;   // force a present at the new scale
             }
             // GPU-raster mode: composite each window's RECORDED scene in one pass (no per-control
@@ -611,7 +666,7 @@ internal sealed class CocoaHost : IWinFormsHost
         {
             if (_wgpu == null && _pendingSurface != IntPtr.Zero && !_closed)
             {
-                _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale, srgb: _gpuRaster, threadDevice: true);
+                _wgpu = new WgpuPresenter(_pendingContext, _pendingSurface, _form.Width, _form.Height, _pendingScale / _k, srgb: _gpuRaster, threadDevice: true);
                 _wgpu.SetTransparent(_transparent);
                 _lastVer = -1;
                 if (Environment.GetEnvironmentVariable("WF_TRACE_SURFACE") == "1") Console.WriteLine($"[CocoaHost] off-main presenter for '{_form.Text}' {_form.Width}x{_form.Height}");
@@ -899,6 +954,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static Screen[] s_screens = Array.Empty<Screen>();
     private static long s_screensAt;
+    private static double s_screensScale = 1;
 
     /// <summary>Called by the driver when it starts: the screens are known before any form places
     /// itself (a splash screen, on a thread of its own, before any window exists).</summary>
@@ -906,7 +962,8 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static Screen[] MacScreens()
     {
-        if (pthread_main_np() != 0 && s_screens.Length == 0) RefreshScreens(rescan: false);
+        // again once the DPI mode is settled: a per-monitor application's screens are in pixels
+        if (pthread_main_np() != 0 && (s_screens.Length == 0 || s_screensScale != ScreenScale)) RefreshScreens(rescan: s_screens.Length > 0);
         return s_screens.Length > 0 ? s_screens : DisplayScreens();
     }
 
@@ -918,20 +975,43 @@ internal sealed class CocoaHost : IWinFormsHost
         if (CGGetActiveDisplayList(16, ids, out uint count) != 0 || count == 0) return Array.Empty<Screen>();
         uint main = CGMainDisplayID();
         var list = new System.Collections.Generic.List<Screen>();
+        double ss = ScreenScale;
+        Rectangle Scaled(NSRect r) => Rectangle.FromLTRB((int)Math.Round(r.x * ss), (int)Math.Round(r.y * ss), (int)Math.Round((r.x + r.w) * ss), (int)Math.Round((r.y + r.h) * ss));
         NSRect b = CGDisplayBounds(main);
-        var bounds = new Rectangle((int)b.x, (int)b.y, (int)b.w, (int)b.h);
-        list.Add(new Screen(true, "DISPLAY1", bounds, Rectangle.FromLTRB(bounds.Left, bounds.Top + 25, bounds.Right, bounds.Bottom)));
+        var bounds = Scaled(b);
+        list.Add(new Screen(true, "DISPLAY1", bounds, Rectangle.FromLTRB(bounds.Left, bounds.Top + (int)Math.Round(25 * ss), bounds.Right, bounds.Bottom)));
         for (int i = 0; i < count; i++)
         {
             if (ids[i] == main) continue;
             b = CGDisplayBounds(ids[i]);
-            bounds = new Rectangle((int)b.x, (int)b.y, (int)b.w, (int)b.h);
+            bounds = Scaled(b);
             list.Add(new Screen(false, $"DISPLAY{list.Count + 1}", bounds, bounds));
         }
         return list.ToArray();
     }
 
+    /// <summary>The main display's DPI as Windows would give it -- 96 per point, so 192 on a Retina
+    /// display: its pixels over its points. From CoreGraphics, which any thread may ask; 0 if there
+    /// is no display.</summary>
+    internal static int MainDisplayDpi()
+    {
+        try
+        {
+            IntPtr mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+            if (mode == IntPtr.Zero) return 0;
+            nuint pixels = CGDisplayModeGetPixelWidth(mode), points = CGDisplayModeGetWidth(mode);
+            CGDisplayModeRelease(mode);
+            return points == 0 ? 0 : (int)Math.Round(96.0 * pixels / points);
+        }
+        catch (DllNotFoundException) { return 0; }
+        catch (EntryPointNotFoundException) { return 0; }
+    }
+
     private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+    [DllImport(CoreGraphics)] private static extern IntPtr CGDisplayCopyDisplayMode(uint display);
+    [DllImport(CoreGraphics)] private static extern nuint CGDisplayModeGetPixelWidth(IntPtr mode);
+    [DllImport(CoreGraphics)] private static extern nuint CGDisplayModeGetWidth(IntPtr mode);
+    [DllImport(CoreGraphics)] private static extern void CGDisplayModeRelease(IntPtr mode);
     [DllImport(CoreGraphics)] private static extern unsafe int CGGetActiveDisplayList(uint max, uint* displays, out uint count);
     [DllImport(CoreGraphics)] private static extern uint CGMainDisplayID();
     [DllImport(CoreGraphics)] private static extern NSRect CGDisplayBounds(uint display);
@@ -945,15 +1025,17 @@ internal sealed class CocoaHost : IWinFormsHost
         int n = screens == IntPtr.Zero ? 0 : (int)(nint)Send(screens, Sel("count"));
         if (n == 0) return;
         double primaryHeight = SendRectRet(SendPtrNUInt(screens, Sel("objectAtIndex:"), 0), Sel("frame")).h;
-        Rectangle Win32(NSRect r) => Rectangle.FromLTRB((int)Math.Round(r.x), (int)Math.Round(primaryHeight - r.y - r.h),
-                                                       (int)Math.Round(r.x + r.w), (int)Math.Round(primaryHeight - r.y));
+        double ss = ScreenScale;
+        Rectangle Win32(NSRect r) => Rectangle.FromLTRB((int)Math.Round(r.x * ss), (int)Math.Round((primaryHeight - r.y - r.h) * ss),
+                                                       (int)Math.Round((r.x + r.w) * ss), (int)Math.Round((primaryHeight - r.y) * ss));
         var list = new Screen[n];
         for (int i = 0; i < n; i++)
         {
             IntPtr screen = SendPtrNUInt(screens, Sel("objectAtIndex:"), (nuint)i);
             list[i] = new Screen(i == 0, $"DISPLAY{i + 1}", Win32(SendRectRet(screen, Sel("frame"))), Win32(SendRectRet(screen, Sel("visibleFrame"))));
         }
-        bool same = list.Length == s_screens.Length;
+        bool same = list.Length == s_screens.Length && s_screensScale == ss;
+        s_screensScale = ss;
         for (int i = 0; same && i < list.Length; i++)
             same = list[i].Bounds == s_screens[i].Bounds && list[i].WorkingArea == s_screens[i].WorkingArea;
         if (same) return;
@@ -1042,14 +1124,14 @@ internal sealed class CocoaHost : IWinFormsHost
         }
     }
 
-    /// <summary>The window's content rectangle in the form's coordinates (top-left origin, points).</summary>
+    /// <summary>The window's content rectangle in the form's coordinates (top-left origin, driver units).</summary>
     private Rectangle NativeBounds()
     {
         NSRect frame = SendRectRet(_window, Sel("frame"));
         NSRect content = SendRectRect(_window, Sel("contentRectForFrameRect:"), frame);
-        double screenHeight = PrimaryScreenHeight();
-        return new Rectangle((int)Math.Round(content.x), (int)Math.Round(screenHeight - content.y - content.h),
-                             (int)Math.Round(content.w), (int)Math.Round(content.h));
+        double screenHeight = PrimaryScreenHeight(), ss = ScreenScale;
+        return new Rectangle((int)Math.Round(content.x * ss), (int)Math.Round((screenHeight - content.y - content.h) * ss),
+                             (int)Math.Round(content.w * _k), (int)Math.Round(content.h * _k));
     }
 
     // Screen coordinates are anchored to the PRIMARY screen (the one with the menu bar), on both
@@ -1069,14 +1151,23 @@ internal sealed class CocoaHost : IWinFormsHost
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr r, IntPtr s, nuint a);
 
     /// <summary>
-    /// Where the form asked to be (its Location, which StartPosition has already resolved), in
-    /// Cocoa's coordinates: origin at the bottom-left of the main screen, measured to the window's
-    /// bottom edge. Main thread only (NSScreen).
+    /// Where the form asked to be (its Location, which StartPosition has already resolved, and its
+    /// size, in driver units), in Cocoa's coordinates: points, origin at the bottom-left of the main
+    /// screen, measured to the window's bottom edge. Main thread only (NSScreen).
     /// </summary>
-    private static NSRect CocoaRect(int left, int top, double w, double h)
+    private NSRect CocoaRect(int left, int top, double w, double h)
     {
-        double screenHeight = PrimaryScreenHeight();
-        return new NSRect { x = left, y = screenHeight - top - h, w = w, h = h };
+        double screenHeight = PrimaryScreenHeight(), ss = ScreenScale;
+        w /= _k; h /= _k;
+        return new NSRect { x = left / ss, y = screenHeight - top / ss - h, w = w, h = h };
+    }
+
+    /// <summary>A point on the screen (Cocoa's) in the driver's screen space, by this window: its
+    /// content's origin is the form's client origin there.</summary>
+    private System.Drawing.Point ScreenToDriver(NSPoint p)
+    {
+        NSRect c = ContentScreenRect();
+        return new System.Drawing.Point(_form.Left + (int)Math.Floor((p.x - c.x) * _k), _form.Top + (int)Math.Floor((c.y + c.h - p.y) * _k));
     }
 
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRet(IntPtr r, IntPtr s);
@@ -1348,8 +1439,9 @@ internal sealed class CocoaHost : IWinFormsHost
         try
         {
             NSPoint p = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
-            x = (int)Math.Floor(p.x);
-            y = (int)Math.Floor(PrimaryScreenHeight() - p.y);
+            double ss = ScreenScale;
+            x = (int)Math.Floor(p.x * ss);
+            y = (int)Math.Floor((PrimaryScreenHeight() - p.y) * ss);
             return true;
         }
         catch
@@ -1376,7 +1468,7 @@ internal sealed class CocoaHost : IWinFormsHost
             // The pointer in screen coordinates (Win32's: top-left of the primary screen).
             NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
             NSRect frame = SendRectRet(window, Sel("frame"));
-            var screen = new System.Drawing.Point((int)(frame.x + loc.x), (int)(PrimaryScreenHeight() - (frame.y + loc.y)));
+            var screen = host.ScreenToDriver(new NSPoint { x = frame.x + loc.x, y = frame.y + loc.y });
             (host._driver as XplatUIWebGpu)?.NotePointer(screen.X, screen.Y);
             Control target = host._form;
             while (target.GetChildAtPoint(target.PointToClient(screen), GetChildAtPointSkip.Invisible) is Control child) target = child;
@@ -1414,8 +1506,8 @@ internal sealed class CocoaHost : IWinFormsHost
         _wheelUnits -= notches * 120;
 
         NSPoint loc = LocationInContent(evt, out _);
-        int cx = (int)loc.x + _form.Left;
-        int cy = (int)(_form.Height - loc.y) + _form.Top;
+        int cx = (int)(loc.x * _k) + _form.Left;
+        int cy = (int)(_form.Height - loc.y * _k) + _form.Top;
         _wheelInject ??= _driver.GetType().GetMethod("InjectWheel", BindingFlags.NonPublic | BindingFlags.Instance);
         _wheelInject?.Invoke(_driver, new object[] { cx, cy, notches * 120 });
         Application.DoEvents();
@@ -1467,10 +1559,10 @@ internal sealed class CocoaHost : IWinFormsHost
         double h = f.h + (top ? dy : bottom ? -dy : 0);
         // The form's limits, else Windows' smallest tracking size (SM_CXMINTRACK x SM_CYMINTRACK).
         System.Drawing.Size min = _form.MinimumSize, max = _form.MaximumSize;
-        w = Math.Max(w, min.Width > 0 ? min.Width : 136);
-        h = Math.Max(h, min.Height > 0 ? min.Height : 39);
-        if (max.Width > 0) w = Math.Min(w, max.Width);
-        if (max.Height > 0) h = Math.Min(h, max.Height);
+        w = Math.Max(w, (min.Width > 0 ? min.Width : 136) / _k);
+        h = Math.Max(h, (min.Height > 0 ? min.Height : 39) / _k);
+        if (max.Width > 0) w = Math.Min(w, max.Width / _k);
+        if (max.Height > 0) h = Math.Min(h, max.Height / _k);
         NSRect next = new NSRect { x = left ? f.x + f.w - w : f.x, y = bottom ? f.y + f.h - h : f.y, w = w, h = h };
         SendVoidRectBool(_window, Sel("setFrame:display:"), next, true);
         return true;
@@ -1511,12 +1603,14 @@ internal sealed class CocoaHost : IWinFormsHost
         {
             NSPoint loc = LocationInContent(evt, out bool viaLayer);
             if (_sizingHit != 0 && ContinueSizing(type, loc)) return;
+            // the point in the content in driver units (still bottom-up); loc stays in points for AppKit
+            NSPoint at = new NSPoint { x = loc.x * _k, y = loc.y * _k };
             // A press on a sizing border the form draws itself sizes the window, as Windows' default
             // handling of HTLEFT..HTBOTTOMRIGHT does. AppKit sizes only from its own frame: its title
             // bar zone at the top, nothing along the other edges, which the content covers.
             if (type == 1 && _ownCaption && !_formHasMouse && !viaLayer && IsResizable())
             {
-                int sizing = HitTest((int)loc.x + _form.Left, (int)(_form.Height - loc.y) + _form.Top);
+                int sizing = HitTest((int)at.x + _form.Left, (int)(_form.Height - at.y) + _form.Top);
                 if (sizing >= HTLEFT && sizing <= HTBOTTOMRIGHT)
                 {
                     BeginSizing(sizing, loc);
@@ -1529,8 +1623,8 @@ internal sealed class CocoaHost : IWinFormsHost
             // title bar and a band along the edges stay AppKit's, so the window still moves and
             // resizes the native way; those are not the form's. Bare moves go to both (cursor).
             const double EdgeBand = 4;
-            bool inContent = loc.y >= 0 && loc.y < _form.Height && loc.x >= 0 && loc.x < _form.Width;
-            bool atEdge = loc.x < EdgeBand || loc.x >= _form.Width - EdgeBand || loc.y < EdgeBand;
+            bool inContent = at.y >= 0 && at.y < _form.Height && at.x >= 0 && at.x < _form.Width;
+            bool atEdge = loc.x < EdgeBand || at.x >= _form.Width - EdgeBand * _k || loc.y < EdgeBand;
             // Through the popup layer it is a popup's, wherever it is: the layer lets the pointer
             // through where it shows nothing.
             if (type != 5 && (!inContent || atEdge) && !_formHasMouse && !viaLayer)
@@ -1542,7 +1636,7 @@ internal sealed class CocoaHost : IWinFormsHost
             // it, as Windows' default handling of HTCAPTION does; a press on its border resizes it.
             if (type == 1 && _ownCaption && !_formHasMouse)
             {
-                int hit = HitTest((int)loc.x + _form.Left, (int)(_form.Height - loc.y) + _form.Top);
+                int hit = HitTest((int)at.x + _form.Left, (int)(_form.Height - at.y) + _form.Top);
                 if (hit == HTCAPTION)
                 {
                     if ((nint)Send(evt, Sel("clickCount")) >= 2) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
@@ -1566,8 +1660,8 @@ internal sealed class CocoaHost : IWinFormsHost
             // hit-tests: the form's client area is drawn at the form's location there. Window
             // coordinates alone were right only while every form sat at (0,0) -- which stopped
             // being true when the form began to report where the window really is.
-            int cx = (int)loc.x + _form.Left;
-            int cy = (int)(_form.Height - loc.y) + _form.Top;
+            int cx = (int)at.x + _form.Left;
+            int cy = (int)(_form.Height - at.y) + _form.Top;
             if (s_traceInput) Console.WriteLine($"[cocoa input] type={type} window=({loc.x},{loc.y}) -> driver=({cx},{cy}) form={_form.Bounds}");
             switch (type)
             {

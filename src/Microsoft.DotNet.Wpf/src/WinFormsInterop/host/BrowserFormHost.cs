@@ -29,7 +29,10 @@ namespace System.Windows.Forms
 		private readonly System.Diagnostics.Stopwatch _blink = System.Diagnostics.Stopwatch.StartNew ();
 		private BrowserWindow _window;
 		private WgpuPresenter _wgpu;
-		private double _scale = 1;
+		// device pixels per driver unit; and driver units per CSS pixel -- 1 for an application laid
+		// out at 96 dpi, the devicePixelRatio for a per-monitor one, which lays out in device pixels
+		// (ScaleHelper.HostSourceDpi 0) and is rendered 1:1
+		private double _scale = 1, _k = 1;
 		private int _lastVer = -1, _surfaceW, _surfaceH;
 		private bool _lastCaretOn, _lastPresentOk, _leftDown, _closed;
 		private int _traced, _tracedScenes;
@@ -44,6 +47,38 @@ namespace System.Windows.Forms
 		private Point _dragFrom, _dragOrigin;
 		private static readonly bool s_trace = Environment.GetEnvironmentVariable ("WF_TRACE_BROWSER") == "1";
 
+		private static bool PerMonitor => ScaleHelper.IsDeviceScaled && ScaleHelper.HostSourceDpi == 0;
+
+		/// <summary>The page's DPI as Windows would give it: 96 per CSS pixel.</summary>
+		internal static int PageDpi ()
+		{
+			double ratio = new BrowserWindow ().GetBackingScale ();
+			return ratio > 0 ? (int)Math.Round (96 * ratio) : 0;
+		}
+
+		/// <summary>A per-monitor application told when the page's devicePixelRatio changes (the page
+		/// zoomed, the browser window moved to another display), as Windows tells a window that moved
+		/// to another monitor: the same size in CSS pixels, in the new DPI's pixels.</summary>
+		private void FollowBacking (double backing)
+		{
+			if (!PerMonitor || backing <= 0 || !_form.IsHandleCreated || _form.IsDisposed)
+				return;
+			int dpi = (int)Math.Round (96 * backing);
+			if (Math.Abs (backing - _k) < 0.001) {
+				if (_driver.WindowDpi (_form.Handle) != dpi)
+					_driver.SetWindowDpi (_form.Handle, dpi);
+				return;
+			}
+			double old = _k;
+			_k = backing;
+			var suggested = new Rectangle (_form.Location, new Size ((int)Math.Round (_form.Width * backing / old), (int)Math.Round (_form.Height * backing / old)));
+			if (ScaleHelper.IsThreadPerMonitorV2Aware)
+				_driver.HostDpiChanged (_form.Handle, dpi, suggested);
+			else
+				_driver.SetWindowDpi (_form.Handle, dpi);
+			_lastVer = -1;
+		}
+
 		internal BrowserFormHost (Form form)
 		{
 			_form = form;
@@ -55,11 +90,16 @@ namespace System.Windows.Forms
 		{
 			bool borderless = _form.FormBorderStyle == FormBorderStyle.None;
 			_window = new BrowserWindow ();
-			_scale = Math.Max (0.5, _window.GetBackingScale ());
-			// device pixels for the origin, points for the size; CW_USEDEFAULT lets the page place it
+			double backing = Math.Max (0.5, _window.GetBackingScale ());
+			_k = PerMonitor ? _driver.WindowDpi (_form.Handle) / 96.0 : ScaleHelper.HostSourceDpi / 96.0;
+			_scale = backing / _k;
+			// device pixels for the origin, CSS pixels for the size; CW_USEDEFAULT lets the page place it
 			bool placed = _form.StartPosition == FormStartPosition.Manual;
 			_window.Create (_form.Text, placed ? (int)(_form.Left * _scale) : unchecked((int)0x80000000), placed ? (int)(_form.Top * _scale) : unchecked((int)0x80000000),
-				Math.Max (1, _form.Width), Math.Max (1, _form.Height), borderless);
+				Math.Max (1, (int)Math.Round (_form.Width / _k)), Math.Max (1, (int)Math.Round (_form.Height / _k)), borderless);
+			// the page's DPI: the driver's for the window, and the form's if it is another
+			FollowBacking (backing);
+			_scale = backing / _k;
 			_window.Resized += OnResized;
 			// the form's window, for content that is a window of its own inside it: an ElementHost's WPF tree
 			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
@@ -185,6 +225,17 @@ namespace System.Windows.Forms
 		{
 			if (_wgpu == null || _closed)
 				return;
+			// the page's devicePixelRatio changed (zoom, another display): a per-monitor form lays itself
+			// out again, any other is drawn at the new scale
+			double backing = Math.Max (0.5, _window.GetBackingScale ());
+			FollowBacking (backing);
+			if ((float)(backing / _k) != _wgpu.Scale) {
+				_scale = backing / _k;
+				_wgpu.SetScale (_scale);
+				EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
+				_surfaceW = -1;                // the canvas's CSS size follows
+				_lastVer = -1;
+			}
 			// the embedded content's changes too (a hosted WPF tree animating by itself)
 			int ver = _driver.GetPaintVersion () + EmbeddedScenes.CurrentVersion ();
 			bool caretOn = CaretOn ();
@@ -198,7 +249,7 @@ namespace System.Windows.Forms
 				// a drop-down reaching past the form: the canvas grows to hold it (shrinks back after)
 				_surfaceW = needW;
 				_surfaceH = needH;
-				_window.SetContentSize (needW, needH);
+				_window.SetContentSize ((int)Math.Round (needW / _k), (int)Math.Round (needH / _k));
 			}
 			Rectangle? caret = caretOn && _driver.GetCaret (out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;

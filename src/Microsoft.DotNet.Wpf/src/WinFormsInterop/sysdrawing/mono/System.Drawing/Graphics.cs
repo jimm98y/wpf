@@ -3524,6 +3524,11 @@ namespace System.Drawing
 				string family = font.FontFamily.Name;
 				int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
 				int argb = ArgbOf (brush);
+				// The run's string as the engine laid it out: its hot-key prefixes gone. The renderer
+				// draws the string itself where it cannot use these levels -- a window presented at
+				// another scale than the one they were realized at, a Retina display's -- and drawn from
+				// the caller's string, DotNetBar's ribbon read "&File", "&Home", "D&esign".
+				string shown = format != null && format.HotkeyPrefix != Text.HotkeyPrefix.None ? StripHotkeyPrefix (s, out _) : s;
 				// Device pixels, relative to the recording's origin: drawn with no world at all.
 				GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, 0f, 0f);
 				try {
@@ -3535,7 +3540,7 @@ namespace System.Drawing
 							Mode = mode, Hint = (int) recorded_text_hint, Contrast = contrast,
 							Em = em * (float) Math.Sqrt (Math.Abs (det)), OriginX = at.Left, OriginY = at.Top + at.Height,
 						};
-						GpuRecorder.DrawGdiPlusText (run, s, argb, style, family);
+						GpuRecorder.DrawGdiPlusText (run, shown, argb, style, family);
 					}
 					RecordEngineImage (bmp, bx, by);
 				} finally {

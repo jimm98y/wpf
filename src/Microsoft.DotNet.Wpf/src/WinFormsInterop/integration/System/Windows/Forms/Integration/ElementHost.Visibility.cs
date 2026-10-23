@@ -129,11 +129,18 @@ namespace System.Windows.Forms.Integration
         {
             if (_source == null || _source.IsDisposed || !OnTreeThread) return;
             List<SD.Rectangle> pieces = VisiblePieces();
+            // The region is in the window's own units -- CSS pixels on the page, points in AppKit -- and
+            // the pieces in the control's: device pixels for a per-monitor application, whose windows'
+            // units are not its own.
+            double backing = OperatingSystem.IsBrowser() ? MS.Internal.Interop.BrowserWindow.FromHandle(_source.Handle)?.GetBackingScale() ?? 1
+                : MS.Internal.Interop.CocoaWindow.FromHandle(_source.Handle)?.GetBackingScale() ?? 1;
+            double k = (_scale > 0 ? _scale : 1) / (backing > 0 ? backing : 1);
             var rects = new int[pieces.Count * 4];
             for (int i = 0; i < pieces.Count; i++)
             {
-                rects[i * 4] = pieces[i].X; rects[i * 4 + 1] = pieces[i].Y;
-                rects[i * 4 + 2] = pieces[i].Width; rects[i * 4 + 3] = pieces[i].Height;
+                int l = (int)Math.Floor(pieces[i].Left * k), t = (int)Math.Floor(pieces[i].Top * k);
+                rects[i * 4] = l; rects[i * 4 + 1] = t;
+                rects[i * 4 + 2] = (int)Math.Ceiling(pieces[i].Right * k) - l; rects[i * 4 + 3] = (int)Math.Ceiling(pieces[i].Bottom * k) - t;
             }
             // the window's size as well: the same pieces of a window that has since grown are another mask
             string region = $"{_placedW}x{_placedH}:" + string.Join(",", rects);

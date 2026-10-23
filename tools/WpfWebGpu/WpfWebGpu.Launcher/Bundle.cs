@@ -236,6 +236,9 @@ internal static class Bundle
                 {
                     // the app's configuration, not this host's: what ConfigurationManager reads
                     AppContext.SetData("APP_CONFIG_FILE", "/{{app.Name}}.dll.config");
+                    // the file the app is started from, first on its command line as on Windows (the app's
+                    // Environment.CommandLine is rewritten to put it there: WpfWebGpu.ComInterop's BrowserApis)
+                    AppContext.SetData("WPFWEBGPU_APP_PATH", "/{{(File.Exists(app.Exe) ? app.Name + ".exe" : app.Name + ".dll")}}");
                     Assembly app = Assembly.Load(new AssemblyName("{{app.Name}}"));
                     // the app is the process's entry assembly, as when its own .exe starts it: an app asks
                     // GetEntryAssembly who it is (GraphWorX picks its colour scheme by its name)

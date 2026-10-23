@@ -48,7 +48,12 @@ namespace System.Windows.Forms
 
 		internal bool HasFrame => Frame != Padding.Empty;
 
-		// Windows 11 at 96 dpi: the resize margin outside the visible edge, a 46-pixel close button
+		// The window's DPI over 96: the caption's buttons and insets are Windows 11's at 96 dpi, scaled
+		// (the frame itself is the driver's for the window's DPI).
+		private float Dpi => _form.IsHandleCreated ? XplatUIWebGpu.GetInstance ().WindowDpi (_form.Handle) / 96f : 1f;
+		private int Px (float v) => (int)Math.Round (v * Dpi);
+
+		// Windows 11: the resize margin outside the visible edge, a 46-pixel close button
 		private int Margin => Math.Max (0, Frame.Left - 1);
 		private Rectangle Visible (Size window) => new Rectangle (Margin, 0, window.Width - 2 * Margin, window.Height - Margin);
 		private Rectangle Caption (Size window)
@@ -59,7 +64,7 @@ namespace System.Windows.Forms
 		private Rectangle CloseBox (Size window)
 		{
 			Rectangle c = Caption (window);
-			return _form.ControlBox ? new Rectangle (c.Right - 46, c.Top, 46, c.Height) : Rectangle.Empty;
+			return _form.ControlBox ? new Rectangle (c.Right - Px (46), c.Top, Px (46), c.Height) : Rectangle.Empty;
 		}
 
 		/// <summary>WM_NCHITTEST for a point in window coordinates (0,0 the outer top-left).</summary>
@@ -110,14 +115,15 @@ namespace System.Windows.Forms
 					g.FillRectangle (caption, v.Left, v.Top, v.Width, f.Top);
 				using (var sides = new SolidBrush (_form.BackColor))
 					g.FillRectangle (sides, v.Left, f.Top, v.Width, v.Height - f.Top);
-				using (var edge = new Pen (active ? Color.FromArgb (120, 120, 120) : Color.FromArgb (170, 170, 170)))
-					g.DrawRectangle (edge, v.Left, v.Top, v.Width - 1, v.Height - 1);
+				int line = Math.Max (1, Px (1));
+				using (var edge = new Pen (active ? Color.FromArgb (120, 120, 120) : Color.FromArgb (170, 170, 170), line))
+					g.DrawRectangle (edge, v.Left + (line - 1) / 2f, v.Top + (line - 1) / 2f, v.Width - line, v.Height - line);
 
 				Rectangle c = Caption (window);
 				Rectangle close = CloseBox (window);
 				// the title: the caption font, from the left edge to the buttons
 				Font font = SystemFonts.CaptionFont ?? Control.DefaultFont;
-				var title = new Rectangle (c.Left + 11, c.Top, (close.IsEmpty ? c.Right : close.Left) - c.Left - 11, c.Height);
+				var title = new Rectangle (c.Left + Px (11), c.Top, (close.IsEmpty ? c.Right : close.Left) - c.Left - Px (11), c.Height);
 				TextRenderer.DrawText (g, _form.Text, font, title, active ? Color.Black : Color.FromArgb (150, 150, 150),
 					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
@@ -127,13 +133,13 @@ namespace System.Windows.Forms
 						using var red = new SolidBrush (_pressed == HTCLOSE ? Color.FromArgb (200, 66, 58) : Color.FromArgb (196, 43, 28));
 						g.FillRectangle (red, close);
 					}
-					// the cross, ten pixels across in the button's middle
-					int cx = close.Left + close.Width / 2, cy = close.Top + close.Height / 2;
-					using var cross = new Pen (hot ? Color.White : active ? Color.Black : Color.FromArgb (150, 150, 150), 1f);
+					// the cross, ten pixels across (at 96 dpi) in the button's middle
+					int cx = close.Left + close.Width / 2, cy = close.Top + close.Height / 2, arm = Px (5);
+					using var cross = new Pen (hot ? Color.White : active ? Color.Black : Color.FromArgb (150, 150, 150), Dpi);
 					SmoothingMode before = g.SmoothingMode;
 					g.SmoothingMode = SmoothingMode.AntiAlias;
-					g.DrawLine (cross, cx - 5, cy - 5, cx + 5, cy + 5);
-					g.DrawLine (cross, cx + 5, cy - 5, cx - 5, cy + 5);
+					g.DrawLine (cross, cx - arm, cy - arm, cx + arm, cy + arm);
+					g.DrawLine (cross, cx + arm, cy - arm, cx - arm, cy + arm);
 					g.SmoothingMode = before;
 				}
 				return System.Drawing.WebGpuBackend.GpuRaster.EndScene (g);
