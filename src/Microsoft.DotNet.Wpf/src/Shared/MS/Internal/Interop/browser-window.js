@@ -148,6 +148,19 @@ export function isSecondaryWindow(handle) {
 
 // The window draws its own frame (the WinForms host's WindowChrome: Windows' title bar, edges and the
 // shadow in the see-through margin round them), so the page gives it none of its own.
+// The window with the keyboard when it is not the page's own: a child window that took it when it was
+// pressed (an ElementHost's WPF tree), as SetFocus on a child window does on Windows. Every key went to
+// the page's first window, and a WPF tree hosted in a form never had one. It keeps the keyboard until
+// a press lands on another window, or the host activates another (releaseKeyboard).
+let keyWindow = 0;
+
+export function setTakesKeyboardOnPress(handle, takes) {
+    const w = windows.get(handle);
+    if (w) w.takesKeyboard = !!takes;
+}
+
+export function releaseKeyboard() { keyWindow = 0; }
+
 export function setOwnFrame(handle) {
     const w = windows.get(handle);
     if (w) w.canvas.style.boxShadow = "none";
@@ -168,6 +181,7 @@ export function destroyWindow(handle) {
     if (!w) return;
     w.canvas.remove();
     windows.delete(handle);
+    if (keyWindow === handle) keyWindow = 0;
     canvases().delete(handle);
 }
 
@@ -528,6 +542,7 @@ function pushMouse(kind, e, wheel = 0) {
         if (!handle) return;
     }
     const r = windows.get(handle).canvas.getBoundingClientRect();
+    if (kind === 1) keyWindow = windows.get(handle).takesKeyboard ? handle : 0;
     queue.push({
         t: "m", k: kind, h: handle, b: e.button ?? 0,
         x: Math.round((e.clientX - r.left) * dpr()),
@@ -732,6 +747,8 @@ function installListeners() {
 function pushKey(isDown, e) {
     let handle = 0;
     for (const [h, w] of windows) { if (!w.borderless) { handle = h; break; } }
+    const kw = keyWindow && windows.get(keyWindow);
+    if (kw && kw.canvas.style.display !== "none") handle = keyWindow;
     if (!handle) return;
 
     // While an IME is composing, the keystrokes are ITS input, not the app's. Two things have to

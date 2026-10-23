@@ -156,7 +156,9 @@ internal static class ComImportStep
             }
 
         var candidates = files.Where(f => f.DeclaresCom).ToList();
-        if (candidates.Count == 0)
+        // An assembly rewritten for its P/Invokes is loaded from memory as well, with no file: what asks
+        // where it is goes through the caller rewriting below (step 2), as for a COM-rewritten one.
+        if (candidates.Count == 0 && pinvokes.Count == 0)
         {
             foreach (var f in files.Where(f => pinvokes.Contains(f.Name))) Take(f, list, ComImportLoader.Parts.PInvokes);
             Finish();
@@ -245,9 +247,13 @@ internal static class ComImportStep
             }
         }
 
-        // 2. caller rewriting: who asks the chosen (and, in turn, the callers) where they are
+        // 2. caller rewriting: who asks the chosen (and, in turn, the callers) where they are -- the chosen
+        // for COM and the assemblies rewritten for their P/Invokes, which have no file either. app'
+        // IcoFwxUtils (P/Invokes) reads its own file for the company's signing certificate and compares
+        // every component's signer with it: with no file it found none, every point manager was "custom",
+        // and app held back even its licence information during the demo's startup delay.
         var callers = new Dictionary<string, AppFile>(StringComparer.OrdinalIgnoreCase);
-        if (chosen.Count > 0)
+        if (chosen.Count > 0 || pinvokes.Count > 0)
         {
             foreach (var f in files.Where(f => f.MayReadLocations))
             {
@@ -258,7 +264,7 @@ internal static class ComImportStep
                 dirty = true;
             }
             var askers = files.Where(f => f.Asks is { AsksOthers: true }).ToList();
-            var rewritten = new HashSet<string>(chosen.Keys, StringComparer.OrdinalIgnoreCase);
+            var rewritten = new HashSet<string>(chosen.Keys.Concat(pinvokes), StringComparer.OrdinalIgnoreCase);
             for (bool grew = true; grew;)
             {
                 grew = false;
@@ -292,6 +298,13 @@ internal static class ComImportStep
         }
         foreach (var x in callers.Values) if (!chosen.ContainsKey(x.Name)) Add(x, ComImportLoader.Parts.Location);
         foreach (var f in files) if (pinvokes.Contains(f.Name)) Add(f, ComImportLoader.Parts.PInvokes);
+        // a P/Invoke-rewritten assembly's own location calls (Assembly.GetExecutingAssembly().Location): it has no file
+        foreach (var f in files)
+            if (pinvokes.Contains(f.Name) && f.MayReadLocations && !chosen.ContainsKey(f.Name))
+            {
+                Add(f, ComImportLoader.Parts.Location);
+                if (!callers.ContainsKey(f.Name)) notes.Add($"comimport {f.Name}: its location calls rewritten with its P/Invokes -- it is loaded from memory and may ask where it is");
+            }
         foreach (var (f, p) in parts.Values) Take(f, list, p);
         Finish();
 

@@ -142,6 +142,8 @@ namespace System.Windows.Forms
 			if (previous == this)
 				return;
 			s_active = this;
+			// another window active: the keyboard leaves a child window of the one before
+			BrowserWindow.ReleaseKeyboard ();
 			if (previous != null && !previous._closed && previous._form.IsHandleCreated) {
 				_driver.HostActivate ((long)previous._form.Handle, false);
 				previous.Repaint ();
@@ -354,6 +356,9 @@ namespace System.Windows.Forms
 			IntPtr outerRoot = XplatUIWebGpu.InputRoot;
 			XplatUIWebGpu.InputRoot = _form.Handle;
 			try {
+				// a move without the button down is Windows' WM_SETCURSOR, which ends a Cursor.Current
+				if (m.Kind == 0 && !_leftDown)
+					_driver.EndCursorOverride ();
 				switch (m.Kind) {
 				case 0: _driver.InjectMouseMove (x, y, _leftDown); break;
 				case 1:
@@ -369,7 +374,24 @@ namespace System.Windows.Forms
 			} finally {
 				XplatUIWebGpu.InputRoot = outerRoot;
 			}
+			if (m.Kind == 0)
+				ApplyCursor ();
 			Present ();
+		}
+
+		/// <summary>The cursor the control under the pointer asks for (the driver's StdCursor), as Windows
+		/// shows it on WM_SETCURSOR, as the page's CSS cursor. Nothing set one: an arrow over every
+		/// splitter, text box and link.</summary>
+		private void ApplyCursor ()
+		{
+			string css = _driver.GetActiveCursor () switch {
+				1 => "progress", 3 => "crosshair", 4 => "pointer", 5 => "help",
+				6 => "row-resize", 7 => "text", 8 => "not-allowed",
+				>= 9 and <= 19 => "all-scroll", 20 => "move", 21 => "nesw-resize", 22 => "ns-resize",
+				23 => "nwse-resize", 24 => "ew-resize", 26 => "col-resize", 27 => "wait",
+				_ => "default",
+			};
+			BrowserWindow.SetCursor (css);
 		}
 
 		// ---- the frame (WindowChrome): DefWindowProc's part --------------------------------------
@@ -445,6 +467,9 @@ namespace System.Windows.Forms
 		{
 			// The page's keys reach the first window; on Windows they go to the active one.
 			if (_closed || !_form.IsHandleCreated || _form.IsDisposed)
+				return;
+			// a child window that took the keyboard (an ElementHost's WPF tree) has its own keys
+			if (BrowserWindow.FromHandle (k.Window) is { TakesKeyboardOnPress: true })
 				return;
 			Form active = Form.ActiveForm;
 			if (active != null ? active != _form : !Mine (k.Window))

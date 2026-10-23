@@ -61,6 +61,28 @@ internal sealed class CocoaHost : IWinFormsHost
     // the screen -- a window's origin, the displays' bounds, the pointer -- are in the main display's
     // pixels (ScreenScale), as Windows' physical coordinates are in its monitors' pixels.
     private double _k = 1;
+    // the backing scale the window's layer was last given (0 until the first present)
+    private double _layerScale;
+
+    // WF_TEST_BACKING=<scale>@<seconds> (diagnostics): from that many seconds after start, the windows'
+    // backing scale reads as <scale> -- a display change (one attached, the window moved to another)
+    // without a display to attach.
+    private static readonly (double Scale, long At) s_testBacking = ParseTestBacking();
+    private static (double, long) ParseTestBacking()
+    {
+        string v = Environment.GetEnvironmentVariable("WF_TEST_BACKING");
+        if (string.IsNullOrEmpty(v)) return (0, 0);
+        string[] parts = v.Split('@');
+        double.TryParse(parts[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double scale);
+        long.TryParse(parts.Length > 1 ? parts[1] : "0", out long seconds);
+        return (scale, Environment.TickCount64 + seconds * 1000);
+    }
+
+    private bool _testBackingSeen;
+
+    private static double Backing(IntPtr view)
+        => s_testBacking.Scale > 0 && Environment.TickCount64 >= s_testBacking.At ? s_testBacking.Scale
+            : Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(view);
 
     private static bool PerMonitor => ScaleHelper.IsDeviceScaled && ScaleHelper.HostSourceDpi == 0;
 
@@ -338,7 +360,7 @@ internal sealed class CocoaHost : IWinFormsHost
             var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Acquire();
             IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, _popupView);
             SendVoidBool(Send(_popupView, Sel("layer")), Sel("setOpaque:"), false);
-            double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_popupView);
+            double scale = Backing(_popupView);
             _popupWgpu = new WgpuPresenter(ctx, surface, (int)(content.w * _k), (int)(content.h * _k), scale / _k, srgb: _gpuRaster, threadDevice: true);
             _popupWgpu.SetTransparent(true);
             _popupWgpu.Tag = " popups";
@@ -511,7 +533,7 @@ internal sealed class CocoaHost : IWinFormsHost
                         // the process's device (ProcessGpu.cs), though the window presents off the main thread
                         var ctx = Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Acquire();
                         IntPtr surface = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.CreateWindowSurface(ctx.Instance, nv);
-                        _pendingScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(nv);
+                        _pendingScale = Backing(nv);
                         if (_transparent) SendVoidBool(Send(nv, Sel("layer")), Sel("setOpaque:"), false);
                         _pendingContext = ctx;
                         _pendingSurface = surface;
@@ -533,6 +555,7 @@ internal sealed class CocoaHost : IWinFormsHost
         double w = _form.Width, h = _form.Height;
         IntPtr win = Send(Cls("NSWindow"), Sel("alloc"));
         _k = InitialUnitsPerPoint();
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' shown: k={_k} per-monitor={PerMonitor} handle={_form.IsHandleCreated} windowDpi={(_driver as XplatUIWebGpu)?.WindowDpi(_form.Handle)} screenScale={ScreenScale} form={_form.Bounds}");
         var rect = CocoaRect(_form.Left, _form.Top, w, h);
         _transparent = IsLayered();
         _ownCaption = DrawsOwnCaption();
@@ -551,7 +574,13 @@ internal sealed class CocoaHost : IWinFormsHost
         // the first Pump then hands the real frame back to the form.
         _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
         // the display it came up on: the driver's DPI for the window, and the form's if it is another
-        FollowBacking(Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView));
+        FollowBacking(Backing(_imageView));
+        if (s_testBacking.Scale > 0)
+        {
+            var due = new System.Windows.Forms.Timer { Interval = (int)Math.Max(1, s_testBacking.At - Environment.TickCount64 + 50) };
+            due.Tick += (_, _) => { due.Stop(); Console.WriteLine($"frame: simulated backing {Backing(_imageView)} now for '{_form.Text}' presenter={(_wgpu != null)} raster={_gpuRaster} k={_k} closed={_closed}"); Present(); };
+            due.Start();
+        }
         ObserveLiveResize();
         s_live.Add(this);
         _form.VisibleChanged += OnFormVisibleChanged;
@@ -573,7 +602,7 @@ internal sealed class CocoaHost : IWinFormsHost
             // Render at the real backing scale (2x on Retina) so text/geometry are crisp rather than a
             // 1x surface upscaled by the display. The CAMetalLayer's contentsScale (set by CreateSurface)
             // and the surface config must both be device-pixel sized; the presenter scales the scene.
-            double scale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
+            double scale = Backing(_imageView);
             // Scene path uses an sRGB surface so the renderer's gamma-correct glyph coverage kicks in
             // (crisp, WPF-weight text); the bitmap path stays non-sRGB (pixels are already display-space).
             _wgpu = new WgpuPresenter(ctx, surface, _form.Width, _form.Height, scale / _k, srgb: _gpuRaster, threadDevice: true);
@@ -601,10 +630,16 @@ internal sealed class CocoaHost : IWinFormsHost
             // resync the CAMetalLayer contentsScale + resize the swap chain so text stays crisp
             // (a wrong 1x on a 2x display would upscale to a pixelated result).
             // A per-monitor application is told of the new DPI and lays itself out for it instead.
-            double curScale = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.BackingScale(_imageView);
+            double curScale = Backing(_imageView);
             FollowBacking(curScale);
-            if ((float)(curScale / _k) != _wgpu.Scale)
+            // The layer follows the backing, whatever the presenter's scale: for a per-monitor form that
+            // is 1 at every DPI (2/2 on Retina, 1/1 after), and keyed on it the layer kept 2 when the
+            // window went to a 100% display -- the frame shown in a quarter of the window.
+            if (curScale != _layerScale || (float)(curScale / _k) != _wgpu.Scale)
             {
+                // the popup layer is made again for the new display (its scale and units are the window's)
+                if (_layerScale != 0 && curScale != _layerScale) ClosePopupLayer();
+                _layerScale = curScale;
                 Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.SetContentsScale(_imageView, curScale);
                 _wgpu.SetScale(curScale / _k);
                 EmbeddedScenes.PublishHostWindow(_imageView, (float)(curScale / _k), _form);
@@ -891,14 +926,27 @@ internal sealed class CocoaHost : IWinFormsHost
             if (host._window == IntPtr.Zero || host._form.IsDisposed) return;
             if (s_traceResize) TraceResize($"enter native={host.NativeBounds()} form={host._form.Bounds} depth={s_inResize}", stack: s_inResize == 1);
             s_inResize++;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp(), t1 = t0, t2 = t0;
             try
             {
                 host.SyncFrame();
+                // What Windows' modal sizing loop does between moves: the messages the application posted
+                // to itself are dispatched (DotNetBar lays its ribbon out from one), not left until the
+                // button is let go -- the ribbon stretched only after the drag. AppKit's events stay
+                // where they are: the host's pump reads none inside a resize (s_inResize).
+                Application.DoEvents();
+                t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 EmbeddedScenes.Pump();
+                t2 = System.Diagnostics.Stopwatch.GetTimestamp();
                 host.Present();
             }
             finally { s_inResize--; }
-            if (s_traceResize) TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds}");
+            if (s_traceResize)
+            {
+                long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds} sync={Ms(t0, t1):F1}ms embedded={Ms(t1, t2):F1}ms present={Ms(t2, t3):F1}ms");
+            }
         }
         catch (Exception e)
         {
@@ -1321,10 +1369,36 @@ internal sealed class CocoaHost : IWinFormsHost
         Send(win, Sel("close"));
     }
 
+    // WF_TEST_RESIZE=1 (diagnostics): 25 s after the window is up, its frame is grown and shrunk through
+    // AppKit (setFrame:display:, which posts the resize notification a user's drag does), 40 steps,
+    // and the cost of each is traced (WF_TRACE_RESIZE).
+    private static readonly bool s_testResize = Environment.GetEnvironmentVariable("WF_TEST_RESIZE") == "1";
+    private long _testResizeAt;
+    private bool _testResized;
+
+    private void TestResize()
+    {
+        if (!s_testResize || _testResized || _window == IntPtr.Zero) return;
+        if (_testResizeAt == 0) { _testResizeAt = Environment.TickCount64 + 25000; return; }
+        if (Environment.TickCount64 < _testResizeAt) return;
+        _testResized = true;
+        NSRect f0 = SendRectRet(_window, Sel("frame"));
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 1; i <= 40; i++)
+        {
+            double d = (i <= 20 ? i : 40 - i) * 8;
+            SendVoidRectBool(_window, Sel("setFrame:display:"), new NSRect { x = f0.x, y = f0.y - d, w = f0.w + d, h = f0.h + d }, true);
+        }
+        Console.Error.WriteLine($"[resize] test: 40 steps in {clock.ElapsedMilliseconds} ms");
+    }
+
     public bool Pump()
     {
         // Events are the main thread's to read; see _offMain.
         if (_offMain) return !_closed && _form.Visible && !_form.IsDisposed;
+        TestResize();
+        // the simulated display change (WF_TEST_BACKING) comes with no window event to present on
+        if (s_testBacking.Scale > 0 && !_testBackingSeen && Environment.TickCount64 >= s_testBacking.At) { _testBackingSeen = true; Present(); }
 
         HookWpfIfLoaded();
         if (Environment.TickCount64 - s_screensAt > 1000) RefreshScreens(rescan: true);
@@ -1663,6 +1737,8 @@ internal sealed class CocoaHost : IWinFormsHost
             int cx = (int)at.x + _form.Left;
             int cy = (int)(_form.Height - at.y) + _form.Top;
             if (s_traceInput) Console.WriteLine($"[cocoa input] type={type} window=({loc.x},{loc.y}) -> driver=({cx},{cy}) form={_form.Bounds}");
+            // A bare move is Windows' WM_SETCURSOR, which ends a Cursor.Current; a drag (captured) keeps it.
+            if (type == 5) (_driver as XplatUIWebGpu)?.EndCursorOverride();
             switch (type)
             {
                 case 1: _down.Invoke(_driver, new object[] { cx, cy }); break;
@@ -1675,6 +1751,7 @@ internal sealed class CocoaHost : IWinFormsHost
             Application.DoEvents();   // let the control repaint (pressed/hover) into its backbuffer
             Present();                // show it immediately
             if (type == 5) Send(App(), Sel("sendEvent:"), evt);
+            if (type == 5 || type == 6) ApplyCursor();
             return;
         }
         else if (type == 22) // NSEventTypeScrollWheel -> WM_MOUSEWHEEL at the pointer
@@ -1710,6 +1787,52 @@ internal sealed class CocoaHost : IWinFormsHost
         }
         Send(App(), Sel("sendEvent:"), evt);
     }
+
+    // ---- the cursor ------------------------------------------------------------------------
+    //
+    // What the control under the pointer asks for (the driver's StdCursor: Control.Cursor, a
+    // Cursor.Current), as Windows shows it on WM_SETCURSOR. Nothing here set one, and the pointer was
+    // an arrow over every splitter, text box and link. NSCursor has no public diagonal-size, move or
+    // help cursor; AppKit's own (the window frame's) are used where it has them, else the nearest.
+    private static int s_cursorShown = int.MinValue;
+    private static readonly bool s_traceCursor = Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1";
+
+    private void ApplyCursor()
+    {
+        int id = (_driver as XplatUIWebGpu)?.GetActiveCursor() ?? -1;
+        // set on every move, not only when it changes: an embedded WPF window sets its own over itself
+        if (s_traceCursor && id != s_cursorShown) Console.WriteLine($"[cocoa cursor] StdCursor {id}");
+        string[] names = id switch
+        {
+            3 => new[] { "crosshairCursor" },                                         // Cross
+            4 => new[] { "pointingHandCursor" },                                      // Hand
+            5 => new[] { "_helpCursor", "arrowCursor" },                              // Help
+            6 or 22 => new[] { "resizeUpDownCursor" },                                // HSplit, SizeNS
+            7 => new[] { "IBeamCursor" },                                             // IBeam
+            8 => new[] { "operationNotAllowedCursor" },                               // No
+            >= 9 and <= 19 => new[] { "_moveCursor", "openHandCursor" },              // NoMove*, Pan*
+            20 => new[] { "_moveCursor", "openHandCursor" },                          // SizeAll
+            21 => new[] { "_windowResizeNorthEastSouthWestCursor", "arrowCursor" },   // SizeNESW
+            23 => new[] { "_windowResizeNorthWestSouthEastCursor", "arrowCursor" },   // SizeNWSE
+            24 or 26 => new[] { "resizeLeftRightCursor" },                            // SizeWE, VSplit
+            1 or 27 => new[] { "_waitCursor", "arrowCursor" },                        // AppStarting, Wait
+            _ => new[] { "arrowCursor" },                                             // Default, Arrow, UpArrow
+        };
+        IntPtr cls = Cls("NSCursor");
+        foreach (string name in names)
+        {
+            IntPtr sel = Sel(name);
+            if (!class_respondsToSelector(object_getClass(cls), sel)) continue;
+            IntPtr cursor = Send(cls, sel);
+            if (cursor == IntPtr.Zero) continue;
+            Send(cursor, Sel("set"));
+            s_cursorShown = id;
+            return;
+        }
+    }
+
+    [DllImport(ObjC)] private static extern IntPtr object_getClass(IntPtr obj);
+    [DllImport(ObjC)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool class_respondsToSelector(IntPtr cls, IntPtr sel);
 
     // ---- Objective-C runtime -----------------------------------------------------
 
