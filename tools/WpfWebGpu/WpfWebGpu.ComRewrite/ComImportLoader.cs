@@ -27,7 +27,7 @@ public sealed class ComImportLoader
 {
     /// <summary>What of an assembly is rewritten.</summary>
     [Flags]
-    public enum Parts { None = 0, Com = 1, Location = 2, PInvokes = 4 }
+    public enum Parts { None = 0, Com = 1, Location = 2, PInvokes = 4, Paths = 8 }
 
     private readonly Dictionary<string, (string Path, Parts Parts)> _originals;          // assembly name -> original file
     private readonly string[] _searchDirs;
@@ -48,7 +48,7 @@ public sealed class ComImportLoader
     }
 
     /// <summary>The launcher's list, as it passes it (WpfWebGpu.ComImport): "name|path|parts" lines, parts a
-    /// comma-separated list of com, location, pinvoke ("name|path" alone: com).</summary>
+    /// comma-separated list of com, location, pinvoke, paths ("name|path" alone: com).</summary>
     public static Dictionary<string, (string Path, Parts Parts)> Parse(string? list)
     {
         var d = new Dictionary<string, (string, Parts)>(StringComparer.OrdinalIgnoreCase);
@@ -59,7 +59,7 @@ public sealed class ComImportLoader
             if (parts.Length < 2 || parts[0].Length == 0) continue;
             var what = Parts.None;
             foreach (string p in (parts.Length > 2 ? parts[2] : "com").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-                what |= p switch { "com" => Parts.Com, "location" => Parts.Location, "pinvoke" => Parts.PInvokes, _ => Parts.None };
+                what |= p switch { "com" => Parts.Com, "location" => Parts.Location, "pinvoke" => Parts.PInvokes, "paths" => Parts.Paths, _ => Parts.None };
             d[parts[0]] = (parts[1], what);
         }
         return d;
@@ -108,10 +108,11 @@ public sealed class ComImportLoader
             else
             {
                 var (img, sym, result) = RewriteServicingTheMainThread(() => ComRewriter.RewriteToMemory(path, _searchDirs, locationOnly: (parts & Parts.Location) != 0 && (parts & Parts.Com) == 0,
-                    com: (parts & Parts.Com) != 0, pinvokes: (parts & Parts.PInvokes) != 0, windows: windows));
+                    com: (parts & Parts.Com) != 0, pinvokes: (parts & Parts.PInvokes) != 0, windows: windows, paths: (parts & Parts.Paths) != 0));
                 image = img; symbols = sym;
                 what = ((parts & Parts.Com) != 0 ? result.ToString() : (parts & Parts.Location) != 0 ? $"its location calls ({result.CallSites})" : "")
-                    + ((parts & Parts.PInvokes) != 0 ? ((parts & (Parts.Com | Parts.Location)) != 0 ? "; " : "") + result.Win32Summary : "");
+                    + ((parts & Parts.PInvokes) != 0 ? ((parts & (Parts.Com | Parts.Location)) != 0 ? "; " : "") + result.Win32Summary : "")
+                    + ((parts & Parts.Paths) != 0 ? ((parts & ~Parts.Paths) != 0 ? "; " : "") + result.PathSummary : "");
                 if (cached != null) Keep(cached, image, symbols);
             }
             long rewrite = sw.ElapsedMilliseconds;

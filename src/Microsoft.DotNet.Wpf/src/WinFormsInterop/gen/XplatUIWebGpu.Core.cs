@@ -32,6 +32,8 @@ namespace System.Windows.Forms
 		private static readonly object s_instanceLock = new object();
 		private XplatUIWebGpu()
 		{
+			// the driver's windows in the process's focus model (XplatUIWebGpu.Focus.cs)
+			EnsureFocusRegistered();
 			// a head whose screen is the application's main window: every other window is framed (WindowChrome)
 			if (OperatingSystem.IsBrowser()) FramedWindow = WindowChrome.IsFramed;
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
@@ -1521,6 +1523,9 @@ namespace System.Windows.Forms
 			// which left scrolled controls invisible until something forced them to repaint.
 			if (s is Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv)
 			{
+				// The window keeps its pixels until it paints again, as a window does on Windows: the
+				// renderer composites it from a texture of its own while this is the scene it hands out.
+				sv.CacheAsSurface = true;
 				Hwnd h = Hwnd.ObjectFromHandle(handle);
 				AddPopupShadow(sv, h);
 				Padding frame = HasChildFrame(handle, h) ? FrameOf(handle) : Padding.Empty;
@@ -2097,9 +2102,7 @@ namespace System.Windows.Forms
 			SendMessage(handle, Msg.WM_ACTIVATE, (IntPtr)(active ? 1 : 0), IntPtr.Zero);
 			if (!active && _focusHandle != IntPtr.Zero && IsDescendantOf(_focusHandle, handle)) {
 				// A window that is not the active one holds no keyboard focus.
-				IntPtr lost = _focusHandle;
-				_focusHandle = IntPtr.Zero;
-				SendMessage(lost, Msg.WM_KILLFOCUS, IntPtr.Zero, IntPtr.Zero);
+				SetFocus(IntPtr.Zero);
 			}
 			_paintVersion++;
 		}
@@ -2415,19 +2418,6 @@ namespace System.Windows.Forms
 		}
 		internal override void SetModal(IntPtr handle, bool Modal) { }
 
-		private IntPtr _focusHandle;   // window with keyboard focus (WM_CHAR/KEYDOWN target)
-
-		/// <summary>The window that currently has keyboard focus, for GetFocus.</summary>
-		internal IntPtr FocusHandle => _focusHandle;
-
-		internal override void SetFocus(IntPtr handle)
-		{
-			if (handle == _focusHandle) return;
-			IntPtr prev = _focusHandle;
-			_focusHandle = handle;
-			if (prev != IntPtr.Zero) SendMessage(prev, Msg.WM_KILLFOCUS, handle, IntPtr.Zero);
-			if (handle != IntPtr.Zero) SendMessage(handle, Msg.WM_SETFOCUS, prev, IntPtr.Zero);
-		}
 
 		/// <summary>Input hooks: deliver keyboard to the focused window. WM_KEYDOWN carries the
 		/// virtual-key (special keys: backspace/enter/arrows/delete), WM_CHAR the typed character

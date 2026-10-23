@@ -246,6 +246,7 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         if (_form.IsDisposed) return;
         bool visible = _form.Visible;
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' visible changed: {visible} modal={_form.Modal} window={(_window != IntPtr.Zero)} closed={_closed}");
         OnMain(() =>
         {
             IntPtr window = _window;
@@ -257,6 +258,7 @@ internal sealed class CocoaHost : IWinFormsHost
             else
             {
                 HidePopupLayer();
+                ReleaseModalParent();
                 SendVoidPtr(window, Sel("orderOut:"), IntPtr.Zero);
             }
         });
@@ -265,6 +267,18 @@ internal sealed class CocoaHost : IWinFormsHost
             _lastVer = -1;   // it has no picture from while it was away
             Present();
         }
+    }
+
+    /// <summary>A hidden form's window is off screen: a modal dialog closed by its title bar's button stayed
+    /// up, blank, its form hidden and its loop over, until the button was pressed a second time.</summary>
+    public void FormHidden()
+    {
+        if (_offMain || _window == IntPtr.Zero || _closed) return;
+        if ((nint)Send(_window, Sel("isVisible")) == 0) return;
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' hidden, its window was still up: ordered out");
+        HidePopupLayer();
+        ReleaseModalParent();
+        SendVoidPtr(_window, Sel("orderOut:"), IntPtr.Zero);
     }
 
     // ---- the popup layer ----------------------------------------------------------------
@@ -366,6 +380,9 @@ internal sealed class CocoaHost : IWinFormsHost
             _popupWgpu.Tag = " popups";
             _popupFrame = content;
         }
+        // Where the layer really is: a child window moves with its parent, so every drag or zoom of
+        // the form since it was placed took it along, off the display, and the popups with it.
+        else _popupFrame = SendRectRet(_popupWindow, Sel("frame"));
         if (content.x != _popupFrame.x || content.y != _popupFrame.y || content.w != _popupFrame.w || content.h != _popupFrame.h)
         {
             SendVoidRectBool(_popupWindow, Sel("setFrame:display:"), content, false);
@@ -570,6 +587,8 @@ internal sealed class CocoaHost : IWinFormsHost
         SendVoidPtr(win, Sel("setContentView:"), view);
 
         _window = win; _imageView = view;
+        // the title bar's close button asks the form, as Windows' does (WindowShouldClose)
+        SendVoidPtr(win, Sel("setDelegate:"), CloseDelegate());
         // What the form asked for. AppKit may constrain it (below the menu bar, onto the screen);
         // the first Pump then hands the real frame back to the form.
         _knownBounds = new Rectangle(_form.Left, _form.Top, _form.Width, _form.Height);
@@ -938,6 +957,7 @@ internal sealed class CocoaHost : IWinFormsHost
                 t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 EmbeddedScenes.Pump();
                 t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                if (s_traceResize) Microsoft.Wpf.Interop.WebGpu.Composition.WgpuSceneRenderer.PerfReset();
                 host.Present();
             }
             finally { s_inResize--; }
@@ -945,7 +965,7 @@ internal sealed class CocoaHost : IWinFormsHost
             {
                 long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
                 static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds} sync={Ms(t0, t1):F1}ms embedded={Ms(t1, t2):F1}ms present={Ms(t2, t3):F1}ms drew={host._lastPresentOk}");
+                TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds} sync={Ms(t0, t1):F1}ms embedded={Ms(t1, t2):F1}ms present={Ms(t2, t3):F1}ms drew={host._lastPresentOk} layers hit={Microsoft.Wpf.Interop.WebGpu.Composition.WgpuSceneRenderer.PerfLayerHits} miss={Microsoft.Wpf.Interop.WebGpu.Composition.WgpuSceneRenderer.PerfLayerMiss}");
             }
         }
         catch (Exception e)
@@ -984,6 +1004,15 @@ internal sealed class CocoaHost : IWinFormsHost
         if (_window == IntPtr.Zero || !_form.IsHandleCreated) return;
         IntPtr key = Send(App(), Sel("keyWindow"));
         bool active = key != IntPtr.Zero && (key == _window || Send(key, Sel("parentWindow")) == _window);
+        if (active && !_form.Enabled && ModalHost() is { } modal && modal != this)
+        {
+            // made key by the Dock, Cmd-Tab or a click AppKit handled itself: on Windows the dialog
+            // that disabled it is what activates
+            SendVoidPtr(modal._window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+            return;
+        }
+        if (active) s_lastActive = this;
+        if (active && !_reportedActive) RaiseOwned();
         if (active == _reportedActive) return;
         _reportedActive = active;
         s_hostActivate ??= _driver.GetType().GetMethod("HostActivate", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1012,7 +1041,40 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         // again once the DPI mode is settled: a per-monitor application's screens are in pixels
         if (pthread_main_np() != 0 && (s_screens.Length == 0 || s_screensScale != ScreenScale)) RefreshScreens(rescan: s_screens.Length > 0);
-        return s_screens.Length > 0 ? s_screens : DisplayScreens();
+        if (s_screens.Length > 0) return s_screens;
+        Screen[] guess = DisplayScreens();
+        if (guess.Length > 0) s_guessed = guess;
+        return guess;
+    }
+
+    // What the screens were said to be before the main thread read them (DisplayScreens, which knows
+    // the menu bar and not the Dock): what a later reading is compared with, as with one of its own.
+    private static Screen[] s_guessed = Array.Empty<Screen>();
+
+    // Broadcasts owed for a change RefreshScreens found, raised from the pump (RaiseScreenChanges):
+    // the work area (Windows: WM_SETTINGCHANGE SPI_SETWORKAREA, UserPreferenceChanged with Desktop)
+    // and the displays themselves (WM_DISPLAYCHANGE, DisplaySettingsChanged). DotNetBar reads the
+    // screens once and again only on UserPreferenceChanged: a drop-down at the Dock took the Dock's
+    // band for room it had, and opened behind it instead of upwards.
+    private static bool s_workAreaOwed, s_displayOwed;
+
+    private static void RaiseScreenChanges()
+    {
+        if (!s_workAreaOwed && !s_displayOwed) return;
+        bool work = s_workAreaOwed, display = s_displayOwed;
+        s_workAreaOwed = s_displayOwed = false;
+        if (s_traceFrames) Console.WriteLine($"screens: changed (work area {work}, displays {display}): {string.Join(", ", s_screens.Select(sc => $"{sc.Bounds} work {sc.WorkingArea}"))}");
+        // the app's SystemEvents (the stack's own off Windows), which this assembly does not reference
+        Type events = Type.GetType("Microsoft.Win32.SystemEvents, Microsoft.Win32.SystemEvents");
+        if (events == null) return;
+        try
+        {
+            if (display)
+                events.GetMethod("RaiseDisplaySettingsChanged", BindingFlags.NonPublic | BindingFlags.Static)?.Invoke(null, null);
+            if (work && events.GetMethod("RaiseUserPreference", BindingFlags.NonPublic | BindingFlags.Static) is { } raise)
+                raise.Invoke(null, new object[] { Enum.ToObject(raise.GetParameters()[0].ParameterType, 3) });   // Desktop
+        }
+        catch (TargetInvocationException e) { Console.Error.WriteLine("[CocoaHost] screen change broadcast: " + e.InnerException?.Message); }
     }
 
     /// <summary>Off the main thread, before it has read them: CoreGraphics' displays (its global
@@ -1087,6 +1149,20 @@ internal sealed class CocoaHost : IWinFormsHost
         for (int i = 0; same && i < list.Length; i++)
             same = list[i].Bounds == s_screens[i].Bounds && list[i].WorkingArea == s_screens[i].WorkingArea;
         if (same) return;
+        // Against what was said before -- the last reading, or the guess handed out before the first
+        // -- at the same scale (a scale change is a DPI change, told otherwise).
+        Screen[] before = s_screens.Length > 0 ? s_screens : s_guessed;
+        if (before.Length == list.Length)
+        {
+            for (int i = 0; i < list.Length; i++)
+            {
+                if (list[i].Bounds != before[i].Bounds) s_displayOwed = true;
+                else if (list[i].WorkingArea != before[i].WorkingArea) s_workAreaOwed = true;
+            }
+        }
+        else if (before.Length > 0) s_displayOwed = true;
+        if (s_displayOwed) s_workAreaOwed = true;
+        s_guessed = Array.Empty<Screen>();
         s_screens = list;
         if (rescan) Screen.Rescan();
     }
@@ -1360,6 +1436,7 @@ internal sealed class CocoaHost : IWinFormsHost
             return;
         }
         if (_window == IntPtr.Zero) return;
+        ReleaseModalParent();
         StopObservingLiveResize();
         s_live.Remove(this);
         ClosePopupLayer();
@@ -1381,6 +1458,9 @@ internal sealed class CocoaHost : IWinFormsHost
         if (_testResizeAt == 0) { _testResizeAt = Environment.TickCount64 + 25000; return; }
         if (Environment.TickCount64 < _testResizeAt) return;
         _testResized = true;
+        // in front, so its presents get drawables (one behind other windows draws nothing)
+        Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
+        SendVoidPtr(_window, Sel("orderFrontRegardless"), IntPtr.Zero);
         NSRect f0 = SendRectRet(_window, Sel("frame"));
         var clock = System.Diagnostics.Stopwatch.StartNew();
         for (int i = 1; i <= 40; i++)
@@ -1401,7 +1481,9 @@ internal sealed class CocoaHost : IWinFormsHost
 
         HookWpfIfLoaded();
         if (Environment.TickCount64 - s_screensAt > 1000) RefreshScreens(rescan: true);
+        RaiseScreenChanges();
         SyncFrame();
+        KeepModalAbove();
         ReportActivation();
 
         // Inside a resize callback (an app's Resize handler calling DoEvents) the queue is AppKit's
@@ -1489,6 +1571,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static bool RouteFromWpf(IntPtr evt)
     {
+        if (BlockedByModal(evt)) return true;
         CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
         if (host == null) return FilterEmbeddedPress(evt);
         host.HandleEvent(evt);
@@ -1497,12 +1580,132 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static void Route(IntPtr evt)
     {
+        if (BlockedByModal(evt)) return;
         CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
         if (host != null) host.HandleEvent(evt);
         else if (FilterEmbeddedPress(evt)) return;
         else if (s_wpfDispatch != null) s_wpfDispatch(evt);
         else Send(App(), Sel("sendEvent:"), evt);
     }
+
+    // ---- disabled windows and modal dialogs ---------------------------------------------
+    //
+    // ShowDialog disables every other form of the thread (EnableWindow FALSE), and Windows then gives a
+    // disabled window no input at all: no mouse, no keys, not even a move of it by its caption -- and
+    // neither to its child windows, an ElementHost's WPF tree among them. A press on one activates the
+    // window that disabled it (its last active popup, the modal dialog) and beeps. Here AppKit took the
+    // press, made the disabled form key and raised it over its dialog, and the canvas under it went on
+    // taking clicks: GraphWorX's Select Color dialog was neither in front nor in the way.
+
+    /// <summary>Whether <paramref name="evt"/> is input for a disabled form's window (or one of its child
+    /// windows): then it is dropped, and a press brings the modal dialog forward.</summary>
+    private static bool BlockedByModal(IntPtr evt)
+    {
+        try
+        {
+            nint type = (nint)Send(evt, Sel("type"));
+            bool press = type is 1 or 3 or 25;
+            bool input = press || type is 2 or 4 or 5 or 6 or 7 or 10 or 11 or 12 or 22 or 26 or 27;
+            if (!input) return false;
+            IntPtr window = Send(evt, Sel("window"));
+            CocoaHost host = HostFor(window);
+            if (host == null && window != IntPtr.Zero) host = HostFor(Send(window, Sel("parentWindow")));
+            if (host == null || host._form.IsDisposed || host._form.Enabled) return false;
+            if (press && s_traceFrames)
+                Console.WriteLine($"frame: press for disabled '{host._form.Text}' dropped: window {(window == host._window ? "its own" : window == host._popupWindow ? "its popup layer" : "a child")} (popups shown={host._popupShown})");
+            if (press && ModalHost() is { } modal && modal._window != IntPtr.Zero)
+            {
+                // a press that fell on the dialog through a window wrongly above it is the dialog's
+                // (StayAboveSiblings): raised now, the user's next press reaches it; no beep for it
+                NSPoint at = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
+                NSRect df = SendRectRet(modal._window, Sel("frame"));
+                bool onDialog = at.x >= df.x && at.x < df.x + df.w && at.y >= df.y && at.y < df.y + df.h;
+                if (!onDialog) NSBeep();
+                SendVoidPtr(modal._window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // While a dialog is modal it is a child window of the form it blocks -- its owner, or the form that was
+    // active when it came up (ShowDialog with no owner takes that one on Windows): AppKit keeps a child
+    // above its parent whatever raises the parent, as Windows keeps a dialog above the window it
+    // disabled. A child window also moves with its parent, which an owned window does not, but a
+    // disabled window cannot be moved. Undone when the dialog goes (ReleaseModalParent).
+    private IntPtr _modalParent;
+    private static CocoaHost s_lastActive;
+
+    private void KeepModalAbove()
+    {
+        if (_window == IntPtr.Zero) return;
+        if (!_form.Modal || !_form.Visible) { ReleaseModalParent(); return; }
+        if (_modalParent != IntPtr.Zero) { StayAboveSiblings(); return; }
+        CocoaHost parent = null;
+        foreach (CocoaHost h in s_live) if (h != this && h._form == _form.Owner) parent = h;
+        if (parent == null && s_lastActive != this && s_lastActive != null && s_live.Contains(s_lastActive) && !s_lastActive._form.Enabled) parent = s_lastActive;
+        if (parent?._window is not { } pw || pw == IntPtr.Zero) return;
+        SendPtrNInt(pw, Sel("addChildWindow:ordered:"), _window, 1);   // NSWindowAbove
+        _modalParent = pw;
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' modal over '{parent._form.Text}'");
+    }
+
+    // Above the parent's other child windows too: an ElementHost's WPF windows are its children as
+    // well, and one reordered as the form moves it or gives it the keyboard rose over the dialog, whose
+    // caption then took no presses -- they went to the disabled form's canvas, and beeped.
+    private void StayAboveSiblings()
+    {
+        IntPtr children = Send(_modalParent, Sel("childWindows"));
+        nint n = children == IntPtr.Zero ? 0 : (nint)Send(children, Sel("count"));
+        nint mine = (nint)Send(_window, Sel("orderedIndex"));
+        for (nint i = 0; i < n; i++)
+        {
+            IntPtr c = SendPtrNUInt(children, Sel("objectAtIndex:"), (nuint)i);
+            if (c == _window || (nint)Send(c, Sel("isVisible")) == 0) continue;
+            if ((nint)Send(c, Sel("orderedIndex")) < mine)   // in front of the dialog
+            {
+                SendVoidPtr(_window, Sel("orderFront:"), IntPtr.Zero);
+                return;
+            }
+        }
+    }
+
+    private void ReleaseModalParent()
+    {
+        if (_modalParent == IntPtr.Zero) return;
+        if (_window != IntPtr.Zero) SendVoidPtr(_modalParent, Sel("removeChildWindow:"), _window);
+        _modalParent = IntPtr.Zero;
+    }
+
+    /// <summary>The host of the innermost modal dialog on screen, if one is.</summary>
+    private static CocoaHost ModalHost()
+    {
+        for (int i = Form.modal_dialogs.Count - 1; i >= 0; i--)
+        {
+            if (Form.modal_dialogs[i] is not Form f || f.IsDisposed || !f.Visible) continue;
+            foreach (CocoaHost h in s_live) if (h._form == f && h._window != IntPtr.Zero) return h;
+        }
+        return null;
+    }
+
+    /// <summary>The forms this one owns -- Owner set, or a dialog shown over it -- kept above it, as Windows
+    /// keeps an owned window above its owner.</summary>
+    private void RaiseOwned()
+    {
+        nint below = (nint)Send(_window, Sel("windowNumber"));
+        foreach (CocoaHost h in s_live)
+        {
+            if (h == this || h._window == IntPtr.Zero || h._form.IsDisposed || !h._form.Visible || h._form.Owner != _form) continue;
+            SendNIntNInt(h._window, Sel("orderWindow:relativeTo:"), 1, below);   // NSWindowAbove
+            h.RaiseOwned();
+        }
+    }
+
+    [DllImport("/System/Library/Frameworks/AppKit.framework/AppKit")] private static extern void NSBeep();
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendNIntNInt(IntPtr r, IntPtr s, nint a, nint b);
 
     /// <summary>Where the pointer is, in Win32's screen coordinates (top-left of the primary
     /// screen), wherever it is: over the form, an embedded window, or none of the app's.</summary>
@@ -1758,78 +1961,188 @@ internal sealed class CocoaHost : IWinFormsHost
             HandleScrollWheel(evt);
             return;
         }
-        else if (type == 10) // NSEventTypeKeyDown -> route to the focused control
+        else if (type == 10 || type == 11 || type == 12) // KeyDown, KeyUp, FlagsChanged
         {
-            IntPtr chars = Send(evt, Sel("characters"));
-            string s = chars == IntPtr.Zero ? "" : Marshal.PtrToStringUTF8(Send(chars, Sel("UTF8String"))) ?? "";
-            foreach (char c in s)
-            {
-                // Arrow/function keys arrive as the 0xF700+ Unicode private range -> map to VKs;
-                // everything else (printable, backspace 0x7F, enter 0x0D) goes as WM_CHAR.
-                // macOS function-key private range -> Win32 VK: arrows, Home/End, PageUp/Down,
-                // forward Delete. (VK: Left37 Up38 Right39 Down40 End35 Home36 PgUp33 PgDn34 Del46)
-                int vk = c switch
-                {
-                    (char)0xF700 => 38, (char)0xF701 => 40, (char)0xF702 => 37, (char)0xF703 => 39,
-                    (char)0xF729 => 36, (char)0xF72B => 35, (char)0xF72C => 33, (char)0xF72D => 34,
-                    (char)0xF728 => 46,
-                    _ => 0
-                };
-                if (vk != 0) _keyDown.Invoke(_driver, new object[] { vk });
-                // macOS Delete key yields 0x7F, which WinForms treats as Ctrl+Backspace (delete
-                // word); plain backspace is 0x08. Translate so Delete removes one character.
-                else _char.Invoke(_driver, new object[] { c == (char)0x7F ? (char)0x08 : c });
-            }
-            Application.DoEvents();
-            Present();
-            return;   // don't forward key events to AppKit (we've handled them)
+            HandleKey(evt, type);
+            return;   // the form's keys are its own; AppKit gets none of them
         }
         Send(App(), Sel("sendEvent:"), evt);
+    }
+
+    // ---- the close button ------------------------------------------------------------------
+    //
+    // Windows' close button is a WM_SYSCOMMAND/SC_CLOSE to the form, which decides: it closes (its own
+    // Close, which takes the window down through this host) or stays (FormClosing cancelled). AppKit's
+    // closed the window itself, and the host, finding the window gone and the form still shown, gave
+    // the form a new one: the login dialog animated away and came straight back. A delegate asks the
+    // form instead and keeps the window (windowShouldClose: NO); the host's own close (Close) does
+    // not ask it.
+    private static IntPtr s_closeDelegate;
+
+    private static unsafe IntPtr CloseDelegate()
+    {
+        if (s_closeDelegate != IntPtr.Zero) return s_closeDelegate;
+        IntPtr cls = objc_getClass("WfFormWindowDelegate");
+        if (cls == IntPtr.Zero)
+        {
+            cls = objc_allocateClassPair(Cls("NSObject"), "WfFormWindowDelegate", UIntPtr.Zero);
+            class_addMethod(cls, Sel("windowShouldClose:"),
+                (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, byte>)&WindowShouldClose, "c@:@");
+            objc_registerClassPair(cls);
+        }
+        s_closeDelegate = Send(Send(cls, Sel("alloc")), Sel("init"));
+        return s_closeDelegate;
+    }
+
+    [UnmanagedCallersOnly]
+    private static byte WindowShouldClose(IntPtr self, IntPtr cmd, IntPtr window)
+    {
+        // Inside AppKit: nothing may unwind through its frames.
+        try
+        {
+            CocoaHost host = null;
+            foreach (CocoaHost h in s_live) if (h._window == window) { host = h; break; }
+            if (host == null || host._form.IsDisposed || !host._form.IsHandleCreated) return 1;   // not a form's
+            const int SC_CLOSE = 0xF060;
+            if (s_traceFrames) Console.WriteLine($"frame: '{host._form.Text}' close button: modal={host._form.Modal} enabled={host._form.Enabled} visible={host._form.Visible} active={Form.ActiveForm?.Text}");
+            XplatUI.SendMessage(host._form.Handle, Msg.WM_SYSCOMMAND, (IntPtr)SC_CLOSE, IntPtr.Zero);
+            if (s_traceFrames) Console.WriteLine($"frame: '{host._form.Text}' after close: visible={host._form.Visible} handle={host._form.IsHandleCreated} disposed={host._form.IsDisposed} windowVisible={(host._window != IntPtr.Zero && (nint)Send(host._window, Sel("isVisible")) != 0)}");
+            if (!host._closed && host._window != IntPtr.Zero) host.Present();
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("[CocoaHost] close button: " + e.Message);
+        }
+        return 0;
+    }
+
+    [DllImport(ObjC)] private static extern IntPtr objc_allocateClassPair(IntPtr superclass, string name, UIntPtr extraBytes);
+    [DllImport(ObjC)] private static extern void objc_registerClassPair(IntPtr cls);
+    [DllImport(ObjC)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool class_addMethod(IntPtr cls, IntPtr sel, IntPtr imp, string types);
+
+    // ---- the keyboard ----------------------------------------------------------------------
+    //
+    // What Windows gives a window for a key: WM_KEYDOWN with its virtual key -- which is where WinForms
+    // moves the focus on Tab, presses the default button on Enter, the cancel button on Escape -- then
+    // the character it types (TranslateMessage's WM_CHAR), unless pre-processing took the key, and
+    // WM_KEYUP when it is let go, with the modifiers as they are. The keys went as characters alone:
+    // Tab typed a tab and moved no focus, Enter and Escape pressed no button, and no shortcut existed.
+    // Command counts as Control, as the browser head has it: the Mac's shortcuts are on it.
+    private void HandleKey(IntPtr evt, nint type)
+    {
+        if (_driver is not XplatUIWebGpu d) return;
+        ulong flags = (ulong)(nint)Send(evt, Sel("modifierFlags"));
+        const ulong Shift = 1UL << 17, Ctrl = 1UL << 18, Option = 1UL << 19, Command = 1UL << 20;
+        bool control = (flags & (Ctrl | Command)) != 0;
+        d.SetModifierKeys((control ? Keys.Control : 0) | ((flags & Shift) != 0 ? Keys.Shift : 0) | ((flags & Option) != 0 ? Keys.Alt : 0));
+        if (type == 12) return;   // a modifier alone: the state is what changed
+
+        int keyCode = (int)(nint)Send(evt, Sel("keyCode"));
+        int vk = VirtualKey(keyCode, Characters(evt, "charactersIgnoringModifiers"));
+        if (type == 11)
+        {
+            if (vk != 0) d.InjectKeyUp(vk);
+            return;
+        }
+        bool consumed = vk != 0 && d.InjectKeyDown(vk);
+        if (!consumed)
+        {
+            // the control characters Windows translates these into; the typed text otherwise
+            if (vk is 0x08 or 0x09 or 0x0D or 0x1B) d.InjectChar((char)vk);
+            else if (!control)
+                foreach (char c in Characters(evt, "characters"))
+                    if (c >= ' ' && c != (char)0x7F && !(c >= (char)0xF700 && c <= (char)0xF8FF))
+                        d.InjectChar(c);
+        }
+        Application.DoEvents();
+        Present();
+    }
+
+    private static string Characters(IntPtr evt, string selector)
+    {
+        IntPtr chars = Send(evt, Sel(selector));
+        return chars == IntPtr.Zero ? "" : Marshal.PtrToStringUTF8(Send(chars, Sel("UTF8String"))) ?? "";
+    }
+
+    /// <summary>The Win32 virtual key for a Mac key: a letter or digit by what it types in the current
+    /// layout (Windows' VK_A..VK_Z and VK_0..VK_9 follow the layout too), every other key by its place
+    /// (kVK_*).</summary>
+    internal static int VirtualKey(int keyCode, string unmodified)
+    {
+        if (unmodified.Length == 1)
+        {
+            char c = char.ToUpperInvariant(unmodified[0]);
+            if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;
+        }
+        return keyCode switch
+        {
+            0x24 or 0x4C => 0x0D,   // Return, keypad Enter
+            0x30 => 0x09,           // Tab
+            0x31 => 0x20,           // Space
+            0x33 => 0x08,           // Delete (backspace)
+            0x35 => 0x1B,           // Escape
+            0x75 => 0x2E,           // forward Delete
+            0x73 => 0x24, 0x77 => 0x23, 0x74 => 0x21, 0x79 => 0x22,   // Home, End, PageUp, PageDown
+            0x7B => 0x25, 0x7E => 0x26, 0x7C => 0x27, 0x7D => 0x28,   // Left, Up, Right, Down
+            0x72 => 0x2D,           // Help (Insert on a PC keyboard)
+            0x7A => 0x70, 0x78 => 0x71, 0x63 => 0x72, 0x76 => 0x73, 0x60 => 0x74, 0x61 => 0x75,   // F1..F6
+            0x62 => 0x76, 0x64 => 0x77, 0x65 => 0x78, 0x6D => 0x79, 0x67 => 0x7A, 0x6F => 0x7B,   // F7..F12
+            0x52 => 0x60, 0x53 => 0x61, 0x54 => 0x62, 0x55 => 0x63, 0x56 => 0x64,                 // keypad 0..4
+            0x57 => 0x65, 0x58 => 0x66, 0x59 => 0x67, 0x5B => 0x68, 0x5C => 0x69,                 // keypad 5..9
+            0x43 => 0x6A, 0x45 => 0x6B, 0x4E => 0x6D, 0x41 => 0x6E, 0x4B => 0x6F,                 // keypad * + - . /
+            0x1B => 0xBD, 0x18 => 0xBB, 0x21 => 0xDB, 0x1E => 0xDD, 0x2A => 0xDC,                 // - = [ ] \
+            0x29 => 0xBA, 0x27 => 0xDE, 0x2B => 0xBC, 0x2F => 0xBE, 0x2C => 0xBF, 0x32 => 0xC0,   // ; ' , . / `
+            _ => 0,
+        };
     }
 
     // ---- the cursor ------------------------------------------------------------------------
     //
     // What the control under the pointer asks for (the driver's StdCursor: Control.Cursor, a
     // Cursor.Current), as Windows shows it on WM_SETCURSOR. Nothing here set one, and the pointer was
-    // an arrow over every splitter, text box and link. NSCursor has no public diagonal-size, move or
-    // help cursor; AppKit's own (the window frame's) are used where it has them, else the nearest.
+    // an arrow over every splitter, text box and link. Public NSCursor API only: AppKit's private
+    // cursors (_moveCursor and the like) answer respondsToSelector and then throw an Objective-C
+    // exception when called on some systems, which aborted the app. The diagonal sizes are macOS 15's
+    // frame-resize cursors where there are any; a move is the open hand; help and wait (which macOS
+    // shows by itself for a busy app) the arrow.
     private static int s_cursorShown = int.MinValue;
     private static readonly bool s_traceCursor = Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1";
+
+    // NSCursorFrameResizePosition and NSCursorFrameResizeDirections (macOS 15)
+    private const nuint FrameTop = 1, FrameLeft = 2, FrameBottom = 4, FrameRight = 8, FrameAllDirections = 3;
 
     private void ApplyCursor()
     {
         int id = (_driver as XplatUIWebGpu)?.GetActiveCursor() ?? -1;
         // set on every move, not only when it changes: an embedded WPF window sets its own over itself
         if (s_traceCursor && id != s_cursorShown) Console.WriteLine($"[cocoa cursor] StdCursor {id}");
-        string[] names = id switch
+        s_cursorShown = id;
+        IntPtr cursor = id switch
         {
-            3 => new[] { "crosshairCursor" },                                         // Cross
-            4 => new[] { "pointingHandCursor" },                                      // Hand
-            5 => new[] { "_helpCursor", "arrowCursor" },                              // Help
-            6 or 22 => new[] { "resizeUpDownCursor" },                                // HSplit, SizeNS
-            7 => new[] { "IBeamCursor" },                                             // IBeam
-            8 => new[] { "operationNotAllowedCursor" },                               // No
-            >= 9 and <= 19 => new[] { "_moveCursor", "openHandCursor" },              // NoMove*, Pan*
-            20 => new[] { "_moveCursor", "openHandCursor" },                          // SizeAll
-            21 => new[] { "_windowResizeNorthEastSouthWestCursor", "arrowCursor" },   // SizeNESW
-            23 => new[] { "_windowResizeNorthWestSouthEastCursor", "arrowCursor" },   // SizeNWSE
-            24 or 26 => new[] { "resizeLeftRightCursor" },                            // SizeWE, VSplit
-            1 or 27 => new[] { "_waitCursor", "arrowCursor" },                        // AppStarting, Wait
-            _ => new[] { "arrowCursor" },                                             // Default, Arrow, UpArrow
+            3 => Public("crosshairCursor"),                                     // Cross
+            4 => Public("pointingHandCursor"),                                  // Hand
+            6 or 22 => Public("resizeUpDownCursor"),                            // HSplit, SizeNS
+            7 => Public("IBeamCursor"),                                         // IBeam
+            8 => Public("operationNotAllowedCursor"),                           // No
+            >= 9 and <= 20 => Public("openHandCursor"),                         // NoMove*, Pan*, SizeAll
+            21 => FrameResize(FrameTop | FrameRight),                           // SizeNESW
+            23 => FrameResize(FrameTop | FrameLeft),                            // SizeNWSE
+            24 or 26 => Public("resizeLeftRightCursor"),                        // SizeWE, VSplit
+            _ => IntPtr.Zero,                                                   // Default, Arrow, Help, Wait, UpArrow
         };
-        IntPtr cls = Cls("NSCursor");
-        foreach (string name in names)
-        {
-            IntPtr sel = Sel(name);
-            if (!class_respondsToSelector(object_getClass(cls), sel)) continue;
-            IntPtr cursor = Send(cls, sel);
-            if (cursor == IntPtr.Zero) continue;
-            Send(cursor, Sel("set"));
-            s_cursorShown = id;
-            return;
-        }
+        if (cursor == IntPtr.Zero) cursor = Public("arrowCursor");
+        if (cursor != IntPtr.Zero) Send(cursor, Sel("set"));
     }
 
+    private static IntPtr Public(string name) => Send(Cls("NSCursor"), Sel(name));
+
+    private static IntPtr FrameResize(nuint position)
+    {
+        IntPtr cls = Cls("NSCursor"), sel = Sel("frameResizeCursorFromPosition:inDirections:");
+        return class_respondsToSelector(object_getClass(cls), sel) ? SendNUIntNUInt(cls, sel, position, FrameAllDirections) : IntPtr.Zero;
+    }
+
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendNUIntNUInt(IntPtr r, IntPtr s, nuint a, nuint b);
     [DllImport(ObjC)] private static extern IntPtr object_getClass(IntPtr obj);
     [DllImport(ObjC)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool class_respondsToSelector(IntPtr cls, IntPtr sel);
 

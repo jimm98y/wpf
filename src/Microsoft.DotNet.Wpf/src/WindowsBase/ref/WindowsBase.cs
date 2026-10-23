@@ -73,6 +73,22 @@ namespace MS.Internal.Interop
             public override string ToString() { throw null; }
         }
     }
+    public static partial class PlatformFocus
+    {
+        public static void FocusMovedByPlatform(System.IntPtr handle) { }
+        public static System.IntPtr GetFocus() { throw null; }
+        public static void NoteFocusMessage(System.IntPtr handle, int msg, System.IntPtr wParam) { }
+        public static void Register(MS.Internal.Interop.PlatformFocus.IWindowSystem system) { }
+        public static System.IntPtr SetFocus(System.IntPtr handle) { throw null; }
+        public static void SetNativeFocus(System.IntPtr hwnd) { }
+        public partial interface IWindowSystem
+        {
+            void Deliver(System.IntPtr handle, int msg, System.IntPtr wParam, System.IntPtr lParam);
+            bool GetsNativeFocusMessages(System.IntPtr handle);
+            bool Owns(System.IntPtr handle);
+            void TakeNativeKeyboard(System.IntPtr handle);
+        }
+    }
     public static partial class BrowserBlocking
     {
         public static bool CanBlock { get { throw null; } }
@@ -83,6 +99,7 @@ namespace MS.Internal.Interop
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
     public sealed partial class BrowserWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public void TakeKeyboard() { }
         public BrowserWindow() { }
         public System.IntPtr Handle { get { throw null; } }
         public bool IsBorderless { get { throw null; } }
@@ -165,6 +182,7 @@ namespace MS.Internal.Interop
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("macos")]
     public sealed partial class CocoaWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public void TakeKeyboard() { }
         public static System.IntPtr MouseCaptureHandle;
         public static System.Func<System.IntPtr, bool> ForeignEventHandler;
         public static void DispatchEvent(System.IntPtr evt) { }
@@ -383,6 +401,7 @@ namespace MS.Internal.Interop
         void SetVisible(bool visible);
         void SetVisible(bool visible, bool activate) { }
         void Activate() { }
+        void TakeKeyboard() { }
         double GetRefreshRateHz() { throw null; }
         void SetWindowState(int state) { }
         int GetWindowState() { throw null; }

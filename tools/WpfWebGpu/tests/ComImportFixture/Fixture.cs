@@ -711,7 +711,8 @@ namespace ComImportFixture
         {
             object[] a = { 1, "two", 3.5 };
             Arrays2(p).Reverse(ref a);
-            return string.Join(",", a) + "|" + a[0].GetType().Name;
+            // invariant: the expected "3.5" is not the current culture's everywhere ("3,5")
+            return string.Join(",", Array.ConvertAll(a, x => Convert.ToString(x, System.Globalization.CultureInfo.InvariantCulture))) + "|" + a[0].GetType().Name;
         }
         public static string SafeMatrix(IntPtr p)
         {

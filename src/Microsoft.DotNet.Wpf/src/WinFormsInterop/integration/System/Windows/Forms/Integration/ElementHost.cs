@@ -558,7 +558,9 @@ namespace System.Windows.Forms.Integration
             // ElementHost is in .NET: the form's active chain points here and every container on the
             // way (a DotNetBar dock bar's caption) shows itself inactive. Without it the focus stayed
             // on whatever WinForms control had it before the WPF content was clicked or focused.
-            if (msg == WM_SETFOCUS && !Focused && CanFocus) Focus();
+            // Focus() moves the focus to this control, whose OnGotFocus hands it straight back to the
+            // hosted window -- the keyboard ends up where it was, with WinForms told.
+            if (msg == WM_SETFOCUS && !_forwardingFocus && CanFocus && FindForm()?.ActiveControl != this) Focus();
             return IntPtr.Zero;
         }
 
@@ -607,7 +609,25 @@ namespace System.Windows.Forms.Integration
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int x, y; }
 
-        [DllImport("user32")] private static extern IntPtr SetFocus(IntPtr hWnd);
+        // The process's focus model, on every head (Windows included): the hosted window and this
+        // control's are windows of it alike, and each is told when the focus moves between them.
+        private static IntPtr SetFocus(IntPtr hWnd) => MS.Internal.Interop.PlatformFocus.SetFocus(hWnd);
+
+        // Passing the focus on to the hosted window (OnGotFocus): its WM_SETFOCUS is then not the WPF
+        // content taking the focus from WinForms, which would hand it back here.
+        private bool _forwardingFocus;
+
+        /// <summary>As .NET's ElementHost does: the focus this control gets goes on to the WPF tree it
+        /// hosts, which is what takes the keyboard. WinForms keeps this control as its focused one (its
+        /// container's active control), and the WPF window has the keys.</summary>
+        protected override void OnGotFocus(EventArgs e)
+        {
+            base.OnGotFocus(e);
+            if (_source == null || _source.IsDisposed || _forwardingFocus) return;
+            _forwardingFocus = true;
+            try { SetFocus(_source.Handle); }
+            finally { _forwardingFocus = false; }
+        }
         [DllImport("user32")] private static extern bool ClientToScreen(IntPtr hWnd, ref POINT pt);
         [DllImport("user32")] private static extern bool ScreenToClient(IntPtr hWnd, ref POINT pt);
     }

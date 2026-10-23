@@ -161,6 +161,20 @@ export function setTakesKeyboardOnPress(handle, takes) {
 
 export function releaseKeyboard() { keyWindow = 0; }
 
+// (diagnostics) the window keys go to now, and the windows the page has, in order
+export function keyboardWindow() {
+    const list = [...windows].map(([h, w]) => `${h}${w.borderless ? "b" : ""}${w.takesKeyboard ? "k" : ""}`);
+    return `key=${keyWindow} windows=${list.join(",")}`;
+}
+
+// The keyboard to a window the application gave the focus to (PlatformFocus): the page's first
+// window has it when nothing else does, so it is not named.
+export function setKeyboardWindow(handle) {
+    let first = 0;
+    for (const [h, w] of windows) { if (!w.borderless) { first = h; break; } }
+    keyWindow = windows.has(handle) && handle !== first ? handle : 0;
+}
+
 export function setOwnFrame(handle) {
     const w = windows.get(handle);
     if (w) w.canvas.style.boxShadow = "none";

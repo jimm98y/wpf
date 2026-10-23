@@ -285,6 +285,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserBlocking.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformFocus.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidWindow.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformWindow.cs" />

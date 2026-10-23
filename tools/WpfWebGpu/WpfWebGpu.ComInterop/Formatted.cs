@@ -5,7 +5,7 @@
 //   layout, copied in and, when it is [Out] or blittable (built-in interop pins a blittable one, so the
 //   callee's writes show), copied back into the same object; a struct by reference or [MarshalAs(LPStruct)]
 //   likewise -- through Marshal.StructureToPtr/PtrToStructure, which convert strings and nested structs
-//   with no COM;
+//   with no COM (a type with interface fields through its twin, StructTwins.cs);
 // - a C array (LPArray) of such structs: element by element into one buffer;
 // - [MarshalAs(UnmanagedType.CustomMarshaler)]: the app's ICustomMarshaler, called in built-in interop's
 //   order (ManagedToNative, the call, NativeToManaged for an out, CleanUpNativeData);
@@ -28,81 +28,37 @@ public static unsafe partial class Com
     {
         if (o == null) return IntPtr.Zero;
         Type t = Type.GetTypeFromHandle(type)!;
-        IntPtr p = Marshal.AllocCoTaskMem(Math.Max(1, Marshal.SizeOf(t)));
+        IntPtr p = Marshal.AllocCoTaskMem(Math.Max(1, NativeSizeOf(t)));
         WriteStruct(o, p, t, deleteOld: false);
         return p;
     }
 
-    /// <summary>A formatted type's interface fields (an interface, or object as IUnknown/IDispatch): marshalled
-    /// here, not by Marshal.StructureToPtr, which would make built-in CCWs and RCWs of them.</summary>
-    private static readonly ConcurrentDictionary<Type, (FieldInfo Field, int Offset, bool Dispatch)[]> s_ifaceFields = new();
-
-    private static (FieldInfo Field, int Offset, bool Dispatch)[] InterfaceFields(Type t) => s_ifaceFields.GetOrAdd(t, static t =>
-    {
-        var list = new List<(FieldInfo, int, bool)>();
-        for (Type? x = t; x != null && x != typeof(object) && x != typeof(ValueType); x = x.BaseType)
-            foreach (var f in x.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
-            {
-                var ma = f.GetCustomAttribute<MarshalAsAttribute>();
-                bool iface = f.FieldType.IsInterface || (f.FieldType == typeof(object) && ma?.Value is UnmanagedType.IUnknown or UnmanagedType.Interface or UnmanagedType.IDispatch);
-                if (iface) list.Add((f, (int)Marshal.OffsetOf(t, f.Name), ma?.Value == UnmanagedType.IDispatch));
-            }
-        return list.ToArray();
-    });
+    // A type with interface fields (an interface, or object as IUnknown/IDispatch) goes through its twin
+    // (StructTwins.cs): Marshal lays it out with pointer slots, filled and read here, not with built-in
+    // CCWs and RCWs -- which off Windows it cannot make at all.
 
     private static void WriteStruct(object o, IntPtr p, Type t, bool deleteOld)
     {
-        var fields = InterfaceFields(t);
-        if (fields.Length == 0) { Marshal.StructureToPtr(o, p, deleteOld); return; }
-        if (deleteOld) foreach (var (_, off, _) in fields) { Release(Marshal.ReadIntPtr(p, off)); Marshal.WriteIntPtr(p, off, IntPtr.Zero); }
-        // the struct without its interfaces (a copy: a struct is boxed afresh, a class's fields put back)
-        object copy = t.IsValueType ? RuntimeHelpers_Copy(o) : o;
-        var saved = fields.Select(f => f.Field.GetValue(copy)).ToArray();
-        foreach (var (f, _, _) in fields) f.SetValue(copy, null);
-        try { Marshal.StructureToPtr(copy, p, deleteOld); }
-        finally { if (!t.IsValueType) for (int i = 0; i < fields.Length; i++) fields[i].Field.SetValue(copy, saved[i]); }
-        for (int i = 0; i < fields.Length; i++)
-        {
-            var (f, off, disp) = fields[i];
-            object? v = saved[i];
-            Marshal.WriteIntPtr(p, off, v == null ? IntPtr.Zero : disp ? BorrowDispatch(v) : f.FieldType.IsInterface ? Borrow(v, f.FieldType.TypeHandle) : BorrowUnknown(v));
-        }
-    }
-
-    private static object RuntimeHelpers_Copy(object boxed)
-    {
-        // a boxed struct's copy (SetValue on it then leaves the caller's value alone)
-        var m = typeof(object).GetMethod("MemberwiseClone", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        return m.Invoke(boxed, null)!;
+        if (TwinOf(t) is not { } twin) { Marshal.StructureToPtr(o, p, deleteOld); return; }
+        if (deleteOld) ReleaseInterfaces(p, twin);
+        Marshal.StructureToPtr(ToTwin(o, twin), p, deleteOld);
     }
 
     private static object? ReadStruct(IntPtr p, object? target, Type t)
     {
-        var fields = InterfaceFields(t);
-        if (fields.Length == 0)
+        if (TwinOf(t) is not { } twin)
         {
             if (target != null && !t.IsValueType) { Marshal.PtrToStructure(p, target); return target; }
             return Marshal.PtrToStructure(p, t);
         }
-        // read with the interface slots hidden (no built-in RCWs), then wrap them as rewritten code holds them
-        var ptrs = fields.Select(f => Marshal.ReadIntPtr(p, f.Offset)).ToArray();
-        foreach (var (_, off, _) in fields) Marshal.WriteIntPtr(p, off, IntPtr.Zero);
-        object? r;
-        try
-        {
-            if (target != null && !t.IsValueType) { Marshal.PtrToStructure(p, target); r = target; }
-            else r = Marshal.PtrToStructure(p, t);
-        }
-        finally { for (int i = 0; i < fields.Length; i++) Marshal.WriteIntPtr(p, fields[i].Offset, ptrs[i]); }
-        for (int i = 0; i < fields.Length; i++) fields[i].Field.SetValue(r, Wrap(ptrs[i]));
-        return r;
+        return FromTwin(Marshal.PtrToStructure(p, twin.Type)!, target != null && !t.IsValueType ? target : null, t, twin);
     }
 
     /// <summary>A zeroed buffer for an out-only struct of <paramref name="type"/>.</summary>
     public static IntPtr NewStruct(RuntimeTypeHandle type)
     {
         Type t = Type.GetTypeFromHandle(type)!;
-        int n = Math.Max(1, Marshal.SizeOf(t));
+        int n = Math.Max(1, NativeSizeOf(t));
         IntPtr p = Marshal.AllocCoTaskMem(n);
         new Span<byte>((void*)p, n).Clear();
         return p;
@@ -134,8 +90,9 @@ public static unsafe partial class Com
     /// <summary>DestroyStructure, with interface fields released here.</summary>
     private static void DestroyStruct(IntPtr p, Type t)
     {
-        foreach (var (_, off, _) in InterfaceFields(t)) { Release(Marshal.ReadIntPtr(p, off)); Marshal.WriteIntPtr(p, off, IntPtr.Zero); }
-        Marshal.DestroyStructure(p, t);
+        Twin? twin = TwinOf(t);
+        if (twin != null) ReleaseInterfaces(p, twin);
+        Marshal.DestroyStructure(p, twin?.Type ?? t);
     }
 
     /// <summary>A struct by value: its native layout into <paramref name="dst"/> (the rewriter's blittable shadow of
@@ -152,7 +109,7 @@ public static unsafe partial class Com
     /// the call would pass the wrong bytes.</summary>
     public static void CheckShadow(Type t, int shadowSize)
     {
-        int n = Marshal.SizeOf(t);
+        int n = NativeSizeOf(t);
         if (n != shadowSize) throw new MarshalDirectiveException($"comimport: {t} is {n} bytes natively, but the rewriter laid it out as {shadowSize}");
     }
 
@@ -173,7 +130,7 @@ public static unsafe partial class Com
     {
         if (a == null) return IntPtr.Zero;
         Type t = Type.GetTypeFromHandle(element)!;
-        int size = Marshal.SizeOf(t);
+        int size = NativeSizeOf(t);
         IntPtr p = Marshal.AllocCoTaskMem(Math.Max(1, size * a.Length));
         for (int i = 0; i < a.Length; i++)
         {
@@ -189,7 +146,7 @@ public static unsafe partial class Com
     {
         if (p == IntPtr.Zero || a == null) return;
         Type t = Type.GetTypeFromHandle(element)!;
-        int size = Marshal.SizeOf(t);
+        int size = NativeSizeOf(t);
         for (int i = 0; i < a.Length; i++)
         {
             object? e = a.GetValue(i);
@@ -202,7 +159,7 @@ public static unsafe partial class Com
     {
         if (p == IntPtr.Zero) return;
         Type t = Type.GetTypeFromHandle(element)!;
-        int size = Marshal.SizeOf(t);
+        int size = NativeSizeOf(t);
         for (int i = 0; i < length; i++) DestroyStruct(p + i * size, t);
         Marshal.FreeCoTaskMem(p);
     }

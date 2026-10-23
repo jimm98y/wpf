@@ -341,7 +341,11 @@ namespace System.Windows.Forms
                 // which ends the loop that was pumping the window underneath. The window follows the
                 // form on and off screen by itself; there is nothing to do here but leave it alone.
                 if (!form.Visible)
+                {
+                    // ...except to see that its window is off screen as well, as a hidden window is
+                    host.FormHidden();
                     continue;
+                }
                 host.Present();
                 if (!host.Pump()) Detach(host);
             }

@@ -12,4 +12,5 @@ internal interface IWinFormsHost
     void InjectClickScreen(int x, int y);     // inject a click (self-test)
     void SaveFrame(string path);              // save the current frame to a PNG (verification)
     void SetEnabled(bool enable) { }          // the form was enabled/disabled (a modal loop): the native window follows
+    void FormHidden() { }                     // the form is hidden: its native window is off screen too
 }
