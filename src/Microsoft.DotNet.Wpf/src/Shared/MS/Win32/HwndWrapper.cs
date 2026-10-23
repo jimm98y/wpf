@@ -129,6 +129,11 @@ namespace MS.Win32
                         // (a reopened combo dropdown at the same spot), so creation must place it.
                         var browser = new MS.Internal.Interop.BrowserWindow();
                         browser.Create(name, cx, cy, cw, ch, borderless);
+                        // CreateWindowEx's size is in device pixels, as every later SetWindowPos's is; Create
+                        // took it as CSS pixels (see the Cocoa branch).
+                        if (width > 0 && height > 0) browser.SetContentSizePixels(cw, ch);
+                        // A child window takes the keyboard when pressed, as SetFocus on one does there.
+                        browser.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Route content-size changes to a synthetic WM_SIZE exactly like Cocoa below.
                         browser.Resized += OnCocoaResized;
                         _platformWindow = browser;
@@ -217,6 +222,11 @@ namespace MS.Win32
                         // borderless window's position arrives in Win32's (device pixels, top-left), as
                         // every later SetWindowPos does. Place it the way those are placed.
                         if (borderless && x != CW_USEDEFAULT && y != CW_USEDEFAULT) cocoa.SetFrameOrigin(cx, cy);
+                        // ...and its size is in device pixels too, as CreateWindowEx's is: taken as points, a
+                        // window was twice its size on a Retina display until something moved it. An
+                        // ElementHost's tree that never moved (GraphWorX's display canvas, docked) stayed so,
+                        // masked to its control: the bottom-right half -- the licence notice -- never showed.
+                        if (width > 0 && height > 0) cocoa.SetContentSizePixels(cw, ch);
                         // A child window moves with its parent, as on Windows (an ElementHost's WPF
                         // tree, parented to the WinForms window it is embedded in).
                         if ((style & WS_CHILD) != 0 && parent != IntPtr.Zero) cocoa.AttachToParentWindow(parent);

@@ -2608,7 +2608,8 @@ namespace System.Windows.Media
             //
             UIElement.PropagateResumeLayout(this, child);
 
-            if (HwndTarget.IsProcessPerMonitorDpiAware == true && HwndTarget.IsPerMonitorDpiScalingEnabled)
+            // Off Windows every window is per-monitor (HwndTarget), whatever the Windows version checks say.
+            if (HwndTarget.IsProcessPerMonitorDpiAware == true && (HwndTarget.IsPerMonitorDpiScalingEnabled || !OperatingSystem.IsWindows()))
             {
                 bool flag1 = CheckFlagsAnd(VisualFlags.DpiScaleFlag1);
                 bool flag2 = CheckFlagsAnd(VisualFlags.DpiScaleFlag2);

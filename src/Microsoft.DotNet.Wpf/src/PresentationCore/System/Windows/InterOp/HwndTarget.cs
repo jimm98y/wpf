@@ -327,11 +327,17 @@ namespace System.Windows.Interop
             // _worldTransform (= this scale) makes WPF render its DIP scene into the larger pixel
             // target -- so the layer is crisp on Retina. The scale must match the one GetPixelSize
             // uses; both read CocoaWindow.GetBackingScale (screen-sourced, stable at construction).
+            //
+            // That is per-monitor awareness: each window has its own display's scale and follows it. So
+            // the process is per-monitor aware, as a per-monitor-aware process is on Windows, and the
+            // tree is told its window's DPI (RootVisual, Visual's child propagation): text is laid out
+            // and the layout rounded for the display's pixels. Declared system-aware, the scene was
+            // scaled to the backing but the tree stayed at 96 dpi (VisualTreeHelper.GetDpi 1.0).
             if (!OperatingSystem.IsWindows())
             {
-                AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
-                ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_SYSTEM_DPI_AWARE;
-                DpiAwarenessContext = DpiAwarenessContextValue.SystemAware;
+                AppManifestProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_PER_MONITOR_DPI_AWARE;
+                ProcessDpiAwareness ??= PROCESS_DPI_AWARENESS.PROCESS_PER_MONITOR_DPI_AWARE;
+                DpiAwarenessContext = DpiAwarenessContextValue.PerMonitorAwareVersion2;
                 var platformWindow = MS.Internal.Interop.PlatformWindow.FromHandle(_hWnd.h);
                 double scale = platformWindow?.GetBackingScale() ?? 1.0;
                 CurrentDpiScale = new DpiScale2(scale, scale);
@@ -1161,7 +1167,7 @@ namespace System.Windows.Interop
                 case WindowMessage.WM_NCCREATE:
                     // user32!GetDpiForWindow is only supported on Windows 10 v1607 and later
                     // IsPerMonitorDpiScalingEnabled tests for this indirectly
-                    if (IsProcessPerMonitorDpiAware == true)
+                    if (IsProcessPerMonitorDpiAware == true && OperatingSystem.IsWindows())
                     {
                         UnsafeNativeMethods.EnableNonClientDpiScaling(NormalizeWindow(new HandleRef(this, _hWnd), normalizeChildWindows: false, normalizePopups: true));
                     }

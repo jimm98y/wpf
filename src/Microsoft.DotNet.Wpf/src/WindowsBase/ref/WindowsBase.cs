@@ -87,6 +87,7 @@ namespace MS.Internal.Interop
         public System.IntPtr Handle { get { throw null; } }
         public bool IsBorderless { get { throw null; } }
         public bool IsSecondary { get { throw null; } }
+        public bool TakesKeyboardOnPress { get { throw null; } set { } }
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserKeyMessage> KeyInput { add { } remove { } }
         public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserMouseMessage> MouseInput { add { } remove { } }
@@ -122,6 +123,7 @@ namespace MS.Internal.Interop
         public static void SetCursor(string cssCursor) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
         public void SetOwnFrame() { }
+        public static void ReleaseKeyboard() { }
         public void SetVisibleRegion(int[] rects) { }
         public readonly partial struct BrowserKeyMessage
         {

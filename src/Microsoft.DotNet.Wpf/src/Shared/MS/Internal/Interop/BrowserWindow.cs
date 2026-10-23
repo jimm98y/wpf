@@ -110,6 +110,20 @@ namespace MS.Internal.Interop
         /// adds no shadow of its own round it.</summary>
         public void SetOwnFrame() => Js.SetOwnFrame((int)Handle);
 
+        /// <summary>A child window (WS_CHILD) that takes the keyboard when it is pressed, as SetFocus on a
+        /// child window does on Windows: an ElementHost's WPF tree, whose keys otherwise went to the
+        /// page's first window -- the form, whose focused control was whatever had it before the click.</summary>
+        public bool TakesKeyboardOnPress
+        {
+            get => _takesKeyboard;
+            set { _takesKeyboard = value; if (Handle != IntPtr.Zero) Js.SetTakesKeyboardOnPress((int)Handle, value); }
+        }
+        private bool _takesKeyboard;
+
+        /// <summary>The keyboard back to the page's own window: another window was activated, which on
+        /// Windows moves the focus out of a child window of the one before.</summary>
+        public static void ReleaseKeyboard() => Js.ReleaseKeyboard();
+
         /// <summary>The parts of the window that show (and take the pointer): x, y, width, height in CSS
         /// pixels from its top-left, four to a rectangle; null for all of it. A child window's clip, as on
         /// Windows (see browser-window.js).</summary>
@@ -556,6 +570,12 @@ namespace MS.Internal.Interop
 
             [JSImport("setOwnFrame", Module)]
             internal static partial void SetOwnFrame(int handle);
+
+            [JSImport("setTakesKeyboardOnPress", Module)]
+            internal static partial void SetTakesKeyboardOnPress(int handle, bool takes);
+
+            [JSImport("releaseKeyboard", Module)]
+            internal static partial void ReleaseKeyboard();
 
             [JSImport("setVisibleRegion", Module)]
             internal static partial void SetVisibleRegion(int handle, string rects);

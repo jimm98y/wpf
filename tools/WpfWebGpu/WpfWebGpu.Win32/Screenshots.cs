@@ -4,6 +4,7 @@
 // root) and each top-level WinForms form (the frame its host presents) is saved as a PNG named
 // <seconds>-<kind>-<handle>.png, so a run leaves its timeline behind.
 
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -544,8 +545,72 @@ public static class Screenshots
 
     private static int RuntimeHelpersId(object o) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
 
+    // WPFRUN_DUMP_ADORNERS=1 (diagnostics): every adorner layer under the window's root and what is in
+    // it -- type, size, visibility, opacity, where it is relative to the root -- with each capture.
+    private static void DumpAdorners(HwndSource source, string stamp)
+    {
+        if (source.RootVisual is not Visual root) return;
+        var lines = new System.Text.StringBuilder($"adorners of wpf 0x{source.Handle:x} at {stamp} (root {root.GetType().Name} dpi {VisualTreeHelper.GetDpi(root).DpiScaleX}):\n");
+        var stack = new Stack<DependencyObject>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            DependencyObject d = stack.Pop();
+            if (d is System.Windows.Documents.AdornerLayer layer)
+            {
+                lines.Append($"  layer {layer.RenderSize} visible={layer.IsVisible} children={VisualTreeHelper.GetChildrenCount(layer)}\n");
+                for (int i = 0; i < VisualTreeHelper.GetChildrenCount(layer); i++)
+                    if (VisualTreeHelper.GetChild(layer, i) is UIElement a)
+                    {
+                        string at = "?";
+                        try { at = a.TransformToAncestor(root).Transform(new Point()).ToString(); } catch (Exception e) { at = e.GetType().Name; }
+                        lines.Append($"    {a.GetType().FullName} size={a.RenderSize} visible={a.IsVisible} opacity={a.Opacity} at={at}\n");
+                    }
+            }
+            if (d.GetType().Name == "GwxRuntimeViewControl")
+            {
+                // GraphWorX's licence state, which decides its licence notices (diagnostics only)
+                const BindingFlags f = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+                Type t = d.GetType();
+                object Field(string name) { try { return t.GetField(name, f)?.GetValue(d); } catch (Exception e) { return e.GetType().Name; } }
+                string mainForm;
+                try { mainForm = t.GetMethod("IsMainForm", f)?.Invoke(d, null)?.ToString() ?? "?"; } catch (Exception e) { mainForm = (e.InnerException ?? e).GetType().Name; }
+                object model = Field("licenseModel");
+                string show = "?";
+                try { show = model?.GetType().GetProperty("ShowLicenseWarningMessage")?.GetValue(model)?.ToString() + " '" + model?.GetType().GetProperty("LicenseWarningMessage")?.GetValue(model) + "'"; } catch (Exception e) { show = e.GetType().Name; }
+                string Prop(string name) { try { return model?.GetType().GetProperty(name, f)?.GetValue(model)?.ToString() ?? "null"; } catch (Exception e) { return (e.InnerException ?? e).GetType().Name; } }
+                lines.Append($"  licence model: IsDemoMode={Prop("IsDemoMode")} CreationDate={Prop("CreationDate")} ExpirationDate={Prop("ExpirationDate")} ShutDownDate={Prop("ShutDownDate")} now={DateTime.Now} IsConnected={Prop("IsConnected")} Edition={Prop("Edition")}\n");
+                try
+                {
+                    if (model?.GetType().GetProperty("LicenseTags", f)?.GetValue(model) is System.Collections.IEnumerable tags)
+                        foreach (object tag in tags)
+                        {
+                            Type tt = tag.GetType();
+                            object point = tt.GetProperty("LicensePoint", f)?.GetValue(tag);
+                            object ctx = tt.GetProperty("Context", f)?.GetValue(tag);
+                            lines.Append($"    point {tt.GetProperty("LicenseTag", f)?.GetValue(tag)}: point={(point == null ? "null" : point.GetType().Name)} last={tt.GetProperty("LastValue", f)?.GetValue(tag) ?? "null"} context={ctx?.GetType().Name}\n");
+                            if (point != null && lines.Length < 20000)
+                                foreach (PropertyInfo pi in point.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
+                                {
+                                    if (pi.GetIndexParameters().Length > 0) continue;
+                                    object v; try { v = pi.GetValue(point); } catch (Exception e) { v = (e.InnerException ?? e).GetType().Name; }
+                                    lines.Append($"      {pi.Name}={v}\n");
+                                }
+                        }
+                }
+                catch (Exception e) { lines.Append("    points: " + e.GetType().Name + "\n"); }
+                lines.Append($"  GwxRuntimeViewControl: IsMainForm={mainForm} licenseManager={(Field("licenseManager") == null ? "null" : "set")} licenseModel={(model == null ? "null" : "set")} warning={show} failureAdorner={(Field("licenseFailureAdorner") == null ? "null" : "set")} noticeAdorner={(Field("licenseNotificationAdorner") == null ? "null" : "set")}\n");
+            }
+            int n = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetChildrenCount(d) : 0;
+            for (int i = 0; i < n; i++) stack.Push(VisualTreeHelper.GetChild(d, i));
+        }
+        Console.Error.Write(lines.ToString());
+    }
+
     private static void SaveWpf(HwndSource source, string path)
     {
+        if (Environment.GetEnvironmentVariable("WPFRUN_DUMP_ADORNERS") == "1")
+            try { DumpAdorners(source, Path.GetFileName(path)); } catch (Exception e) { Console.Error.WriteLine("adorner dump: " + e.Message); }
         if (source.IsDisposed || source.RootVisual is not FrameworkElement root || root.ActualWidth < 1 || root.ActualHeight < 1) return;
         // At the window's own DPI, so the picture is the window's physical pixels (a 200% display
         // got a half-size picture of a window that is drawn 1:1).

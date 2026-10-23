@@ -232,25 +232,21 @@ namespace System.Windows.Forms
 				s_defaulted = chosen == null;
 				HighDpiMode mode = chosen ?? HighDpiMode.DpiUnaware;
 				s_mode = mode;
-				// A system-aware application is run as a per-monitor (V2) one. Windows lays it out at the
-				// system DPI and bitmap-stretches it on every display at another -- blurred text on a
-				// second monitor, and on a head whose system DPI is not one Windows would have (a Mac's
-				// Retina display) the stretched 96-dpi surface everywhere. Nothing here is bound to
-				// that: the application declared that it scales itself, and .NET's WinForms follows DPI
-				// changes (WM_DPICHANGED) whatever the mode was, so it is laid out at its display's DPI
-				// and rendered 1:1 on each. Mode still says what the application chose.
-				s_effective = mode == HighDpiMode.SystemAware ? HighDpiMode.PerMonitorV2 : mode;
-				if (s_effective == HighDpiMode.PerMonitor || s_effective == HighDpiMode.PerMonitorV2) {
+				// SystemAware is Windows': laid out at the system DPI -- the main display's, which every
+				// head now reports (a Mac's Retina display is 192) -- and rendered 1:1 there, and never
+				// told of a DPI change: on a display at another DPI its picture is stretched, as Windows
+				// stretches it. An application that declared itself system-aware was not written for DPI
+				// changes (GraphWorX's DotNetBar ribbon and panes keep their sizes through one), so it is
+				// not sent them. The process itself is made per-monitor so the host can render 1:1.
+				s_effective = mode;
+				if (mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2 || mode == HighDpiMode.SystemAware) {
 					// The OS decides what the process can be: an application that already made itself
 					// unaware (or a host that did) stays on the scaled 96-dpi surface.
 					int awareness = XplatUIWebGpu.EnterPerMonitorAwareness (out int systemDpi);
 					if (awareness > 0 && systemDpi > 0) {
 						s_scaled = true;
 						s_systemDpi = systemDpi;
-						// a process the OS left system-aware is told of no DPI change: Windows' system-aware
-						if (awareness == 1 && mode == HighDpiMode.SystemAware)
-							s_effective = HighDpiMode.SystemAware;
-						s_perMonitorV2 = s_effective == HighDpiMode.PerMonitorV2 && awareness == 2;
+						s_perMonitorV2 = mode == HighDpiMode.PerMonitorV2 && awareness == 2;
 					}
 				}
 				System.Drawing.WebGpuBackend.DisplayDpi.Set (s_systemDpi);
