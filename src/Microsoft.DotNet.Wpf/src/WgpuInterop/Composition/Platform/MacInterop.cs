@@ -201,14 +201,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (window == IntPtr.Zero) return;
             NSRect frame = SendRect(window, Sel("frame"));
             NSRect content = SendRectRect(window, Sel("contentRectForFrameRect:"), frame);
+            double screenHeight = PrimaryScreenHeight();
+            double scale = BackingScale(nsView);
+            x = (int)Math.Round(content.x * scale);
+            y = (int)Math.Round((screenHeight - content.y - content.height) * scale);
+        }
+
+        // The primary display's height, read again at most once a second: NSScreen.screens asks the
+        // window server, and an ElementHost asks where its form's window is on every frame -- a few
+        // milliseconds each, a third of what a hosted WPF tree cost while its form was being resized.
+        private static double s_primaryHeight;
+        private static long s_primaryHeightAt = long.MinValue;
+
+        internal static double PrimaryScreenHeight()
+        {
+            long now = Environment.TickCount64;
+            if (now - s_primaryHeightAt < 1000) return s_primaryHeight;
             IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
             IntPtr primary = screens != IntPtr.Zero && SendNUInt(screens, Sel("count")) > 0
                 ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)
                 : Send(objc_getClass("NSScreen"), Sel("mainScreen"));
-            double screenHeight = primary != IntPtr.Zero ? SendRect(primary, Sel("frame")).height : 0;
-            double scale = BackingScale(nsView);
-            x = (int)Math.Round(content.x * scale);
-            y = (int)Math.Round((screenHeight - content.y - content.height) * scale);
+            s_primaryHeight = primary != IntPtr.Zero ? SendRect(primary, Sel("frame")).height : 0;
+            s_primaryHeightAt = now;
+            return s_primaryHeight;
         }
 
         internal static double BackingScale(IntPtr nsView)
