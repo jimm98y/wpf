@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Browser replacement for System.IO.IsolatedStorage, whose wasm build throws
+       PlatformNotSupportedException from every member. Elsewhere .NET's IsolatedStorage is managed code
+       over a folder per store, and that is all this is, over the page's file system: app's
+       app client keeps its process-wide values and its profile settings there, and asked several
+       hundred times a session, failing each time. Same strong-name identity as the real assembly so
+       existing references bind to it; bundled for the browser head only (see Sdk.targets), like the
+       Process, Registry and SystemEvents shims. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.IO.IsolatedStorage</AssemblyName>
+    <RootNamespace>System.IO.IsolatedStorage</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- Higher than the shared-framework 10.0.0.0 for the same reason as the Registry shim: RAR must
+         not mistake it for the in-box assembly, so it is copied app-local and wins name unification. -->
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>msft.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;CS0067</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

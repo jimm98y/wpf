@@ -422,6 +422,10 @@ namespace System.Windows.Forms.Integration
 
         private bool ReparentHostedWindow(IntPtr parent)
         {
+            // A canvas of the page is placed in the page whatever its parent (EnsureSource adds the form's
+            // origin), and the page has no user32 to ask: WPF's SetParent is the real import, which failed
+            // there, and the hosted canvas stayed where the parking window had it, over the form's top.
+            if (OperatingSystem.IsBrowser()) return true;
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {

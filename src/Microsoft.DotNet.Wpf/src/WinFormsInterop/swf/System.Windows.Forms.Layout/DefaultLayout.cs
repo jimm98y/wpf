@@ -52,8 +52,13 @@ namespace System.Windows.Forms.Layout
 					control.DistanceRight = parent.DisplayRectangle.Right - bounds.X - bounds.Width;
 				if ((specified & (BoundsSpecified.Height | BoundsSpecified.Y)) != BoundsSpecified.None)
 					control.DistanceBottom = parent.DisplayRectangle.Bottom - bounds.Y - bounds.Height;
+				if (s_traceAnchor && control is Control c && c.Name is { Length: > 0 } name)
+					Console.WriteLine ($"[anchor] {name}: bounds={bounds} parent={parent.DisplayRectangle} right={control.DistanceRight} bottom={control.DistanceBottom} ({specified}) visible={c.is_visible}\n{new System.Diagnostics.StackTrace (1, false).ToString ()}");
 			}		
 		}
+
+		// WF_TRACE_ANCHOR=1: every time a control's distances to its parent's edges are taken
+		static readonly bool s_traceAnchor = Environment.GetEnvironmentVariable ("WF_TRACE_ANCHOR") == "1";
 
 		static void LayoutDockedChildren (IArrangedElement parent, IList controls)
 		{

@@ -957,6 +957,11 @@
            browser truly cannot do. -->
       <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Diagnostics.Process'))" />
       <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Diagnostics.Process.dll" />
+
+      <!-- System.IO.IsolatedStorage likewise refuses every member in the browser; the shim is .NET's
+           folder-per-store over the page's file system (app keeps its settings there). -->
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.IO.IsolatedStorage'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.IO.IsolatedStorage.dll" />
     </ItemGroup>
   </Target>
 
@@ -970,7 +975,7 @@
           Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <_WpfWebGpuShimmed Include="@(ResolvedFileToPublish)"
-                         Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry' or '%(Filename)' == 'System.Diagnostics.Process')
+                         Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry' or '%(Filename)' == 'System.Diagnostics.Process' or '%(Filename)' == 'System.IO.IsolatedStorage')
                                     and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and Exists('$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
       <ResolvedFileToPublish Remove="@(_WpfWebGpuShimmed)" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />

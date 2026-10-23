@@ -120,6 +120,8 @@ namespace System.Windows.Forms
 		private static readonly object s_lock = new object ();
 		private static volatile bool s_resolved;
 		private static HighDpiMode s_mode = HighDpiMode.DpiUnaware;
+		// The mode the layout follows: the application's, a system-aware one run per-monitor (Resolve).
+		private static HighDpiMode s_effective = HighDpiMode.DpiUnaware;
 		private static bool s_scaled, s_perMonitorV2;
 		private static int s_systemDpi = OneHundredPercentLogicalDpi;
 		internal static HighDpiMode? s_requested;
@@ -201,12 +203,12 @@ namespace System.Windows.Forms
 		/// at startup) and never told of DPI changes. Windows shows its windows 1:1 on displays at
 		/// that DPI and bitmap-stretches them by display DPI over system DPI on the others; the
 		/// host does the same.</summary>
-		internal static bool IsSystemAware { get { Resolve (); return s_scaled && s_mode == HighDpiMode.SystemAware; } }
+		internal static bool IsSystemAware { get { Resolve (); return s_scaled && s_effective == HighDpiMode.SystemAware; } }
 
 		/// <summary>The DPI the application's own pixels are at, as far as a host putting them on a
 		/// display is concerned: 96 for an unaware application, the system DPI for a system-aware
 		/// one; a per-monitor one's are the display's (0: nothing to scale).</summary>
-		internal static int HostSourceDpi { get { Resolve (); return !s_scaled ? OneHundredPercentLogicalDpi : s_mode == HighDpiMode.SystemAware ? s_systemDpi : 0; } }
+		internal static int HostSourceDpi { get { Resolve (); return !s_scaled ? OneHundredPercentLogicalDpi : s_effective == HighDpiMode.SystemAware ? s_systemDpi : 0; } }
 
 		/// <summary>The primary display's DPI at startup for a scaled application, 96 for any other.</summary>
 		internal static int InitialSystemDpi { get { Resolve (); return s_systemDpi; } }
@@ -230,17 +232,25 @@ namespace System.Windows.Forms
 				s_defaulted = chosen == null;
 				HighDpiMode mode = chosen ?? HighDpiMode.DpiUnaware;
 				s_mode = mode;
-				if (mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2 || mode == HighDpiMode.SystemAware) {
-					// SystemAware is per-monitor machinery with the DPI fixed at startup: the process
-					// is made per-monitor so the host can render 1:1, and the layout stays at the
-					// system DPI (DeviceDpi, AutoScale) because DPI changes are not processed.
+				// A system-aware application is run as a per-monitor (V2) one. Windows lays it out at the
+				// system DPI and bitmap-stretches it on every display at another -- blurred text on a
+				// second monitor, and on a head whose system DPI is not one Windows would have (a Mac's
+				// Retina display) the stretched 96-dpi surface everywhere. Nothing here is bound to
+				// that: the application declared that it scales itself, and .NET's WinForms follows DPI
+				// changes (WM_DPICHANGED) whatever the mode was, so it is laid out at its display's DPI
+				// and rendered 1:1 on each. Mode still says what the application chose.
+				s_effective = mode == HighDpiMode.SystemAware ? HighDpiMode.PerMonitorV2 : mode;
+				if (s_effective == HighDpiMode.PerMonitor || s_effective == HighDpiMode.PerMonitorV2) {
 					// The OS decides what the process can be: an application that already made itself
 					// unaware (or a host that did) stays on the scaled 96-dpi surface.
 					int awareness = XplatUIWebGpu.EnterPerMonitorAwareness (out int systemDpi);
 					if (awareness > 0 && systemDpi > 0) {
 						s_scaled = true;
 						s_systemDpi = systemDpi;
-						s_perMonitorV2 = mode == HighDpiMode.PerMonitorV2 && awareness == 2;
+						// a process the OS left system-aware is told of no DPI change: Windows' system-aware
+						if (awareness == 1 && mode == HighDpiMode.SystemAware)
+							s_effective = HighDpiMode.SystemAware;
+						s_perMonitorV2 = s_effective == HighDpiMode.PerMonitorV2 && awareness == 2;
 					}
 				}
 				System.Drawing.WebGpuBackend.DisplayDpi.Set (s_systemDpi);
@@ -253,17 +263,17 @@ namespace System.Windows.Forms
 		internal static IDisposable OverrideForTests (HighDpiMode mode, int systemDpi)
 		{
 			Resolve ();
-			var saved = (s_mode, s_scaled, s_perMonitorV2, s_systemDpi);
+			var saved = (s_mode, s_effective, s_scaled, s_perMonitorV2, s_systemDpi);
 			bool wasOverridden = IsOverriddenForTests;
 			IsOverriddenForTests = true;
 			bool scaled = mode == HighDpiMode.PerMonitor || mode == HighDpiMode.PerMonitorV2 || mode == HighDpiMode.SystemAware;
-			s_mode = mode;
+			s_mode = s_effective = mode;
 			s_scaled = scaled;
 			s_perMonitorV2 = mode == HighDpiMode.PerMonitorV2;
 			s_systemDpi = scaled ? systemDpi : OneHundredPercentLogicalDpi;
 			System.Drawing.WebGpuBackend.DisplayDpi.Set (s_systemDpi);
 			return new Restore (() => {
-				(s_mode, s_scaled, s_perMonitorV2, s_systemDpi) = saved;
+				(s_mode, s_effective, s_scaled, s_perMonitorV2, s_systemDpi) = saved;
 				IsOverriddenForTests = wasOverridden;
 				System.Drawing.WebGpuBackend.DisplayDpi.Set (s_systemDpi);
 			});

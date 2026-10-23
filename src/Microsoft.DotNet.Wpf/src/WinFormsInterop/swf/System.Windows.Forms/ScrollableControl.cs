@@ -982,7 +982,9 @@ namespace System.Windows.Forms {
 
 			UpdateSizeGripVisible ();
 
-			ResumeLayout (doLayout);
+			// the scroll bars are this port's child controls, not .NET's: their bounds are no reason to
+			// take the other children's anchors again (see Control.ResumeLayoutKeepingAnchors)
+			ResumeLayoutKeepingAnchors (doLayout);
 			
 			// We should now scroll the active control into view, 
 			// the funny part is that ScrollableControl does not have 

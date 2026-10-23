@@ -2146,15 +2146,19 @@ namespace System.Windows.Forms
 			if (dpi != ScaleHelper.OneHundredPercentLogicalDpi && NativeFrameForDpi(style, exStyle, menu, dpi) is Padding native)
 				return native;
 			var ws = (WindowStyles)style;
+			// Elsewhere (the browser), the metrics Windows builds it from at that DPI: a dialog frame
+			// of 3 that does not scale, a border, the padded border (4) and the caption (22, and a
+			// pixel) that do -- 8 and 31 at 96 dpi, 13 and 58 at 192, as Windows has them.
+			int M(int v) => (v * dpi + 48) / 96;
 			int edge;
-			if ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION) edge = 8;
-			else if ((ws & WindowStyles.WS_THICKFRAME) != 0) edge = 7;
+			if ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION) edge = 3 + M(1) + M(4);
+			else if ((ws & WindowStyles.WS_THICKFRAME) != 0) edge = 3 + M(4);
 			else if ((ws & WindowStyles.WS_DLGFRAME) != 0) edge = 3;
-			else if ((ws & WindowStyles.WS_BORDER) != 0) edge = 1;
+			else if ((ws & WindowStyles.WS_BORDER) != 0) edge = M(1);
 			else return Padding.Empty;
-			int top = edge + ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION ? 23 : 0);
-			if (((WindowExStyles)exStyle & WindowExStyles.WS_EX_CLIENTEDGE) != 0) { edge += 2; top += 2; }
-			if (menu) top += 20;
+			int top = edge + ((ws & WindowStyles.WS_CAPTION) == WindowStyles.WS_CAPTION ? M(22) + 1 : 0);
+			if (((WindowExStyles)exStyle & WindowExStyles.WS_EX_CLIENTEDGE) != 0) { edge += M(2); top += M(2); }
+			if (menu) top += M(19) + 1;
 			return new Padding(edge, top, edge, edge);
 		}
 

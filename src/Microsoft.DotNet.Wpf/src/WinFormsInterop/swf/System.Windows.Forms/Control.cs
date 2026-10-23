@@ -609,7 +609,7 @@ namespace System.Windows.Forms
 					for (int i = 0; i < controls.Length; i++)
 						AddImplicit (controls [i]);
 				} finally {
-					owner.ResumeLayout (false);
+					owner.ResumeLayoutKeepingAnchors (false);
 				}
 			}
 
@@ -4306,6 +4306,25 @@ namespace System.Windows.Forms
 			ResumeLayout (true);
 		}
 
+		// Set while this port's own bookkeeping resumes layout (see ResumeLayoutKeepingAnchors).
+		bool keep_anchors_on_resume;
+
+		/// <summary>ResumeLayout, without the reset of the children's anchors ResumeLayout(false) does: for
+		/// what this port does that .NET does not -- a container's scroll bars are child controls here, put
+		/// in and taken out under a suspended layout, and in .NET part of its window. Resetting the anchors
+		/// there took a hidden panel's distances to its form's edges while the form was at another size
+		/// (app's login dialog, small in basic mode): shown with the form grown to advanced mode, the
+		/// panel was 168 pixels wider than it.</summary>
+		internal void ResumeLayoutKeepingAnchors (bool performLayout)
+		{
+			keep_anchors_on_resume = true;
+			try {
+				ResumeLayout (performLayout);
+			} finally {
+				keep_anchors_on_resume = false;
+			}
+		}
+
 		public void ResumeLayout(bool performLayout) {
 			if (layout_suspended > 0) {
 				// .NET: the last resume tells the parent, still suspended, so a container scales
@@ -4333,11 +4352,13 @@ namespace System.Windows.Forms
 						else
 							PerformLayout ();
 					}
-				} else {
+				} else if (!keep_anchors_on_resume) {
 					layout_pending_event_args = null;
 					// Reproduce the weird behavior, where ResumeLayout(false) resets the anchors
 					foreach (Control c in Controls)
 						LayoutEngine.InitLayout(c, BoundsSpecified.All);
+				} else {
+					layout_pending_event_args = null;
 				}
 			}
 		}

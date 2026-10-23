@@ -11,6 +11,10 @@
 //                           app makes a function pointer of for the Windows it calls (a window procedure
 //                           it subclasses with), which Mono on WebAssembly cannot make a thunk for: its
 //                           token (Callbacks), which the stack's Win32 calls the delegate for.
+//   Environment             GetCommandLineArgs, CommandLine: what the app was started as. In a page the
+//                           runtime's first argument is the page's host assembly; the app's own file
+//                           (WPFWEBGPU_APP_PATH, set by the host that calls its Main) is what Windows
+//                           puts there, and app names its client by it.
 //   ServicePointManager     the connection limits and policies of System.Net.Requests, which the browser
 //                           has no part of: the values an app sets and reads back.
 
@@ -89,6 +93,24 @@ public static class BrowserApis
 
     public static TDelegate Marshal_GetDelegateForFunctionPointer<TDelegate>(IntPtr ptr)
         => (TDelegate)(object)Marshal_GetDelegateForFunctionPointer(ptr, typeof(TDelegate));
+
+    public static string[] Environment_GetCommandLineArgs()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        if (!OperatingSystem.IsBrowser() || AppContext.GetData("WPFWEBGPU_APP_PATH") is not string app) return args;
+        if (args.Length == 0) return new[] { app };
+        var copy = (string[])args.Clone();
+        copy[0] = app;
+        return copy;
+    }
+
+    public static string Environment_get_CommandLine()
+    {
+        if (!OperatingSystem.IsBrowser() || AppContext.GetData("WPFWEBGPU_APP_PATH") is not string) return Environment.CommandLine;
+        // as Windows' command line reads: each argument quoted where it needs to be
+        return string.Join(" ", Environment_GetCommandLineArgs().Select(a =>
+            a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 ? a : "\"" + a.Replace("\"", "\\\"") + "\""));
+    }
 
 #pragma warning disable SYSLIB0014
     // ServicePointManager: what a desktop process starts with, as set and read back
