@@ -32,6 +32,8 @@ namespace System.Windows.Forms
 		private static readonly object s_instanceLock = new object();
 		private XplatUIWebGpu()
 		{
+			// a head whose screen is the application's main window: every other window is framed (WindowChrome)
+			if (OperatingSystem.IsBrowser()) FramedWindow = WindowChrome.IsFramed;
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
 			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
 			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",
@@ -151,7 +153,9 @@ namespace System.Windows.Forms
 				return true;
 			}
 		}
-		private static readonly bool Trace = Environment.GetEnvironmentVariable("WF_DRIVER_TRACE") == "1";
+		// WF_DRIVER_TRACE=1: what the driver is asked to do; =stack: with who asked, where that is the question
+		private static readonly bool Trace = Environment.GetEnvironmentVariable("WF_DRIVER_TRACE") is "1" or "stack";
+		private static readonly bool TraceStacks = Environment.GetEnvironmentVariable("WF_DRIVER_TRACE") == "stack";
 		private static void T(string s) { if (Trace) Console.WriteLine("[drv] " + s); }
 
 		/// <summary>Presentation hook: the current pixel buffer for a window (theme output).</summary>
@@ -937,7 +941,7 @@ namespace System.Windows.Forms
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			var hwnd = new Hwnd();
 			// WinForms passes the WINDOW rectangle; keep the client one (see _frames).
-			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, CreateDpi(cp));
+			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, CreateDpi(cp), cp.control);
 			int w = Math.Max(1, cp.Width - frame.Horizontal), h = Math.Max(1, cp.Height - frame.Vertical);
 			hwnd.x = (cp.X == int.MinValue ? 0 : cp.X) + frame.Left;
 			hwnd.y = (cp.Y == int.MinValue ? 0 : cp.Y) + frame.Top;
@@ -980,6 +984,7 @@ namespace System.Windows.Forms
 				_paintVersion++;
 			}
 
+			T($"CreateWindow h=0x{handle.ToInt64():x} {cp.control?.GetType().Name ?? cp.ClassName} {hwnd.x},{hwnd.y} {w}x{h} style=0x{cp.Style:x} ex=0x{cp.ExStyle:x} parent=0x{cp.Parent.ToInt64():x}");
 			Text(handle, cp.Caption);
 			AdoptDisplayDpi(handle, cp);
 			SendMessage(handle, Msg.WM_CREATE, (IntPtr)1, IntPtr.Zero);
@@ -997,6 +1002,7 @@ namespace System.Windows.Forms
 
 		internal override void DestroyWindow(IntPtr handle)
 		{
+			T($"DestroyWindow h=0x{handle.ToInt64():x}" + (TraceStacks ? "\n" + Environment.StackTrace : ""));
 			// Win32 destroys a window's children along with it, and each of them gets its own
 			// WM_DESTROY -- which is what makes WinForms clear Control.Created. Destroying only this
 			// window left every child still marked created, with a parent that no longer existed, so
@@ -1067,6 +1073,8 @@ namespace System.Windows.Forms
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return false;
+			if (Trace && hwnd.visible != visible)
+				T($"SetVisible h=0x{handle.ToInt64():x} {visible}" + (TraceStacks ? "\n" + Environment.StackTrace : ""));
 			hwnd.visible = visible;
 			hwnd.Mapped = visible;
 			_paintVersion++;   // visibility change alters the composite
@@ -2107,7 +2115,7 @@ namespace System.Windows.Forms
 		{
 			// Only a top-level window's frame is modelled (see TopLevelFrame); a child's border is
 			// drawn over its own edge (DrawWindowBorder), so a child's window and client are one.
-			Padding f = TopLevelFrame(cp.Style, cp.ExStyle, menu != null, CreateDpi(cp));
+			Padding f = TopLevelFrame(cp.Style, cp.ExStyle, menu != null, CreateDpi(cp), cp.control);
 			WindowRect = new Rectangle(ClientRect.X - f.Left, ClientRect.Y - f.Top,
 			                           ClientRect.Width + f.Horizontal, ClientRect.Height + f.Vertical);
 			return true;
@@ -2115,9 +2123,10 @@ namespace System.Windows.Forms
 
 		/// <summary>The non-client frame of a top-level window, as the host draws it: supplied by the
 		/// host (the native title bar and borders belong to it), and on Windows, where Win32Host puts
-		/// the window in a real Windows 11 frame, Windows 11's own at 96 dpi by default. Elsewhere it
-		/// defaults to none -- a browser page has no frame round its canvas.</summary>
-		internal static Func<int, int, bool, int, Padding> FrameProvider = OperatingSystem.IsWindows() ? Windows11Frame : null;
+		/// the window in a real Windows 11 frame, Windows 11's own at 96 dpi by default. In the browser
+		/// it is Windows 11's too, for the windows that have one there (FramedWindow), whose frame the
+		/// host draws (WindowChrome). Elsewhere it defaults to none.</summary>
+		internal static Func<int, int, bool, int, Padding> FrameProvider = OperatingSystem.IsWindows() || OperatingSystem.IsBrowser() ? Windows11Frame : null;
 
 		/// <summary>The DPI a window being created lays out for: its control's (DeviceDpi), which a
 		/// child takes from its parent and a top-level window from the display it opens on.</summary>
@@ -2152,13 +2161,22 @@ namespace System.Windows.Forms
 		/// <summary>The frame of a window with this style, if it is a top-level window with a
 		/// caption or sizing frame (a Form); zero for a child, and for a popup (a drop-down list),
 		/// whose border the driver draws itself.</summary>
-		internal static Padding TopLevelFrame(int style, int exStyle, bool menu, int dpi = ScaleHelper.OneHundredPercentLogicalDpi)
+		internal static Padding TopLevelFrame(int style, int exStyle, bool menu, int dpi = ScaleHelper.OneHundredPercentLogicalDpi, Control control = null)
 		{
 			var ws = (WindowStyles)style;
 			if ((ws & WindowStyles.WS_CHILD) != 0) return ChildFrame(style, exStyle, dpi);
 			if ((ws & (WindowStyles.WS_CAPTION | WindowStyles.WS_THICKFRAME)) == 0) return Padding.Empty;
-			return FrameProvider?.Invoke(style, exStyle, menu, dpi) ?? Padding.Empty;
+			Padding frame = FrameProvider?.Invoke(style, exStyle, menu, dpi) ?? Padding.Empty;
+			if (frame != Padding.Empty && FramedWindow != null && !FramedWindow(control)) return Padding.Empty;
+			return frame;
 		}
+
+		/// <summary>Which of the windows a frame is asked for have one, on a head that frames some
+		/// top-level windows and not others (null: every one). The browser's, iOS' and Android's: the
+		/// screen there is one window, the application's main one, which fills it with no frame (as a
+		/// maximized window's is off the screen); every other window -- a dialog -- has Windows' frame,
+		/// which the host draws (WindowChrome), as Windows' DWM would.</summary>
+		internal static Func<Control, bool> FramedWindow;
 
 		/// <summary>
 		/// A child window's non-client frame, as AdjustWindowRectEx gives it: WS_BORDER one pixel,
@@ -2248,7 +2266,7 @@ namespace System.Windows.Forms
 		internal static event Action<IntPtr> FrameChanged;
 
 		private Padding StandardFrame(IntPtr handle) =>
-			_styles.TryGetValue(handle, out var s) ? TopLevelFrame(s.Style, s.ExStyle, s.Menu, WindowDpi(handle)) : Padding.Empty;
+			_styles.TryGetValue(handle, out var s) ? TopLevelFrame(s.Style, s.ExStyle, s.Menu, WindowDpi(handle), Control.FromHandle(handle)) : Padding.Empty;
 
 		[StructLayout(LayoutKind.Sequential)]
 		private struct NcRect { public int Left, Top, Right, Bottom; }
@@ -2363,7 +2381,7 @@ namespace System.Windows.Forms
 			// is drawn from these, and a border style changed after creation kept drawing the old one.
 			hwnd.initial_style = cp.WindowStyle;
 			hwnd.initial_ex_style = cp.WindowExStyle;
-			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, WindowDpi(handle))));
+			ApplyFrame(handle, AskFrame(handle, TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, WindowDpi(handle), cp.control)));
 		}
 		internal override void SetBorderStyle(IntPtr handle, FormBorderStyle border_style) { }
 		// A top-level window's state, as the host's real window has it. The generated stubs said Normal

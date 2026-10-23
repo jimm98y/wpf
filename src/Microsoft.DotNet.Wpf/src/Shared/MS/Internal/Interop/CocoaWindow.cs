@@ -628,6 +628,55 @@ namespace MS.Internal.Interop
             if (_parentWindow != IntPtr.Zero) SendVoidPtr(_parentWindow, Sel("removeChildWindow:"), _window);
         }
 
+        /// <summary>
+        /// The parts of the window that show, as Windows clips a child window to its ancestors' client
+        /// areas and under the windows above it: <paramref name="rects"/> holds x, y, width, height in
+        /// content points from the top-left, four to a rectangle; null shows the whole window. A child
+        /// NSWindow is not clipped by its parent at all -- an ElementHost's WPF tree, sized to its
+        /// control, showed in full past the form's edge and over the panes beside it. The rest is masked
+        /// off (the content layer's mask), and being transparent in a non-opaque window, lets the mouse
+        /// through to what is behind it, as HTTRANSPARENT does there.
+        /// </summary>
+        public void SetVisibleRegion(int[] rects)
+        {
+            _region = rects;
+            ApplyRegion();
+        }
+
+        // The region as last given (SetVisibleRegion), applied again whenever the content changes size:
+        // a mask is a layer of its own, sized to the content as it was, and when the window was resized
+        // after it the old mask showed one stale corner of the new content.
+        private int[] _region;
+        private static readonly bool s_traceRegion = Environment.GetEnvironmentVariable("WPF_TRACE_REGION") == "1";
+
+        private void ApplyRegion()
+        {
+            int[] rects = _region;
+            if (_contentView == IntPtr.Zero) return;
+            IntPtr layer = Send(_contentView, Sel("layer"));
+            if (layer == IntPtr.Zero) return;
+            if (rects == null)
+            {
+                SendVoidPtr(layer, Sel("setMask:"), IntPtr.Zero);
+                return;
+            }
+            NSRect bounds = SendRect(_contentView, Sel("bounds"));
+            if (s_traceRegion)
+                Console.WriteLine($"[cocoa region] window 0x{(long)_window:x} content {bounds.width}x{bounds.height} frame {SendRect(_window, Sel("frame")).width}x{SendRect(_window, Sel("frame")).height} rects [{string.Join(",", rects)}]");
+            IntPtr mask = Send(objc_getClass("CALayer"), Sel("layer"));
+            SendVoidRect(mask, Sel("setFrame:"), bounds);
+            IntPtr opaque = Send(Send(objc_getClass("NSColor"), Sel("blackColor")), Sel("CGColor"));
+            for (int i = 0; i + 3 < rects.Length; i += 4)
+            {
+                IntPtr piece = Send(objc_getClass("CALayer"), Sel("layer"));
+                // the content view is not flipped: its layer's origin is the bottom-left
+                SendVoidRect(piece, Sel("setFrame:"), new NSRect { x = rects[i], y = bounds.height - rects[i + 1] - rects[i + 3], width = rects[i + 2], height = rects[i + 3] });
+                SendVoidPtr(piece, Sel("setBackgroundColor:"), opaque);
+                SendVoidPtr(mask, Sel("addSublayer:"), piece);
+            }
+            SendVoidPtr(layer, Sel("setMask:"), mask);
+        }
+
         /// <summary>Current content-view size in points (device-independent units).</summary>
         public void GetContentSize(out int width, out int height)
         {
@@ -2308,6 +2357,7 @@ namespace MS.Internal.Interop
             {
                 _lastReportedW = w;
                 _lastReportedH = h;
+                if (_region != null) ApplyRegion();
                 Resized?.Invoke(w, h);
             }
         }

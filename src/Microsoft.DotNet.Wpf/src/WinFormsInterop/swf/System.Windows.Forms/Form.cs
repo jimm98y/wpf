@@ -1769,10 +1769,10 @@ namespace System.Windows.Forms {
 			}
 #endif
 
-			// What follows the loop: once it is over here, and when the dialog closes on the browser head,
-			// where the loop does not block and ShowDialog returns while the dialog is still up.
-			Application.RunLoop(true, new ApplicationContext(this), EndShowDialog);
-			return Application.LoopsReturnAtOnce ? DialogResult.None : DialogResult;
+			// What follows the loop: once it is over here, and when the dialog closes on a browser head
+			// whose loops cannot block, where ShowDialog returns while the dialog is still up.
+			bool ended = Application.RunLoop(true, new ApplicationContext(this), EndShowDialog);
+			return ended ? DialogResult : DialogResult.None;
 		}
 
 		private void EndShowDialog ()

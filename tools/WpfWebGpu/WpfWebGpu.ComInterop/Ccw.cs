@@ -61,7 +61,9 @@ public static unsafe partial class Com
             var list = new List<(Guid Iid, IntPtr Vtable)>();
             foreach (Type i in type.GetInterfaces())
             {
-                Type? ccw = i.GetNestedType("ComCcw", BindingFlags.Public | BindingFlags.NonPublic);
+                // ComCcw_<interface> (the rewriter's name now), or ComCcw (an assembly rewritten before)
+                Type? ccw = i.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
+                    .FirstOrDefault(n => n.Name == "ComCcw" || n.Name.StartsWith("ComCcw_", StringComparison.Ordinal));
                 if (ccw?.GetMethod("Vtable", BindingFlags.Public | BindingFlags.Static) is { } vt) list.Add((i.GUID, (IntPtr)vt.Invoke(null, null)!));
                 else if (BclComTypes.VtableOf(i) is var bcl && bcl != IntPtr.Zero) list.Add((i.GUID, bcl));
                 else if (Generated.TryGetValue(i, out var g) && g.Ccw.GetMethod("Vtable", BindingFlags.Public | BindingFlags.Static) is { } gv) list.Add((i.GUID, (IntPtr)gv.Invoke(null, null)!));

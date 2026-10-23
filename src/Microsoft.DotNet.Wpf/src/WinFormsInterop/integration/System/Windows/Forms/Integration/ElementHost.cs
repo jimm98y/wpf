@@ -267,7 +267,12 @@ namespace System.Windows.Forms.Integration
         // rectangle; it presents its own surface instead. Either way the WPF tree is a real
         // HwndSource with real layout, hit-testing and input -- Cocoa and Wayland deliver
         // mouse/keyboard into HwndMouseInputProvider exactly as for any WPF window.
-        private static bool CompositeIntoHostFrame => OperatingSystem.IsWindows();
+        //
+        // The browser is Windows' case: a page's canvas is composited by the browser, but the hosted window
+        // is a canvas of the page's window manager like any other, and the host can claim it as Windows'
+        // host claims the child HWND -- its picture drawn in the form's frame, its canvas left transparent
+        // over the control to take the page's input, as the child window takes the OS's.
+        private static bool CompositeIntoHostFrame => OperatingSystem.IsWindows() || OperatingSystem.IsBrowser();
 
         private void EnsureSource()
         {
@@ -340,6 +345,13 @@ namespace System.Windows.Forms.Integration
             if (!CompositeIntoHostFrame)
             {
                 NativePlatform.GetWindowOrigin(hostWindow, out int hx, out int hy);
+                px += hx;
+                py += hy;
+            }
+            else if (OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserWindow.FromHandle(hostWindow) is { } page)
+            {
+                // a canvas is placed in the page, not in its parent: the form's canvas's origin added
+                page.GetClientScreenOriginPixels(out int hx, out int hy);
                 px += hx;
                 py += hy;
             }

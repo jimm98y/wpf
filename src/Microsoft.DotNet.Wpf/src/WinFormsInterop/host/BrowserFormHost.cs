@@ -32,12 +32,22 @@ namespace System.Windows.Forms
 		private double _scale = 1;
 		private int _lastVer = -1, _surfaceW, _surfaceH;
 		private bool _lastCaretOn, _lastPresentOk, _leftDown, _closed;
-		private int _traced;
+		private int _traced, _tracedScenes;
+		// the frame the page has no window manager to draw (WindowChrome): a dialog's title bar and edges
+		private readonly WindowChrome _chrome;
+		private bool _dragging;
+
+		// The active window (WM_ACTIVATE), which the page has no window manager to keep: the one shown or
+		// clicked last, as Windows activates a window; the windows in the order they were active.
+		private static readonly List<BrowserFormHost> s_activation = new List<BrowserFormHost> ();
+		private static BrowserFormHost s_active;
+		private Point _dragFrom, _dragOrigin;
 		private static readonly bool s_trace = Environment.GetEnvironmentVariable ("WF_TRACE_BROWSER") == "1";
 
 		internal BrowserFormHost (Form form)
 		{
 			_form = form;
+			_chrome = new WindowChrome (form);
 			PresentationHost.Attach (this, form);
 		}
 
@@ -51,6 +61,8 @@ namespace System.Windows.Forms
 			_window.Create (_form.Text, placed ? (int)(_form.Left * _scale) : unchecked((int)0x80000000), placed ? (int)(_form.Top * _scale) : unchecked((int)0x80000000),
 				Math.Max (1, _form.Width), Math.Max (1, _form.Height), borderless);
 			_window.Resized += OnResized;
+			// the form's window, for content that is a window of its own inside it: an ElementHost's WPF tree
+			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
 			// hidden is not closed (a form is shown again, a drop-down reused): the canvas follows
 			_form.VisibleChanged += OnVisibleChanged;
 			// ShowDialog's end destroys the dialog's handle: its window goes, and a later Show makes another
@@ -67,24 +79,81 @@ namespace System.Windows.Forms
 			_surfaceW = _form.Width;
 			_surfaceH = _form.Height;
 			_wgpu = new WgpuPresenter (ctx, surface, _surfaceW, _surfaceH, _scale, srgb: true, threadDevice: true);
-			Color bc = _form.BackColor;
-			_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			if (_chrome.HasFrame) {
+				// the resize margin outside the visible edge is see-through, as Windows'; the chrome draws its shadow
+				_wgpu.SetTransparent (true);
+				_window.SetOwnFrame ();
+			} else {
+				Color bc = _form.BackColor;
+				_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			}
+			Activate ();
 			Present ();
 		}
 
-		/// <summary>The form takes the place and size the page gave its window (the window manager's
-		/// decision, as AppKit's or Windows' would be).</summary>
+		/// <summary>This window active, the one that was deactivated (WM_ACTIVATE both ways).</summary>
+		private void Activate ()
+		{
+			if (_closed || !_form.IsHandleCreated)
+				return;
+			BrowserFormHost previous = s_active;
+			s_activation.Remove (this);
+			s_activation.Add (this);
+			if (previous == this)
+				return;
+			s_active = this;
+			if (previous != null && !previous._closed && previous._form.IsHandleCreated) {
+				_driver.HostActivate ((long)previous._form.Handle, false);
+				previous.Repaint ();
+			}
+			_driver.HostActivate ((long)_form.Handle, true);
+			Repaint ();
+		}
+
+		/// <summary>This window gone or hidden: the one active before it is again, its owner first.</summary>
+		private void Deactivate ()
+		{
+			bool wasActive = s_active == this;
+			s_activation.Remove (this);
+			if (!wasActive)
+				return;
+			s_active = null;
+			if (_form.IsHandleCreated)
+				_driver.HostActivate ((long)_form.Handle, false);
+			BrowserFormHost next = null;
+			foreach (BrowserFormHost h in s_activation)
+				if (h._form == _form.Owner)
+					next = h;
+			next ??= s_activation.Count > 0 ? s_activation [s_activation.Count - 1] : null;
+			next?.Activate ();
+		}
+
+		/// <summary>The form takes the place the page gave its window (the window manager's decision,
+		/// as AppKit's or Windows' would be), and the screen's own window its size too: it fills the page
+		/// and follows it. Any other window's size is the form's own -- its canvas may be larger, to hold
+		/// a drop-down hanging past it -- and taking the canvas's back grew a dialog without end (the
+		/// canvas grown for a child reaching past the form, the form grown to the canvas, its anchored
+		/// children with it, and round again).</summary>
 		private void SyncFromWindow ()
 		{
 			if (_window == null || _form.IsDisposed || !_form.IsHandleCreated)
 				return;
+			// the canvas is the window's outer rectangle: its origin is the form's Location
 			_window.GetClientScreenOriginPixels (out int px, out int py);
-			_window.GetPixelSize (out int pw, out int ph);
-			var bounds = new Rectangle ((int)Math.Round (px / _scale), (int)Math.Round (py / _scale),
-				(int)Math.Round (pw / _scale), (int)Math.Round (ph / _scale));
+			int x = (int)Math.Round (px / _scale), y = (int)Math.Round (py / _scale);
+			int w = _form.Width, h = _form.Height;
+			if (IsScreenWindow) {
+				_window.GetPixelSize (out int pw, out int ph);
+				w = (int)Math.Round (pw / _scale);
+				h = (int)Math.Round (ph / _scale);
+			}
+			var bounds = new Rectangle (x, y, w, h);
 			if (bounds.Width > 0 && bounds.Height > 0 && _form.Bounds != bounds)
 				XplatUI.SetWindowPos (_form.Handle, bounds.X, bounds.Y, bounds.Width, bounds.Height);
 		}
+
+		// the page's own window, which fills it (the first framed one the window manager is given)
+		private bool IsScreenWindow => _window != null && !_window.IsSecondary;
 
 		private void OnVisibleChanged (object sender, EventArgs e)
 		{
@@ -92,6 +161,10 @@ namespace System.Windows.Forms
 				return;
 			_window.SetVisible (_form.Visible);
 			_lastVer = -1;
+			if (_form.Visible)
+				Activate ();
+			else
+				Deactivate ();
 		}
 
 		private void OnHandleDestroyed (object sender, EventArgs e)
@@ -112,12 +185,15 @@ namespace System.Windows.Forms
 		{
 			if (_wgpu == null || _closed)
 				return;
-			int ver = _driver.GetPaintVersion ();
+			// the embedded content's changes too (a hosted WPF tree animating by itself)
+			int ver = _driver.GetPaintVersion () + EmbeddedScenes.CurrentVersion ();
 			bool caretOn = CaretOn ();
 			if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk)
 				return;   // nothing changed
 
 			var scenes = GetScenes (out int ox, out int oy, out int needW, out int needH);
+			if (_chrome.HasFrame)
+				scenes.Insert (0, (_chrome.Paint (_form.Size, Form.ActiveForm == _form), 0, 0));
 			if (needW != _surfaceW || needH != _surfaceH) {
 				// a drop-down reaching past the form: the canvas grows to hold it (shrinks back after)
 				_surfaceW = needW;
@@ -127,7 +203,8 @@ namespace System.Windows.Forms
 			Rectangle? caret = caretOn && _driver.GetCaret (out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, needW, needH);
-			if (s_trace && _traced++ < 6) {
+			if (s_trace && (_traced++ < 6 || scenes.Count != _tracedScenes)) {
+				_tracedScenes = scenes.Count;
 				_window.GetPixelSize (out int pw, out int ph);
 				_window.GetContentSize (out int cw2, out int ch2);
 				Console.WriteLine ($"[browser form] '{_form.Text}' form={_form.Bounds} client={_form.ClientSize} window px={pw}x{ph} content={cw2}x{ch2} scale={_scale} surface={needW}x{needH} origin=({ox},{oy}) ok={_lastPresentOk} scenes=" +
@@ -142,11 +219,15 @@ namespace System.Windows.Forms
 		private List<(object, int, int)> GetScenes (out int ox, out int oy, out int needW, out int needH)
 		{
 			long[] wins = _driver.GetPresentWindows (_form.Handle);
-			ox = wins.Length >= 3 ? (int)wins [1] : _form.Left;
-			oy = wins.Length >= 3 ? (int)wins [2] : _form.Top;
+			// the canvas's origin is the window's: its client is the frame's width in (WindowChrome)
+			Padding frame = _chrome.Frame;
+			ox = (wins.Length >= 3 ? (int)wins [1] : _form.Left + frame.Left) - frame.Left;
+			oy = (wins.Length >= 3 ? (int)wins [2] : _form.Top + frame.Top) - frame.Top;
 			needW = _form.Width;
 			needH = _form.Height;
 			var list = new List<(object, int, int)> (wins.Length / 3);
+			// the top-level window each scene belongs to, so embedded content goes right after its own
+			var roots = new List<IntPtr> (wins.Length / 3);
 			for (int i = 0; i + 2 < wins.Length; i += 3) {
 				IntPtr h = (IntPtr)wins [i];
 				object scene = _driver.GetWindowScene (h);
@@ -154,10 +235,32 @@ namespace System.Windows.Forms
 					continue;
 				int px = (int)wins [i + 1] - ox, py = (int)wins [i + 2] - oy;
 				list.Add ((scene, px, py));
+				roots.Add (Control.FromHandle (h)?.TopLevelControl is Control top && top.IsHandleCreated ? top.Handle : h);
+				// Only a popup (a menu, a drop-down) stands outside the form; any other window is cut to
+				// its parent, so what it has past the form never shows. GraphWorX's designer parks its
+				// root control 32000 pixels off, 32000 across, and the canvas grew to 64000 square.
+				if (!_driver.IsInPopupWindow (h))
+					continue;
 				long size = _driver.GetWindowSizePacked (h);
 				int w = (int)(size >> 32), hh = (int)(size & 0xFFFFFFFF);
 				needW = Math.Max (needW, px + w);
 				needH = Math.Max (needH, py + hh);
+			}
+			// Embedded non-WinForms content (an ElementHost's WPF tree, composited into this frame as on
+			// Windows; see ElementHost.CompositeIntoHostFrame) right after the windows of the top-level window
+			// it is in -- over the control whose area it occupies, under anything above that window (a menu,
+			// a dialog of the same thread) -- and only in this window's frame: every host drew every hosted
+			// tree, and a dialog's showed the main window's display canvas through it.
+			var embedded = EmbeddedScenes.GetWithOwners (ox, oy);
+			if (embedded != null) {
+				for (int e = embedded.Count - 1; e >= 0; e--) {
+					var (scene, x, y, owner) = embedded [e];
+					int last = roots.LastIndexOf (owner);
+					if (last < 0)
+						continue;                    // another window's content
+					list.Insert (last + 1, (scene, x, y));
+					roots.Insert (last + 1, owner);
+				}
 			}
 			return list;
 		}
@@ -184,11 +287,19 @@ namespace System.Windows.Forms
 
 		private void OnMouse (BrowserWindow.BrowserMouseMessage m)
 		{
+			if (_dragging && !_closed && OnDrag (m))
+				return;
 			if (!Mine (m.Window))
 				return;
-			// device pixels in the canvas -> the page's points, the forms' screen
+			// device pixels in the canvas -> the page's points, the forms' screen (the canvas is the
+			// window's outer rectangle, whose origin is the form's Location)
 			int x = (int)Math.Floor (m.X / _scale) + _form.Left;
 			int y = (int)Math.Floor (m.Y / _scale) + _form.Top;
+			// a click activates the window, as Windows' WM_MOUSEACTIVATE does -- not one a modal dialog disabled
+			if (m.Kind == 1 && _form.Enabled)
+				Activate ();
+			if (_chrome.HasFrame && OnFrame (m, x, y))
+				return;
 			IntPtr outerRoot = XplatUIWebGpu.InputRoot;
 			XplatUIWebGpu.InputRoot = _form.Handle;
 			try {
@@ -207,6 +318,75 @@ namespace System.Windows.Forms
 			} finally {
 				XplatUIWebGpu.InputRoot = outerRoot;
 			}
+			Present ();
+		}
+
+		// ---- the frame (WindowChrome): DefWindowProc's part --------------------------------------
+
+		/// <summary>The pointer on the window's frame: true when it was the frame's (not the client's).</summary>
+		private bool OnFrame (BrowserWindow.BrowserMouseMessage m, int x, int y)
+		{
+			int hit = _chrome.HitTest (new Point (x - _form.Left, y - _form.Top), _form.Size);
+			bool down = m.Kind == 1 && m.Button == 0, up = m.Kind == 2 && m.Button == 0;
+			if (_chrome.Pressed == WindowChrome.HTCLOSE) {
+				// the close button holds the mouse until it is let go, and closes only if let go on it
+				if (up) {
+					_chrome.Track (hit, WindowChrome.HTNOWHERE);
+					Repaint ();
+					if (hit == WindowChrome.HTCLOSE)
+						_chrome.Close ();
+				} else if (_chrome.Track (hit, WindowChrome.HTCLOSE)) {
+					Repaint ();
+				}
+				return true;
+			}
+			if (hit == WindowChrome.HTCLIENT || hit == WindowChrome.HTNOWHERE) {
+				if (_chrome.Track (WindowChrome.HTNOWHERE, WindowChrome.HTNOWHERE))
+					Repaint ();
+				return false;
+			}
+			if (down && !_form.Enabled)
+				return true;                   // a window a modal dialog disabled takes no clicks, frame included
+			if (down && hit == WindowChrome.HTCAPTION) {
+				// SC_MOVE: the window follows the pointer until the button is let go
+				_dragging = true;
+				_dragFrom = new Point (x, y);
+				_dragOrigin = _form.Location;
+				Activate ();
+				return true;
+			}
+			if (_chrome.Track (hit, down && hit == WindowChrome.HTCLOSE ? WindowChrome.HTCLOSE : WindowChrome.HTNOWHERE))
+				Repaint ();
+			return true;
+		}
+
+		/// <summary>A move in progress: the window where the pointer has taken it, wherever on the page
+		/// the pointer now is.</summary>
+		private bool OnDrag (BrowserWindow.BrowserMouseMessage m)
+		{
+			if (m.Kind == 2 && m.Button == 0) {
+				_dragging = false;
+				return true;
+			}
+			if (m.Kind != 0)
+				return true;
+			BrowserWindow over = BrowserWindow.FromHandle (m.Window);
+			if (over == null)
+				return true;
+			over.GetClientScreenOriginPixels (out int sx, out int sy);
+			int x = (int)Math.Floor ((m.X + sx) / _scale), y = (int)Math.Floor ((m.Y + sy) / _scale);
+			var to = new Point (_dragOrigin.X + x - _dragFrom.X, _dragOrigin.Y + y - _dragFrom.Y);
+			// the title bar stays on the page, as Windows keeps a caption on the screen
+			to.Y = Math.Max (0, to.Y);
+			_window.SetFrameOrigin ((int)Math.Round (to.X * _scale), (int)Math.Round (to.Y * _scale));
+			XplatUI.SetWindowPos (_form.Handle, to.X, to.Y, _form.Width, _form.Height);
+			Present ();
+			return true;
+		}
+
+		private void Repaint ()
+		{
+			_lastVer = -1;
 			Present ();
 		}
 
@@ -278,6 +458,7 @@ namespace System.Windows.Forms
 		{
 			if (_closed)
 				return;
+			Deactivate ();
 			_closed = true;
 			_form.VisibleChanged -= OnVisibleChanged;
 			_form.HandleDestroyed -= OnHandleDestroyed;

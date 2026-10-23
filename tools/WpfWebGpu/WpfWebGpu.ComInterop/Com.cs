@@ -89,8 +89,17 @@ public static unsafe partial class Com
     /// <summary>The loader's: <paramref name="assembly"/> was rewritten from <paramref name="path"/>.</summary>
     public static void RegisterOriginal(Assembly assembly, string path) => s_original.AddOrUpdate(assembly, Path.GetFullPath(path));
 
-    /// <summary>The original file of a rewritten assembly; null for any other.</summary>
-    public static string? OriginalPath(Assembly? assembly) => assembly != null && s_original.TryGetValue(assembly, out var p) ? p : null;
+    /// <summary>The original file of a rewritten assembly; null for any other. In a bundle (the browser head),
+    /// where the runtime knows no file for any assembly, an assembly's place in the app's folder:
+    /// AppContext.BaseDirectory, where the app's own files are, and its name.</summary>
+    public static string? OriginalPath(Assembly? assembly)
+    {
+        if (assembly == null) return null;
+        if (s_original.TryGetValue(assembly, out var p)) return p;
+        if (OperatingSystem.IsBrowser() && !assembly.IsDynamic && string.IsNullOrEmpty(assembly.Location) && assembly.GetName().Name is { Length: > 0 } name)
+            return Path.Combine(AppContext.BaseDirectory, name + ".dll");
+        return null;
+    }
 
     public static string AssemblyLocation(Assembly a) => OriginalPath(a) ?? a.Location;
 

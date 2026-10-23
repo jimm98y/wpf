@@ -102,6 +102,19 @@ namespace MS.Internal.Interop
 
         public void SetFrameOrigin(int xPixels, int yPixels) => Js.SetFrameOrigin((int)Handle, xPixels, yPixels);
 
+        /// <summary>Whether this is a window over the page's own (a dialog): the page's own fills the
+        /// page and follows it; this one keeps the place and size it is given.</summary>
+        public bool IsSecondary => Handle != IntPtr.Zero && Js.IsSecondaryWindow((int)Handle);
+
+        /// <summary>The window draws its own frame (a WinForms dialog's title bar and edges): the page
+        /// adds no shadow of its own round it.</summary>
+        public void SetOwnFrame() => Js.SetOwnFrame((int)Handle);
+
+        /// <summary>The parts of the window that show (and take the pointer): x, y, width, height in CSS
+        /// pixels from its top-left, four to a rectangle; null for all of it. A child window's clip, as on
+        /// Windows (see browser-window.js).</summary>
+        public void SetVisibleRegion(int[] rects) => Js.SetVisibleRegion((int)Handle, rects == null ? "" : string.Join(",", rects));
+
         public void GetContentSize(out int width, out int height)
         {
             width = Js.GetWidth((int)Handle, false);
@@ -320,6 +333,41 @@ namespace MS.Internal.Interop
         /// dispatcher pump; falls back to a 250ms timeout when the tab is hidden).</summary>
         public static System.Threading.Tasks.Task NextFrameAsync() => Js.NextFrame();
 
+        // The page's thread's context on the multithreaded runtime (JSSynchronizationContext, which the
+        // runtime installs there), seen the first time a pump waits from it.
+        private static System.Threading.SynchronizationContext s_pageContext;
+
+        /// <summary>
+        /// Awaits the next animation frame and resumes on the page's thread: <c>await BrowserWindow.NextFrameOnPage()</c>.
+        /// On the multithreaded runtime the continuation of a frame's Task lands on a pool thread -- a Web
+        /// Worker, where the page's windows and JS modules are out of reach -- and completing a Task from the
+        /// page's thread does not bring it back; so the waiting method's own continuation is posted to the
+        /// page's context. A pump must not capture the context it runs under: that is its own (a WPF
+        /// dispatcher's, a WinForms loop's), which only the pump drains. Single-threaded, the continuation runs
+        /// where the frame completed, the page's one thread.
+        /// </summary>
+        public static PageFrameAwaitable NextFrameOnPage() => default;
+
+        public readonly struct PageFrameAwaitable : System.Runtime.CompilerServices.ICriticalNotifyCompletion
+        {
+            public PageFrameAwaitable GetAwaiter() => this;
+            public bool IsCompleted => false;
+            public void GetResult() { }
+            public void OnCompleted(Action continuation) => UnsafeOnCompleted(continuation);
+            public void UnsafeOnCompleted(Action continuation)
+            {
+                if (s_pageContext == null && System.Threading.SynchronizationContext.Current is { } current
+                    && current.GetType().Name == "JSSynchronizationContext")
+                    s_pageContext = current;
+                System.Threading.SynchronizationContext page = s_pageContext;
+                NextFrameAsync().ContinueWith(_ =>
+                {
+                    if (page != null) page.Post(static state => ((Action)state)(), continuation);
+                    else continuation();
+                }, System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously);
+            }
+        }
+
         /// <summary>Drains DOM events queued by browser-window.js and raises the corresponding
         /// managed events. Called once per dispatcher pump tick on the browser.</summary>
         public static void PumpEvents()
@@ -502,6 +550,15 @@ namespace MS.Internal.Interop
 
             [JSImport("setFrameOrigin", Module)]
             internal static partial void SetFrameOrigin(int handle, int xPixels, int yPixels);
+
+            [JSImport("isSecondaryWindow", Module)]
+            internal static partial bool IsSecondaryWindow(int handle);
+
+            [JSImport("setOwnFrame", Module)]
+            internal static partial void SetOwnFrame(int handle);
+
+            [JSImport("setVisibleRegion", Module)]
+            internal static partial void SetVisibleRegion(int handle, string rects);
 
             [JSImport("getWidth", Module)]
             internal static partial int GetWidth(int handle, bool devicePixels);

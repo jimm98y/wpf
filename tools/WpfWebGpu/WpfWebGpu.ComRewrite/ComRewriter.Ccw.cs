@@ -47,7 +47,12 @@ public static partial class ComRewriter
         private TypeDefinition EmitCcw(TypeReference iface, TypeDefinition nestIn, TypeDefinition key, int first, List<(MethodDefinition Decl, MethodReference Call)> methods)
         {
             ImportCcw();
-            var ccw = new TypeDefinition("", "ComCcw", TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, _object);
+            // ComCcw_<interface>, not ComCcw alone: an AOT-compiling head names each [UnmanagedCallersOnly]
+            // stub by its namespace, its (nested) class and its name, and two interfaces' stubs of one name
+            // (IFileOpenDialog's and IFileSaveDialog's AddPlace) were then one symbol, which the browser
+            // build refuses. Com's lookup (Ccw.cs) takes either name.
+            var ccw = new TypeDefinition("", "ComCcw_" + new string(nestIn.Name.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray()),
+                TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, _object);
             nestIn.NestedTypes.Add(ccw);
             var refused = new List<string>();
             var stubs = new List<MethodDefinition>();

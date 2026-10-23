@@ -756,15 +756,23 @@ namespace System.Windows.Forms
 
 		/// <summary>
 		/// A message loop, and what follows it once it is over (<paramref name="after"/>: Form.ShowDialog's
-		/// own ending). On the browser head the page's thread cannot block, so a loop does not run here
-		/// at all: it is begun, the browser pump steps it (BrowserLoops), and it ends -- <paramref name="after"/>
-		/// with it -- when its form is gone, after this call has long returned (LoopsReturnAtOnce).
+		/// own ending); whether it was over when this returns. On the browser head the main loop does not
+		/// run here: it is begun, the browser pump steps it a frame at a time (BrowserLoops), as WPF's
+		/// dispatcher is stepped on that head, and this returns at once. A modal loop runs to its end on
+		/// the multithreaded runtime, where the app's code is on a worker that may block
+		/// (BrowserLoops.RunBlocking); on the single-threaded one it is begun like the main loop, and ends
+		/// -- <paramref name="after"/> with it -- when its form is gone, long after this returned false.
 		/// </summary>
-		internal static void RunLoop (bool Modal, ApplicationContext context, Action after)
+		internal static bool RunLoop (bool Modal, ApplicationContext context, Action after)
 		{
-			if (LoopsReturnAtOnce) {
+			if (OperatingSystem.IsBrowser ()) {
+				if (Modal && BrowserLoops.CanBlock) {
+					BrowserLoops.RunBlocking (BeginLoop (Modal, context));
+					after?.Invoke ();
+					return true;
+				}
 				BrowserLoops.Begin (BeginLoop (Modal, context), after);
-				return;
+				return false;
 			}
 			IntPtr theming = Win32ThemingScope.Enter ();
 			try {
@@ -773,12 +781,8 @@ namespace System.Windows.Forms
 				Win32ThemingScope.Leave (theming);
 			}
 			after?.Invoke ();
+			return true;
 		}
-
-		/// <summary>Whether a message loop returns at once and runs on without blocking: the browser
-		/// head, whose page thread cannot block (as WPF's dispatcher there). ShowDialog then returns
-		/// DialogResult.None while its dialog is still up.</summary>
-		internal static bool LoopsReturnAtOnce => OperatingSystem.IsBrowser ();
 
 		/// <summary>The innermost message loop on this thread has a form and that form is gone --
 		/// disposed, its window destroyed, or (a modal loop) hidden. That loop is finished whether or not

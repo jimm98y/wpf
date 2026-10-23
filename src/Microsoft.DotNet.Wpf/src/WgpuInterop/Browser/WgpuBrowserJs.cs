@@ -52,6 +52,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [JSImport("surfaceGetCurrentTexture", ModuleName)]
         internal static partial int SurfaceGetCurrentTexture(int surface);
 
+        [JSImport("surfacePresent", ModuleName)]
+        internal static partial void SurfacePresent(int surface);
+
         [JSImport("createTexture", ModuleName)]
         internal static partial int CreateTexture(int device, int width, int height, string format, double usage, int mipLevelCount, int sampleCount);
 
