@@ -44,7 +44,7 @@ try {
         .withEnvironmentVariable('WPF_USE_WEBGPU_COMPOSITION', '1')
         .withEnvironmentVariable('WPF_WEBGPU_SINK_LOG', '/sink.log');
     if (params.has('perf')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_PERF_CONSOLE', '1');
-    if (params.has('firstchance')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_LOG_FIRST_CHANCE', '1');
+    if (params.has('firstchance')) builder = builder.withEnvironmentVariable('WPF_WEBGPU_LOG_FIRST_CHANCE', params.get('firstchance') === 'stack' ? 'stack' : '1');
     // A page has no environment block, so the renderer's knobs come from the URL instead:
     //   ?damage=0        every frame in full (WGPU_DAMAGE=0) -- the A/B for partial redraw
     //   ?damageverify    render each frame partial AND full and log every differing pixel
@@ -150,5 +150,13 @@ try {
     }
 } catch (e) {
     status.innerText = `boot failed: ${e}`;
+    // An app built for the multithreaded runtime (WasmEnableThreads) shares its memory with workers,
+    // which a browser allows only on a cross-origin isolated page. Not isolated, it fails here with
+    // "memory import must be a WebAssembly.Memory object", which says nothing of why: say it.
+    if (!globalThis.crossOriginIsolated)
+        status.innerText += ' -- this page is not cross-origin isolated, which an app that uses threads needs: '
+            + (window.top !== window
+                ? 'it is shown inside a frame (an editor\'s preview?); open it in a browser tab of its own'
+                : 'serve it with `wpfrun serve` (COOP/COEP headers) and open the address it prints');
     console.error(e);
 }

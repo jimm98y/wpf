@@ -9,6 +9,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using WpfWebGpu.ComInterop;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -895,13 +896,17 @@ public static unsafe partial class Exports
         return ReadUtf16(cls);
     }
 
+    // an enumeration callback: the app's delegate in the browser (Callbacks), a function pointer elsewhere
+    private static int Enumerate(delegate* unmanaged<nint, nint, int> callback, nint h, nint data)
+        => Callbacks.Of((nint)callback) is { } d ? (int)Callbacks.Invoke(d, h, data) : callback(h, data);
+
     [Win32Export("EnumWindows")]
     public static int EnumWindows(delegate* unmanaged<nint, nint, int> callback, nint data)
     {
         foreach (object o in TopLevels())
         {
             nint h = HandleOf(o);
-            if (h != 0 && callback(h, data) == FALSE) break;
+            if (h != 0 && Enumerate(callback, h, data) == FALSE) break;
         }
         return TRUE;
     }
@@ -917,7 +922,7 @@ public static unsafe partial class Exports
             nint h = HandleOf(o);
             if (h == 0) continue;
             any = true;
-            if (callback(h, data) == FALSE) break;
+            if (Enumerate(callback, h, data) == FALSE) break;
         }
         return any ? TRUE : FALSE;
     }
@@ -929,7 +934,7 @@ public static unsafe partial class Exports
         foreach (object o in ChildrenOf(parent))
         {
             nint h = HandleOf(o);
-            if (h != 0 && callback(h, data) == FALSE) break;
+            if (h != 0 && Enumerate(callback, h, data) == FALSE) break;
         }
         return TRUE;
     }
@@ -1109,6 +1114,7 @@ public static unsafe partial class Exports
     public static nint CallWindowProc(nint proc, nint hwnd, uint msg, nint w, nint l)
     {
         if (proc == 0) return 0;
+        if (Callbacks.Of(proc) is { } d) return Callbacks.Invoke(d, hwnd, (nint)msg, w, l);
         return ((delegate* unmanaged<nint, uint, nint, nint, nint>)proc)(hwnd, msg, w, l);
     }
 
@@ -1215,7 +1221,8 @@ public static unsafe partial class Exports
         void Fire()
         {
             uint tick = (uint)Environment.TickCount64;
-            if (procPtr != 0) ((delegate* unmanaged<nint, uint, nuint, uint, void>)procPtr)(hwnd, WM_TIMER, id, tick);
+            if (Callbacks.Of(procPtr) is { } d) Callbacks.Invoke(d, hwnd, (nint)WM_TIMER, (nint)id, (nint)tick);
+            else if (procPtr != 0) ((delegate* unmanaged<nint, uint, nuint, uint, void>)procPtr)(hwnd, WM_TIMER, id, tick);
             else if (target is AppWindow a) a.Dispatch(WM_TIMER, (nint)id, 0);
         }
         var timer = new Timer(_ =>
@@ -1285,6 +1292,7 @@ internal sealed unsafe class AppWindow
     public nint Dispatch(uint msg, nint w, nint l)
     {
         if (WndProc == 0) return DefaultProc(Handle, msg, w, l);
+        if (Callbacks.Of(WndProc) is { } d) return Callbacks.Invoke(d, Handle, (nint)msg, w, l);
         return ((delegate* unmanaged<nint, uint, nint, nint, nint>)WndProc)(Handle, msg, w, l);
     }
 

@@ -12,6 +12,9 @@ internal static class Program
                        [--size <w>x<h>] [--title-prefix <text>] [--close] <App.dll|App.exe|folder> [-- app args]
                                                     Windows: the stock .exe and the WebGPU run side by side
           wpfrun prepare <App.dll|App.exe|folder>   write the generated files, print the command, do not run
+          wpfrun bundle [--out <dir>] [--feed <dir>] [--aot] <App.dll|App.exe|folder>
+                                                    the app as a page for the browser (WpfWebGpu.Sdk's browser head)
+          wpfrun serve [--port <n>] <dir>           serve a bundle's page, cross-origin isolated (its threads need it)
           wpfrun audit [--out <file.md>] <App.dll|App.exe|folder>
                                                     what the app needs that the stack on this OS lacks
           wpfrun reg import <file.reg>              macOS: load a regedit export into the registry apps see here
@@ -39,6 +42,8 @@ internal static class Program
                 "run" => Run(args[1..], execute: true),
                 "prepare" => Run(args[1..], execute: false),
                 "audit" => Audit(args[1..]),
+                "bundle" => Bundle.Run(args[1..]),
+                "serve" => Serve.Run(args[1..]),
                 "compare" => CompareCommand(args[1..]),
                 "clean" => Clean(args[1..]),
                 "reg" => RegFile.Run(args[1..]),

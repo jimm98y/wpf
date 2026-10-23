@@ -97,15 +97,50 @@ export function configureSurface(surfaceId, deviceId, format, viewFormat, alphaM
     const cfg = {
         device,
         format,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+        // COPY_DST: what a back buffer is presented with (surfacePresent)
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
         alphaMode,
     };
     if (viewFormat) cfg.viewFormats = [viewFormat];
     s.context.configure(cfg);
+    s.device = device;
+    if (s.back) { s.back.destroy(); s.back = null; }
+    if (relayedRuntime()) {
+        s.back = device.createTexture({
+            size: { width, height, depthOrArrayLayers: 1 },
+            format,
+            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING,
+            viewFormats: viewFormat ? [viewFormat] : [],
+        });
+        s.back.__canvasBacked = true;
+        if (viewFormat) s.back.__viewFormat = viewFormat;
+    }
+}
+
+// A canvas's current texture lives only until the JS task that took it returns to the event loop:
+// the browser presents it then and destroys it. On .NET's multithreaded runtime the app's code runs
+// on a worker, and each call it makes to this module reaches the page as a task of its own, so the
+// texture it acquired is gone by the time it submits what it drew into it. There the surface is a
+// texture of the bridge's own (s.back), which the frame is drawn into, and present copies it onto the
+// canvas's current texture in one call -- one task -- as a swap chain's present would.
+function relayedRuntime() {
+    try { return !!globalThis.getDotnetRuntime?.(0)?.runtimeBuildInfo?.wasmEnableThreads; }
+    catch { return false; }
+}
+
+export function surfacePresent(surfaceId) {
+    const s = get(surfaceId);
+    if (!s?.back) return;     // the canvas's own texture, presented when this task ends
+    const tex = s.context.getCurrentTexture();
+    const enc = s.device.createCommandEncoder();
+    enc.copyTextureToTexture({ texture: s.back }, { texture: tex },
+        { width: s.back.width, height: s.back.height, depthOrArrayLayers: 1 });
+    s.device.queue.submit([enc.finish()]);
 }
 
 export function surfaceGetCurrentTexture(surfaceId) {
     const s = get(surfaceId);
+    if (s.back) return put(s.back);
     try {
         const tex = s.context.getCurrentTexture();
         if (!tex) return 0;

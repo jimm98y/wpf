@@ -115,6 +115,44 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
     installListeners();
 }
 
+// The parts of a window that show, as Windows clips a child window to its ancestors' client areas and
+// under the windows above it: rectangles x,y,w,h in CSS pixels from the canvas's top-left, four numbers
+// to a rectangle; empty for the whole window. Drawn only there (clip-path), and pointed at only there
+// (topmostWindowAt): an ElementHost's canvas is the size of its control, which is cut to the pane it is
+// in, and took the clicks meant for the panes beside it.
+export function setVisibleRegion(handle, rects) {
+    const w = windows.get(handle);
+    if (!w) return;
+    const n = (rects || "").split(",").filter(v => v !== "").map(Number);
+    if (n.length < 4) { w.region = null; w.canvas.style.clipPath = ""; return; }
+    w.region = [];
+    let d = "";
+    for (let i = 0; i + 3 < n.length; i += 4) {
+        const [x, y, rw, rh] = [n[i], n[i + 1], n[i + 2], n[i + 3]];
+        w.region.push({ x, y, w: rw, h: rh });
+        d += `M${x} ${y}h${rw}v${rh}h${-rw}Z`;
+    }
+    w.canvas.style.clipPath = w.region.length ? `path('${d}')` : "inset(100%)";
+}
+
+function inRegion(w, r, clientX, clientY) {
+    if (!w.region) return true;
+    const x = clientX - r.left, y = clientY - r.top;
+    return w.region.some(p => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h);
+}
+
+// A window over the page's own (a dialog), rather than the page's own or a popup.
+export function isSecondaryWindow(handle) {
+    return !!windows.get(handle)?.secondary;
+}
+
+// The window draws its own frame (the WinForms host's WindowChrome: Windows' title bar, edges and the
+// shadow in the see-through margin round them), so the page gives it none of its own.
+export function setOwnFrame(handle) {
+    const w = windows.get(handle);
+    if (w) w.canvas.style.boxShadow = "none";
+}
+
 // Show/hide without tearing the canvas down (WPF's Window.Hide(), not Close()), so the same
 // window can be shown again -- what a caller reusing a cached window, such as a docking adorner
 // hidden between drags, expects. display:none rather than visibility:hidden: a hidden window must
@@ -472,7 +510,7 @@ function topmostWindowAt(clientX, clientY) {
     for (const [handle, w] of windows) {
         const r = w.canvas.getBoundingClientRect();
         const z = parseInt(w.canvas.style.zIndex || "0", 10);
-        if (clientX >= r.left && clientX < r.right && clientY >= r.top && clientY < r.bottom && z >= bestZ) {
+        if (clientX >= r.left && clientX < r.right && clientY >= r.top && clientY < r.bottom && z >= bestZ && inRegion(w, r, clientX, clientY)) {
             best = handle;
             bestZ = z;
         }

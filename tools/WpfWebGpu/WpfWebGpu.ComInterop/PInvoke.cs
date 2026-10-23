@@ -36,11 +36,11 @@ public static class PInvoke
     public static IntPtr HandleOf(SafeHandle? handle) => handle == null ? IntPtr.Zero : handle.DangerousGetHandle();
 
     /// <summary>A delegate argument: the function pointer the runtime hands native code for it (null: 0).</summary>
-    public static IntPtr DelegateToNative(Delegate? d) => d == null ? IntPtr.Zero : Marshal.GetFunctionPointerForDelegate(d);
+    public static IntPtr DelegateToNative(Delegate? d) => Callbacks.ToNative(d);
 
     /// <summary>A function pointer returned as a delegate type.</summary>
     public static Delegate? DelegateFromNative(IntPtr p, RuntimeTypeHandle type) =>
-        p == IntPtr.Zero ? null : Marshal.GetDelegateForFunctionPointer(p, Type.GetTypeFromHandle(type)!);
+        Callbacks.FromNative(p, Type.GetTypeFromHandle(type)!);
 
     /// <summary>A returned ANSI string: copied; the memory is CoTaskMem the caller owns, freed as the runtime frees it.</summary>
     public static string? TakeAnsi(IntPtr p)

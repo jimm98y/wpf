@@ -438,7 +438,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             return Find(family, bold, italic) != Find(family, false, false);
         }
 
+        /// <summary>A family's file: its own, else, for a family every Windows has, a substitute's.</summary>
         private static string? Resolve(string family, bool bold, bool italic)
+            => ResolveOwn(family, bold, italic) ?? Substitute(family, bold, italic);
+
+        // Families Windows always has, and what stands in for them where their files are not installed
+        // (a browser page has only the stack's bundled fonts, a Linux box its own). Metric-compatible
+        // first -- Liberation Sans for Arial's metrics, Selawik for Segoe UI's -- so text keeps the
+        // Windows layout. GDI+ has these families on every Windows, so code creates them by name and
+        // does not expect "cannot be found": app's start-up did exactly that for Microsoft Sans
+        // Serif, and stopped there in the browser.
+        private static readonly string[] s_sansSubstitutes = { "Liberation Sans", "Arial", "Helvetica", "Selawik", "DejaVu Sans", "Roboto", "Droid Sans" };
+        private static readonly string[] s_serifSubstitutes = { "Liberation Serif", "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" };
+        private static readonly string[] s_monoSubstitutes = { "Liberation Mono", "Courier New", "Cascadia Mono", "Cascadia Code", "Menlo", "DejaVu Sans Mono", "Droid Sans Mono" };
+        private static readonly string[] s_uiSubstitutes = { "Selawik", "Liberation Sans", "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans", "Roboto", "Droid Sans" };
+        private static readonly Dictionary<string, string[]> s_substitutes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Microsoft Sans Serif"] = s_sansSubstitutes, ["MS Sans Serif"] = s_sansSubstitutes, ["MS Shell Dlg"] = s_sansSubstitutes,
+            ["MS Shell Dlg 2"] = s_sansSubstitutes, ["Arial"] = s_sansSubstitutes, ["Tahoma"] = s_sansSubstitutes, ["Verdana"] = s_sansSubstitutes,
+            ["Calibri"] = s_sansSubstitutes, ["Trebuchet MS"] = s_sansSubstitutes, ["Arial Narrow"] = s_sansSubstitutes,
+            ["Segoe UI"] = s_uiSubstitutes, ["Segoe UI Semibold"] = s_uiSubstitutes, ["Segoe UI Light"] = s_uiSubstitutes, ["Segoe UI Variable"] = s_uiSubstitutes,
+            ["Times New Roman"] = s_serifSubstitutes, ["Cambria"] = s_serifSubstitutes, ["Georgia"] = s_serifSubstitutes, ["Palatino Linotype"] = s_serifSubstitutes,
+            ["Courier New"] = s_monoSubstitutes, ["Consolas"] = s_monoSubstitutes, ["Lucida Console"] = s_monoSubstitutes, ["Courier"] = s_monoSubstitutes,
+        };
+
+        private static string? Substitute(string family, bool bold, bool italic)
+        {
+            if (!s_substitutes.TryGetValue(family, out string[]? candidates)) return null;
+            foreach (string candidate in candidates)
+                if (!candidate.Equals(family, StringComparison.OrdinalIgnoreCase) && ResolveOwn(candidate, bold, italic) is { } path)
+                    return path;
+            return null;
+        }
+
+        private static string? ResolveOwn(string family, bool bold, bool italic)
         {
             int slot = (bold ? 1 : 0) | (italic ? 2 : 0);
 
@@ -755,7 +788,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             // Regular instance's family, and the file is the same either way; but a family that
             // BOTH a file and an instance claim (a static "Sitka Text" beside a variable one)
             // should come from the file, which is what Windows lists.
-            if (Resolve(family!, bold, italic) is { } direct
+            if (ResolveOwn(family!, bold, italic) is { } direct
                 && (!s_scannedInstances.TryGetValue(family!, out NamedInstance?[]? byName)
                     || byName[(bold ? 1 : 0) | (italic ? 2 : 0)] is not { } exact
                     || !string.Equals(exact.Path, direct, StringComparison.OrdinalIgnoreCase)))

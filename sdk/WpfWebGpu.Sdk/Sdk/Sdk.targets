@@ -138,6 +138,16 @@
     <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
     <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
     <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <!-- the rest of WindowsDesktop's own: an app built for it references them as part of its framework
+         and ships none of them (app's configurator compiles scripts with System.CodeDom) -->
+    <PackageReference Include="System.CodeDom" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.10" />
+    <PackageReference Include="System.Threading.AccessControl" Version="10.0.10" />
+    <!-- WindowsDesktop's: the reader of every resource that is not a string (a .resx's bitmaps and icons),
+         named in the resources themselves and so reached by name alone. -->
+    <PackageReference Include="System.Resources.Extensions" Version="10.0.10" />
     <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
 
     <!-- The font bundle, on the heads with no system fonts this renderer can use. It is a package
@@ -583,6 +593,18 @@
          static init. Same rationale as SuppressTrimAnalysisWarnings/TrimmerRootAssembly above:
          this SDK targets existing reflection-heavy WPF apps, unmodified. -->
     <JsonSerializerIsReflectionEnabledByDefault Condition="'$(JsonSerializerIsReflectionEnabledByDefault)' == ''">true</JsonSerializerIsReflectionEnabledByDefault>
+    <!-- Trimming otherwise turns ResourceManager's custom types off ("Use of ResourceManager for custom
+         types is disabled"), and every WinForms resource that is not a string (the bitmaps and icons of
+         a .resx, which a control's InitializeComponent reads) is one. On the desktop they are always
+         on; app's runtime control could not be made without them. -->
+    <CustomResourceTypesSupport Condition="'$(CustomResourceTypesSupport)' == ''">true</CustomResourceTypesSupport>
+    <!-- And two more of the desktop's always-on behaviours a trimmed publish turns off: the designer host
+         ("Designer support has been disabled in the app configuration"; app's configurator edits
+         displays in a hosted WinForms designer) and DefaultValueAttribute.Value for a type named by
+         string ("Runtime instantiation of this attribute is not allowed"; every property grid and
+         designer reads it). -->
+    <_DesignerHostSupport Condition="'$(_DesignerHostSupport)' == ''">true</_DesignerHostSupport>
+    <_DefaultValueAttributeSupport Condition="'$(_DefaultValueAttributeSupport)' == ''">true</_DefaultValueAttributeSupport>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
     <!-- Fingerprinting publishes _framework/dotnet.native.js under a content-hashed name as well as
          its plain one, and the placeholder task then refuses the duplicate ("already mapped to
@@ -625,6 +647,8 @@
     <TrimmerRootAssembly Include="System.IO.Packaging" />
     <TrimmerRootAssembly Include="System.Windows.Extensions" />
     <TrimmerRootAssembly Include="System.Configuration.ConfigurationManager" />
+    <!-- named by resources, not by code (DeserializingResourceReader) -->
+    <TrimmerRootAssembly Include="System.Resources.Extensions" />
 
     <!-- Keep these on the interpreter: they reference assemblies that are not in
          the browser bundle (WinForms, Accessibility, print pipeline) and none are
@@ -711,6 +735,40 @@
     </ItemGroup>
   </Target>
 
+  <!-- What the app references and does not ship (an assembly a Windows install leaves out because nothing
+       the app does needs it): a placeholder holding the types it names, so the runtime can load the
+       classes that name them (Placeholders.cs). Made at build, as copy-local, because the bundle is made
+       of the build's assets. What the app is built with (its references, its packages, the runtime
+       pack, the stack) is provided; only the rest is missing. -->
+  <Target Name="_WpfWebGpuPlaceholders" AfterTargets="ResolveAssemblyReferences" DependsOnTargets="_WpfWebGpuWin32CopyLocal"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
+    <PropertyGroup>
+      <_WpfWebGpuPlaceholderDir>$([MSBuild]::NormalizeDirectory('$(ProjectDir)$(IntermediateOutputPath)wpf-placeholders'))</_WpfWebGpuPlaceholderDir>
+      <_WpfWebGpuPlaceholderRsp>$(ProjectDir)$(IntermediateOutputPath)wpf-placeholders.rsp</_WpfWebGpuPlaceholderRsp>
+      <_WpfWebGpuDotnet>$(DOTNET_HOST_PATH)</_WpfWebGpuDotnet>
+      <_WpfWebGpuDotnet Condition="'$(_WpfWebGpuDotnet)' == ''">dotnet</_WpfWebGpuDotnet>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WpfWebGpuPlaceholderInput Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll' and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuWin32Root)'))" />
+      <_WpfWebGpuPlaceholderArg Include="--placeholders;--out;$(_WpfWebGpuPlaceholderDir)" />
+      <_WpfWebGpuPlaceholderArg Include="@(ReferenceCopyLocalPaths->WithMetadataValue('Extension', '.dll')->'--published=%(Filename)')" />
+      <_WpfWebGpuPlaceholderArg Include="@(ReferencePath->'--published=%(Filename)')" />
+      <_WpfWebGpuPlaceholderArg Include="@(RuntimePackAsset->WithMetadataValue('Extension', '.dll')->'--published=%(Filename)')" />
+      <_WpfWebGpuPlaceholderArg Include="--published=$(AssemblyName)" />
+      <!-- where an embedded assembly's own references resolve, to write it under the name asked for -->
+      <_WpfWebGpuPlaceholderArg Include="@(RuntimePackAsset->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
+      <_WpfWebGpuPlaceholderArg Include="@(ReferencePath->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
+      <_WpfWebGpuPlaceholderArg Include="@(_WpfWebGpuPlaceholderInput->'%(FullPath)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(_WpfWebGpuPlaceholderRsp)" Lines="@(_WpfWebGpuPlaceholderArg)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <Exec Command="&quot;$(_WpfWebGpuDotnet)&quot; &quot;$(WpfWebGpuWin32Root)tools/rewrite/wpf-rewrite.dll&quot; @&quot;$(_WpfWebGpuPlaceholderRsp)&quot;"
+          StandardOutputImportance="high" Condition="'@(_WpfWebGpuPlaceholderInput)' != ''" />
+    <ItemGroup>
+      <_WpfWebGpuPlaceholder Include="$(_WpfWebGpuPlaceholderDir)*.dll" />
+      <ReferenceCopyLocalPaths Include="@(_WpfWebGpuPlaceholder)" DestinationSubDirectory="" CopyLocal="true" AssetType="runtime" WpfWebGpuPlaceholder="true" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="_WpfWebGpuRewriteForBundle"
           AfterTargets="_ComputeAssembliesToPostprocessOnPublish"
           Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
@@ -729,6 +787,13 @@
       <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/wpf-browser;--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
       <_WpfWebGpuRewriteArg Include="@(_ManagedRuntimePackAssembly->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
       <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuRewriteInput->'%(FullPath)')" />
+      <!-- the multithreaded runtime's CoreLib: its Lock cannot tell threads apart (BuildRewrite.cs, CoreLibPatch) -->
+      <_WpfWebGpuCoreLib Include="@(ResolvedFileToPublish)" Condition="'$(WasmEnableThreads)' == 'true' and '%(Filename)%(Extension)' == 'System.Private.CoreLib.dll'" />
+      <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuCoreLib->'--corelib=%(FullPath)')" />
+      <!-- System.Drawing.Primitives: off Windows its SystemColors are a palette compiled in, Windows XP's;
+           made its Windows build, which asks user32 (BuildRewrite.cs, SystemColorsPatch) -->
+      <_WpfWebGpuPrimitives Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'System.Drawing.Primitives.dll'" />
+      <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuPrimitives->'--primitives=%(FullPath)')" />
     </ItemGroup>
     <WriteLinesToFile File="$(_WpfWebGpuRewriteRsp)" Lines="@(_WpfWebGpuRewriteArg)" Overwrite="true" WriteOnlyWhenDifferent="true" />
     <Exec Command="&quot;$(_WpfWebGpuDotnet)&quot; &quot;$(WpfWebGpuWin32Root)tools/rewrite/wpf-rewrite.dll&quot; @&quot;$(_WpfWebGpuRewriteRsp)&quot;"
@@ -745,14 +810,28 @@
       <ResolvedFileToPublish Include="@(_WpfWebGpuRewritten)" />
       <ResolvedFileToPublish Remove="@(_WpfWebGpuRewrittenPdb)" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuRewrittenPdb->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
+      <_WpfWebGpuPatchedCoreLib Include="@(_WpfWebGpuCoreLib->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" Condition="Exists('$(_WpfWebGpuRewriteDir)System.Private.CoreLib.dll')" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuCoreLib)" Condition="'@(_WpfWebGpuPatchedCoreLib)' != ''" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuPatchedCoreLib)" />
+      <_WpfWebGpuPatchedPrimitives Include="@(_WpfWebGpuPrimitives->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" Condition="Exists('$(_WpfWebGpuRewriteDir)System.Drawing.Primitives.dll')" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuPrimitives)" Condition="'@(_WpfWebGpuPatchedPrimitives)' != ''" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuPatchedPrimitives)" />
     </ItemGroup>
 
     <!-- what the rewritten assemblies call: the implementations and, under them, the stack's WinForms
-         (in the build's output, _WpfWebGpuWin32CopyLocal); without a rewrite, nothing calls them -->
-    <ItemGroup Condition="'@(_WpfWebGpuRewritten)' == ''">
+         (in the build's output, _WpfWebGpuWin32CopyLocal); without a rewrite (System.Drawing.Primitives'
+         GetSysColor is one), nothing calls them -->
+    <ItemGroup Condition="'@(_WpfWebGpuRewritten)' == '' and '@(_WpfWebGpuPatchedPrimitives)' == ''">
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish->WithMetadataValue('WpfWebGpuWin32Runtime', 'true'))" />
     </ItemGroup>
-    <ItemGroup Condition="'@(_WpfWebGpuRewritten)' != ''">
+    <!-- the placeholders (_WpfWebGpuPlaceholders) are linked with the rest, like any assembly of the app -->
+    <ItemGroup>
+      <ResolvedFileToPublish Condition="'%(ResolvedFileToPublish.WpfWebGpuPlaceholder)' == 'true'">
+        <PostprocessAssembly>true</PostprocessAssembly>
+        <RelativePath Condition="'%(ResolvedFileToPublish.RelativePath)' == ''">%(Filename)%(Extension)</RelativePath>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+    <ItemGroup Condition="'@(_WpfWebGpuRewritten)' != '' or '@(_WpfWebGpuPatchedPrimitives)' != ''">
       <!-- linked with the assemblies that call them (the linker resolves the calls against them) -->
       <ResolvedFileToPublish Condition="'%(ResolvedFileToPublish.WpfWebGpuWin32Runtime)' == 'true'">
         <PostprocessAssembly>true</PostprocessAssembly>
@@ -878,6 +957,23 @@
            browser truly cannot do. -->
       <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Diagnostics.Process'))" />
       <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Diagnostics.Process.dll" />
+    </ItemGroup>
+  </Target>
+
+  <!-- The same swap for a publish: _GetDefaultWasmAssembliesToBundle runs on the AOT path only, so an
+       interpreted bundle (WpfWebGpuAot=false, as wpfrun bundle builds) kept the throw-only framework
+       copies, and app's ribbon failed on SystemEvents.UserPreferenceChanged. Swapped in the publish
+       list once the linker's inputs are marked, keeping each item's metadata (the linker and the bundle
+       take the stack's file as they would have the original). -->
+  <Target Name="_WpfWebGpuBrowserPublishShims"
+          AfterTargets="_ComputeAssembliesToPostprocessOnPublish"
+          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuShimmed Include="@(ResolvedFileToPublish)"
+                         Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry' or '%(Filename)' == 'System.Diagnostics.Process')
+                                    and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and Exists('$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuShimmed)" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
     </ItemGroup>
   </Target>
 

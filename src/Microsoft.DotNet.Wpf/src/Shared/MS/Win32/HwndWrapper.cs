@@ -189,7 +189,17 @@ namespace MS.Win32
                                      (style & WS_VISIBLE) != 0, activatable);
                         // Route Cocoa content-size changes to a synthetic WM_SIZE so the registered hooks
                         // (HwndTarget re-render + HwndSource re-layout) run exactly as on Windows.
-                        cocoa.Resized += OnCocoaResized;
+                        // WM_SIZE carries the client size in DEVICE pixels, as Windows sends it and the browser
+                        // head reports it; Cocoa reports points. HwndSource lays a window with no Window in
+                        // it (an ElementHost's tree) out at lParam / DPI scale, so at points it came out half
+                        // the size of its window on a Retina display -- after every resize, the first layout
+                        // being from the creation size.
+                        cocoa.Resized += (w, h) =>
+                        {
+                            double scale = cocoa.GetBackingScale();
+                            if (!(scale > 0)) scale = 1.0;
+                            OnCocoaResized((int)System.Math.Round(w * scale), (int)System.Math.Round(h * scale));
+                        };
                         // Route a title-bar close-button click to a WM_CLOSE (which fires Closing/Closed
                         // and tears the window down, exactly as the Win32 close path does).
                         cocoa.Closed += OnCocoaClosed;

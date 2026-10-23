@@ -2057,8 +2057,16 @@ namespace System.Windows.Threading
             {
                 if (_frameDepth > 0)
                 {
-                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on the browser.");
+                    // A nested frame (ShowDialog, DispatcherOperation.Wait) blocks: on the multithreaded
+                    // runtime it can, and runs to its end as on Windows (BrowserBlocking).
+                    if (!MS.Internal.Interop.BrowserBlocking.CanBlock)
+                    {
+                        throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on the browser's single-threaded runtime.");
+                    }
+                    RunBrowserFrameBlocking(frame);
+                    return;
                 }
+                MS.Internal.Interop.BrowserBlocking.NoteContext();
                 RunBrowserPumpAsync(frame);
                 return;
             }
@@ -2202,11 +2210,19 @@ namespace System.Windows.Threading
                     // and made timer-driven animation visibly jitter. Timers with due times
                     // inside a frame fire on the next tick — 60Hz granularity, same as any
                     // display-paced app. Hidden tabs fall back to a slow JS-side timeout.
-                    await MS.Internal.Interop.BrowserWindow.NextFrameAsync().ConfigureAwait(false);
+                    // ...and on the page's thread (the multithreaded runtime resumes elsewhere otherwise)
+                    await MS.Internal.Interop.BrowserWindow.NextFrameOnPage();
 
                     if (_runLoop is null || !frame.Continue)
                     {
                         break;
+                    }
+
+                    // a nested frame blocking on this thread runs the queue itself, and this frame of the
+                    // page arrived through its drain of the JS queue: not again from in there
+                    if (_browserBlockingFrames > 0)
+                    {
+                        continue;
                     }
 
                     if (_disableProcessingCount > 0)
@@ -2305,6 +2321,82 @@ namespace System.Windows.Threading
             }
             finally
             {
+                _frameDepth--;
+                if (_frameDepth == 0)
+                {
+                    _exitAllFrames = false;
+                }
+            }
+        }
+
+        // A nested frame on the browser's multithreaded runtime: the frame pump's tick, run to the frame's
+        // end on this thread, paced by a short wait rather than the page's frame, with the thread's JS queue
+        // drained between ticks (the page's frames for WinForms' pump and the renderer, continuations). This
+        // dispatcher's frame pump stands aside meanwhile (_browserBlockingFrames); another framework's (a
+        // WinForms loop) goes on, as a modal loop on Windows dispatches every window's messages.
+        private int _browserBlockingFrames;
+
+        private void RunBrowserFrameBlocking(DispatcherFrame frame)
+        {
+            _frameDepth++;
+            _browserBlockingFrames++;
+            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
+            try
+            {
+                while (frame.Continue && _runLoop is not null)
+                {
+                    if (_disableProcessingCount > 0)
+                    {
+                        throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
+                    }
+                    SynchronizationContext oldSyncContext = SynchronizationContext.Current;
+                    SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
+                    try
+                    {
+                        MS.Internal.Interop.BrowserWindow.PumpEvents();
+                        if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
+                        {
+                            PromoteTimers(Environment.TickCount);
+                        }
+                        long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                        long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;
+                        do
+                        {
+                            ProcessQueue();
+                        }
+                        while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
+                               && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
+                               && frame.Continue);
+                        RaiseIdleIfQuiescent();
+                        if (frame.Continue)
+                        {
+                            MS.Internal.Interop.BrowserBlocking.DrainJSQueue();
+                        }
+                    }
+                    catch (Exception tickException)
+                    {
+                        // as the frame pump's tick: offered to Dispatcher.UnhandledException, and the loop goes on
+                        if (!CatchException(tickException))
+                        {
+                            Console.WriteLine($"WPF browser dispatcher: unhandled exception in a nested frame (it continues): {tickException}");
+                        }
+                    }
+                    finally
+                    {
+                        SynchronizationContext.SetSynchronizationContext(oldSyncContext);
+                    }
+                    if (!frame.Continue) break;
+                    int wait = 16;
+                    if (_dueTimeFound)
+                    {
+                        wait = Math.Clamp(_dueTimeInTicks - Environment.TickCount, 1, 16);
+                    }
+                    MS.Internal.Interop.BrowserBlocking.Wait(wait);
+                }
+            }
+            finally
+            {
+                _browserBlockingFrames--;
                 _frameDepth--;
                 if (_frameDepth == 0)
                 {

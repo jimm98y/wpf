@@ -3404,9 +3404,20 @@ namespace System.Windows.Forms
 
 					if (parent != null)
 						parent.PerformLayout (this, "Visible");
+				} else if (WindowDisagrees (value)) {
+					SetVisibleCore (value);
 				}
 			}
 		}
+
+		// Visible set to what it already is, on a control whose window says otherwise: a window made
+		// without WS_VISIBLE by CreateParams (DotNetBar's popup container strips it, and shows the
+		// menu by setting Visible = true), or shown or hidden behind WinForms' back (ShowWindow).
+		// Windows' SetVisibleCore ends with SetWindowPos(SWP_SHOWWINDOW / SWP_HIDEWINDOW) whenever
+		// the handle exists, so the window follows; here it was left as it was, and the menu never
+		// came up. Forms keep their own path (SetVisibleCore's Form branch).
+		private bool WindowDisagrees (bool value)
+			=> !(this is Form) && IsHandleCreated && XplatUI.IsVisible (Handle) != value;
 
 		internal bool ShouldSerializeVisible ()
 		{
@@ -5212,6 +5223,12 @@ namespace System.Windows.Forms
 
 				if (!(this is Form))
 					OnVisibleChanged (EventArgs.Empty);
+			} else if (WindowDisagrees (value)) {
+				// the flag is right and the window is not (see WindowDisagrees): the window follows it,
+				// not activated (SWP_NOACTIVATE, as Windows' SetVisibleCore shows it)
+				XplatUI.SetVisible (Handle, value, false);
+				if (value && parent != null)
+					parent.UpdateZOrderOfChild (this);
 			}
 		}
 

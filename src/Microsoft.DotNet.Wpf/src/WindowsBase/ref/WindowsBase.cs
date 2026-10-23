@@ -73,12 +73,20 @@ namespace MS.Internal.Interop
             public override string ToString() { throw null; }
         }
     }
+    public static partial class BrowserBlocking
+    {
+        public static bool CanBlock { get { throw null; } }
+        public static void DrainJSQueue() { }
+        public static void NoteContext() { }
+        public static void Wait(int ms) { }
+    }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
     public sealed partial class BrowserWindow : MS.Internal.Interop.IPlatformWindow
     {
         public BrowserWindow() { }
         public System.IntPtr Handle { get { throw null; } }
         public bool IsBorderless { get { throw null; } }
+        public bool IsSecondary { get { throw null; } }
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserKeyMessage> KeyInput { add { } remove { } }
         public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserMouseMessage> MouseInput { add { } remove { } }
@@ -99,11 +107,22 @@ namespace MS.Internal.Interop
         public void GetWindowPixelSize(out int width, out int height) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
         public static System.Threading.Tasks.Task NextFrameAsync() { throw null; }
+        public static MS.Internal.Interop.BrowserWindow.PageFrameAwaitable NextFrameOnPage() { throw null; }
+        public readonly partial struct PageFrameAwaitable : System.Runtime.CompilerServices.ICriticalNotifyCompletion, System.Runtime.CompilerServices.INotifyCompletion
+        {
+            public bool IsCompleted { get { throw null; } }
+            public MS.Internal.Interop.BrowserWindow.PageFrameAwaitable GetAwaiter() { throw null; }
+            public void GetResult() { }
+            public void OnCompleted(System.Action continuation) { }
+            public void UnsafeOnCompleted(System.Action continuation) { }
+        }
         public static void PumpEvents() { }
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
         public static void SetCursor(string cssCursor) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public void SetOwnFrame() { }
+        public void SetVisibleRegion(int[] rects) { }
         public readonly partial struct BrowserKeyMessage
         {
             private readonly object _dummy;
@@ -187,6 +206,7 @@ namespace MS.Internal.Interop
         public bool TakesKeyboardOnPress { get { throw null; } set { } }
         public static bool TryGetForeignOuterRectPixels(System.IntPtr viewOrWindow, out int x, out int y, out int width, out int height) { throw null; }
         public void AttachToParentWindow(System.IntPtr parentView) { }
+        public void SetVisibleRegion(int[] rects) { }
         public void GetResizeMode(out bool canResize, out bool canMinimize) { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }

@@ -68,7 +68,7 @@ internal static class WpfWebGpuWasmBoot
     }
 
     /// <summary>
-    ///  With WPF_WEBGPU_LOG_FIRST_CHANCE=1 (?firstchance=1 on the page), print EVERY exception the
+    ///  With WPF_WEBGPU_LOG_FIRST_CHANCE=1 (?firstchance=1 on the page; =stack, ?firstchance=stack, for the whole stack), print EVERY exception the
     ///  moment it is thrown, with its stack.
     /// </summary>
     /// <remarks>
@@ -80,13 +80,17 @@ internal static class WpfWebGpuWasmBoot
     /// </remarks>
     private static void InstallFirstChanceLogging()
     {
-        if (Environment.GetEnvironmentVariable("WPF_WEBGPU_LOG_FIRST_CHANCE") != "1") return;
+        string mode = Environment.GetEnvironmentVariable("WPF_WEBGPU_LOG_FIRST_CHANCE");
+        if (mode != "1" && mode != "stack") return;
+        // "stack" (?firstchance=stack): the whole stack the exception is thrown on, not only the frames
+        // it has unwound through when first seen -- who called the member that threw
+        bool whole = mode == "stack";
 
         AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
         {
             try
             {
-                Console.WriteLine($"FIRSTCHANCE {e.Exception.GetType().FullName}: {e.Exception.Message}\n{e.Exception.StackTrace}");
+                Console.WriteLine($"FIRSTCHANCE {e.Exception.GetType().FullName}: {e.Exception.Message}\n{(whole ? new System.Diagnostics.StackTrace(1, false).ToString() : e.Exception.StackTrace)}");
             }
             catch { }   // logging must never itself break the app
         };

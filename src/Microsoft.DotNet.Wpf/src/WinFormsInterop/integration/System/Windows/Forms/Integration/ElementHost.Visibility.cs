@@ -103,7 +103,11 @@ namespace System.Windows.Forms.Integration
         /// where it is a real child window). Cheap when nothing changed.</summary>
         private void SyncHostedWindow()
         {
+            if (OperatingSystem.IsMacOS()) { SyncHostedRegion(); return; }
             if (!CompositeIntoHostFrame || _source == null || _source.IsDisposed || !OnTreeThread) return;
+            // the browser's hosted canvas lies over the whole control; it shows and takes the pointer
+            // only where the control does, as a clipped child window
+            if (OperatingSystem.IsBrowser()) SyncHostedRegion();
             List<SD.Rectangle> pieces = VisiblePieces();
             bool on = pieces.Count > 0 && _placedW > 0 && _placedH > 0;
             if (on != _shown)
@@ -112,6 +116,32 @@ namespace System.Windows.Forms.Integration
                 _shown = on;
                 ShowHostedWindow(on);
             }
+        }
+
+        private string _region;
+
+        /// <summary>macOS, where the hosted window presents itself over the control (an NSWindow, a child
+        /// of the form's), and the browser, where it is a canvas over the control: only the parts of it
+        /// that would show on Windows show, and take the pointer (CocoaWindow's or BrowserWindow's region).
+        /// Without this the whole of it did -- app's display canvas ran out of the form's bottom,
+        /// over the dock, and over the panes beside it.</summary>
+        private void SyncHostedRegion()
+        {
+            if (_source == null || _source.IsDisposed || !OnTreeThread) return;
+            List<SD.Rectangle> pieces = VisiblePieces();
+            var rects = new int[pieces.Count * 4];
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                rects[i * 4] = pieces[i].X; rects[i * 4 + 1] = pieces[i].Y;
+                rects[i * 4 + 2] = pieces[i].Width; rects[i * 4 + 3] = pieces[i].Height;
+            }
+            // the window's size as well: the same pieces of a window that has since grown are another mask
+            string region = $"{_placedW}x{_placedH}:" + string.Join(",", rects);
+            if (region == _region) return;
+            _region = region;
+            if (s_trace) Console.WriteLine($"ElementHost: hosted window 0x{_source.Handle:x} region [{region}]");
+            if (OperatingSystem.IsBrowser()) MS.Internal.Interop.BrowserWindow.FromHandle(_source.Handle)?.SetVisibleRegion(rects);
+            else MS.Internal.Interop.CocoaWindow.FromHandle(_source.Handle)?.SetVisibleRegion(rects);
         }
 
         /// <summary>Whether the screen point (device pixels) is over a part of this control that a WinForms

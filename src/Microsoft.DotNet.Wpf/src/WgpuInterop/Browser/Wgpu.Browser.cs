@@ -609,7 +609,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal static WGPUStatus wgpuSurfacePresent(IntPtr surface)
         {
             // The browser presents the canvas's current texture automatically when
-            // the current JS task returns to the event loop.
+            // the current JS task returns to the event loop; a surface drawn from a worker
+            // (the multithreaded runtime) is copied onto it here (wgpu-interop.js surfacePresent).
+            WgpuBrowserJs.SurfacePresent((int)surface);
             return WGPUStatus.Success;
         }
 

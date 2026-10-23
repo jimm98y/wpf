@@ -7,6 +7,7 @@
 
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using WpfWebGpu.ComInterop;
 using Forms = System.Windows.Forms;
 
 namespace WpfWebGpu.Win32;
@@ -266,7 +267,8 @@ public static unsafe partial class Exports
         for (int i = 0; i < screens.Count; i++)
         {
             RECT r = screens[i].Bounds;
-            if (callback((nint)(i + 1), hdc, &r, data) == FALSE) break;
+            int go = Callbacks.Of((nint)callback) is { } d ? (int)Callbacks.Invoke(d, (nint)(i + 1), hdc, (nint)(&r), data) : callback((nint)(i + 1), hdc, &r, data);
+            if (go == FALSE) break;
         }
         return TRUE;
     }
