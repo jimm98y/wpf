@@ -79,9 +79,10 @@ namespace System.Windows.Interop
 
             Debug.Assert( null != _source );
 
-            // Off-Windows there is no Win32 focus (GetFocus/SetFocus). Our single Cocoa key window
-            // always holds OS focus; WPF's own keyboard-focus tracking is managed, so just report
-            // success and let WPF route keyboard input to the focused element.
+            // Off-Windows the window's style is the platform window's: the focus moves to it (the
+            // process's focus model, PlatformFocus, which also gives it the platform's keyboard) unless
+            // it is a popup, which never takes the focus (WS_EX_NOACTIVATE on Windows, below). Success
+            // is reported either way, as it was: the element focus is WPF's own.
             if (!OperatingSystem.IsWindows())
             {
                 if (!checkOnly)
@@ -89,6 +90,12 @@ namespace System.Windows.Interop
                     _acquiringFocusOurselves = true;
                     _restoreFocusWindow = IntPtr.Zero;
                     _restoreFocus = null;
+                    try
+                    {
+                        if (PlatformWindow.FromHandle(_source.Handle) is { IsBorderless: false })
+                            UnsafeNativeMethods.TrySetFocus(new HandleRef(this, _source.Handle));
+                    }
+                    finally { _acquiringFocusOurselves = false; }
                 }
                 return true;
             }

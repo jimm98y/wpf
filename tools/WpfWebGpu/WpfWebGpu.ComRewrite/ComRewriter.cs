@@ -43,6 +43,9 @@ public sealed class RewriteResult
     /// <summary>Windows P/Invokes whose signature the rewriter cannot marshal (they throw by name when called; on
     /// Windows they stay on the real function).</summary>
     public List<string> Win32Unsupported { get; } = new();
+    /// <summary>Calls of members that take a path, onto WindowsPaths (PathSubstitutions).</summary>
+    public int PathCalls;
+    public string PathSummary => $"{PathCalls} calls taking a path";
 
     public string Win32Summary => Win32Implemented + Win32Unimplemented + Win32Missing + Win32Routed + Win32Unsupported.Count == 0 ? "no Windows P/Invokes"
         : (Win32Routed > 0 ? $"{Win32Routed} Windows P/Invokes routed for the stack's windows" : $"Windows P/Invokes: {Win32Implemented} implemented, {Win32Unimplemented} unimplemented, {Win32Missing} not exported")
@@ -155,8 +158,9 @@ public static partial class ComRewriter
     /// <param name="pinvokes">its Windows P/Invokes, onto the stack's implementations (ComRewriter.PInvoke.cs);
     /// <paramref name="windows"/>: as the Windows head routes them</param>
     /// <param name="catalog">the Windows exports and their implementations (default: those in <paramref name="searchDirs"/>)</param>
+    /// <param name="paths">its calls of members that take a path, onto WindowsPaths (PathSubstitutions)</param>
     public static (MemoryStream Image, MemoryStream? Symbols, RewriteResult Result) RewriteToMemory(string input, IEnumerable<string> searchDirs, bool locationOnly = false,
-        bool com = true, bool pinvokes = false, bool windows = false, Win32Catalog? catalog = null)
+        bool com = true, bool pinvokes = false, bool windows = false, Win32Catalog? catalog = null, bool paths = false)
     {
         searchDirs = searchDirs.ToList();
         var result = new RewriteResult();
@@ -186,6 +190,7 @@ public static partial class ComRewriter
             if (locationOnly) work.RunLocationOnly();
             else if (com) work.Run();
             if (pinvokes) work.RunPInvokes(catalog ?? Win32Catalog.For(searchDirs), windows);
+            if (paths && PathSubstitutions.For(searchDirs) is { } ps) result.PathCalls = ps.Apply(module);
             module.Attributes &= ~ModuleAttributes.StrongNameSigned;
             var image = new MemoryStream();
             MemoryStream? sym = null;

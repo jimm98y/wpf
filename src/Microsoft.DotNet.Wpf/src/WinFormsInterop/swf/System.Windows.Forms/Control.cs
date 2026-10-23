@@ -4027,9 +4027,19 @@ namespace System.Windows.Forms
 				XplatUI.Invalidate(Handle, rc, false);
 
 				if (invalidateChildren) {
+					// RedrawWindow's RDW_ALLCHILDREN, as .NET asks it: every descendant window, each in
+					// the part of the rectangle over it -- not the children alone. DotNetBar's style
+					// change invalidates its form so, and a docked bar's caption, two levels down
+					// (form, dock site, bar), kept the old theme until it was clicked.
 					Control [] controls = child_controls.GetAllControls ();
-					for (int i=0; i<controls.Length; i++)
-						controls [i].Invalidate ();
+					for (int i=0; i<controls.Length; i++) {
+						Control c = controls [i];
+						Rectangle over = Rectangle.Intersect (rc, c.Bounds);
+						if (over.Width <= 0 || over.Height <= 0)
+							continue;
+						over.Offset (-c.Left, -c.Top);
+						c.Invalidate (over, true);
+					}
 				} else {
 					// If any of our children are transparent, we
 					// have to invalidate them anyways

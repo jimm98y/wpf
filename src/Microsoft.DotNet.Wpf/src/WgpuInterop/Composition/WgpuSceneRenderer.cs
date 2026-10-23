@@ -328,6 +328,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private sealed class CachedLayer
         {
             public IntPtr SubTex, SubView;     // sharp content layer (owned)
+            // SubTex's format: a window surface's is the frame's own (sRGB for an sRGB frame), so that
+            // what is composited back from it is what drawing it directly would have stored
+            public WGPUTextureFormat SubFormat = ReadbackFormat;
             public IntPtr BlurTex, BlurView;   // blurred layer for blur/shadow (owned; Zero if none)
             // An opacity layer holding ClearType text: each channel's own coverage (see
             // CoverageDrawData), so it composites per channel. Zero if none.
@@ -362,6 +365,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public PathGeometry? ClipDevice;
         }
         private readonly Dictionary<long, CachedLayer> _layerCache = new();
+        // Window surfaces drawn directly: their bake asked for paper from under the window (see CollectVisual)
+        private readonly HashSet<long> _directSurfaces = new();
 
         /// <summary>A blurred drop shadow shared by every layer bake with the same silhouette (see
         /// ShadowSilhouetteKey). Outlives the layers that use it: each use refreshes LastFrame, and
@@ -426,7 +431,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     (deadL ??= new List<long>()).Add(kv.Key);
                     CachedLayer c = kv.Value;
                     // Return the (same-size, reusable) RGBA layer textures to the pool; release the R8 mask.
-                    ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
+                    ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh, c.SubFormat);
                     if (c.CovTex != IntPtr.Zero) ReturnLayerTexture(c.CovTex, c.CovView, c.Rw, c.Rh);
                     if (c.BlurTex != IntPtr.Zero && c.ShadowKey == 0) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
                     if (c.MaskTex != IntPtr.Zero)
@@ -1601,7 +1606,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // and all of it inside the ~2.3 ms readback floor. The command is still decoded so
             // the intent is recorded; honour it only if a case is found where it actually pays.
             bool needsLayer = v.Effect != null || v.ClipGeometry != null || v.OpacityMask != null
-                || (vOpacity < 0.999 && CountDrawables(v) > 1);
+                || (vOpacity < 0.999 && CountDrawables(v) > 1)
+                // a window's surface (SceneVisual.CacheAsSurface), unless it holds a nested full-target pass
+                || (v.CacheAsSurface && s_surfaces && !_directSurfaces.Contains(v.Serial) && !HasNestedFullTargetContent(v));
 
             if (!needsLayer)
             {
@@ -1752,6 +1759,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         : stableRegion ? region : clip;
                     _layerCache[key] = cl = RenderLayerToCache(v, world, region, bakeClip, plan, width, height,
                         backdrop: fullTarget ? null : outData);
+                    // A window surface whose text took its paper from what lies under the window cannot
+                    // be composited back exactly (those pixels are not opaque in the texture, and round):
+                    // it is drawn directly, now and from then on, as a window that shows what is behind
+                    // it is redrawn on Windows rather than kept.
+                    if (v.CacheAsSurface && s_surfaces && cl.BackdropAsks is { Count: > 0 })
+                    {
+                        if (_directSurfaces.Count > 4096) _directSurfaces.Clear();
+                        _directSurfaces.Add(v.Serial);
+                        _layerCache.Remove(key);
+                        _retiredLayers.Add(cl);
+                        EmitSubtree(v, world, inheritedOpacity * vOpacity, clip, outData, plan, width, height, outFormat);
+                        return;
+                    }
                     cl.FullTarget = fullTarget;
                     cl.OrigTX = world.M31; cl.OrigTY = world.M32;
                     if (fullTarget)
@@ -1924,7 +1944,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             DrawData? backdrop = null)
         {
             int rx = region.X, ry = region.Y, rw = region.W, rh = region.H;
-            (IntPtr subTex, IntPtr subView) = CreateOwnedLayerTexture(rw, rh);
+            // A window surface is baked as the frame would have drawn it: into an sRGB texture when the
+            // frame is sRGB. In the linear RGBA8 of other layers, ClearType text came back a level off
+            // in places; in the frame's own encoding an opaque pixel round-trips exactly.
+            WGPUTextureFormat subFormat = v.CacheAsSurface && s_surfaces && _srgbOutput ? OffscreenFormat : ReadbackFormat;
+            (IntPtr subTex, IntPtr subView) = RentLayerTexture(rw, rh, subFormat);
             DrawData subData = RentDrawData();
             if (backdrop is not null && PlainOpacityLayer(v))
             {
@@ -1933,13 +1957,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             float sOX = _devOX, sOY = _devOY;
             _devOX = rx; _devOY = ry;
-            EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, ReadbackFormat);
+            EmitSubtree(v, world, 1.0, clip, subData, plan, rw, rh, subFormat);
             _devOX = sOX; _devOY = sOY;
-            plan.Add(new LayerPass(subView, true, default, subData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
+            plan.Add(new LayerPass(subView, true, default, subData, subFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
 
-            var cl = new CachedLayer { SubTex = subTex, SubView = subView, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
+            var cl = new CachedLayer { SubTex = subTex, SubView = subView, SubFormat = subFormat, Rx = rx, Ry = ry, Rw = rw, Rh = rh };
             if (subData.BackdropAsks is { } asks) cl.BackdropAsks = new(asks);
-            if (s_layerSubpixel && PlainOpacityLayer(v) && CoverageDrawData(subData) is { } covData)
+            // (not for a window surface: its text is over the window's own paper, in the same texture,
+            // and blends there as it would drawn directly -- an 8-bit coverage composited later was a
+            // level off ClearType's direct blend)
+            if (s_layerSubpixel && PlainOpacityLayer(v) && !(v.CacheAsSurface && s_surfaces) && CoverageDrawData(subData) is { } covData)
             {
                 (cl.CovTex, cl.CovView) = CreateOwnedLayerTexture(rw, rh);
                 plan.Add(new LayerPass(cl.CovView, true, default, covData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
@@ -2352,7 +2379,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private void ReleaseCachedLayer(CachedLayer c)
         {
-            ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh);
+            ReturnLayerTexture(c.SubTex, c.SubView, c.Rw, c.Rh, c.SubFormat);
             if (c.CovTex != IntPtr.Zero) ReturnLayerTexture(c.CovTex, c.CovView, c.Rw, c.Rh);
             if (c.BlurTex != IntPtr.Zero && c.ShadowKey == 0) ReturnLayerTexture(c.BlurTex, c.BlurView, c.Rw, c.Rh);
             if (c.MaskTex != IntPtr.Zero)
@@ -2489,8 +2516,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 case DropShadowEffect d: HV(102); HF((float)d.BlurRadius); HF((float)d.OffsetX); HF((float)d.OffsetY); HF(d.Color.A); break;
                 default: HV(100); break;
             }
-            HashVisual(v, world, bx, by);
+            if (v.CacheAsSurface && s_surfaces) HashSurface(v, world);
+            else HashVisual(v, world, bx, by);
             return _hash;
+        }
+
+        // WF_SURFACES=0 (diagnostics): window surfaces (SceneVisual.CacheAsSurface) are drawn like any
+        // other subtree, every frame, instead of from the texture each keeps.
+        private static readonly bool s_surfaces = Environment.GetEnvironmentVariable("WF_SURFACES") != "0";
+
+        /// <summary>A window surface's key (SceneVisual.CacheAsSurface): what it is drawn from never
+        /// changes once recorded, so its identity says what its content is; its own state (opacity, clip,
+        /// mask) is set as it is composited and is hashed, and so are its children's identities and
+        /// places, which are added to it afterwards (a child window's frame, a popup's shadow).</summary>
+        private void HashSurface(SceneVisual v, Matrix3x2 w)
+        {
+            HV(0x53555246L);   // 'SURF'
+            HF(w.M11); HF(w.M12); HF(w.M21); HF(w.M22);
+            HV(v.Serial);
+            HV(BitConverter.DoubleToInt64Bits(v.Opacity));
+            if (v.Clip is { } c) HR(c); else HV(7);
+            if (v.OpacityMask is { } m) HashBrush(m);
+            HV(v.Content.Count);
+            foreach (SceneVisual ch in v.Children)
+            {
+                HV(ch.Serial);
+                Matrix3x2 l = ch.LocalToParent;
+                HF(l.M11); HF(l.M12); HF(l.M21); HF(l.M22); HF(l.M31); HF(l.M32);
+            }
         }
 
         // bx/by: the layer's top-node world translation. Each node's translation is hashed relative to it
@@ -2713,14 +2766,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // frames instead. Card layer regions are stable size (content bounds include the opaque card
         // background), so exact-size matching reuses well. Cleared on use, so stale contents are fine.
         private readonly List<(IntPtr Tex, IntPtr View, int W, int H)> _freeLayerTex = new();
+        // ...and the sRGB ones a window surface is baked into (RenderLayerToCache), kept apart
+        private readonly List<(IntPtr Tex, IntPtr View, int W, int H)> _freeSrgbLayerTex = new();
 
-        private (IntPtr Tex, IntPtr View) RentLayerTexture(int width, int height)
+        private (IntPtr Tex, IntPtr View) RentLayerTexture(int width, int height, WGPUTextureFormat format = ReadbackFormat)
         {
-            for (int i = 0; i < _freeLayerTex.Count; i++)
-                if (_freeLayerTex[i].W == width && _freeLayerTex[i].H == height)
+            List<(IntPtr Tex, IntPtr View, int W, int H)> pool = format == ReadbackFormat ? _freeLayerTex : _freeSrgbLayerTex;
+            for (int i = 0; i < pool.Count; i++)
+                if (pool[i].W == width && pool[i].H == height)
                 {
-                    (IntPtr Tex, IntPtr View, int W, int H) hit = _freeLayerTex[i];
-                    _freeLayerTex.RemoveAt(i);
+                    (IntPtr Tex, IntPtr View, int W, int H) hit = pool[i];
+                    pool.RemoveAt(i);
                     return (hit.Tex, hit.View);
                 }
             PerfLayers++;
@@ -2729,7 +2785,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding,
                 dimension = WGPUTextureDimension._2D,
                 size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
-                format = ReadbackFormat,
+                format = format,
                 mipLevelCount = 1,
                 sampleCount = 1,
             };
@@ -2784,15 +2840,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _freeMaskTex.Add((tex, view, width, height));
         }
 
-        private void ReturnLayerTexture(IntPtr tex, IntPtr view, int width, int height)
+        private void ReturnLayerTexture(IntPtr tex, IntPtr view, int width, int height, WGPUTextureFormat format = ReadbackFormat)
         {
             const int Cap = 64;   // bound the pool; release extras (e.g. after a window resize)
-            if (tex == IntPtr.Zero || _freeLayerTex.Count >= Cap)
+            List<(IntPtr Tex, IntPtr View, int W, int H)> pool = format == ReadbackFormat ? _freeLayerTex : _freeSrgbLayerTex;
+            if (tex == IntPtr.Zero || pool.Count >= Cap)
             {
                 if (tex != IntPtr.Zero) { wgpuTextureViewRelease(view); wgpuTextureRelease(tex); }
                 return;
             }
-            _freeLayerTex.Add((tex, view, width, height));
+            pool.Add((tex, view, width, height));
         }
 
         // The region a layer effect actually touches: the content bounds plus the blur spread (and, for
@@ -3370,6 +3427,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     case GeometryStroke s: AccGeometry(s.Geometry, world, (float)s.Style.Thickness * 0.5f, ref minX, ref minY, ref maxX, ref maxY); break;
                     case GeometryDrawing d: AccGeometry(d.Geometry, world, (float)d.StrokeStyle.Thickness * 0.5f, ref minX, ref minY, ref maxX, ref maxY); break;
                     case GlyphRunDraw g: AccText(g, world, ref minX, ref minY, ref maxX, ref maxY); break;
+                    // GDI+ text (a WinForms window's): its realized levels where it has them, in the
+                    // recording's device space, and the run it falls back to. Left out, a window whose
+                    // picture is text and images alone (DotNetBar's double-buffered combo boxes) had no
+                    // bounds, and as a cached surface it was not drawn at all.
+                    case GdiPlusTextDraw gt:
+                        if (gt.Run.Pre is { } lv && lv.Width > 0 && lv.Height > 0)
+                            AccRect(lv.Left, lv.Top, lv.Width, lv.Height, world, 0f, ref minX, ref minY, ref maxX, ref maxY);
+                        if (gt.Fallback != null) AccText(gt.Fallback, world, ref minX, ref minY, ref maxX, ref maxY);
+                        break;
+                    case NestedVisualDraw nv when nv.Visual != null:
+                        AccumulateContentBounds(nv.Visual, nv.Visual.LocalToParent * world, ref minX, ref minY, ref maxX, ref maxY);
+                        break;
                     // A Viewport3D occupies its viewport rect. This used to be unnecessary because a
                     // Viewport3D forced its enclosing layer full-target; now that the layer is sized
                     // to its content, leaving 3D out of the bounds gave a region that excluded it and
@@ -3774,7 +3843,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             float sx1 = MathF.Max(x0, x1 - 1f), sy1 = MathF.Max(y0, y1 - 1f);
             foreach (Vector2 c in new[] { new Vector2(x0, y0), new Vector2(sx1, y0), new Vector2(x0, sy1), new Vector2(sx1, sy1) })
             {
-                Vector2 p = Vector2.Transform(c - new Vector2(ox, oy), fromDevice);
+                // fromDevice inverts the draw's world, which maps to ABSOLUTE device coordinates (only
+                // ToNdc takes the pass origin off), and the box is asked in them too: taking the origin
+                // off again looked a region-sized layer's text up at the wrong place on its gradient --
+                // a flat paper where there was a field (a app pane header, a level off as a
+                // window surface). The origin is the pass's, kept for callers.
+                Vector2 p = Vector2.Transform(c, fromDevice);
                 float t = Math.Clamp(Vector2.Dot(p - start, axis) / len2, 0f, 1f);
                 tMin = MathF.Min(tMin, t); tMax = MathF.Max(tMax, t);
             }
@@ -7089,6 +7163,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _freeVtx.Clear(); _freeIdx.Clear(); _inUseBufs.Clear();
             foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeLayerTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
             _freeLayerTex.Clear();
+            foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeSrgbLayerTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
+            _freeSrgbLayerTex.Clear();
             foreach ((IntPtr Tex, IntPtr View, int _) in _freeEdgeTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
             _freeEdgeTex.Clear();
             foreach ((IntPtr Tex, IntPtr View, int _, int _) in _freeMaskTex) { wgpuTextureViewRelease(View); wgpuTextureRelease(Tex); }
@@ -7481,9 +7557,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // its destination factor is one number and here each lamp needs its own.
                 if (kind is FillKind.TextSubpixelMultiply or FillKind.LayerSubpixelMultiply)
                 {
-                    // dst *= (1 - coverage), per channel.
+                    // dst *= (1 - coverage), per channel. The alpha is source-over in this one pass (and
+                    // left alone by the add): split across the two, it was rounded in between, and an
+                    // opaque destination came out at 254 under the text -- a window surface composited
+                    // from such a texture let a level of what is under it show through.
                     blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrc };
-                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha };
+                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.OneMinusSrcAlpha };
                 }
                 else if (kind == FillKind.LayerWindowFade)
                 {
@@ -7499,9 +7578,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 else if (kind is FillKind.TextSubpixelAdd or FillKind.LayerSubpixelAdd)
                 {
-                    // dst += colour * coverage, per channel.
+                    // dst += colour * coverage, per channel; the alpha was done by the multiply.
                     blend.color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
-                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.One };
+                    blend.alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.Zero, dstFactor = WGPUBlendFactor.One };
                 }
                 // Coverage / brush-alpha passes write the mask value directly (single opaque
                 // quad into a cleared R8 target) — no blending. All others blend premultiplied.

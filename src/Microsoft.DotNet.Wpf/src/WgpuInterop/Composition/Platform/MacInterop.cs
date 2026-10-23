@@ -211,12 +211,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         // window server, and an ElementHost asks where its form's window is on every frame -- a few
         // milliseconds each, a third of what a hosted WPF tree cost while its form was being resized.
         private static double s_primaryHeight;
-        private static long s_primaryHeightAt = long.MinValue;
+        private static long s_primaryHeightAt;   // 0: never read
 
         internal static double PrimaryScreenHeight()
         {
             long now = Environment.TickCount64;
-            if (now - s_primaryHeightAt < 1000) return s_primaryHeight;
+            if (s_primaryHeightAt != 0 && s_primaryHeight > 0 && now - s_primaryHeightAt < 1000) return s_primaryHeight;
             IntPtr screens = Send(objc_getClass("NSScreen"), Sel("screens"));
             IntPtr primary = screens != IntPtr.Zero && SendNUInt(screens, Sel("count")) > 0
                 ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)

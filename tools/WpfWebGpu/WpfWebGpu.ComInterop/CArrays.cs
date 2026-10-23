@@ -114,7 +114,7 @@ public static unsafe partial class Com
 
     /// <summary>A blittable element's size (an enum's underlying type's; a char is UTF-16).</summary>
     private static int BlitSize(Type e) => e.IsEnum ? BlitSize(Enum.GetUnderlyingType(e)) : e == typeof(char) ? 2 : e == typeof(bool) ? 1
-        : e.IsPrimitive ? Buffer.ByteLength(Array.CreateInstance(e, 1)) : Marshal.SizeOf(e);
+        : e.IsPrimitive ? Buffer.ByteLength(Array.CreateInstance(e, 1)) : NativeSizeOf(e);
 
     /// <summary>Native elements (<paramref name="n"/>) as a managed array; the buffer stays the caller's.</summary>
     public static Array? ElemArrayFromNativeN(IntPtr p, int n, int kind, RuntimeTypeHandle arrayType, bool outOnly)
@@ -165,7 +165,7 @@ public static unsafe partial class Com
     {
         if (a == null || p == IntPtr.Zero) return;
         Type t = a.GetType().GetElementType()!;
-        int size = Marshal.SizeOf(t);
+        int size = NativeSizeOf(t);
         for (int i = 0; i < Math.Min(Math.Max(0, n), a.Length); i++)
             if (a.GetValue(i) is { } e) WriteStruct(e, p + i * size, t, deleteOld: true);
     }

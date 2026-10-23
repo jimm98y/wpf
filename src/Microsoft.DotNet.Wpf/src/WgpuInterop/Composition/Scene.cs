@@ -865,6 +865,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public bool BitmapCached { get; set; }
 
+        /// <summary>
+        /// A window's surface, as Windows keeps one per window: the subtree is rendered once into a
+        /// texture of its own and composited from it on later frames, until it is a different
+        /// subtree. What it is drawn from never changes once recorded (a repaint records a new
+        /// scene; SceneReuse keeps the old objects only where they are equal), so the cache is keyed
+        /// by the visual's identity, its own state and its children's identities -- not by hashing
+        /// the content, which costs what the cache saves. A WinForms window that is only moved (its
+        /// form resized around it) is a quad, as a moved HWND keeps its pixels.
+        /// </summary>
+        public bool CacheAsSurface { get; set; }
+
+        private static long s_serial;
+
+        /// <summary>A number no other visual has: this visual's identity in a cache key.</summary>
+        public long Serial { get; } = System.Threading.Interlocked.Increment(ref s_serial);
+
         /// <summary>When set, the subtree is a SNAPSHOT: it is rendered 1:1 over
         /// <see cref="SceneSnapshot.Source"/> into its own texture, and that texture is drawn stretched
         /// into <see cref="SceneSnapshot.Dest"/> with nearest sampling at <see cref="Opacity"/> -- what

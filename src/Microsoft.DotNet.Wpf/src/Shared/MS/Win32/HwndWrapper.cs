@@ -15,6 +15,8 @@ namespace MS.Win32
         static HwndWrapper()
         {
             s_msgGCMemory = UnsafeNativeMethods.RegisterWindowMessage("HwndWrapper.GetGCMemMessage");
+            // WPF's windows in the process's focus model (FocusWindows)
+            MS.Internal.Interop.PlatformFocus.Register(new FocusWindows());
         }
 
         public HwndWrapper(
@@ -347,6 +349,8 @@ namespace MS.Win32
                     hwndSubclass.Dispose();
                 }
             }
+            // a WPF window in the focus model (FocusWindows), as the other heads' are
+            if (_handle != 0) lock (s_byHandleLock) { s_byHandle[_handle] = this; }
             GC.KeepAlive(initialWndProc);
         }
 
@@ -399,6 +403,7 @@ namespace MS.Win32
                 if (_handle != IntPtr.Zero)
                 {
                     lock (s_byHandleLock) { s_byHandle.Remove(_handle); }
+                    if (MS.Internal.Interop.PlatformFocus.GetFocus() == _handle) MS.Internal.Interop.PlatformFocus.FocusMovedByPlatform(IntPtr.Zero);
 
                     // A window that still holds the mouse capture is being destroyed. MouseCaptureHandle
                     // is this stack's stand-in for Win32 GetCapture(), and it is cleared only on an
@@ -419,6 +424,12 @@ namespace MS.Win32
                 return;
             }
 
+            if (_handle != 0)
+            {
+                lock (s_byHandleLock) { s_byHandle.Remove(_handle); }
+                // a destroyed window has no focus: Win32 leaves none (the window that gets it next is told)
+                if (MS.Internal.Interop.PlatformFocus.GetFocus() == _handle) MS.Internal.Interop.PlatformFocus.FocusMovedByPlatform(IntPtr.Zero);
+            }
             if (isHwndBeingDestroyed)
             {
                 // The window is in the process of being destroyed.  We can't call UnregisterClass yet
@@ -475,6 +486,24 @@ namespace MS.Win32
         private static readonly System.Collections.Generic.Dictionary<IntPtr, HwndWrapper> s_byHandle = new();
         private static readonly object s_byHandleLock = new();
 
+        // WPF's windows in the process's focus model (PlatformFocus), on every head: the registry above
+        // says which handles are WPF's (on Windows too, where it holds the real HWNDs).
+        private sealed class FocusWindows : MS.Internal.Interop.PlatformFocus.IWindowSystem
+        {
+            public bool Owns(IntPtr handle) { lock (s_byHandleLock) return s_byHandle.ContainsKey(handle); }
+
+            public void Deliver(IntPtr handle, int msg, IntPtr wParam, IntPtr lParam) => DispatchMessage(handle, msg, wParam, lParam);
+
+            // user32 sends a real HWND its own focus messages when its native focus moves
+            public bool GetsNativeFocusMessages(IntPtr handle) => OperatingSystem.IsWindows();
+
+            public void TakeNativeKeyboard(IntPtr handle)
+            {
+                if (OperatingSystem.IsWindows()) MS.Internal.Interop.PlatformFocus.SetNativeFocus(handle);
+                else MS.Internal.Interop.PlatformWindow.FromHandle(handle)?.TakeKeyboard();
+            }
+        }
+
         /// <summary>
         /// Off-Windows stand-in for a synchronous SendMessage: runs the target window's managed WndProc
         /// (and its full hook chain) for <paramref name="msg"/>. This is what makes message-driven
@@ -521,14 +550,16 @@ namespace MS.Win32
         private void OnCocoaActiveChanged(bool active)
         {
             if (_handle == IntPtr.Zero) return;
-            const int WM_ACTIVATE = 0x0006, WM_SETFOCUS = 0x0007, WM_KILLFOCUS = 0x0008;
+            const int WM_ACTIVATE = 0x0006;
             const int WA_INACTIVE = 0, WA_ACTIVE = 1;
             bool handled = false;
             try
             {
                 WndProc(_handle, WM_ACTIVATE, (IntPtr)(active ? WA_ACTIVE : WA_INACTIVE), IntPtr.Zero, ref handled);
-                handled = false;
-                WndProc(_handle, active ? WM_SETFOCUS : WM_KILLFOCUS, IntPtr.Zero, IntPtr.Zero, ref handled);
+                // The focus goes with the key window: the process's focus model tells this window and
+                // the one that had the focus (a WinForms control, another WPF window), as Win32 does.
+                if (active) MS.Internal.Interop.PlatformFocus.FocusMovedByPlatform(_handle);
+                else if (MS.Internal.Interop.PlatformFocus.GetFocus() == _handle) MS.Internal.Interop.PlatformFocus.FocusMovedByPlatform(IntPtr.Zero);
             }
             catch { }   // a callback exception must not break the Cocoa event pump that raised this
         }
@@ -612,6 +643,12 @@ namespace MS.Win32
                 return IntPtr.Zero;
             }
 
+
+            // The focus messages the OS sends a real window (Windows), and the ones sent here: the
+            // process's focus model follows them (PlatformFocus).
+            const int WM_SETFOCUS_ = 0x0007, WM_KILLFOCUS_ = 0x0008;
+            if (msg == WM_SETFOCUS_ || msg == WM_KILLFOCUS_)
+                MS.Internal.Interop.PlatformFocus.NoteFocusMessage(hwnd, msg, wParam);
 
             // Call all of the hooks
             if(_hooks is not null)

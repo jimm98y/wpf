@@ -11,6 +11,9 @@
 // 3. Every app assembly that P/Invokes a Windows DLL is rewritten for those P/Invokes (Documentation/
 //    pinvoke-rewriter.md): onto the stack's implementations off Windows; on Windows, those the stack routes
 //    for its own windows.
+// 5. Every app assembly that calls a member taking a path (File.Exists, Path.Combine, XmlDocument.Load, ...) is
+//    rewritten for those calls onto WindowsPaths, which reads '\' as a separator as Windows does; on Windows
+//    too, where they are the members themselves (PathSubstitutions).
 // 4. The chosen leave the deps, and their names, original paths and what of them is rewritten go to the
 //    runtimeconfig (WpfWebGpu.ComImport): the startup hook rewrites each when it is first loaded.
 //
@@ -155,14 +158,26 @@ internal static class ComImportStep
                 pinvokes.Add(f.Name);
             }
 
+        // 5. (needs no verdicts either) the assemblies that call a member taking a path
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pathScope = Scope(Environment.GetEnvironmentVariable("WPF_PATHS_REWRITE"));
+        PathSubstitutions? pathSubs = PathSubstitutions.For(searchDirs);
+        if (pathSubs == null) notes.Add("paths: no WpfWebGpu.ComInterop found; calls taking a path are not rewritten");
+        else
+            foreach (var f in files)
+            {
+                if (IsEntryFile(f) || !f.ILOnly || !pathSubs.MayUse(f.File)) continue;
+                if (!pathScope(f.Name)) { notes.Add($"paths {f.Name}: left (WPF_PATHS_REWRITE)"); continue; }
+                paths.Add(f.Name);
+            }
+
         var candidates = files.Where(f => f.DeclaresCom).ToList();
         // An assembly rewritten for its P/Invokes is loaded from memory as well, with no file: what asks
         // where it is goes through the caller rewriting below (step 2), as for a COM-rewritten one.
-        if (candidates.Count == 0 && pinvokes.Count == 0)
+        if (candidates.Count == 0 && pinvokes.Count == 0 && paths.Count == 0)
         {
-            foreach (var f in files.Where(f => pinvokes.Contains(f.Name))) Take(f, list, ComImportLoader.Parts.PInvokes);
             Finish();
-            notes.Add($"rewriter: {files.Count} app assemblies read, none declares COM types; {pinvokes.Count} rewritten for their Windows P/Invokes; {total.ElapsedMilliseconds} ms");
+            notes.Add($"rewriter: {files.Count} app assemblies read, none declares COM types, P/Invokes Windows or takes a path; {total.ElapsedMilliseconds} ms");
             return;
         }
         foreach (var c in candidates.Where(c => !inScope(c.Name))) notes.Add($"comimport {c.Name}: left (WPF_COMIMPORT_REWRITE)");
@@ -253,7 +268,7 @@ internal static class ComImportStep
         // every component's signer with it: with no file it found none, every point manager was "custom",
         // and app held back even its licence information during the demo's startup delay.
         var callers = new Dictionary<string, AppFile>(StringComparer.OrdinalIgnoreCase);
-        if (chosen.Count > 0 || pinvokes.Count > 0)
+        if (chosen.Count > 0 || pinvokes.Count > 0 || paths.Count > 0)
         {
             foreach (var f in files.Where(f => f.MayReadLocations))
             {
@@ -264,7 +279,7 @@ internal static class ComImportStep
                 dirty = true;
             }
             var askers = files.Where(f => f.Asks is { AsksOthers: true }).ToList();
-            var rewritten = new HashSet<string>(chosen.Keys.Concat(pinvokes), StringComparer.OrdinalIgnoreCase);
+            var rewritten = new HashSet<string>(chosen.Keys.Concat(pinvokes).Concat(paths), StringComparer.OrdinalIgnoreCase);
             for (bool grew = true; grew;)
             {
                 grew = false;
@@ -298,12 +313,13 @@ internal static class ComImportStep
         }
         foreach (var x in callers.Values) if (!chosen.ContainsKey(x.Name)) Add(x, ComImportLoader.Parts.Location);
         foreach (var f in files) if (pinvokes.Contains(f.Name)) Add(f, ComImportLoader.Parts.PInvokes);
-        // a P/Invoke-rewritten assembly's own location calls (Assembly.GetExecutingAssembly().Location): it has no file
+        foreach (var f in files) if (paths.Contains(f.Name)) Add(f, ComImportLoader.Parts.Paths);
+        // a P/Invoke- or path-rewritten assembly's own location calls (Assembly.GetExecutingAssembly().Location): it has no file
         foreach (var f in files)
-            if (pinvokes.Contains(f.Name) && f.MayReadLocations && !chosen.ContainsKey(f.Name))
+            if ((pinvokes.Contains(f.Name) || paths.Contains(f.Name)) && f.MayReadLocations && !chosen.ContainsKey(f.Name))
             {
                 Add(f, ComImportLoader.Parts.Location);
-                if (!callers.ContainsKey(f.Name)) notes.Add($"comimport {f.Name}: its location calls rewritten with its P/Invokes -- it is loaded from memory and may ask where it is");
+                if (!callers.ContainsKey(f.Name)) notes.Add($"comimport {f.Name}: its location calls rewritten with its {(pinvokes.Contains(f.Name) ? "P/Invokes" : "calls taking a path")} -- it is loaded from memory and may ask where it is");
             }
         foreach (var (f, p) in parts.Values) Take(f, list, p);
         Finish();
@@ -314,7 +330,7 @@ internal static class ComImportStep
             catch (IOException) { }
         }
         notes.Add($"rewriter: {files.Count} app assemblies read, {candidates.Count} declare COM types, {judged} judged now (the rest cached), " +
-                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls, {pinvokes.Count} for their Windows P/Invokes; {total.ElapsedMilliseconds} ms");
+                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls, {pinvokes.Count} for their Windows P/Invokes, {paths.Count} for their calls taking a path; {total.ElapsedMilliseconds} ms");
 
         void Finish()
         {
@@ -331,6 +347,7 @@ internal static class ComImportStep
         if ((parts & ComImportLoader.Parts.Com) != 0) names.Add("com");
         if ((parts & ComImportLoader.Parts.Location) != 0) names.Add("location");
         if ((parts & ComImportLoader.Parts.PInvokes) != 0) names.Add("pinvoke");
+        if ((parts & ComImportLoader.Parts.Paths) != 0) names.Add("paths");
         list.Add($"{f.Name}|{f.File}|{string.Join(",", names)}");
     }
 

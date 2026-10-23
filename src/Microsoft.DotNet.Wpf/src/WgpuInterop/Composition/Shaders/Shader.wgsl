@@ -92,8 +92,8 @@ fn fs_text(in : VSOut) -> @location(0) vec4<f32> {
 //
 // So the quad is drawn TWICE over the same vertices:
 //
-//   dst = dst * (1 - cov)          the multiply pass, blend (Zero, OneMinusSrc)
-//   dst = dst + colour * cov       the add pass, blend (One, One)
+//   dst = dst * (1 - cov)          the multiply pass, blend (Zero, OneMinusSrc); alpha source-over
+//   dst = dst + colour * cov       the add pass, blend (One, One); alpha left alone
 //
 // which together are exactly dst = colour*cov + dst*(1-cov), per channel, with no feature to ask
 // for. The mask is RGBA: one coverage per lamp, and their mean in alpha for the destination's own

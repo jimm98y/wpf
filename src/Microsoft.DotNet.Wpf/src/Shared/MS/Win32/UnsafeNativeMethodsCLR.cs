@@ -477,8 +477,8 @@ namespace MS.Win32
         [DllImport(ExternDll.Gdi32, SetLastError = true, CharSet = CharSet.Auto)]
         public static extern int GetObject(HandleRef hObject, int nSize, [In, Out] NativeMethods.BITMAP bm);
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern IntPtr GetFocus();
+        /// <summary>The process's focus model's (PlatformFocus; see TrySetFocus), not user32's.</summary>
+        public static IntPtr GetFocus() => MS.Internal.Interop.PlatformFocus.GetFocus();
 
         [DllImport(ExternDll.User32, EntryPoint = "GetCursorPos", ExactSpelling = true, CharSet = CharSet.Auto, SetLastError = true)]
         private static extern bool IntGetCursorPos(ref NativeMethods.POINT pt);
@@ -654,16 +654,12 @@ namespace MS.Win32
             return TrySetFocus(hWnd, ref result);
         }
 
+        // SetFocus and GetFocus are the process's focus model's (PlatformFocus), on every head, Windows
+        // included: a window of this stack is not necessarily the one Windows gives the keyboard to. The
+        // model moves the native focus itself where a window has one (user32's SetFocus for a real HWND).
         internal static bool TrySetFocus(HandleRef hWnd, ref IntPtr result)
         {
-            result = NativeMethodsSetLastError.SetFocus(hWnd);
-            int errorCode = Marshal.GetLastWin32Error();
-
-            if (result == IntPtr.Zero && errorCode != 0)
-            {
-                return false;
-            }
-
+            result = MS.Internal.Interop.PlatformFocus.SetFocus(hWnd.Handle);
             return true;
         }
 

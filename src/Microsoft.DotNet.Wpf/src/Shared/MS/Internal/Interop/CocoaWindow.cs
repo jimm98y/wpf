@@ -1318,10 +1318,13 @@ namespace MS.Internal.Interop
         /// </summary>
         public bool TakesKeyboardOnPress { get; set; }
 
-        private void TakeKeyboard()
+        /// <summary>The keyboard to this window (PlatformFocus, a press on a child that takes it): it
+        /// becomes key -- a child window never main (s_keyable), a popup never at all.</summary>
+        public void TakeKeyboard()
         {
             if (_window == IntPtr.Zero || SendBool(_window, Sel("isKeyWindow"))) return;
-            s_keyable.Add(_window);
+            if (_borderless && !_activatable) return;   // a popup must never take focus
+            if (TakesKeyboardOnPress) s_keyable.Add(_window);
             SendVoidPtr(_window, Sel("makeKeyWindow"), IntPtr.Zero);
         }
 

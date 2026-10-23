@@ -7,6 +7,9 @@
 //   types and can make RCWs of their own (judged as members of its group);
 // - an assembly that P/Invokes a Windows DLL is rewritten for those P/Invokes.
 //
+// - an assembly that calls a member taking a path is rewritten for those calls (PathSubstitutions):
+//   '\' read as a separator, as Windows reads it.
+//
 // - an assembly that may ask where an assembly is (Assembly.Location, CodeBase) is rewritten for those
 //   calls: a bundle's assemblies have no file, and the answer is their place in the app's folder
 //   (WpfWebGpu.ComInterop's Com.OriginalPath), as the launcher answers for the assemblies it rewrites.
@@ -67,32 +70,35 @@ public static class BuildRewrite
 
         // members the browser build refuses, for settings the browser takes care of (BrowserSubstitutions)
         BrowserSubstitutions? subs = BrowserSubstitutions.For(dirs);
+        // members taking a path, read as Windows reads it (PathSubstitutions)
+        PathSubstitutions? pathSubs = PathSubstitutions.For(dirs);
 
         Directory.CreateDirectory(outDir);
         var done = new List<Rewritten>();
         foreach (var f in files)
         {
-            bool c = com.Contains(f.Name), p = pinvokes.Contains(f.Name);
+            bool c = com.Contains(f.Name), p = pinvokes.Contains(f.Name), w = pathSubs != null && pathSubs.MayUse(f.File);
             // every location call, its own assembly's too: no assembly of a bundle has a file
             bool l = !c && f.MayReadLocations;
             bool b = false;
             if (subs != null)
                 using (var probe = ModuleDefinition.ReadModule(f.File, new ReaderParameters { ReadingMode = ReadingMode.Deferred }))
                     b = subs.Uses(probe);
-            if (!c && !p && !l && !b) continue;
+            if (!c && !p && !l && !b && !w) continue;
             if (!f.ILOnly) { log($"comimport {f.Name}: mixed-mode (not IL-only): not rewritten"); continue; }
             string output = Path.Combine(outDir, Path.GetFileName(f.File));
             string summary = "";
-            if (c || p || l)
+            if (c || p || l || w)
             {
-                var (image, symbols, result) = ComRewriter.RewriteToMemory(f.File, dirs, locationOnly: l, com: c, pinvokes: p, windows: false, catalog: catalog);
+                var (image, symbols, result) = ComRewriter.RewriteToMemory(f.File, dirs, locationOnly: l, com: c, pinvokes: p, windows: false, catalog: catalog, paths: w);
                 using (image)
                 using (symbols)
                 {
                     Write(output, image);
                     if (symbols != null) Write(Path.ChangeExtension(output, ".pdb"), symbols);
                 }
-                summary = (c ? result.ToString() : l ? $"its location calls ({result.CallSites})" : "") + (p ? (c || l ? "; " : "") + result.Win32Summary : "");
+                summary = (c ? result.ToString() : l ? $"its location calls ({result.CallSites})" : "") + (p ? (c || l ? "; " : "") + result.Win32Summary : "")
+                    + (w ? (c || l || p ? "; " : "") + result.PathSummary : "");
             }
             if (b)
             {

@@ -73,6 +73,11 @@ namespace MS.Internal.Interop
         /// </remarks>
         void Activate() { }
 
+        /// <summary>The platform's keyboard to this window (PlatformFocus moving the focus to it): what
+        /// user32's SetFocus is for a real window -- the key window on macOS, the page's keyboard canvas
+        /// in the browser. Nothing where the platform has no such notion.</summary>
+        void TakeKeyboard() { }
+
         /// <summary>
         /// The refresh rate of the display this window is on, in Hz, or 0 when the head cannot say.
         /// </summary>

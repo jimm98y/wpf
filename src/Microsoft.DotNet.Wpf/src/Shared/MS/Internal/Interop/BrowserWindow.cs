@@ -124,6 +124,9 @@ namespace MS.Internal.Interop
         /// Windows moves the focus out of a child window of the one before.</summary>
         public static void ReleaseKeyboard() => Js.ReleaseKeyboard();
 
+        /// <summary>The page's keys to this window (PlatformFocus moving the focus to it).</summary>
+        public void TakeKeyboard() { if (Handle != IntPtr.Zero) Js.SetKeyboardWindow((int)Handle); }
+
         /// <summary>The parts of the window that show (and take the pointer): x, y, width, height in CSS
         /// pixels from its top-left, four to a rectangle; null for all of it. A child window's clip, as on
         /// Windows (see browser-window.js).</summary>
@@ -441,6 +444,10 @@ namespace MS.Internal.Interop
                             idx++;
                             e = n;
                         }
+                        // A press on a child window that takes the keyboard gave it the page's keys
+                        // (browser-window.js): the focus moved to it, and whichever window had it is told.
+                        if (kind == 1 && FromHandle((IntPtr)handle) is { TakesKeyboardOnPress: true })
+                            PlatformFocus.FocusMovedByPlatform((IntPtr)handle);
                         MouseInput?.Invoke(new BrowserMouseMessage(
                             kind,
                             (IntPtr)handle,
@@ -576,6 +583,9 @@ namespace MS.Internal.Interop
 
             [JSImport("releaseKeyboard", Module)]
             internal static partial void ReleaseKeyboard();
+
+            [JSImport("setKeyboardWindow", Module)]
+            internal static partial void SetKeyboardWindow(int handle);
 
             [JSImport("setVisibleRegion", Module)]
             internal static partial void SetVisibleRegion(int handle, string rects);
