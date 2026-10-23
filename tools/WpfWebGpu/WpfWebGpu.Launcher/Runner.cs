@@ -124,6 +124,12 @@ internal sealed class Runner
         }
         // The app's own children must not inherit a startup hook a parent shell may have set.
         psi.Environment.Remove("DOTNET_STARTUP_HOOKS");
+        // A gen0 budget for a desktop UI that redraws whole windows: the runtime sizes it from the CPU's
+        // cache, which on Apple silicon leaves a few MB, and a live resize of GraphWorX -- whose frames
+        // allocate their scenes afresh -- spent a third of its presents waiting on gen0 collections
+        // (64 MB: 15 ms a frame became 9). Only when the user has not chosen one.
+        if (!HostInfo.IsWindows && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_GCgen0size")))
+            psi.Environment["DOTNET_GCgen0size"] = "0x4000000";
 
         return new Prepared(rcPath, depsPath, logPath, merger.Notes.Concat(comNotes).ToList(), merger.Replaced)
         {

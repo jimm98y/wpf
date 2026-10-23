@@ -181,6 +181,45 @@ namespace System.Drawing.WebGpuBackend.Gdip
         {
             if (pts == null || types == null || pts.Length != types.Length || pts.Length > 4096)
                 return GpRegionRaster.FromPath (pts, types, fill, m);
+            // The same shape a whole number of device pixels away is the same region, moved: a window
+            // being resized repaints its buttons and panels at new places, and every one missed the
+            // cache. Kept by the shape at its own origin, when the move is exact in the rasterizer's
+            // arithmetic (a translation by whole pixels, every point the same float either way).
+            if (WholePixelShift (pts, m, out PointF[] local, out int sx, out int sy)) {
+                DpRegion r0 = PathDeviceExact (local, types, fill, GpMatrix.CreateIdentity ());
+                r0.Offset (sx, sy);
+                return r0;
+            }
+            return PathDeviceExact (pts, types, fill, m);
+        }
+
+        /// <summary>Whether <paramref name="m"/> moves <paramref name="pts"/> by whole device pixels with no
+        /// rounding anywhere: then the region is that of <paramref name="local"/> (the points less the
+        /// whole part of the first, under no transform) offset by (<paramref name="sx"/>, <paramref name="sy"/>).</summary>
+        static bool WholePixelShift (PointF[] pts, in GpMatrix m, out PointF[] local, out int sx, out int sy)
+        {
+            local = null; sx = sy = 0;
+            if (pts.Length == 0 || m.M11 != 1f || m.M22 != 1f || m.M12 != 0f || m.M21 != 0f) return false;
+            if (m.Dx != MathF.Floor (m.Dx) || m.Dy != MathF.Floor (m.Dy) || Math.Abs (m.Dx) > 1 << 22 || Math.Abs (m.Dy) > 1 << 22) return false;
+            float fx = MathF.Floor (pts [0].X), fy = MathF.Floor (pts [0].Y);
+            if (!(Math.Abs (fx) < 1 << 22) || !(Math.Abs (fy) < 1 << 22)) return false;
+            if (fx == 0f && fy == 0f && m.Dx == 0f && m.Dy == 0f) return false;   // at its origin already
+            var q = new PointF [pts.Length];
+            for (int i = 0; i < pts.Length; i++) {
+                float x = pts [i].X, y = pts [i].Y;
+                float lx = x - fx, ly = y - fy;
+                // exact both ways: the local point, and the device point the rasterizer would compute
+                if ((double) lx != (double) x - fx || (double) ly != (double) y - fy) return false;
+                if ((double) (x + m.Dx) != (double) x + m.Dx || (double) (y + m.Dy) != (double) y + m.Dy) return false;
+                q [i] = new PointF (lx, ly);
+            }
+            local = q;
+            sx = (int) (fx + m.Dx); sy = (int) (fy + m.Dy);
+            return true;
+        }
+
+        static DpRegion PathDeviceExact (PointF[] pts, byte[] types, FillMode fill, in GpMatrix m)
+        {
             var key = new PathKey (pts, types, fill, m);
             lock (s_pathRegions)
                 if (s_pathRegions.TryGetValue (key, out DpRegion cached)) return cached.Clone ();

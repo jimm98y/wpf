@@ -945,7 +945,7 @@ internal sealed class CocoaHost : IWinFormsHost
             {
                 long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
                 static double Ms(long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-                TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds} sync={Ms(t0, t1):F1}ms embedded={Ms(t1, t2):F1}ms present={Ms(t2, t3):F1}ms");
+                TraceResize($"leave native={host.NativeBounds()} form={host._form.Bounds} sync={Ms(t0, t1):F1}ms embedded={Ms(t1, t2):F1}ms present={Ms(t2, t3):F1}ms drew={host._lastPresentOk}");
             }
         }
         catch (Exception e)
@@ -1185,13 +1185,12 @@ internal sealed class CocoaHost : IWinFormsHost
     // Screen coordinates are anchored to the PRIMARY screen (the one with the menu bar), on both
     // sides: Win32's origin is its top-left, Cocoa's its bottom-left. (NSScreen.mainScreen is the
     // screen of the key window, which moves.)
+    // (read again at most once a second: NSScreen.screens asks the window server, and the frame is
+    // synchronised on every pump -- MacInterop keeps it)
     private static double PrimaryScreenHeight()
     {
-        IntPtr screens = Send(Cls("NSScreen"), Sel("screens"));
-        IntPtr primary = screens != IntPtr.Zero && (nint)Send(screens, Sel("count")) > 0
-            ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0)
-            : Send(Cls("NSScreen"), Sel("mainScreen"));
-        return primary == IntPtr.Zero ? 900 : SendRectRet(primary, Sel("frame")).h;
+        double h = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.PrimaryScreenHeight();
+        return h > 0 ? h : 900;
     }
 
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRect(IntPtr r, IntPtr s, NSRect a);

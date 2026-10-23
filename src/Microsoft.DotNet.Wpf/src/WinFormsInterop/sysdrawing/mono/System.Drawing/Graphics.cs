@@ -3476,6 +3476,23 @@ namespace System.Drawing
 			float det = wm [0] * wm [3] - wm [1] * wm [2];
 			if (!(Math.Abs (det) > 1e-6f))
 				return false;
+
+			// The same string drawn the same way again, a whole number of device pixels away, is what it
+			// was: replayed from the cache, shifted. A window being resized repaints its ribbon, captions
+			// and labels at every step, and the engine laid each one out and rasterised it again (a scratch
+			// bitmap, a GDI+ render, the ink read back): half of a live resize was spent here.
+			float odx = wm [0] * rect.X + wm [2] * rect.Y + wm [4], ody = wm [1] * rect.X + wm [3] * rect.Y + wm [5];
+			int tx0 = (int) Math.Floor (odx), ty0 = (int) Math.Floor (ody);
+			string cacheKey = EngineTextKey (s, font, brush, rect, format, wm, odx - tx0, ody - ty0);
+			EngineText cached = null;
+			if (cacheKey != null)
+				lock (s_engineText)
+					s_engineText.TryGetValue (cacheKey, out cached);
+			if (cached != null) {
+				EmitEngineText (cached, tx0 + cached.Bx, ty0 + cached.By, s, font, brush, format, det);
+				return true;
+			}
+
 			// The device box the string can reach: the layout rectangle widened by the string's
 			// own measure either way (an alignment in an empty rectangle, an overhang) and two ems,
 			// through the transform.
@@ -3521,38 +3538,91 @@ namespace System.Drawing
 						g.gp.TextLevelsSink = null;
 					}
 				}
-				string family = font.FontFamily.Name;
-				int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
-				int argb = ArgbOf (brush);
-				// The run's string as the engine laid it out: its hot-key prefixes gone. The renderer
-				// draws the string itself where it cannot use these levels -- a window presented at
-				// another scale than the one they were realized at, a Retina display's -- and drawn from
-				// the caller's string, DotNetBar's ribbon read "&File", "&Home", "D&esign".
-				string shown = format != null && format.HotkeyPrefix != Text.HotkeyPrefix.None ? StripHotkeyPrefix (s, out _) : s;
-				// Device pixels, relative to the recording's origin: drawn with no world at all.
-				GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, 0f, 0f);
-				try {
-					foreach ((var lv, int mode, int contrast) in runs) {
-						var at = new Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Levels {
-							Grey = lv.Grey, Left = lv.Left + bx, Top = lv.Top + by, Width = lv.Width, Height = lv.Height, Index = lv.Index };
-						var run = new Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Run {
-							Pre = at, PreKey = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.LevelsKey (at),
-							Mode = mode, Hint = (int) recorded_text_hint, Contrast = contrast,
-							Em = em * (float) Math.Sqrt (Math.Abs (det)), OriginX = at.Left, OriginY = at.Top + at.Height,
-						};
-						GpuRecorder.DrawGdiPlusText (run, shown, argb, style, family);
+				var entry = new EngineText { Runs = runs.ToArray (), Bx = bx - tx0, By = by - ty0, InkW = bmp.Width, InkH = bmp.Height, Ink = EngineInk (bmp) };
+				if (cacheKey != null)
+					lock (s_engineText) {
+						if (s_engineText.Count >= EngineTextCapacity)
+							s_engineText.Clear ();
+						s_engineText [cacheKey] = entry;
 					}
-					RecordEngineImage (bmp, bx, by);
-				} finally {
-					PushRecordedTransform ();
-				}
+				EmitEngineText (entry, bx, by, s, font, brush, format, det);
 			}
 			return true;
 		}
 
-		/// <summary>What a scratch engine surface drew besides text (a path realization's fill, a
-		/// style line), as an image at its device place under the current transform.</summary>
-		void RecordEngineImage (Bitmap bmp, int x, int y)
+		/// <summary>What the engine made of one string (DrawGdiPlusThroughEngine): its runs' levels and
+		/// the rest of its ink, relative to the whole device pixel the layout rectangle starts in.</summary>
+		sealed class EngineText
+		{
+			public (Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Levels Lv, int Mode, int Contrast) [] Runs;
+			public int Bx, By, InkW, InkH;
+			public byte [] Ink;
+		}
+
+		const int EngineTextCapacity = 4096;
+		static readonly System.Collections.Generic.Dictionary<string, EngineText> s_engineText = new System.Collections.Generic.Dictionary<string, EngineText> ();
+
+		/// <summary>Everything the engine's rendering of a string depends on but a whole-pixel offset;
+		/// null when something about it is not known to be covered (it is then drawn, not cached).</summary>
+		string EngineTextKey (string s, Font font, Brush brush, RectangleF rect, StringFormat format, float [] wm, float fx, float fy)
+		{
+			var b = new System.Text.StringBuilder (s.Length + 160);
+			b.Append (s).Append ('\u0001').Append (font.FontFamily.Name).Append ('|').Append (font.Size.ToString ("R", System.Globalization.CultureInfo.InvariantCulture))
+				.Append ('|').Append ((int) font.Unit).Append ('|').Append ((int) font.Style).Append ('|').Append (font.GdiCharSet)
+				.Append ('|').Append (ArgbOf (brush)).Append ('|').Append (rect.Width.ToString ("R", System.Globalization.CultureInfo.InvariantCulture))
+				.Append ('|').Append (rect.Height.ToString ("R", System.Globalization.CultureInfo.InvariantCulture))
+				.Append ('|').Append (fx.ToString ("R", System.Globalization.CultureInfo.InvariantCulture)).Append ('|').Append (fy.ToString ("R", System.Globalization.CultureInfo.InvariantCulture));
+			for (int i = 0; i < 4; i++)
+				b.Append ('|').Append (wm [i].ToString ("R", System.Globalization.CultureInfo.InvariantCulture));
+			b.Append ('|').Append ((int) rec_unit).Append ('|').Append (rec_page_scale.ToString ("R", System.Globalization.CultureInfo.InvariantCulture))
+				.Append ('|').Append ((int) recorded_text_hint).Append ('|').Append (recorded_text_contrast).Append ('|').Append (gpu_smoothing)
+				.Append ('|').Append (DpiX.ToString ("R", System.Globalization.CultureInfo.InvariantCulture)).Append ('|').Append (DpiY.ToString ("R", System.Globalization.CultureInfo.InvariantCulture));
+			if (format != null) {
+				b.Append ("|f").Append ((int) format.FormatFlags).Append (',').Append ((int) format.Alignment).Append (',').Append ((int) format.LineAlignment)
+					.Append (',').Append ((int) format.Trimming).Append (',').Append ((int) format.HotkeyPrefix)
+					.Append (',').Append ((int) format.DigitSubstitutionMethod).Append (',').Append (format.DigitSubstitutionLanguage);
+				float [] tabs = format.GetTabStops (out float firstTab);
+				b.Append (',').Append (firstTab.ToString ("R", System.Globalization.CultureInfo.InvariantCulture));
+				foreach (float t in tabs)
+					b.Append (';').Append (t.ToString ("R", System.Globalization.CultureInfo.InvariantCulture));
+			}
+			return b.ToString ();
+		}
+
+		/// <summary>A cached rendering played at device place (<paramref name="bx"/>, <paramref name="by"/>).</summary>
+		void EmitEngineText (EngineText entry, int bx, int by, string s, Font font, Brush brush, StringFormat format, float det)
+		{
+			string family = font.FontFamily.Name;
+			int style = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0);
+			int argb = ArgbOf (brush);
+			float em = font.SizeInPoints * DpiY / 72f;
+			// The run's string as the engine laid it out: its hot-key prefixes gone. The renderer
+			// draws the string itself where it cannot use these levels -- a window presented at
+			// another scale than the one they were realized at, a Retina display's -- and drawn from
+			// the caller's string, DotNetBar's ribbon read "&File", "&Home", "D&esign".
+			string shown = format != null && format.HotkeyPrefix != Text.HotkeyPrefix.None ? StripHotkeyPrefix (s, out _) : s;
+			// Device pixels, relative to the recording's origin: drawn with no world at all.
+			GpuRecorder.SetWorldTransform (1f, 0f, 0f, 1f, 0f, 0f);
+			try {
+				foreach ((var lv, int mode, int contrast) in entry.Runs) {
+					var at = new Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Levels {
+						Grey = lv.Grey, Left = lv.Left + bx, Top = lv.Top + by, Width = lv.Width, Height = lv.Height, Index = lv.Index };
+					var run = new Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Run {
+						Pre = at, PreKey = Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.LevelsKey (at),
+						Mode = mode, Hint = (int) recorded_text_hint, Contrast = contrast,
+						Em = em * (float) Math.Sqrt (Math.Abs (det)), OriginX = at.Left, OriginY = at.Top + at.Height,
+					};
+					GpuRecorder.DrawGdiPlusText (run, shown, argb, style, family);
+				}
+				if (entry.Ink != null)
+					RecordCoverage (entry.Ink, entry.InkW, entry.InkH, bx, by);
+			} finally {
+				PushRecordedTransform ();
+			}
+		}
+
+		/// <summary>A scratch engine surface's ink as RGBA (EngineText.Ink).</summary>
+		static byte [] EngineInk (Bitmap bmp)
 		{
 			int bw = bmp.Width, bh = bmp.Height;
 			BitmapData d = bmp.LockBits (new Rectangle (0, 0, bw, bh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
@@ -3560,9 +3630,12 @@ namespace System.Drawing
 			for (int j = 0; j < bh; j++)
 				Marshal.Copy (d.Scan0 + j * d.Stride, bgra, j * bw * 4, bw * 4);
 			bmp.UnlockBits (d);
-			for (int i = 0; i < bgra.Length; i += 4)
+			bool any = false;
+			for (int i = 0; i < bgra.Length; i += 4) {
 				(bgra [i], bgra [i + 2]) = (bgra [i + 2], bgra [i]);
-			RecordCoverage (bgra, bw, bh, x, y);
+				any |= bgra [i + 3] != 0;
+			}
+			return any ? bgra : null;
 		}
 
 		/// <summary>An RGBA coverage image at a device place, as bands of the rows that hold ink, each
