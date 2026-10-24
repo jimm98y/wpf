@@ -72,7 +72,7 @@ namespace Wpf.WinFormsInterop.Tests
                     }
                     catch (Exception e) { failure = e; }
                 });
-                t.SetApartmentState(ApartmentState.STA);
+                t.TrySetApartmentState(ApartmentState.STA);
                 t.Start();
                 t.Join();
                 if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
@@ -106,7 +106,7 @@ namespace Wpf.WinFormsInterop.Tests
                     Assert.Equal(f.Handle, WindowAtPoint(abandoned[n].Centre));   // there while its thread lives
                     // ...and the thread ends, the form never closed.
                 });
-                t.SetApartmentState(ApartmentState.STA);
+                t.TrySetApartmentState(ApartmentState.STA);
                 t.Start();
                 t.Join();
             }
@@ -142,7 +142,7 @@ namespace Wpf.WinFormsInterop.Tests
         {
             Exception? failure = null;
             var t = new Thread(() => { try { body(); } catch (Exception e) { failure = e; } });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

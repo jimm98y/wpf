@@ -50,7 +50,29 @@ namespace WgpuInterop.Tests.Harness
         private static readonly Dictionary<string, TrueTypeFont> s_loaded = new();
 
         /// <summary>
-        /// A font VENDORED IN THIS REPO (sdk/WpfWebGpu.Sdk/web/fonts), located by walking up from the
+        /// <paramref name="family"/>'s own file, or null when the machine does not have that family.
+        /// FontFiles.Find answers for a family Windows always has with a stand-in where it is not
+        /// installed (Segoe UI is Helvetica Neue on a Mac), which is right for drawing text and wrong
+        /// for a test about that face's own outlines, hinting or metrics: it skips instead.
+        /// </summary>
+        public static string? Installed(string family, bool bold = false, bool italic = false)
+        {
+            bool has = false;
+            foreach (string name in FontFiles.FamilyNames())
+                if (string.Equals(name, family, StringComparison.OrdinalIgnoreCase)) { has = true; break; }
+            return has ? FontFiles.Find(family, bold, italic) : null;
+        }
+
+        /// <summary>The face of <paramref name="family"/> in <paramref name="path"/>: at its own offset when
+        /// the file is a collection (.ttc), where there is no font at byte zero.</summary>
+        public static TrueTypeFont Open(string path, string family, bool bold = false, bool italic = false)
+        {
+            byte[] data = File.ReadAllBytes(path);
+            return new TrueTypeFont(data, false, false, FontFiles.SfntOffset(data, family, bold, italic));
+        }
+
+        /// <summary>
+        /// A font VENDORED IN THIS REPO (sdk/WpfWebGpu.Fonts/fonts), located by walking up from the
         /// test binary. Tests that guard the substitution tables need the exact file the SDK ships,
         /// not whatever the machine happens to have, or they assert nothing about what users get.
         /// Returns null when the repo layout is not above the binary (e.g. a packaged test run).
@@ -60,7 +82,7 @@ namespace WgpuInterop.Tests.Harness
             var d = new DirectoryInfo(AppContext.BaseDirectory);
             for (int i = 0; i < 12 && d is not null; i++, d = d.Parent)
             {
-                string p = System.IO.Path.Combine(d.FullName, "sdk", "WpfWebGpu.Sdk", "web", "fonts", fileName);
+                string p = System.IO.Path.Combine(d.FullName, "sdk", "WpfWebGpu.Fonts", "fonts", fileName);
                 if (File.Exists(p)) return p;
             }
             return null;
@@ -220,7 +242,7 @@ namespace WgpuInterop.Tests.Harness
         public static TrueTypeFont RequireRepoFont(string fileName)
         {
             string? p = RepoFont(fileName);
-            Assert.SkipWhen(p is null, $"vendored {fileName} not found under sdk/WpfWebGpu.Sdk/web/fonts");
+            Assert.SkipWhen(p is null, $"vendored {fileName} not found under sdk/WpfWebGpu.Fonts/fonts");
             return s_loaded.TryGetValue(p!, out TrueTypeFont? f)
                 ? f
                 : s_loaded[p!] = new TrueTypeFont(File.ReadAllBytes(p!));
@@ -232,18 +254,11 @@ namespace WgpuInterop.Tests.Harness
             if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
             // Fonts this repo bundles and deploys beside apps: identical bytes on every OS.
-            foreach (string dir in new[]
+            foreach (string name in new[] { "Selawik-Regular.ttf", "CascadiaCode-Regular.ttf", "Symbols.ttf" })
             {
-                System.IO.Path.Combine(AppContext.BaseDirectory, "fonts"),
-                System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "..", "..", "..",
-                                       "sdk", "WpfWebGpu.Sdk", "web", "fonts"),
-            })
-            {
-                foreach (string name in new[] { "Selawik-Regular.ttf", "CascadiaCode-Regular.ttf", "Symbols.ttf" })
-                {
-                    string c = System.IO.Path.GetFullPath(System.IO.Path.Combine(dir, name));
-                    if (File.Exists(c)) return c;
-                }
+                string beside = System.IO.Path.Combine(AppContext.BaseDirectory, "fonts", name);
+                if (File.Exists(beside)) return beside;
+                if (RepoFont(name) is { } vendored) return vendored;
             }
 
             string sys = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);

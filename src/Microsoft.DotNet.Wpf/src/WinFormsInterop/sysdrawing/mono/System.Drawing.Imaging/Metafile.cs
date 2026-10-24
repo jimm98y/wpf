@@ -399,7 +399,9 @@ namespace System.Drawing.Imaging {
 		}
 
 		// GdipRecordMetafile* -> GpMetafile::InitForRecording. GDI+ refuses a NULL reference HDC; here
-		// none means a 96-dpi display, the same on every platform. A real HDC exists only on Windows.
+		// none means a 96-dpi display, the same on every platform. A real HDC exists only on Windows;
+		// elsewhere the DC Graphics.GetHdc hands out (a bitmap's, a window's) is a screen-compatible one,
+		// whose device on Windows is the display: the same 96-dpi display.
 		void Record (Stream stream, string fileName, IntPtr referenceHdc, RectangleF? frame, MetafileFrameUnit frameUnit,
 			EmfType type, string description)
 		{
@@ -410,6 +412,8 @@ namespace System.Drawing.Imaging {
 				dev = GpRefDevice.Default;
 			else if (OperatingSystem.IsWindows ())
 				dev = GpWindowsMetafile.Device (referenceHdc);
+			else if (Graphics.IsPseudoHdc (referenceHdc))
+				dev = GpRefDevice.Default;
 			else
 				throw new PlatformNotSupportedException ("An HDC exists only on Windows.");
 			var rec = GpMetafileRecorder.Create (this, dev, type, frame, frameUnit, description, stream, fileName);

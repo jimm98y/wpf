@@ -134,7 +134,7 @@ namespace Wpf.WinFormsInterop.Tests
                 catch (Exception ex) { failure = ex; }
                 finally { done.Set(); }
             }) { IsBackground = true };
-            t.SetApartmentState(System.Threading.ApartmentState.STA);
+            t.TrySetApartmentState(System.Threading.ApartmentState.STA);
             t.Start();
             Assert.True(done.Wait(TimeSpan.FromSeconds(20)), "laying the list view out never finished");
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

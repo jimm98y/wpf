@@ -197,6 +197,21 @@ namespace Wpf.Text.Tests
             return false;
         }
 
+        /// <summary>
+        /// Why a test of stock WPF's exact output for a face cannot run here, or null when it can: the
+        /// face must be Windows' own copy, the file the expected values were measured with. A family of
+        /// the same name elsewhere is another file -- macOS's Arial 5.01 numbers its glyphs and places
+        /// its marks differently from Windows 11's Arial 7, and its Tahoma kerns in GPOS where Windows'
+        /// does not -- so glyph ids, offsets and the fast path are that file's, not stock's.
+        /// </summary>
+        public static string? NotWindowsCopy(GlyphTypeface glyphTypeface, string family)
+        {
+            string path = glyphTypeface.FontUri.IsFile ? glyphTypeface.FontUri.LocalPath : glyphTypeface.FontUri.ToString();
+            return path.Replace('\\', '/').Contains("/Windows/Fonts/", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : $"{family} here is {path}, not Windows' own copy the expected values were measured with";
+        }
+
         /// <summary>True if any one of these families is installed.</summary>
         public static bool AnyFamilyInstalled(params string[] names)
         {

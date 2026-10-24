@@ -11,4 +11,17 @@
     <WpfWindowsCoreDll Condition="'$(WpfWindowsCoreDll)' == ''">$(_WpfWindowsCoreBin)Release/net10.0/System.Private.Windows.Core.dll</WpfWindowsCoreDll>
   </PropertyGroup>
   <Import Project="$(MSBuildThisFileDirectory)../../../../sdk/WpfWebGpu.Sdk/Sdk/WindowsCore.targets" Condition="'$(WpfWebGpuSdkRoot)' == ''" />
+
+  <!-- The fonts an app gets beside it on macOS and Linux (WpfWebGpu.Sdk's _WpfWebGpuAppFont, Sdk.targets),
+       in fonts/ beside the tests, where SystemFontCatalog's app-local probe finds them: Selawik for
+       Segoe UI, Symbols for the icon fonts, Cascadia Code, Noto Sans CJK and the emoji face. Without them
+       the tests ran on whatever the machine has (Segoe UI became Helvetica Neue on a Mac, and every
+       height measured from the default font was another font's), not on what an app runs on. -->
+  <PropertyGroup>
+    <_TestFontsRoot>$(MSBuildThisFileDirectory)../../../../sdk/WpfWebGpu.Fonts/fonts/</_TestFontsRoot>
+  </PropertyGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <None Include="$(_TestFontsRoot)Symbols.ttf;$(_TestFontsRoot)CascadiaCode-Regular.ttf;$(_TestFontsRoot)Selawik*.ttf;$(_TestFontsRoot)NotoSansCJK-Regular.ttc;$(_TestFontsRoot)TwemojiMozilla.ttf"
+          CopyToOutputDirectory="PreserveNewest" Link="fonts/%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
 </Project>

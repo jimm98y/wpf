@@ -67,12 +67,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 dirs.Add("/System/Library/Fonts");
                 dirs.Add("/System/Library/Fonts/Supplemental");
                 dirs.Add("/Library/Fonts");
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (!string.IsNullOrEmpty(home)) dirs.Add(Path.Combine(home, "Library", "Fonts"));
             }
             else
             {
                 dirs.Add("/usr/share/fonts");
                 dirs.Add("/usr/local/share/fonts");
                 dirs.Add("/fonts");                       // the browser's virtual file system
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (!string.IsNullOrEmpty(home)) dirs.Add(Path.Combine(home, ".fonts"));
+            }
+            // The fonts the stack carries where the system has none of its own (WpfWebGpu.Fonts: Selawik
+            // for Segoe UI, Symbols, Cascadia, Noto Sans CJK, the emoji face), beside the app as the SDK
+            // deploys them and in the stack's own folder, as WPF's catalog reads them (SystemFontCatalog).
+            // Not read here, a WinForms "Segoe UI" off Windows fell to Helvetica Neue, not to the
+            // metric-compatible Selawik WPF text used, and every height measured from the default font
+            // was three pixels short of Windows'.
+            if (!OperatingSystem.IsWindows())
+            {
+                dirs.Add(Path.Combine(AppContext.BaseDirectory, "fonts"));
+                if (AppContext.GetData("WpfWebGpu.FontDirectory") is string stack && stack.Length > 0) dirs.Add(stack);
             }
             return dirs.ToArray();
         });

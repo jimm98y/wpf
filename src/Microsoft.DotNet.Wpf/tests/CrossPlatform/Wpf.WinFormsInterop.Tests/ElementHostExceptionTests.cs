@@ -24,13 +24,14 @@ namespace Wpf.WinFormsInterop.Tests
         [Fact]
         public void AnExceptionInAWpfHandler_ReachesThreadException_AndTheHostCarriesOn()
         {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a real hosted WPF window");
             Exception? failure = null;
             var t = new Thread(() =>
             {
                 try { Run(); }
                 catch (Exception ex) { failure = ex; }
             });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
@@ -106,7 +107,7 @@ namespace Wpf.WinFormsInterop.Tests
                     System.Windows.Threading.Dispatcher.CurrentDispatcher.InvokeShutdown();
                 }
             });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

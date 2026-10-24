@@ -102,6 +102,10 @@ namespace Wpf.Text.Tests
         public void PlainLatinTakesTheFastPath(string family)
         {
             SkipUnlessInstalled(family);
+            // whether a face takes the fast path is a property of its file (what its GPOS has for Latin)
+            new Typeface(family).TryGetGlyphTypeface(out GlyphTypeface? gt);
+            string? notWindows = TextHarness.NotWindowsCopy(gt!, family);
+            Assert.SkipWhen(notWindows != null, notWindows ?? "");
             (TextLine line, List<Run> runs) = Format(family, 16, " abc");
             using (line)
             {

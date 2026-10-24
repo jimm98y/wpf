@@ -144,7 +144,7 @@ namespace Wpf.WinFormsInterop.Tests
                     IsBackground = true,
                     Name = name,
                 };
-                _thread.SetApartmentState(ApartmentState.STA);
+                _thread.TrySetApartmentState(ApartmentState.STA);
                 _thread.Start();
                 ready.Wait();
                 Dispatcher = d!;

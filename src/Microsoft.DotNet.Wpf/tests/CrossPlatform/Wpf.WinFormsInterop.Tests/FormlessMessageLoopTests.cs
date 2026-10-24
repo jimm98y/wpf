@@ -27,7 +27,7 @@ namespace Wpf.WinFormsInterop.Tests
                 try { body(); }
                 catch (Exception ex) { failure = ex; }
             });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             Assert.True(t.Join(TimeSpan.FromSeconds(seconds)), "the message loop did not end");
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

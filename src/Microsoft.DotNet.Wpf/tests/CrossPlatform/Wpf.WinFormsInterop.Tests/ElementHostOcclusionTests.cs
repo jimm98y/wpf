@@ -30,7 +30,7 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.SkipUnless(OperatingSystem.IsWindows(), "the hosted WPF tree is a real child window only on Windows");
             Exception? failure = null;
             var t = new Thread(() => { try { body(); } catch (Exception ex) { failure = ex; } });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

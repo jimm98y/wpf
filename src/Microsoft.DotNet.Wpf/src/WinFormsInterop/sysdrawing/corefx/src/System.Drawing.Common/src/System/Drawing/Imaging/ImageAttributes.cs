@@ -339,6 +339,9 @@ namespace System.Drawing.Imaging
                 throw new ArgumentNullException ("path");
             Live();
             // Called in order to emulate exception behavior from netfx related to invalid file paths.
+            // An empty one is Windows' Path.GetFullPath message on every system (the runtime's Unix
+            // GetFullPath words it as an empty string).
+            if (colorProfileFilename.Length == 0) throw new ArgumentException("The path is empty.", "path");
             Path.GetFullPath(colorProfileFilename);
             CheckType(type);
             int status = _recolor.Set(type).SetupCmykSeparation(colorProfileFilename);

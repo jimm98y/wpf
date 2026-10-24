@@ -105,7 +105,20 @@ namespace Wpf.WinFormsInterop.Tests
             if (s == null) return "";
             string t = Path.GetTempPath();
             s = s.Replace(TempDir, "<TMP>").Replace(t.TrimEnd('\\', '/'), "<TEMP>");
+            // the oracle was recorded on Windows: a path under the temporary folder in its separators
+            if (!OperatingSystem.IsWindows()) s = WindowsSeparators(s);
             return s.Replace("\r\n", "\\n").Replace("\n", "\\n").Replace("\r", "\\n").Replace("\t", "\\t");
+        }
+
+        // each '/' of a path that starts at <TMP> or <TEMP>, up to the next space or quote, as '\\'
+        private static string WindowsSeparators(string s)
+        {
+            var sb = new System.Text.StringBuilder(s);
+            foreach (string mark in new[] { "<TMP>", "<TEMP>" })
+                for (int at = s.IndexOf(mark, StringComparison.Ordinal); at >= 0; at = s.IndexOf(mark, at + 1, StringComparison.Ordinal))
+                    for (int i = at + mark.Length; i < s.Length && !char.IsWhiteSpace(s[i]) && s[i] != '\'' && s[i] != '"'; i++)
+                        if (s[i] == '/') sb[i] = '\\';
+            return sb.ToString();
         }
 
         internal static string Describe(object r, int depth = 0)

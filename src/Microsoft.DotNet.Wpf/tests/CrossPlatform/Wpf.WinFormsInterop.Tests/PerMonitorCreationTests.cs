@@ -86,7 +86,7 @@ namespace Wpf.WinFormsInterop.Tests
                     }
                     catch (Exception e) { failure = e; }
                 });
-                t.SetApartmentState(ApartmentState.STA);
+                t.TrySetApartmentState(ApartmentState.STA);
                 t.Start();
                 t.Join();
                 if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

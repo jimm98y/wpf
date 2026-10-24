@@ -30,7 +30,7 @@ namespace Wpf.WinFormsInterop.Tests
                 try { body(Dispatcher.CurrentDispatcher); }
                 catch (Exception ex) { failure = ex; }
             });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             Assert.True(t.Join(20000), "the dispatcher thread did not finish");
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

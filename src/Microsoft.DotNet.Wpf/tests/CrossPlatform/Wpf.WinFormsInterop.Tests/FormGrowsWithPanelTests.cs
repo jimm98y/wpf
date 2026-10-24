@@ -76,9 +76,11 @@ namespace Wpf.WinFormsInterop.Tests
         [Fact]
         public void ModalDialog_GrowsWhenItsAdvancedPanelIsShown()
         {
+            // the real window is read through user32 (RealClient)
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "a Windows host window");
             Exception? failure = null;
             var t = new Thread(() => { try { Run(); } catch (Exception ex) { failure = ex; } });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

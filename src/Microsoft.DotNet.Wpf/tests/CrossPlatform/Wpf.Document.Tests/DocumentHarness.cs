@@ -253,7 +253,7 @@ namespace Wpf.Document.Tests
             // since the Dispatcher's thread affinity is its own rather than the apartment's.
             if (OperatingSystem.IsWindows())
             {
-                thread.SetApartmentState(ApartmentState.STA);
+                thread.TrySetApartmentState(ApartmentState.STA);
             }
 
             thread.IsBackground = true;

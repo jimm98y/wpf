@@ -46,7 +46,7 @@ namespace Wpf.WinFormsInterop.Tests
 
             protected override void OnFontChanged(EventArgs e)
             {
-                _log.Add($"{Name}.OnFontChanged {Font.SizeInPoints} handle={IsHandleCreated}");
+                _log.Add(FormattableString.Invariant($"{Name}.OnFontChanged {Font.SizeInPoints} handle={IsHandleCreated}"));
                 base.OnFontChanged(e);
             }
 

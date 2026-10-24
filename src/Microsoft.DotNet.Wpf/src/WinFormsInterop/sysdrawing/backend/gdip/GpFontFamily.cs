@@ -36,8 +36,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
         static readonly Dictionary<string, Metrics?> s_metrics = new Dictionary<string, Metrics?> (StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The family's name as its font declares it, or null when no installed (or
-        /// registered) font is called that.</summary>
-        public static string Canonical (string name) => FontFiles.CanonicalFamily (name);
+        /// registered) font is called that. Off Windows a Windows family the stack carries a
+        /// metric-compatible face for counts as installed (MetricStandIns).</summary>
+        public static string Canonical (string name) => FontFiles.CanonicalFamily (name) ?? StandInFor (name);
+
+        // The Windows families whose faces the stack's own (WpfWebGpu.Fonts) or the system's fonts
+        // stand in for metric for metric: the same advances and the same ascent, descent and line gap,
+        // so text measures and lays out as it does on Windows. Elsewhere such a family is installed as
+        // far as an application can tell, as Segoe UI is to WPF there -- not, as GDI+ treats a family it
+        // does not have, Microsoft Sans Serif: a WinForms "Segoe UI 9" was 14 pixels high where Windows
+        // has 16, and every control sized from it was short.
+        static readonly (string Family, string[] StandIns)[] MetricStandIns = {
+            ("Segoe UI", new[] { "Selawik" }),
+            ("Arial", new[] { "Liberation Sans" }),
+            ("Times New Roman", new[] { "Liberation Serif" }),
+            ("Courier New", new[] { "Liberation Mono" }),
+        };
+
+        static string StandInFor (string name)
+        {
+            if (OperatingSystem.IsWindows () || string.IsNullOrEmpty (name)) return null;
+            foreach ((string family, string[] standIns) in MetricStandIns) {
+                if (!string.Equals (family, name, StringComparison.OrdinalIgnoreCase)) continue;
+                foreach (string standIn in standIns)
+                    if (FontFiles.CanonicalFamily (standIn) != null) return family;
+            }
+            return null;
+        }
 
         /// <summary>Whether the managed font stack can draw <paramref name="name"/> at all (an installed
         /// family, or one it substitutes for).</summary>
