@@ -163,10 +163,7 @@ public static unsafe partial class Exports
         if (Resolve(hwnd) is not System.Windows.Forms.Control c) return;
         Ui(c, () =>
         {
-            object? driver = typeof(System.Windows.Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
-            driver?.GetType().GetMethod("ValidateWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.Invoke(driver, new object[] { (IntPtr)hwnd, repaint });
+            System.Windows.Forms.Win32Bridge.ValidateWindow(hwnd, repaint);
             return 0;
         });
     }
@@ -584,10 +581,7 @@ public static unsafe partial class Exports
         Ui(o, () =>
         {
             if (!control.IsHandleCreated) return 0;
-            object? driver = typeof(System.Windows.Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
-            driver?.GetType().GetMethod("SetLayeredImage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.Invoke(driver, new object[] { control.Handle, rgba, w, h, opacity });
+            System.Windows.Forms.Win32Bridge.SetLayeredImage(control.Handle, rgba, w, h, opacity);
             return 0;
         });
         return TRUE;

@@ -14,7 +14,6 @@
 // Only the stack's WinForms windows have scroll bars to answer for; a handle that is not one answers
 // as Windows does for a window without the bar asked for.
 
-using System.Reflection;
 using System.Runtime.InteropServices;
 using Forms = System.Windows.Forms;
 
@@ -80,16 +79,13 @@ public static unsafe partial class Exports
     private const int SB_HORZ = 0, SB_VERT = 1, SB_CTL = 2, SB_BOTH = 3;
     private const uint SIF_RANGE = 1, SIF_PAGE = 2, SIF_POS = 4, SIF_DISABLENOSCROLL = 8, SIF_TRACKPOS = 0x10;
 
-    private static MethodInfo? s_allControls;
 
     /// <summary>The scroll bar <paramref name="bar"/> of a window: the window itself for SB_CTL, else
     /// its own (implicit) scroll bar of that orientation, visible or not; null for none.</summary>
     private static Forms.ScrollBar? ScrollBarOf(Forms.Control c, int bar)
     {
         if (bar == SB_CTL) return c as Forms.ScrollBar;
-        s_allControls ??= c.Controls.GetType().GetMethod("GetAllControls", BindingFlags.NonPublic | BindingFlags.Instance);
-        if (s_allControls?.Invoke(c.Controls, null) is not Forms.Control[] all) return null;
-        foreach (Forms.Control child in all)
+        foreach (Forms.Control child in Forms.Win32Bridge.AllControls(c))
         {
             // Implicit: the control's own, not one the application put in it.
             if (child is Forms.ScrollBar sb && child.GetType().Name.StartsWith("Implicit", StringComparison.Ordinal)

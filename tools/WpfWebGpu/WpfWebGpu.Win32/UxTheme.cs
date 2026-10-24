@@ -3,7 +3,7 @@
 // WinForms draws its themed parts with a managed renderer of Windows 11's aero.msstyles on every head
 // (VisualStylesWin11). An application that calls uxtheme itself -- DotNetBar's themed parts, a control
 // that asks for a theme part on the HDC of its paint Graphics -- comes here, and is answered from that
-// same renderer (System.Windows.Forms.VisualStyles.UxThemeBridge, reached by name), so both ways a part
+// same renderer (System.Windows.Forms.VisualStyles.UxThemeBridge, called directly), so both ways a part
 // is asked for look the same. They were answered "no visual styles" (IsThemeActive FALSE, no theme
 // data), so such code drew its classic look beside WinForms' Windows 11 one.
 //
@@ -13,9 +13,9 @@
 // or the Graphics a GetHdc came from.
 
 using System.Drawing;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using Forms = System.Windows.Forms;
+using UxThemeBridge = System.Windows.Forms.VisualStyles.UxThemeBridge;
 
 namespace WpfWebGpu.Win32;
 
@@ -25,73 +25,6 @@ public static unsafe partial class Exports
 
 
     [StructLayout(LayoutKind.Sequential)] public struct SIZE { public int cx, cy; }
-
-    // ---- the bridge ------------------------------------------------------------------------------
-
-    private delegate nint OpenFn(string classList);
-    private delegate bool PartDefinedFn(nint theme, int part);
-    private delegate bool TransparentFn(nint theme, int part, int state);
-    private delegate int DrawBackgroundFn(nint theme, Graphics g, int part, int state, Rectangle bounds, Rectangle clip, bool clipped);
-    private delegate int DrawTextFn(nint theme, Graphics g, int part, int state, string text, int flags, Rectangle bounds, Font? font, int argb, bool hasColor, bool grayed);
-    private delegate Size MeasureTextFn(Graphics g, string text, int flags, Rectangle bounds, Font? font);
-    private delegate int DrawEdgeFn(nint theme, Graphics g, int part, int state, Rectangle bounds, int edge, int flags, out Rectangle content);
-    private delegate int ParentBackgroundFn(Graphics g, Rectangle bounds, Forms.Control child);
-    private delegate int PartSizeFn(nint theme, Graphics? g, int part, int state, Rectangle bounds, bool hasBounds, int type, out Size size);
-    private delegate int MarginsFn(nint theme, Graphics? g, int part, int state, int property, out Forms.Padding margins);
-    private delegate int RectFn(nint theme, Graphics? g, int part, int state, Rectangle input, out Rectangle output);
-    private delegate int ColorFn(nint theme, int part, int state, int property, out int argb);
-
-    private sealed class Bridge
-    {
-        public required OpenFn Open;
-        public required PartDefinedFn IsPartDefined;
-        public required TransparentFn IsPartiallyTransparent;
-        public required DrawBackgroundFn DrawBackground;
-        public required DrawTextFn DrawText;
-        public required MeasureTextFn MeasureText;
-        public required DrawEdgeFn DrawEdge;
-        public required ParentBackgroundFn DrawParentBackground;
-        public required PartSizeFn PartSize;
-        public required MarginsFn Margins;
-        public required RectFn ContentRect, Extent;
-        public required ColorFn ThemeColor;
-    }
-
-    private static Bridge? s_bridge;
-    private static bool s_bridgeLooked;
-
-    /// <summary>The stack's renderer, or null on a System.Windows.Forms without it (then visual styles
-    /// are reported off, as before).</summary>
-    private static Bridge? Themes
-    {
-        get
-        {
-            if (s_bridgeLooked) return s_bridge;
-            s_bridgeLooked = true;
-            try
-            {
-                Type? t = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.VisualStyles.UxThemeBridge");
-                if (t == null) return null;
-                T D<T>(string name) where T : Delegate => t.GetMethod(name, BindingFlags.Public | BindingFlags.Static)!.CreateDelegate<T>();
-                s_bridge = new Bridge
-                {
-                    Open = D<OpenFn>("Open"), IsPartDefined = D<PartDefinedFn>("IsPartDefined"),
-                    IsPartiallyTransparent = D<TransparentFn>("IsPartiallyTransparent"),
-                    DrawBackground = D<DrawBackgroundFn>("DrawBackground"), DrawText = D<DrawTextFn>("DrawText"),
-                    MeasureText = D<MeasureTextFn>("MeasureText"), DrawEdge = D<DrawEdgeFn>("DrawEdge"),
-                    DrawParentBackground = D<ParentBackgroundFn>("DrawParentBackground"), PartSize = D<PartSizeFn>("PartSize"),
-                    Margins = D<MarginsFn>("Margins"), ContentRect = D<RectFn>("ContentRect"), Extent = D<RectFn>("Extent"),
-                    ThemeColor = D<ColorFn>("ThemeColor"),
-                };
-            }
-            catch (Exception e)
-            {
-                LogOnce("uxtheme:bridge", $"win32 shim: uxtheme has no renderer ({e.GetBaseException().Message}); visual styles are reported off");
-                s_bridge = null;
-            }
-            return s_bridge;
-        }
-    }
 
     private static Rectangle Rect(RECT* r) => r == null ? Rectangle.Empty : Rectangle.FromLTRB(r->Left, r->Top, r->Right, r->Bottom);
     private static void Put(RECT* r, Rectangle v) { if (r != null) *r = new RECT { Left = v.Left, Top = v.Top, Right = v.Right, Bottom = v.Bottom }; }
@@ -136,7 +69,7 @@ public static unsafe partial class Exports
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<nint, nint> s_windowThemes = new();
     private static uint s_themeAppProperties = 7;   // STAP_ALLOW_NONCLIENT | STAP_ALLOW_CONTROLS | STAP_ALLOW_WEBCONTENT
 
-    [Win32Export("IsThemeActive", "IsAppThemed", "IsCompositionActive")] public static int IsThemeActive() => Themes != null ? TRUE : FALSE;
+    [Win32Export("IsThemeActive", "IsAppThemed", "IsCompositionActive")] public static int IsThemeActive() => TRUE;
     [Win32Export("SetWindowTheme")] public static int SetWindowTheme(nint hwnd, char* app, char* idList) => S_OK;
     [Win32Export("CloseThemeData")] public static int CloseThemeData(nint theme) => S_OK;
     [Win32Export("GetThemeAppProperties")] public static uint GetThemeAppProperties() => s_themeAppProperties;
@@ -147,7 +80,7 @@ public static unsafe partial class Exports
     private static nint Open(nint hwnd, char* classList)
     {
         string list = Text(classList, -1);
-        nint theme = list.Length == 0 ? 0 : Themes?.Open(list) ?? 0;
+        nint theme = list.Length == 0 ? 0 : UxThemeBridge.Open(list);
         LogOnce("uxtheme:open:" + list, $"win32 shim: uxtheme {list}: {(theme != 0 ? "themed" : "no theme (drawn classically)")}");
         if (theme == 0) { SetLastError(unchecked((int)0x80070490)); return 0; }
         if (hwnd != 0) s_windowThemes[hwnd] = theme;
@@ -161,7 +94,6 @@ public static unsafe partial class Exports
     [Win32Export("GetCurrentThemeName")]
     public static int GetCurrentThemeName(char* file, int fileMax, char* color, int colorMax, char* size, int sizeMax)
     {
-        if (Themes == null) return E_FAIL;
         if (file != null) WriteUtf16(file, fileMax, @"C:\Windows\resources\Themes\Aero\Aero.msstyles");
         if (color != null) WriteUtf16(color, colorMax, "NormalColor");
         if (size != null) WriteUtf16(size, sizeMax, "NormalSize");
@@ -172,8 +104,8 @@ public static unsafe partial class Exports
 
     [Win32Export("DrawThemeBackground")]
     public static int DrawThemeBackground(nint theme, nint hdc, int part, int state, RECT* rect, RECT* clip)
-        => Themes is not { } b || theme == 0 ? E_FAIL
-         : OnDc(hdc, g => b.DrawBackground(theme, g, part, state, Rect(rect), Rect(clip), clip != null));
+        => theme == 0 ? E_FAIL
+         : OnDc(hdc, g => UxThemeBridge.DrawBackground(theme, g, part, state, Rect(rect), Rect(clip), clip != null));
 
     // DTBGOPTS: dwSize, dwFlags, RECT rcClip. DTBG_CLIPRECT = 1.
     [Win32Export("DrawThemeBackgroundEx")]
@@ -181,7 +113,7 @@ public static unsafe partial class Exports
     {
         bool clipped = options != null && (options[1] & 1) != 0;
         Rectangle clip = clipped ? Rect((RECT*)(options + 2)) : Rectangle.Empty;
-        return Themes is not { } b || theme == 0 ? E_FAIL : OnDc(hdc, g => b.DrawBackground(theme, g, part, state, Rect(rect), clip, clipped));
+        return theme == 0 ? E_FAIL : OnDc(hdc, g => UxThemeBridge.DrawBackground(theme, g, part, state, Rect(rect), clip, clipped));
     }
 
     // DT_CALCRECT (0x400) is the caller's question, not a drawing flag.
@@ -190,17 +122,17 @@ public static unsafe partial class Exports
     [Win32Export("DrawThemeText")]
     public static int DrawThemeText(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, uint flags2, RECT* rect)
     {
-        if (Themes is not { } b || theme == 0) return E_FAIL;
+        if (theme == 0) return E_FAIL;
         string s = Text(text, count);
         Font? font = DcFont(hdc);
-        return OnDc(hdc, g => b.DrawText(theme, g, part, state, s, (int)(flags & ~DT_CALCRECT), Rect(rect), font, 0, false, (flags2 & 1) != 0));   // DTT_GRAYED
+        return OnDc(hdc, g => UxThemeBridge.DrawText(theme, g, part, state, s, (int)(flags & ~DT_CALCRECT), Rect(rect), font, 0, false, (flags2 & 1) != 0));   // DTT_GRAYED
     }
 
     // DTTOPTS: dwSize, dwFlags, crText, ... DTT_TEXTCOLOR = 1, DTT_CALCRECT = 0x200.
     [Win32Export("DrawThemeTextEx")]
     public static int DrawThemeTextEx(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* rect, uint* options)
     {
-        if (Themes is not { } b || theme == 0) return E_FAIL;
+        if (theme == 0) return E_FAIL;
         string s = Text(text, count);
         Font? font = DcFont(hdc);
         uint opts = options != null ? options[1] : 0;
@@ -209,7 +141,7 @@ public static unsafe partial class Exports
             Rectangle r = Rect(rect);
             int hr = OnDc(hdc, g =>
             {
-                Size size = b.MeasureText(g, s, (int)(flags & ~DT_CALCRECT), r, font);
+                Size size = UxThemeBridge.MeasureText(g, s, (int)(flags & ~DT_CALCRECT), r, font);
                 Put(rect, new Rectangle(r.Location, size));
                 return S_OK;
             });
@@ -218,16 +150,16 @@ public static unsafe partial class Exports
         bool hasColor = (opts & 1) != 0;
         uint bgr = hasColor ? options[2] : 0;
         int argb = unchecked((int)(0xFF000000 | ((bgr & 0xFF) << 16) | (bgr & 0xFF00) | ((bgr >> 16) & 0xFF)));
-        return OnDc(hdc, g => b.DrawText(theme, g, part, state, s, (int)flags, Rect(rect), font, argb, hasColor, false));
+        return OnDc(hdc, g => UxThemeBridge.DrawText(theme, g, part, state, s, (int)flags, Rect(rect), font, argb, hasColor, false));
     }
 
     [Win32Export("DrawThemeEdge")]
     public static int DrawThemeEdge(nint theme, nint hdc, int part, int state, RECT* rect, uint edge, uint flags, RECT* content)
     {
-        if (Themes is not { } b || theme == 0) return E_FAIL;
+        if (theme == 0) return E_FAIL;
         return OnDc(hdc, g =>
         {
-            int hr = b.DrawEdge(theme, g, part, state, Rect(rect), (int)edge, (int)flags, out Rectangle inner);
+            int hr = UxThemeBridge.DrawEdge(theme, g, part, state, Rect(rect), (int)edge, (int)flags, out Rectangle inner);
             Put(content, inner);
             return hr;
         });
@@ -235,9 +167,9 @@ public static unsafe partial class Exports
 
     private static int ParentBackground(nint hwnd, nint hdc, RECT* rect)
     {
-        if (Themes is not { } b || Resolve(hwnd) is not Forms.Control child) return S_OK;
+        if (Resolve(hwnd) is not Forms.Control child) return S_OK;
         Rectangle r = rect != null ? Rect(rect) : new Rectangle(Point.Empty, child.Size);
-        return OnDc(hdc, g => b.DrawParentBackground(g, r, child));
+        return OnDc(hdc, g => UxThemeBridge.DrawParentBackground(g, r, child));
     }
 
     [Win32Export("DrawThemeParentBackground")] public static int DrawThemeParentBackground(nint hwnd, nint hdc, RECT* rect) => ParentBackground(hwnd, hdc, rect);
@@ -248,8 +180,8 @@ public static unsafe partial class Exports
     [Win32Export("GetThemePartSize")]
     public static int GetThemePartSize(nint theme, nint hdc, int part, int state, RECT* rect, int type, SIZE* size)
     {
-        if (Themes is not { } b || theme == 0 || size == null) return E_INVALIDARG;
-        int hr = b.PartSize(theme, null, part, state, Rect(rect), rect != null, type, out Size s);
+        if (theme == 0 || size == null) return E_INVALIDARG;
+        int hr = UxThemeBridge.PartSize(theme, null, part, state, Rect(rect), rect != null, type, out Size s);
         *size = new SIZE { cx = s.Width, cy = s.Height };
         return hr;
     }
@@ -258,8 +190,8 @@ public static unsafe partial class Exports
     [Win32Export("GetThemeMargins")]
     public static int GetThemeMargins(nint theme, nint hdc, int part, int state, int property, RECT* rect, int* margins)
     {
-        if (Themes is not { } b || theme == 0 || margins == null) return E_INVALIDARG;
-        int hr = b.Margins(theme, null, part, state, property, out Forms.Padding m);
+        if (theme == 0 || margins == null) return E_INVALIDARG;
+        int hr = UxThemeBridge.Margins(theme, null, part, state, property, out Forms.Padding m);
         margins[0] = m.Left; margins[1] = m.Right; margins[2] = m.Top; margins[3] = m.Bottom;
         return hr;
     }
@@ -267,8 +199,8 @@ public static unsafe partial class Exports
     [Win32Export("GetThemeBackgroundContentRect")]
     public static int GetThemeBackgroundContentRect(nint theme, nint hdc, int part, int state, RECT* bounds, RECT* content)
     {
-        if (Themes is not { } b || theme == 0 || bounds == null || content == null) return E_INVALIDARG;
-        int hr = b.ContentRect(theme, null, part, state, Rect(bounds), out Rectangle r);
+        if (theme == 0 || bounds == null || content == null) return E_INVALIDARG;
+        int hr = UxThemeBridge.ContentRect(theme, null, part, state, Rect(bounds), out Rectangle r);
         Put(content, r);
         return hr;
     }
@@ -276,8 +208,8 @@ public static unsafe partial class Exports
     [Win32Export("GetThemeBackgroundExtent")]
     public static int GetThemeBackgroundExtent(nint theme, nint hdc, int part, int state, RECT* content, RECT* extent)
     {
-        if (Themes is not { } b || theme == 0 || content == null || extent == null) return E_INVALIDARG;
-        int hr = b.Extent(theme, null, part, state, Rect(content), out Rectangle r);
+        if (theme == 0 || content == null || extent == null) return E_INVALIDARG;
+        int hr = UxThemeBridge.Extent(theme, null, part, state, Rect(content), out Rectangle r);
         Put(extent, r);
         return hr;
     }
@@ -294,13 +226,13 @@ public static unsafe partial class Exports
     [Win32Export("GetThemeTextExtent")]
     public static int GetThemeTextExtent(nint theme, nint hdc, int part, int state, char* text, int count, uint flags, RECT* bounds, RECT* extent)
     {
-        if (Themes is not { } b || theme == 0 || extent == null) return E_INVALIDARG;
+        if (theme == 0 || extent == null) return E_INVALIDARG;
         string s = Text(text, count);
         Font? font = DcFont(hdc);
         Rectangle r = Rect(bounds);
         return OnDc(hdc, g =>
         {
-            Size size = b.MeasureText(g, s, (int)(flags & ~DT_CALCRECT), r, font);
+            Size size = UxThemeBridge.MeasureText(g, s, (int)(flags & ~DT_CALCRECT), r, font);
             Put(extent, new Rectangle(r.Location, size));
             return S_OK;
         });
@@ -309,8 +241,8 @@ public static unsafe partial class Exports
     [Win32Export("GetThemeColor")]
     public static int GetThemeColor(nint theme, int part, int state, int property, uint* color)
     {
-        if (Themes is not { } b || theme == 0 || color == null) return E_INVALIDARG;
-        int hr = b.ThemeColor(theme, part, state, property, out int argb);
+        if (theme == 0 || color == null) return E_INVALIDARG;
+        int hr = UxThemeBridge.ThemeColor(theme, part, state, property, out int argb);
         if (hr != S_OK) return E_PROP_ID_UNSUPPORTED;
         uint c = (uint)argb;
         *color = ((c >> 16) & 0xFF) | (c & 0xFF00) | ((c & 0xFF) << 16);   // COLORREF 0x00BBGGRR
@@ -323,9 +255,9 @@ public static unsafe partial class Exports
 
     [Win32Export("GetThemeSysColor")] public static uint GetThemeSysColor(nint theme, int index) => SysColor(index);
 
-    [Win32Export("IsThemePartDefined")] public static int IsThemePartDefined(nint theme, int part, int state) => theme != 0 && Themes is { } b && b.IsPartDefined(theme, part) ? TRUE : FALSE;
+    [Win32Export("IsThemePartDefined")] public static int IsThemePartDefined(nint theme, int part, int state) => theme != 0 && UxThemeBridge.IsPartDefined(theme, part) ? TRUE : FALSE;
 
     [Win32Export("IsThemeBackgroundPartiallyTransparent")]
     public static int IsThemeBackgroundPartiallyTransparent(nint theme, int part, int state)
-        => theme != 0 && Themes is { } b && b.IsPartiallyTransparent(theme, part, state) ? TRUE : FALSE;
+        => theme != 0 && UxThemeBridge.IsPartiallyTransparent(theme, part, state) ? TRUE : FALSE;
 }

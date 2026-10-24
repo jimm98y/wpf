@@ -1,4 +1,4 @@
-// wpf-rewrite --out[=]<dir> [--search[=]<dir>]... [--corelib=<System.Private.CoreLib.dll>] [--primitives=<System.Drawing.Primitives.dll>] <assembly | @response-file>...
+// wpf-rewrite --out[=]<dir> [--search[=]<dir>]... [--primitives=<System.Drawing.Primitives.dll>] <assembly | @response-file>...
 // wpf-rewrite --placeholders --out[=]<dir> [--published=<name>]... <assembly | @response-file>...
 //
 // Rewrites what of the given app assemblies needs it -- their COM types, their Windows P/Invokes -- into
@@ -13,7 +13,7 @@ var inputs = new List<string>();
 var search = new List<string>();
 var publishedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 bool placeholdersOnly = false;
-string? outDir = null, corelib = null, primitives = null;
+string? outDir = null, primitives = null;
 var queue = new Queue<string>(args);
 while (queue.Count > 0)
 {
@@ -27,7 +27,6 @@ while (queue.Count > 0)
     else if (a.StartsWith("--out=", StringComparison.Ordinal)) outDir = a["--out=".Length..];
     else if (a == "--search" && queue.Count > 0) search.Add(queue.Dequeue());
     else if (a.StartsWith("--search=", StringComparison.Ordinal)) search.Add(a["--search=".Length..]);
-    else if (a.StartsWith("--corelib=", StringComparison.Ordinal)) corelib = a["--corelib=".Length..];
     else if (a.StartsWith("--primitives=", StringComparison.Ordinal)) primitives = a["--primitives=".Length..];
     else if (a.StartsWith("--published=", StringComparison.Ordinal)) publishedNames.Add(a["--published=".Length..]);
     else if (a == "--placeholders") placeholdersOnly = true;
@@ -85,8 +84,6 @@ try
     if (primitives != null && SystemColorsPatch.Write(primitives, Path.Combine(outDir, ".primitives"), Console.WriteLine) is { } patched)
         inputs.Add(patched);
     var done = BuildRewrite.Run(inputs, search, outDir, name => name.StartsWith("WpfWebGpu.", StringComparison.Ordinal), Console.WriteLine);
-    // the multithreaded runtime's CoreLib, its Lock made to tell threads apart (CoreLibPatch)
-    if (corelib != null) CoreLibPatch.Write(corelib, outDir, Console.WriteLine);
     Console.WriteLine($"wpf-rewrite: {inputs.Count} assemblies read, {done.Count} rewritten");
     return 0;
 }

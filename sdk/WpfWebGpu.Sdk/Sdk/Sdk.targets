@@ -614,6 +614,17 @@
     <StaticWebAssetsFingerprintContent Condition="'$(StaticWebAssetsFingerprintContent)' == ''">false</StaticWebAssetsFingerprintContent>
   </PropertyGroup>
 
+  <!-- The multithreaded runtime's OS thread id, one per thread (web/thread-id.c, dotnet/runtime#129900):
+       its System.Threading.Lock told no two threads apart, and the timer queue aborted the runtime. The
+       native runtime is relinked for AOT anyway; the wrap replaces the one function every caller asks. -->
+  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WasmEnableThreads)' == 'true'">
+    <NativeFileReference Include="$(WpfWebGpuSdkRoot)web/thread-id.c" />
+  </ItemGroup>
+  <PropertyGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WasmEnableThreads)' == 'true'">
+    <WasmBuildNative>true</WasmBuildNative>
+    <EmccExtraLDFlags>$(EmccExtraLDFlags) -Wl,--wrap=SystemNative_TryGetUInt32OSThreadId</EmccExtraLDFlags>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <Compile Include="$(WpfWebGpuSdkRoot)web/WasmBoot.cs" Link="WpfWebGpuWasmBoot.cs" />
     <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
@@ -787,9 +798,6 @@
       <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/wpf-browser;--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
       <_WpfWebGpuRewriteArg Include="@(_ManagedRuntimePackAssembly->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
       <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuRewriteInput->'%(FullPath)')" />
-      <!-- the multithreaded runtime's CoreLib: its Lock cannot tell threads apart (BuildRewrite.cs, CoreLibPatch) -->
-      <_WpfWebGpuCoreLib Include="@(ResolvedFileToPublish)" Condition="'$(WasmEnableThreads)' == 'true' and '%(Filename)%(Extension)' == 'System.Private.CoreLib.dll'" />
-      <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuCoreLib->'--corelib=%(FullPath)')" />
       <!-- System.Drawing.Primitives: off Windows its SystemColors are a palette compiled in, Windows XP's;
            made its Windows build, which asks user32 (BuildRewrite.cs, SystemColorsPatch) -->
       <_WpfWebGpuPrimitives Include="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'System.Drawing.Primitives.dll'" />
@@ -810,9 +818,6 @@
       <ResolvedFileToPublish Include="@(_WpfWebGpuRewritten)" />
       <ResolvedFileToPublish Remove="@(_WpfWebGpuRewrittenPdb)" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuRewrittenPdb->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
-      <_WpfWebGpuPatchedCoreLib Include="@(_WpfWebGpuCoreLib->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" Condition="Exists('$(_WpfWebGpuRewriteDir)System.Private.CoreLib.dll')" />
-      <ResolvedFileToPublish Remove="@(_WpfWebGpuCoreLib)" Condition="'@(_WpfWebGpuPatchedCoreLib)' != ''" />
-      <ResolvedFileToPublish Include="@(_WpfWebGpuPatchedCoreLib)" />
       <_WpfWebGpuPatchedPrimitives Include="@(_WpfWebGpuPrimitives->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" Condition="Exists('$(_WpfWebGpuRewriteDir)System.Drawing.Primitives.dll')" />
       <ResolvedFileToPublish Remove="@(_WpfWebGpuPrimitives)" Condition="'@(_WpfWebGpuPatchedPrimitives)' != ''" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuPatchedPrimitives)" />

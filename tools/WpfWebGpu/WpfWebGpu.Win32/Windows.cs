@@ -15,7 +15,6 @@ namespace WpfWebGpu.Win32;
 
 public static unsafe partial class Exports
 {
-    private static Func<IntPtr, bool>? s_isStackWindow;
     private static Action<IntPtr>? s_flushHdc;
 
     /// <summary>Whether the process is the Windows comparison head (the real Windows API is underneath).</summary>
@@ -69,17 +68,5 @@ public static unsafe partial class Exports
 
     /// <summary>Whether <paramref name="h"/> is a window of the stack's WinForms. Never a real HWND:
     /// the driver's handles are not Windows' (see XplatUIWebGpu.CreateWindow).</summary>
-    internal static bool IsStackWindow(nint h)
-    {
-        if (h == 0) return false;
-        if (s_isStackWindow == null)
-        {
-            var hwndType = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.Hwnd");
-            var from = hwndType?.GetMethod("ObjectFromHandle", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-            if (from == null) return false;
-            var f = (Func<IntPtr, object?>)Delegate.CreateDelegate(typeof(Func<IntPtr, object?>), from);
-            s_isStackWindow = p => f(p) != null;
-        }
-        return s_isStackWindow((IntPtr)h);
-    }
+    internal static bool IsStackWindow(nint h) => Forms.Win32Bridge.IsWindow(h);
 }

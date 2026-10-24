@@ -7,14 +7,14 @@
 // caller holds is this backend's (VisualStylesWin11) and what it draws is what WinForms draws: one
 // Windows 11 look, whichever way a part is asked for.
 //
-// Only public types cross: the shim binds these by name (reflection) and keeps no reference to the
-// backend's internals.
+// Public, so the shim calls it directly (no reflection, which the browser's AOT compiler cannot bind);
+// only public types cross, and nothing of the backend's internals.
 
 using System.Drawing;
 
 namespace System.Windows.Forms.VisualStyles
 {
-	internal static class UxThemeBridge
+	public static class UxThemeBridge
 	{
 		private const int TMT_TEXTCOLOR = 3803;
 

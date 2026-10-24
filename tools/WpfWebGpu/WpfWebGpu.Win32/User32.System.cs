@@ -278,13 +278,11 @@ public static unsafe partial class Exports
     // out at -- the display's for a per-monitor-aware application, 96 on the surface the host
     // scales for any other.
     private static Forms.HighDpiMode Mode => Forms.Application.HighDpiMode;
-    private static uint SystemDpi => (uint)(s_systemDpi ??= (int)(typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.ScaleHelper")
-        ?.GetProperty("InitialSystemDpi", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null) ?? 96));
-    private static int? s_systemDpi;
+    private static uint SystemDpi => (uint)Forms.Win32Bridge.InitialSystemDpi;
 
     [Win32Export("GetDpiForWindow")] public static uint GetDpiForWindow(nint hwnd)
     {
-        int dpi = Resolve(hwnd) is Forms.Control ? DriverInt("GetDpiForWindow", hwnd) : 0;
+        int dpi = Resolve(hwnd) is Forms.Control ? Forms.Win32Bridge.GetDpiForWindow(hwnd) : 0;
         return dpi > 0 ? (uint)dpi : SystemDpi;
     }
     [Win32Export("GetDpiForSystem")] public static uint GetDpiForSystem() => SystemDpi;

@@ -23,7 +23,7 @@ internal sealed unsafe partial class Win32Host
         if (_form.Opacity < 1.0 || !_form.TransparencyKey.IsEmpty) return true;
         // An app that makes its form WS_EX_LAYERED itself (CreateParams) and draws it through
         // UpdateLayeredWindow: the driver holds that picture (XplatUIWebGpu.SetLayeredImage).
-        return _hasLayeredImage != null && (bool)_hasLayeredImage.Invoke(_driver, new object[] { _formHandle });
+        return _driver.HasLayeredImage(_formHandle);
     }
 
     /// <summary>Present one frame through UpdateLayeredWindow. False when that cannot be done, and
@@ -40,7 +40,7 @@ internal sealed unsafe partial class Win32Host
         // A window the app draws through UpdateLayeredWindow shows exactly that bitmap, and Windows
         // draws nothing else of it (not its children either): hand the app's own premultiplied bits
         // on as they are, with its constant alpha.
-        if (_getLayeredBits?.Invoke(_driver, new object[] { _formHandle }) is ValueTuple<byte[], int, int, byte> lb && lb.Item2 > 0 && lb.Item3 > 0)
+        if (_driver.GetLayeredBits(_formHandle) is ValueTuple<byte[], int, int, byte> lb && lb.Item2 > 0 && lb.Item3 > 0)
         {
             // An application that is not per-monitor aware hands over bits in its own (96-dpi or
             // system-dpi) pixels, and Windows' DPI virtualisation shows them stretched to the

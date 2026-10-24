@@ -11,7 +11,6 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -25,22 +24,14 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // follows. Asking the live control every frame therefore took the process down every time a
     // dialog was closed with a button rather than the window close box.
     private IntPtr _formHandle;
-    private MethodInfo _hostActivate;
 
     /// <summary>Whether there is still a form behind this window. A disposed one has no pixels to
     /// present and must not be touched.</summary>
     private bool FormGone => _form == null || _form.IsDisposed;
-    private readonly object _driver;
-    private readonly MethodInfo _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _getCaret, _getSubtree, _keyUp, _setModifiers, _wheel, _tickTimers, _sysKeyDown, _sysChar, _rightDown, _rightUp;
-    private readonly MethodInfo _getRubberBands;
-    private readonly MethodInfo _isPopup;
-    private readonly MethodInfo _isUnderPopup;
-    private readonly MethodInfo _hasLayeredImage, _getLayeredBits;
-    private readonly MethodInfo _getCursor, _endCursorOverride;
+    private readonly XplatUIWebGpu _driver;
     // On unless switched off; see XplatUIWebGpu.s_gpuRaster for why it cannot be opt-in.
     private readonly bool _gpuRaster = Environment.GetEnvironmentVariable("WF_GPU_RASTER") != "0"
         && Environment.GetEnvironmentVariable("WF_WEBGPU") != "0";
-    private readonly Stopwatch _blink = Stopwatch.StartNew();
     private IntPtr _hwnd, _hinstance;
     private WgpuPresenter _wgpu;
     private float _scale = 1f;
@@ -66,26 +57,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     internal Win32Host(Form form)
     {
         _form = form;
-        var xplat = typeof(Control).Assembly.GetType("System.Windows.Forms.XplatUI");
-        _driver = xplat.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
-        Type dt = _driver.GetType();
-        MethodInfo M(string n) => dt.GetMethod(n, BindingFlags.NonPublic | BindingFlags.Instance);
-        _injectClick = M("InjectClick"); _down = M("InjectMouseDown"); _up = M("InjectMouseUp");
-        _move = M("InjectMouseMove"); _char = M("InjectChar"); _keyDown = M("InjectKeyDown");
-        _getPresent = M("GetPresentWindows"); _getScene = M("GetWindowScene");
-        _keyUp = M("InjectKeyUp"); _setModifiers = M("SetModifierKeys");
-        _wheel = M("InjectWheel");
-        // TickTimers() and TickTimers(bool) both exist: by name alone the lookup is ambiguous and threw,
-        // so no WinForms window could open on Windows.
-        _tickTimers = dt.GetMethod("TickTimers", BindingFlags.NonPublic | BindingFlags.Instance, Type.EmptyTypes);
-        _rightDown = M("InjectRightDown"); _rightUp = M("InjectRightUp");
-        _sysKeyDown = M("InjectSysKeyDown"); _sysChar = M("InjectSysChar");
-        _getVersion = M("GetPaintVersion"); _getCaret = M("GetCaret");
-        _hostActivate = M("HostActivate");
-        _getRubberBands = M("GetReversibleRects");
-        _getSubtree = M("GetSubtreeWindows"); _isPopup = M("IsInPopupWindow"); _isUnderPopup = M("IsUnderPopup"); _hasLayeredImage = M("HasLayeredImage"); _getLayeredBits = M("GetLayeredBits");
-        _getCursor = M("GetActiveCursor"); _endCursorOverride = M("EndCursorOverride");
-        _leaveAll = M("InjectMouseLeaveAll");
+        _driver = XplatUIWebGpu.GetInstance();
         // Register as the on-screen host for THIS form, so the driver's message loop drives this
         // window rather than creating a second one of its own.
         _formHandle = form.Handle;
@@ -572,7 +544,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (sourceDpi == 0)
         {
             _scale = 1f;
-            if (_driver is System.Windows.Forms.XplatUIWebGpu dpiDriver)
+            if (_driver is { } dpiDriver)
             {
                 // The form was laid out at the DPI its handle was created at (the system's). A window
                 // that comes up on a display at another DPI is told so, as Windows tells a window
@@ -728,7 +700,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // The driver's paint version covers the WinForms controls; embedded content (a hosted WPF
         // tree) changes on its own clock, so fold its version in or a WPF-only animation never
         // reaches the screen.
-        int ver = (int)_getVersion.Invoke(_driver, null) + EmbeddedScenes.CurrentVersion();
+        int ver = (int)_driver.GetPaintVersion() + EmbeddedScenes.CurrentVersion();
         WatchAnimations();
         bool caretOn = CaretOn();
         string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
@@ -794,13 +766,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         }
     }
 
-    private static FieldInfo s_activeHighlights;
-
-    private static int ActiveHighlights()
-    {
-        s_activeHighlights ??= typeof(ProgressBar).GetField("s_active_highlights", BindingFlags.NonPublic | BindingFlags.Static);
-        return s_activeHighlights?.GetValue(null) is int n ? n : 0;
-    }
+    private static int ActiveHighlights() => ProgressBar.s_active_highlights;
 
     /// <summary>The form is gone: take its window down NOW, on the form's own thread, while that
     /// thread is still here to do it. Left to the next frame loop's tick, a form disposed just before
@@ -1020,16 +986,16 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // that goes outside simply stopped being reported: dragging a ListView column edge past
             // the dialog's edge could not widen the column beyond the dialog.
             case 0x0201: Trace("WM_LBUTTONDOWN", lParam); SetFocus(hwnd); SetCapture(hwnd);
-                MouseAt(lParam, _down); InputFrame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
+                MouseAt(lParam, _driver.InjectMouseDown); InputFrame(); return IntPtr.Zero;                // WM_LBUTTONDOWN
             case 0x0202: Trace("WM_LBUTTONUP", lParam); ReleaseCapture();
-                MouseAt(lParam, _up); InputFrame(); return IntPtr.Zero;                  // WM_LBUTTONUP
+                MouseAt(lParam, _driver.InjectMouseUp); InputFrame(); return IntPtr.Zero;                  // WM_LBUTTONUP
             // The right button. Focus follows it, as it does in Windows -- the menu it raises
             // acts on the control that has the keyboard -- but no capture: the menu takes its
             // own. WinForms turns the release into WM_CONTEXTMENU itself.
             case 0x0204: Trace("WM_RBUTTONDOWN", lParam); SetFocus(hwnd);
-                MouseAt(lParam, _rightDown); InputFrame(); return IntPtr.Zero;           // WM_RBUTTONDOWN
+                MouseAt(lParam, _driver.InjectRightDown); InputFrame(); return IntPtr.Zero;           // WM_RBUTTONDOWN
             case 0x0205: Trace("WM_RBUTTONUP", lParam);
-                MouseAt(lParam, _rightUp); InputFrame(); return IntPtr.Zero;             // WM_RBUTTONUP
+                MouseAt(lParam, _driver.InjectRightUp); InputFrame(); return IntPtr.Zero;             // WM_RBUTTONUP
             // WM_ACTIVATE. A popup is dismissed by looking away from it: clicking the window it dropped
             // out of, or another application altogether. Nothing told it so -- it is a window of its own,
             // and a click elsewhere is not a message the driver ever sees -- so a colour picker that was
@@ -1039,7 +1005,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 if (((long)wParam & 0xFFFF) == 0) DismissPopup("WM_ACTIVATE");
                 // The form learns it was activated -- which is when a WinForms window takes focus.
                 if (_formHandle != IntPtr.Zero)
-                    _hostActivate?.Invoke(_driver, new object[] { _formHandle.ToInt64(), ((long)wParam & 0xFFFF) != 0 });
+                    _driver.HostActivate(_formHandle.ToInt64(), ((long)wParam & 0xFFFF) != 0);
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
             case 0x0008:                                   // WM_KILLFOCUS: the keyboard went elsewhere
                 DismissPopup("WM_KILLFOCUS");
@@ -1053,12 +1019,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // Nothing forwarded it, so the wheel did nothing anywhere -- no list, grid or text box
             // scrolled.
             case 0x020A:
-                if (_wheel != null)
                 {
                     int delta = (short)((long)wParam >> 16);
                     var pt = new POINT { x = (short)((long)lParam & 0xFFFF), y = (short)(((long)lParam >> 16) & 0xFFFF) };
                     ScreenToClient(hwnd, ref pt);
-                    _wheel.Invoke(_driver, new object[] { _ox + (int)(pt.x / _scale), _oy + (int)(pt.y / _scale), delta });
+                    _driver.InjectWheel(_ox + (int)(pt.x / _scale), _oy + (int)(pt.y / _scale), delta);
                     InputFrame();
                 }
                 return IntPtr.Zero;
@@ -1092,7 +1057,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                     _trackingLeave = TrackMouseEvent(ref again);
                     return IntPtr.Zero;
                 }
-                _leaveAll?.Invoke(_driver, null);
+                _driver.InjectMouseLeaveAll();
                 Frame();
                 return IntPtr.Zero;
             // WM_SETCURSOR: the window class carries a plain arrow, so without answering this
@@ -1102,7 +1067,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // Windows sends it when the pointer moves over the window without a capture, and that is
             // what ends a Cursor.Current: it was a SetCursor, and the window's own cursor comes back.
             case 0x0020:
-                _endCursorOverride?.Invoke(_driver, null);
+                _driver.EndCursorOverride();
                 if ((((long)lParam) & 0xFFFF) == 1 && ApplyCursor())   // HTCLIENT
                     return (IntPtr)1;
                 return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1113,7 +1078,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 // a key-down. The key-down is the one a control acts on; inserting the code too put
                 // a stray character in the text box.
                 if (typed < ' ' && (ModifierState() & Keys.Control) != 0) return IntPtr.Zero;
-                _char.Invoke(_driver, new object[] { typed }); InputFrame(); return IntPtr.Zero;
+                _driver.InjectChar(typed); InputFrame(); return IntPtr.Zero;
             case 0x0100:                                                          // WM_KEYDOWN
                 int vk = (int)wParam;
                 PublishModifiers();
@@ -1128,25 +1093,25 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 // not also get typed into whatever just received the focus.
                 if (vk == 9)
                 {
-                    _swallowChar = _keyDown.Invoke(_driver, new object[] { vk }) is bool b && b;
+                    _swallowChar = _driver.InjectKeyDown(vk) is bool b && b;
                     Frame();
                 }
                 else if (vk != 8 && vk != 13 && vk != 27)
-                { _keyDown.Invoke(_driver, new object[] { vk }); InputFrame(); }
+                { _driver.InjectKeyDown(vk); InputFrame(); }
                 return IntPtr.Zero;
             case 0x0101:                                                          // WM_KEYUP
                 PublishModifiers();
-                _keyUp?.Invoke(_driver, new object[] { (int)wParam });
+                _driver.InjectKeyUp((int)wParam);
                 return IntPtr.Zero;
             // Alt combinations arrive as the SYS variants and nothing forwarded them, so a mnemonic
             // (Alt+C for a "&Copy" button) never reached WinForms at all.
             case 0x0104:                                                          // WM_SYSKEYDOWN
                 PublishModifiers();
-                _sysKeyDown?.Invoke(_driver, new object[] { (int)wParam });
+                _driver.InjectSysKeyDown((int)wParam);
                 Frame();
                 return IntPtr.Zero;
             case 0x0106:                                                          // WM_SYSCHAR
-                _sysChar?.Invoke(_driver, new object[] { (char)(int)wParam });
+                _driver.InjectSysChar((char)(int)wParam);
                 Frame();
                 return IntPtr.Zero;
             // WM_NCCALCSIZE: where the client goes. A form that draws its own caption has said so to the
@@ -1166,7 +1131,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // sizing edges are, as it would to Windows; the system then drags, sizes, snaps and
             // maximizes this window itself. The host answered for it, so such a window could be
             // neither moved nor sized.
-            case 0x0084 when _driver is System.Windows.Forms.XplatUIWebGpu hd && !FormGone
+            case 0x0084 when _driver is { } hd && !FormGone
                              && (_form.FormBorderStyle == FormBorderStyle.None || OwnFrame(out _)):
             {
                 var pt = new POINT { x = (short)((long)lParam & 0xFFFF), y = (short)(((long)lParam >> 16) & 0xFFFF) };
@@ -1206,7 +1171,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             case 0x0005:                                                          // WM_SIZE
                 // SIZE_RESTORED / SIZE_MINIMIZED / SIZE_MAXIMIZED: the form's WindowState is the window's.
                 if (s_traceState) Console.Error.WriteLine($"[state] {DateTime.Now:HH:mm:ss.fff} WM_SIZE {(long)wParam} {(long)lParam & 0xFFFF}x{((long)lParam >> 16) & 0xFFFF} form 0x{_formHandle:x} '{_form.Text}'");
-                if (_driver is System.Windows.Forms.XplatUIWebGpu sd && !FormGone && (long)wParam <= 2)
+                if (_driver is { } sd && !FormGone && (long)wParam <= 2)
                     sd.HostWindowState(_formHandle, (long)wParam == 2 ? FormWindowState.Maximized : (long)wParam == 1 ? FormWindowState.Minimized : FormWindowState.Normal);
                 // Restoring a window sends WM_MOVE BEFORE this WM_SIZE, so the move arrived while the
                 // form was still minimized (or maximized) and OnWindowMoved left it alone. The form kept
@@ -1244,7 +1209,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 if ((int)wParam == AnimateTimerId)
                 {
                     Present();
-                    if (!(_driver is System.Windows.Forms.XplatUIWebGpu ad && ad.Animating)) { KillTimer(hwnd, AnimateTimerId); _animateTimer = false; }
+                    if (!(_driver is { } ad && ad.Animating)) { KillTimer(hwnd, AnimateTimerId); _animateTimer = false; }
                     return IntPtr.Zero;
                 }
                 if ((int)wParam == RepresentTimerId)
@@ -1308,7 +1273,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         return mods;
     }
 
-    private void PublishModifiers() => _setModifiers?.Invoke(_driver, new object[] { ModifierState() });
+    private void PublishModifiers() => _driver.SetModifierKeys(ModifierState());
 
     // One frame's worth of work in response to input. Timers tick here as well as in the message
     // loop: while the pointer is moving there is always another message waiting, so the loop never
@@ -1316,7 +1281,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     // -- any animation stuttered exactly while the user was doing something.
     private void Frame()
     {
-        _tickTimers?.Invoke(_driver, null);
+        _driver.TickTimers();
         Application.DoEvents();
         Present();
     }
@@ -1337,7 +1302,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (t_pumpDepth != 0 && t_wndProcDepth == t_pumpDepth)
         {
             if (InputTrace.On) InputTrace.Log($"defer #{InputTrace.Seq} present to the end of the message batch");
-            _tickTimers?.Invoke(_driver, null);
+            _driver.TickTimers();
             Application.DoEvents();
             _presentOwed = true;
             return;
@@ -1363,9 +1328,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         string who = "?";
         try
         {
-            var at = _driver.GetType().GetMethod("WindowAtPoint",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            IntPtr h = (IntPtr)at.Invoke(_driver, new object[] { x, y });
+            IntPtr h = _driver.WindowAtPoint(x, y);
             Control c = Control.FromHandle(h);
             who = $"win=0x{h.ToInt64():x} control={(c == null ? "<none>" : c.GetType().Name + " '" + c.Name + "'")}";
         }
@@ -1416,7 +1379,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private bool OwnFrame(out System.Windows.Forms.Padding frame)
     {
         frame = System.Windows.Forms.Padding.Empty;
-        bool own = _formHandle != IntPtr.Zero && _driver is System.Windows.Forms.XplatUIWebGpu d && d.HasOwnFrame(_formHandle, out frame);
+        bool own = _formHandle != IntPtr.Zero && _driver is { } d && d.HasOwnFrame(_formHandle, out frame);
         if (s_traceFrame) Console.Error.WriteLine($"[frame] host OwnFrame form 0x{_formHandle:x} driver {_driver?.GetType().Name} -> {own} {frame}");
         return own;
     }
@@ -1478,7 +1441,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 RECT r = Marshal.PtrToStructure<RECT>(suggested);
                 rect = Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
             }
-            if (System.Windows.Forms.ScaleHelper.IsThreadPerMonitorV2Aware && _driver is System.Windows.Forms.XplatUIWebGpu d && !FormGone)
+            if (System.Windows.Forms.ScaleHelper.IsThreadPerMonitorV2Aware && _driver is { } d && !FormGone)
                 d.HostDpiChanged(_formHandle, dpi, rect);
             _lastVer = -1;
             Present();
@@ -1537,7 +1500,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         if (s_resizePreview && !WantsLayeredHost() && _wgpu.PresentLastAtSize(lw, lh)) ResizePreviews++;
         long rs1 = System.Diagnostics.Stopwatch.GetTimestamp();
         // As Win32 tells a window it was sized (see XplatUIWebGpu.HostResized), not through ClientSize.
-        if (_driver is System.Windows.Forms.XplatUIWebGpu d && !FormGone) d.HostResized(_formHandle, lw, lh);
+        if (_driver is { } d && !FormGone) d.HostResized(_formHandle, lw, lh);
         else _form.ClientSize = new Size(lw, lh);
         long rs2 = System.Diagnostics.Stopwatch.GetTimestamp();
         Application.DoEvents();                             // let the WinForms layout settle first
@@ -1584,7 +1547,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// </summary>
     internal void WatchAnimations()
     {
-        if (_hwnd == IntPtr.Zero || FormGone || !(_driver is System.Windows.Forms.XplatUIWebGpu d)) return;
+        if (_hwnd == IntPtr.Zero || FormGone || !(_driver is { } d)) return;
         if (d.Animating && !_animateTimer)
         {
             _animateTimer = true;
@@ -1598,15 +1561,15 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         }
     }
 
-    private void MouseAt(IntPtr lParam, MethodInfo inject)
+    private void MouseAt(IntPtr lParam, Action<int, int> inject)
     {
         (int x, int y) = ClientDip(lParam);
-        inject.Invoke(_driver, new object[] { x, y });
+        inject(x, y);
     }
     private void MouseMove(IntPtr lParam)
     {
         (int x, int y) = ClientDip(lParam);
-        _move.Invoke(_driver, new object[] { x, y, (GetKeyState(0x01) & 0x8000) != 0 }); // left button down?
+        _driver.InjectMouseMove(x, y, (GetKeyState(0x01) & 0x8000) != 0); // left button down?
     }
     private (int, int) ClientDip(IntPtr lParam)
     {
@@ -1627,9 +1590,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// names to NSCursor.</summary>
     private bool ApplyCursor()
     {
-        if (_getCursor == null) return false;
         int id;
-        try { id = (int)_getCursor.Invoke(_driver, null); }
+        try { id = (int)_driver.GetActiveCursor(); }
         catch (Exception) { return false; }
         if (s_traceCursor) Console.WriteLine($"WM_SETCURSOR -> StdCursor {id}");
         if (id < 0) return false;
@@ -1717,11 +1679,11 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         Win32Host host = null;
         lock (s_byHwnd)
             if (root != IntPtr.Zero) s_byHwnd.TryGetValue(root, out host);
-        if (host == null || host._hwnd == IntPtr.Zero || host._isUnderPopup == null || host.FormGone) return false;
+        if (host == null || host._hwnd == IntPtr.Zero || host.FormGone) return false;
         var c = pt;
         if (!ScreenToClient(host._hwnd, ref c)) return false;
         int dx = host._ox + (int)Math.Floor(c.x / host._scale), dy = host._oy + (int)Math.Floor(c.y / host._scale);
-        try { return (bool)host._isUnderPopup.Invoke(host._driver, new object[] { host._formHandle, dx, dy }); }
+        try { return (bool)host._driver.IsUnderPopup(host._formHandle, dx, dy); }
         catch { return false; }
     }
 
@@ -1757,7 +1719,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         return true;
     }
 
-    public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
+    public void InjectClickScreen(int x, int y) => _driver.InjectClick(x, y);
     private System.Collections.Generic.List<(object, int, int)> _lastPresented;
 
     /// <summary>The last presented frame, rendered again from the scenes it was made of (for tests:
@@ -1783,8 +1745,10 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         _quit = true;
         ReleaseGpu();
         // ...and its windows go from the driver as they went from Windows.
-        if (_driver is System.Windows.Forms.XplatUIWebGpu d && _formHandle != IntPtr.Zero) d.ForgetWindowTree(_formHandle);
+        if (_driver is { } d && _formHandle != IntPtr.Zero) d.ForgetWindowTree(_formHandle);
     }
+
+    public IntPtr NativeWindow => _hwnd;
 
     public void SaveFrame(string path)
     {
@@ -1814,7 +1778,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         var tops = new System.Collections.Generic.List<IntPtr>(wins.Length / 3);
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
-            object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
+            object scene = _driver.GetWindowScene((IntPtr)wins[i]);
             if (scene == null) continue;
             list.Add((scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
             Control c = Control.FromHandle((IntPtr)wins[i]);
@@ -1871,10 +1835,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private long[] PresentWindows()
     {
         if (FormGone) return System.Array.Empty<long>();
-        if (_getSubtree == null)
-            return (long[])_getPresent.Invoke(_driver, new object[] { _formHandle });
 
-        long[] mine = (long[])_getSubtree.Invoke(_driver, new object[] { _formHandle });
+        long[] mine = (long[])_driver.GetSubtreeWindows(_formHandle);
         if (!PresentationHost.IsTopHost(this)) return mine;
 
         // Everything another host owns, or that is a compositing container belonging to a WPF
@@ -1888,9 +1850,9 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         // and are positioned by that element, not by the driver, so drawing them here put the
         // workbench's pads inside an unrelated dialog.
         foreach (IntPtr composited in PresentationHost.CompositedWindows())
-            AddSubtree(claimed, (long[])_getSubtree.Invoke(_driver, new object[] { composited }));
+            AddSubtree(claimed, (long[])_driver.GetSubtreeWindows(composited));
 
-        long[] all = (long[])_getPresent.Invoke(_driver, new object[] { _formHandle });
+        long[] all = (long[])_driver.GetPresentWindows(_formHandle);
         var outl = new System.Collections.Generic.List<long>(mine.Length + 12);
         outl.AddRange(mine);
         for (int i = 0; i + 2 < all.Length; i += 3)
@@ -1900,7 +1862,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // WPF element has not built its HwndHost yet: SharpDevelop's Tools sidebar sits at the
             // driver's origin and so was drawn into the top-left corner of every dialog this host
             // put on screen, including the unhandled-exception box.
-            if (_isPopup != null && !(bool)_isPopup.Invoke(_driver, new object[] { (IntPtr)all[i] }))
+            if (!_driver.IsInPopupWindow((IntPtr)all[i]))
                 continue;
             outl.Add(all[i]); outl.Add(all[i + 1]); outl.Add(all[i + 2]);
         }
@@ -1917,7 +1879,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private void ClaimForm(System.Collections.Generic.HashSet<long> into, Form form)
     {
         if (form == null || form.IsDisposed || !form.IsHandleCreated) return;
-        AddSubtree(into, (long[])_getSubtree.Invoke(_driver, new object[] { form.Handle }));
+        AddSubtree(into, (long[])_driver.GetSubtreeWindows(form.Handle));
     }
 
     // WF_TRACE_WINDOWS=1 prints, once per host, what this window actually composites: the windows
@@ -1934,7 +1896,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                                 $"{_form.Width}x{_form.Height}: own={mine.Length / 3} total={all.Count / 3}");
         for (int i = 0; i + 2 < all.Count; i += 3)
         {
-            object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)all[i] });
+            object scene = _driver.GetWindowScene((IntPtr)all[i]);
             Console.Error.WriteLine($"   win 0x{all[i]:x} at ({all[i + 1]},{all[i + 2]}) " +
                                     $"{(i < mine.Length ? "own" : "extra")} scene={(scene == null ? "null" : "ok")}");
         }
@@ -1943,8 +1905,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     /// <summary>The rubber bands the driver is holding, in this window's client space.</summary>
     private System.Collections.Generic.List<(Rectangle Rect, int Width)> RubberBands(int ox, int oy)
     {
-        if (_getRubberBands == null) return null;
-        long[] raw = (long[])_getRubberBands.Invoke(_driver, null);
+        long[] raw = (long[])_driver.GetReversibleRects();
         if (raw == null || raw.Length == 0) return null;
         var bands = new System.Collections.Generic.List<(Rectangle, int)>(raw.Length / 5);
         for (int i = 0; i + 4 < raw.Length; i += 5)
@@ -1954,27 +1915,18 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     }
 
     // The driver's blink clock (restarted when the caret is created, moved or shown, as user32's
-    // is); the host's own stopwatch only if the driver has none.
-    private MethodInfo _caretBlink;
-    private long BlinkMs()
-    {
-        _caretBlink ??= _driver.GetType().GetMethod("GetCaretBlinkElapsed", BindingFlags.NonPublic | BindingFlags.Instance);
-        return _caretBlink != null ? (long)_caretBlink.Invoke(_driver, null) : _blink.ElapsedMilliseconds;
-    }
+    // is).
+    private long BlinkMs() => _driver.GetCaretBlinkElapsed();
 
     private Rectangle? GetCaretRect(int ox, int oy)
     {
-        if (_getCaret == null) return null;
-        object[] a = { 0, 0, 0, 0 };
-        if (!(bool)_getCaret.Invoke(_driver, a)) return null;
+        if (!_driver.GetCaret(out int cx, out int cy, out int cw, out int ch)) return null;
         if ((BlinkMs() / 530) % 2 != 0) return null;
-        return new Rectangle((int)a[0] - ox, (int)a[1] - oy, Math.Max(1, (int)a[2]), (int)a[3]);
+        return new Rectangle(cx - ox, cy - oy, Math.Max(1, cw), ch);
     }
     private bool CaretOn()
     {
-        if (_getCaret == null) return false;
-        object[] a = { 0, 0, 0, 0 };
-        if (!(bool)_getCaret.Invoke(_driver, a)) return false;
+        if (!_driver.GetCaret(out _, out _, out _, out _)) return false;
         return (BlinkMs() / 530) % 2 == 0;
     }
 
@@ -2039,7 +1991,6 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     private static readonly bool s_syntheticCursor = Environment.GetEnvironmentVariable("WF_SYNTHETIC_CURSOR") == "1";
     [DllImport("user32")] private static extern bool GetCursorPos(out POINT p);
     [DllImport("user32")] private static extern IntPtr WindowFromPoint(POINT p);
-    private readonly MethodInfo _leaveAll;
     private bool _trackingLeave;
     [DllImport("user32")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);

@@ -57,7 +57,7 @@ internal sealed unsafe partial class Win32Host
     {
         foreach (PopupWindow pw in _popupWindows.Values) pw.Used = false;
         List<(object, int, int)> keep = scenes;
-        if (!s_noPopupWindows && owners != null && owners.Count == scenes.Count && _isPopup != null && !FormGone)
+        if (!s_noPopupWindows && owners != null && owners.Count == scenes.Count && !FormGone)
         {
             int cw = _form.ClientSize.Width, ch = _form.ClientSize.Height;
             HashSet<IntPtr> checkedTops = null;
@@ -69,7 +69,7 @@ internal sealed unsafe partial class Win32Host
                 if (!checkedTops.Add(top)) continue;
                 Control c = Control.FromHandle(top);
                 if (c == null || c is Form || !c.Visible) continue;
-                if (!(bool)_isPopup.Invoke(_driver, new object[] { top })) continue;
+                if (!(bool)_driver.IsInPopupWindow(top)) continue;
                 // Where the popup is, in this host's frame (form points from the frame's origin).
                 int px = c.Left - _ox, py = c.Top - _oy;
                 int pw0 = c.Width, ph0 = c.Height;

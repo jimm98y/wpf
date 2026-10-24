@@ -13,4 +13,5 @@ internal interface IWinFormsHost
     void SaveFrame(string path);              // save the current frame to a PNG (verification)
     void SetEnabled(bool enable) { }          // the form was enabled/disabled (a modal loop): the native window follows
     void FormHidden() { }                     // the form is hidden: its native window is off screen too
+    System.IntPtr NativeWindow => System.IntPtr.Zero;   // the native window (NSWindow, HWND), for diagnostics
 }

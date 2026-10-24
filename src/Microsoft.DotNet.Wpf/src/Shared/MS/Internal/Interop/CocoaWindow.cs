@@ -2200,9 +2200,20 @@ namespace MS.Internal.Interop
         /// </summary>
         public static Func<IntPtr, bool> ForeignEventHandler;
 
+        // The two pumps meet through AppContext, as neither assembly references the other: the
+        // WinForms host publishes its router under ForeignEventsKey, and this class its own
+        // delivery under DispatchEventKey, for the host to hand WPF the events of WPF's windows.
+        private const string ForeignEventsKey = "WinFormsWebGpu.CocoaEvents";
+        private const string DispatchEventKey = "WpfWebGpu.CocoaWindow.DispatchEvent";
+
+        static CocoaWindow()
+        {
+            AppContext.SetData(DispatchEventKey, (Action<IntPtr>)DispatchEvent);
+        }
+
         private static bool DispatchToForeignHost(IntPtr evt)
         {
-            Func<IntPtr, bool> foreign = ForeignEventHandler;
+            Func<IntPtr, bool> foreign = ForeignEventHandler ??= AppContext.GetData(ForeignEventsKey) as Func<IntPtr, bool>;
             if (foreign == null) return false;
             try { return foreign(evt); }
             catch { return false; }

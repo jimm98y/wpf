@@ -64,9 +64,7 @@ public static class Screenshots
             Forms.Form? form = Forms.Application.OpenForms.Cast<Forms.Form>().FirstOrDefault(f => f.IsHandleCreated && f.Visible && f.TopLevel);
             form?.BeginInvoke(() =>
             {
-                object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")?.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
-                MethodInfo? wheel = driver?.GetType().GetMethod("InjectWheel", BindingFlags.NonPublic | BindingFlags.Instance);
-                wheel?.Invoke(driver, new object[] { form.Left + (int)v[0], form.Top + (int)v[1], (int)v[2] * 120 });
+                Forms.Win32Bridge.InjectWheel(form.Left + (int)v[0], form.Top + (int)v[1], (int)v[2] * 120);
                 Exports.Log($"debug wheel: {(int)v[2]} notches at {v[0]},{v[1]}");
             });
         }, null, (int)(v[3] * 1000), Timeout.Infinite));
@@ -237,36 +235,6 @@ public static class Screenshots
 
         if (Environment.GetEnvironmentVariable("WPFRUN_DUMP_WINDOWS") == "1")
         {
-            // Every native window WPF made, presentation source or not: whose hooks it carries says
-            // whose window it is (an HwndSource, a Window, a Popup, a hidden helper).
-            try
-            {
-                Type? wrapperType = typeof(System.Windows.Threading.Dispatcher).Assembly.GetType("MS.Win32.HwndWrapper");
-                var bf = BindingFlags.NonPublic | BindingFlags.Static;
-                if (wrapperType?.GetField("s_byHandle", bf)?.GetValue(null) is System.Collections.IDictionary byHandle)
-                {
-                    var lines = new System.Text.StringBuilder($"wpf native windows at {stamp}:\n");
-                    object gate = wrapperType.GetField("s_byHandleLock", bf)?.GetValue(null) ?? byHandle;
-                    lock (gate)
-                    {
-                        foreach (System.Collections.DictionaryEntry e in byHandle)
-                        {
-                            object w = e.Value!;
-                            var hooks = wrapperType.GetField("_hooks", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(w) as System.Collections.IEnumerable;
-                            string owners = hooks == null ? "" : string.Join(",", hooks.Cast<object>().Select(h => h is Delegate d ? d.Target?.GetType().Name + "." + d.Method.Name : h?.GetType().Name));
-                            object? platform = wrapperType.GetField("_platformWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(w);
-                            nint ns = platform?.GetType().GetField("_window", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(platform) is IntPtr p ? p : 0;
-                            lines.Append($"  0x{(IntPtr)e.Key:x} nswindow=0x{ns:x} hooks=[{owners}]\n");
-                        }
-                    }
-                    Exports.LogOnce("wpfnative:" + stamp, lines.ToString().TrimEnd());
-                }
-            }
-            catch (Exception e)
-            {
-                Exports.LogOnce("wpfnative-fail", "wpf native window dump: " + e.Message);
-            }
-
             try
             {
                 foreach (PresentationSource ps in PresentationSource.CurrentSources)
@@ -282,44 +250,21 @@ public static class Screenshots
 
         try
         {
-            Type? host = typeof(Forms.Form).Assembly.GetType("System.Windows.Forms.PresentationHost");
-            if (host?.GetField("s_forms", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) is System.Collections.IDictionary forms)
+            var hosted = Forms.Win32Bridge.HostedForms();
+            if (Environment.GetEnvironmentVariable("WPFRUN_DUMP_WINDOWS") == "1")
             {
-                object? gate = host.GetField("s_lock", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
-                List<(object Host, Forms.Form Form)> snapshot = new();
-                lock (gate ?? forms)
-                {
-                    foreach (System.Collections.DictionaryEntry e in forms)
-                    {
-                        if (e.Value is Forms.Form f && !f.IsDisposed) snapshot.Add((e.Key, f));
-                    }
-                }
+                var lines = new System.Text.StringBuilder($"winforms hosts at {stamp}:\n");
+                foreach (var (f, host, ns) in hosted)
+                    lines.Append($"  {host} nswindow=0x{ns:x} form={f.GetType().FullName} '{f.Text}' visible={f.Visible}\n");
+                Exports.LogOnce("hosts:" + stamp, lines.ToString().TrimEnd());
+            }
+            foreach (var (form, _, _) in hosted)
+            {
+                if (!form.IsHandleCreated) continue;
                 if (Environment.GetEnvironmentVariable("WPFRUN_DUMP_WINDOWS") == "1")
-                {
-                    var lines = new System.Text.StringBuilder($"winforms hosts at {stamp}:\n");
-                    lock (gate ?? forms)
-                    {
-                        foreach (System.Collections.DictionaryEntry e in forms)
-                        {
-                            object hostObj = e.Key;
-                            nint ns = hostObj.GetType().GetField("_window", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(hostObj) is IntPtr p ? p : 0;
-                            var f = e.Value as Forms.Form;
-                            lines.Append($"  {hostObj.GetType().Name} nswindow=0x{ns:x} form={f?.GetType().FullName} '{f?.Text}' disposed={f?.IsDisposed} visible={(f is { IsDisposed: false } ? f.Visible : false)}\n");
-                        }
-                    }
-                    Exports.LogOnce("hosts:" + stamp, lines.ToString().TrimEnd());
-                }
-                foreach (var (h, form) in snapshot)
-                {
-                    if (Environment.GetEnvironmentVariable("WPFRUN_DUMP_WINDOWS") == "1" && form.IsHandleCreated)
-                    {
-                        form.BeginInvoke(() => DumpWindows(form, stamp));
-                    }
-                    string path = Path.Combine(directory, $"{stamp}-winforms-{RuntimeHelpersId(form)}.png");
-                    MethodInfo? save = h.GetType().GetMethod("SaveFrame", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (save == null || !form.IsHandleCreated) continue;
-                    form.BeginInvoke(() => { try { save.Invoke(h, new object[] { path }); } catch { } });
-                }
+                    form.BeginInvoke(() => DumpWindows(form, stamp));
+                string path = Path.Combine(directory, $"{stamp}-winforms-{RuntimeHelpersId(form)}.png");
+                form.BeginInvoke(() => { try { Forms.Win32Bridge.SaveFrame(form, path); } catch { } });
             }
         }
         catch (Exception e)
@@ -441,17 +386,12 @@ public static class Screenshots
             }
             // Top-level controls that are not forms: popups (a menu's container) are windows of
             // their own, outside every form's tree.
-            if (typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.Hwnd")?.GetField("windows", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null) is System.Collections.Hashtable all)
+            foreach (IntPtr handle in Forms.Win32Bridge.Windows())
             {
-                object[] handles;
-                lock (all) { handles = all.Keys.Cast<object>().ToArray(); }
-                foreach (object h in handles)
+                if (Forms.Control.FromHandle(handle) is Forms.Control c && c.Parent == null && c is not Forms.Form && c.Visible)
                 {
-                    if (h is IntPtr handle && Forms.Control.FromHandle(handle) is Forms.Control c && c.Parent == null && c is not Forms.Form && c.Visible)
-                    {
-                        lines.Append($"top-level {c.GetType().FullName} at {c.Bounds}:\n");
-                        Walk(c, 1);
-                    }
+                    lines.Append($"top-level {c.GetType().FullName} at {c.Bounds}:\n");
+                    Walk(c, 1);
                 }
             }
             Exports.LogOnce("tree:" + stamp + form.GetHashCode(), lines.ToString().TrimEnd());
@@ -493,10 +433,7 @@ public static class Screenshots
     {
         try
         {
-            object driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")!
-                .GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-            var present = (long[])driver.GetType().GetMethod("GetPresentWindows", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .Invoke(driver, new object[] { form.Handle })!;
+            long[] present = Forms.Win32Bridge.PresentWindows(form.Handle);
             var lines = new System.Text.StringBuilder($"windows of '{form.Text}' at {stamp}:\n");
             for (int i = 0; i + 2 < present.Length; i += 3)
             {
@@ -519,10 +456,9 @@ public static class Screenshots
             string where = source.RootVisual is FrameworkElement root && root.IsVisible
                 ? $"{root.PointToScreen(new Point(0, 0))} {root.ActualWidth}x{root.ActualHeight} {root.GetType().FullName}"
                 : $"(not visible) {source.RootVisual?.GetType().FullName}";
-            object? wrapper = typeof(HwndSource).GetField("_hwndWrapper", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(source);
-            object? platform = wrapper?.GetType().GetField("_platformWindow", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(wrapper);
-            nint owner = platform?.GetType().GetField("_ownerHandle", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(platform) is IntPtr o ? o : 0;
-            nint nsWindow = platform?.GetType().GetField("_window", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(platform) is IntPtr w ? w : 0;
+            var platform = MS.Internal.Interop.PlatformWindow.FromHandle(source.Handle);
+            nint owner = Exports.GetWindow(source.Handle, 4);   // GW_OWNER
+            nint nsWindow = platform is MS.Internal.Interop.CocoaWindow cocoa ? cocoa.Window : 0;
             if (nsWindow != 0 && OperatingSystem.IsMacOS())
             {
                 bool visible = MacNative.SendBool(nsWindow, MacNative.Sel("isVisible"));
@@ -566,40 +502,6 @@ public static class Screenshots
                         try { at = a.TransformToAncestor(root).Transform(new Point()).ToString(); } catch (Exception e) { at = e.GetType().Name; }
                         lines.Append($"    {a.GetType().FullName} size={a.RenderSize} visible={a.IsVisible} opacity={a.Opacity} at={at}\n");
                     }
-            }
-            if (d.GetType().Name == "GwxRuntimeViewControl")
-            {
-                // app's licence state, which decides its licence notices (diagnostics only)
-                const BindingFlags f = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
-                Type t = d.GetType();
-                object Field(string name) { try { return t.GetField(name, f)?.GetValue(d); } catch (Exception e) { return e.GetType().Name; } }
-                string mainForm;
-                try { mainForm = t.GetMethod("IsMainForm", f)?.Invoke(d, null)?.ToString() ?? "?"; } catch (Exception e) { mainForm = (e.InnerException ?? e).GetType().Name; }
-                object model = Field("licenseModel");
-                string show = "?";
-                try { show = model?.GetType().GetProperty("ShowLicenseWarningMessage")?.GetValue(model)?.ToString() + " '" + model?.GetType().GetProperty("LicenseWarningMessage")?.GetValue(model) + "'"; } catch (Exception e) { show = e.GetType().Name; }
-                string Prop(string name) { try { return model?.GetType().GetProperty(name, f)?.GetValue(model)?.ToString() ?? "null"; } catch (Exception e) { return (e.InnerException ?? e).GetType().Name; } }
-                lines.Append($"  licence model: IsDemoMode={Prop("IsDemoMode")} CreationDate={Prop("CreationDate")} ExpirationDate={Prop("ExpirationDate")} ShutDownDate={Prop("ShutDownDate")} now={DateTime.Now} IsConnected={Prop("IsConnected")} Edition={Prop("Edition")}\n");
-                try
-                {
-                    if (model?.GetType().GetProperty("LicenseTags", f)?.GetValue(model) is System.Collections.IEnumerable tags)
-                        foreach (object tag in tags)
-                        {
-                            Type tt = tag.GetType();
-                            object point = tt.GetProperty("LicensePoint", f)?.GetValue(tag);
-                            object ctx = tt.GetProperty("Context", f)?.GetValue(tag);
-                            lines.Append($"    point {tt.GetProperty("LicenseTag", f)?.GetValue(tag)}: point={(point == null ? "null" : point.GetType().Name)} last={tt.GetProperty("LastValue", f)?.GetValue(tag) ?? "null"} context={ctx?.GetType().Name}\n");
-                            if (point != null && lines.Length < 20000)
-                                foreach (PropertyInfo pi in point.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public))
-                                {
-                                    if (pi.GetIndexParameters().Length > 0) continue;
-                                    object v; try { v = pi.GetValue(point); } catch (Exception e) { v = (e.InnerException ?? e).GetType().Name; }
-                                    lines.Append($"      {pi.Name}={v}\n");
-                                }
-                        }
-                }
-                catch (Exception e) { lines.Append("    points: " + e.GetType().Name + "\n"); }
-                lines.Append($"  GwxRuntimeViewControl: IsMainForm={mainForm} licenseManager={(Field("licenseManager") == null ? "null" : "set")} licenseModel={(model == null ? "null" : "set")} warning={show} failureAdorner={(Field("licenseFailureAdorner") == null ? "null" : "set")} noticeAdorner={(Field("licenseNotificationAdorner") == null ? "null" : "set")}\n");
             }
             int n = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetChildrenCount(d) : 0;
             for (int i = 0; i < n; i++) stack.Push(VisualTreeHelper.GetChild(d, i));

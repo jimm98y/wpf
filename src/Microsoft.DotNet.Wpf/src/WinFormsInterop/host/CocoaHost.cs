@@ -17,8 +17,7 @@ using System.Windows.Forms;
 internal sealed class CocoaHost : IWinFormsHost
 {
     private readonly Form _form;
-    private readonly object _driver;
-    private readonly MethodInfo _getBB, _injectClick, _down, _up, _move, _char, _keyDown, _getPresent, _getScene, _getVersion, _rightDown, _rightUp;
+    private readonly XplatUIWebGpu _driver;
     private volatile IntPtr _window, _imageView;
     // A form shown on a UI thread other than the process's main thread -- a splash screen on its own
     // thread, the commonest case. Windows gives every thread its own windows; AppKit aborts the process
@@ -122,22 +121,7 @@ internal sealed class CocoaHost : IWinFormsHost
     internal CocoaHost(Form form)
     {
         _form = form;
-        var xplat = typeof(Control).Assembly.GetType("System.Windows.Forms.XplatUI");
-        _driver = xplat.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static).GetValue(null);
-        Type dt = _driver.GetType();
-        _getBB = dt.GetMethod("GetWindowBackBuffer", BindingFlags.NonPublic | BindingFlags.Instance);
-        _injectClick = dt.GetMethod("InjectClick", BindingFlags.NonPublic | BindingFlags.Instance);
-        _down = dt.GetMethod("InjectMouseDown", BindingFlags.NonPublic | BindingFlags.Instance);
-        _up = dt.GetMethod("InjectMouseUp", BindingFlags.NonPublic | BindingFlags.Instance);
-        _rightDown = dt.GetMethod("InjectRightDown", BindingFlags.NonPublic | BindingFlags.Instance);
-        _rightUp = dt.GetMethod("InjectRightUp", BindingFlags.NonPublic | BindingFlags.Instance);
-        _move = dt.GetMethod("InjectMouseMove", BindingFlags.NonPublic | BindingFlags.Instance);
-        _char = dt.GetMethod("InjectChar", BindingFlags.NonPublic | BindingFlags.Instance);
-        _keyDown = dt.GetMethod("InjectKeyDown", BindingFlags.NonPublic | BindingFlags.Instance);
-        _getCaret = dt.GetMethod("GetCaret", BindingFlags.NonPublic | BindingFlags.Instance);
-        _getPresent = dt.GetMethod("GetPresentWindows", BindingFlags.NonPublic | BindingFlags.Instance);
-        _getScene = dt.GetMethod("GetWindowScene", BindingFlags.NonPublic | BindingFlags.Instance);
-        _getVersion = dt.GetMethod("GetPaintVersion", BindingFlags.NonPublic | BindingFlags.Instance);
+        _driver = XplatUIWebGpu.GetInstance();
         // Claim the app's on-screen host slot, so the driver's message loop drives THIS window
         // rather than creating a second one of its own.
         PresentationHost.Attach(this, form);
@@ -153,13 +137,13 @@ internal sealed class CocoaHost : IWinFormsHost
         // Walk EVERY visible window by the driver's window tree (not just the form's Control tree),
         // so top-level popups (ComboBox/menu dropdowns are separate WS_POPUP windows) are drawn too.
         // Positions are absolute screen coords; the form is the presentation origin.
-        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        long[] wins = (long[])_driver.GetPresentWindows(_form.Handle);
         // First triple is the form itself -> use it as the origin.
         int ox = wins.Length >= 3 ? (int)wins[1] : 0;
         int oy = wins.Length >= 3 ? (int)wins[2] : 0;
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
-            var bb = (Bitmap)_getBB.Invoke(_driver, new object[] { (IntPtr)wins[i] });
+            var bb = (Bitmap)_driver.GetWindowBackBuffer((IntPtr)wins[i]);
             if (bb != null) g.DrawImageUnscaled(bb, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy);
         }
         return bmp;
@@ -170,13 +154,13 @@ internal sealed class CocoaHost : IWinFormsHost
     // (the GPU draws each control's bitmap as its own quad, instead of a CPU pre-composite).
     private System.Collections.Generic.List<WgpuLayer> GetLayers(out int ox, out int oy)
     {
-        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        long[] wins = (long[])_driver.GetPresentWindows(_form.Handle);
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
         var layers = new System.Collections.Generic.List<WgpuLayer>(wins.Length / 3);
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
-            var bb = (Bitmap)_getBB.Invoke(_driver, new object[] { (IntPtr)wins[i] });
+            var bb = (Bitmap)_driver.GetWindowBackBuffer((IntPtr)wins[i]);
             if (bb != null) layers.Add(new WgpuLayer(bb, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy));
         }
         return layers;
@@ -192,13 +176,13 @@ internal sealed class CocoaHost : IWinFormsHost
     private System.Collections.Generic.List<(object, int, int)> GetScenes(out int ox, out int oy,
         System.Collections.Generic.List<(object, int, int)> popups)
     {
-        long[] wins = (long[])_getPresent.Invoke(_driver, new object[] { _form.Handle });
+        long[] wins = (long[])_driver.GetPresentWindows(_form.Handle);
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
         var list = new System.Collections.Generic.List<(object, int, int)>(wins.Length / 3);
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
-            object scene = _getScene.Invoke(_driver, new object[] { (IntPtr)wins[i] });
+            object scene = _driver.GetWindowScene((IntPtr)wins[i]);
             if (scene == null) continue;
             var item = (scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy);
             if (popups != null && IsPopup((IntPtr)wins[i])) popups.Add(item);
@@ -213,29 +197,20 @@ internal sealed class CocoaHost : IWinFormsHost
     // The blinking text caret as a form-space rect (null when hidden/off-blink); the backing bitmaps
     // don't contain it, so it's a per-frame overlay quad.
     // The driver's blink clock (restarted when the caret is created, moved or shown, as user32's
-    // is); the host's own stopwatch only if the driver has none.
-    private MethodInfo _caretBlink;
-    private long BlinkMs()
-    {
-        _caretBlink ??= _driver.GetType().GetMethod("GetCaretBlinkElapsed", BindingFlags.NonPublic | BindingFlags.Instance);
-        return _caretBlink != null ? (long)_caretBlink.Invoke(_driver, null) : _blink.ElapsedMilliseconds;
-    }
+    // is).
+    private long BlinkMs() => _driver.GetCaretBlinkElapsed();
 
     private Rectangle? GetCaretRect(int ox, int oy)
     {
-        if (_getCaret == null) return null;
-        object[] a = { 0, 0, 0, 0 };
-        if (!(bool)_getCaret.Invoke(_driver, a)) return null;
+        if (!_driver.GetCaret(out int cx, out int cy, out int cw, out int ch)) return null;
         if ((BlinkMs() / 530) % 2 != 0) return null;   // ~530ms blink
-        return new Rectangle((int)a[0] - ox, (int)a[1] - oy, Math.Max(1, (int)a[2]), (int)a[3]);
+        return new Rectangle(cx - ox, cy - oy, Math.Max(1, cw), ch);
     }
 
     // Caret on/off state only (no position) — the cheap change-check for present-on-change.
     private bool CaretOn()
     {
-        if (_getCaret == null) return false;
-        object[] a = { 0, 0, 0, 0 };
-        if (!(bool)_getCaret.Invoke(_driver, a)) return false;
+        if (!_driver.GetCaret(out _, out _, out _, out _)) return false;
         return (BlinkMs() / 530) % 2 == 0;
     }
 
@@ -577,7 +552,7 @@ internal sealed class CocoaHost : IWinFormsHost
         double w = clientArea.Width, h = clientArea.Height;
         IntPtr win = Send(Cls("NSWindow"), Sel("alloc"));
         _k = InitialUnitsPerPoint();
-        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' shown: k={_k} per-monitor={PerMonitor} handle={_form.IsHandleCreated} windowDpi={(_driver as XplatUIWebGpu)?.WindowDpi(_form.Handle)} screenScale={ScreenScale} form={_form.Bounds}");
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' shown: k={_k} per-monitor={PerMonitor} handle={_form.IsHandleCreated} windowDpi={_driver.WindowDpi(_form.Handle)} screenScale={ScreenScale} form={_form.Bounds}");
         var rect = CocoaRect(clientArea.Left, clientArea.Top, w, h);
         _transparent = IsLayered();
         _ownCaption = DrawsOwnCaption();
@@ -675,7 +650,7 @@ internal sealed class CocoaHost : IWinFormsHost
             // the window is front-most). This makes an idle window cost ~nothing.
             // Fold in the embedded contributors' version too — a hosted WPF tree animates on its own
             // clock and would otherwise never repaint (see EmbeddedScenes).
-            int ver = (int)_getVersion.Invoke(_driver, null) + EmbeddedScenes.CurrentVersion();
+            int ver = (int)_driver.GetPaintVersion() + EmbeddedScenes.CurrentVersion();
             bool caretOn = CaretOn();
             string save = Environment.GetEnvironmentVariable("WF_WEBGPU_SAVE");
             bool wantSave = !string.IsNullOrEmpty(save) && !_savedGpu;
@@ -732,7 +707,7 @@ internal sealed class CocoaHost : IWinFormsHost
             }
             if (_wgpu != null && _gpuRaster && !_closed)
             {
-                int v = (int)_getVersion.Invoke(_driver, null);
+                int v = (int)_driver.GetPaintVersion();
                 bool on = CaretOn();
                 if (v == _lastVer && on == _lastCaretOn && _lastPresentOk) return;
                 var offScenes = GetScenes(out int sx, out int sy);
@@ -863,7 +838,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private void PresentOffMain()
     {
-        int ver = (int)_getVersion.Invoke(_driver, null);
+        int ver = (int)_driver.GetPaintVersion();
         bool caretOn = CaretOn();
         if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk) return;
         _lastVer = ver; _lastCaretOn = caretOn;
@@ -1002,7 +977,6 @@ internal sealed class CocoaHost : IWinFormsHost
     // Windows -- had none, so one centred on its parent (app's About box) stayed at 0,0.
 
     private bool _reportedActive;
-    private static MethodInfo s_hostActivate;
 
     private void ReportActivation()
     {
@@ -1020,8 +994,7 @@ internal sealed class CocoaHost : IWinFormsHost
         if (active && !_reportedActive) RaiseOwned();
         if (active == _reportedActive) return;
         _reportedActive = active;
-        s_hostActivate ??= _driver.GetType().GetMethod("HostActivate", BindingFlags.NonPublic | BindingFlags.Instance);
-        s_hostActivate?.Invoke(_driver, new object[] { _form.Handle.ToInt64(), active });
+        _driver.HostActivate(_form.Handle.ToInt64(), active);
     }
 
     // ---- the screens ----------------------------------------------------------------------
@@ -1215,7 +1188,7 @@ internal sealed class CocoaHost : IWinFormsHost
             : (nint)Send(_window, Sel("isZoomed")) != 0 ? FormWindowState.Maximized : FormWindowState.Normal;
         if (state == _reportedState) return;
         _reportedState = state;
-        (_driver as XplatUIWebGpu)?.HostWindowState(_form.Handle, state);
+        _driver.HostWindowState(_form.Handle, state);
     }
 
     private void SyncFrame()
@@ -1420,26 +1393,24 @@ internal sealed class CocoaHost : IWinFormsHost
         bmp.Save(path, ImageFormat.Png);
     }
 
-    private readonly MethodInfo _getCaret;
-    private readonly System.Diagnostics.Stopwatch _blink = System.Diagnostics.Stopwatch.StartNew();
 
     // Overlay the blinking text caret onto the composite (the backing bitmaps don't contain it).
     private void DrawCaret(Bitmap dest)
     {
-        if (_getCaret == null) return;
-        object[] a = { 0, 0, 0, 0 };
-        if (!(bool)_getCaret.Invoke(_driver, a)) return;
+        if (!_driver.GetCaret(out int x, out int y, out int w, out int h)) return;
         if ((BlinkMs() / 530) % 2 != 0) return;   // ~530ms blink
-        int x = (int)a[0], y = (int)a[1], w = Math.Max(1, (int)a[2]), h = (int)a[3];
+        w = Math.Max(1, w);
         using var g = Graphics.FromImage(dest);
         using var b = new SolidBrush(Color.Black);
         g.FillRectangle(b, x, y, w, h);
     }
 
     /// <summary>Inject a click at a WinForms screen point (as a real NSEvent click would route).</summary>
-    public void InjectClickScreen(int x, int y) => _injectClick.Invoke(_driver, new object[] { x, y });
+    public void InjectClickScreen(int x, int y) => _driver.InjectClick(x, y);
 
     /// <summary>Save the current composited frame (what's on screen) to a PNG for verification.</summary>
+    public IntPtr NativeWindow => _window;
+
     public void SaveFrame(string path)
     {
         if (_wgpu != null && _gpuRaster)
@@ -1562,23 +1533,20 @@ internal sealed class CocoaHost : IWinFormsHost
         // for long work the main thread does outside WinForms (rewriting an assembly as it loads): it can
         // keep the work other threads queue for it moving (see MainWork)
         if (AppContext.GetData("WinFormsWebGpu.DrainMainWork") == null) AppContext.SetData("WinFormsWebGpu.DrainMainWork", (Action)DrainMainWork);
+        // WPF's pump hands this host the events of its windows (CocoaWindow.ForeignEventHandler)
+        AppContext.SetData("WinFormsWebGpu.CocoaEvents", (Func<IntPtr, bool>)RouteFromWpf);
         AppDomain.CurrentDomain.AssemblyLoad += (_, e) => { if (e.LoadedAssembly.GetName().Name == "WindowsBase") s_wpfLoaded = true; };
         foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
             if (a.GetName().Name == "WindowsBase") s_wpfLoaded = true;
     }
 
-    // On the main thread (WPF's window class must not be initialised elsewhere): once WPF is in the
-    // process, take our windows' events from its pump and give it its own from ours.
+    // Once WPF is in the process, give it its own events from our pump: its window class publishes
+    // how it takes them (CocoaWindow.DispatchEvent) when it is first used, which is before WPF has a
+    // window for an event to be for. It takes ours from its pump through the router published above.
     private static void HookWpfIfLoaded()
     {
         if (!s_wpfLoaded || s_wpfDispatch != null) return;
-        Assembly windowsBase = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == "WindowsBase");
-        Type t = windowsBase?.GetType("MS.Internal.Interop.CocoaWindow");
-        FieldInfo hook = t?.GetField("ForeignEventHandler", BindingFlags.Public | BindingFlags.Static);
-        MethodInfo dispatch = t?.GetMethod("DispatchEvent", BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(IntPtr) }, null);
-        if (hook == null || dispatch == null) { s_wpfLoaded = false; return; }
-        hook.SetValue(null, (Func<IntPtr, bool>)RouteFromWpf);
-        s_wpfDispatch = (Action<IntPtr>)dispatch.CreateDelegate(typeof(Action<IntPtr>));
+        s_wpfDispatch = AppContext.GetData("WpfWebGpu.CocoaWindow.DispatchEvent") as Action<IntPtr>;
     }
 
     private static CocoaHost HostFor(IntPtr nsWindow)
@@ -1783,7 +1751,7 @@ internal sealed class CocoaHost : IWinFormsHost
             NSPoint loc = SendPointRet(evt, Sel("locationInWindow"));
             NSRect frame = SendRectRet(window, Sel("frame"));
             var screen = host.ScreenToDriver(new NSPoint { x = frame.x + loc.x, y = frame.y + loc.y });
-            (host._driver as XplatUIWebGpu)?.NotePointer(screen.X, screen.Y);
+            host._driver.NotePointer(screen.X, screen.Y);
             Control target = host._form;
             while (target.GetChildAtPoint(target.PointToClient(screen), GetChildAtPointSkip.Invisible) is Control child) target = child;
             System.Drawing.Point client = target.PointToClient(screen);
@@ -1822,13 +1790,11 @@ internal sealed class CocoaHost : IWinFormsHost
         NSPoint loc = LocationInContent(evt, out _);
         int cx = (int)(loc.x * _k) + ClientScreen.Left;
         int cy = (int)(ClientScreen.Height - loc.y * _k) + ClientScreen.Top;
-        _wheelInject ??= _driver.GetType().GetMethod("InjectWheel", BindingFlags.NonPublic | BindingFlags.Instance);
-        _wheelInject?.Invoke(_driver, new object[] { cx, cy, notches * 120 });
+        _driver.InjectWheel(cx, cy, notches * 120);
         Application.DoEvents();
         Present();
     }
 
-    private MethodInfo _wheelInject;
 
     // ---- sizing from the form's own border ------------------------------------------------
     //
@@ -1978,15 +1944,15 @@ internal sealed class CocoaHost : IWinFormsHost
             int cy = (int)(ClientScreen.Height - at.y) + ClientScreen.Top;
             if (s_traceInput) Console.WriteLine($"[cocoa input] type={type} window=({loc.x},{loc.y}) -> driver=({cx},{cy}) form={_form.Bounds}");
             // A bare move is Windows' WM_SETCURSOR, which ends a Cursor.Current; a drag (captured) keeps it.
-            if (type == 5) (_driver as XplatUIWebGpu)?.EndCursorOverride();
+            if (type == 5) _driver.EndCursorOverride();
             switch (type)
             {
-                case 1: _down.Invoke(_driver, new object[] { cx, cy }); break;
-                case 2: _up.Invoke(_driver, new object[] { cx, cy }); break;
-                case 3: _rightDown.Invoke(_driver, new object[] { cx, cy }); break;
-                case 4: _rightUp.Invoke(_driver, new object[] { cx, cy }); break;
-                case 5: _move.Invoke(_driver, new object[] { cx, cy, false }); break;
-                case 6: _move.Invoke(_driver, new object[] { cx, cy, true }); break;
+                case 1: _driver.InjectMouseDown(cx, cy); break;
+                case 2: _driver.InjectMouseUp(cx, cy); break;
+                case 3: _driver.InjectRightDown(cx, cy); break;
+                case 4: _driver.InjectRightUp(cx, cy); break;
+                case 5: _driver.InjectMouseMove(cx, cy, false); break;
+                case 6: _driver.InjectMouseMove(cx, cy, true); break;
             }
             Application.DoEvents();   // let the control repaint (pressed/hover) into its backbuffer
             Present();                // show it immediately
@@ -2151,7 +2117,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private void ApplyCursor()
     {
-        int id = (_driver as XplatUIWebGpu)?.GetActiveCursor() ?? -1;
+        int id = _driver.GetActiveCursor();
         // set on every move, not only when it changes: an embedded WPF window sets its own over itself
         if (s_traceCursor && id != s_cursorShown) Console.WriteLine($"[cocoa cursor] StdCursor {id}");
         s_cursorShown = id;

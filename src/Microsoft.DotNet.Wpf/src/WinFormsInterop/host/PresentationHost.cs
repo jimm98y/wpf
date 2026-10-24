@@ -193,6 +193,18 @@ namespace System.Windows.Forms
             }
         }
 
+        /// <summary>Every host and the form it puts on screen, a snapshot.</summary>
+        internal static (IWinFormsHost Host, Form Form)[] HostedForms()
+        {
+            lock (s_lock)
+            {
+                var all = new List<(IWinFormsHost, Form)>(s_forms.Count);
+                foreach (var pair in s_forms)
+                    if (!pair.Value.IsDisposed) all.Add((pair.Key, pair.Value));
+                return all.ToArray();
+            }
+        }
+
         /// <summary>The host putting <paramref name="form"/> on screen, or null when it has none.
         /// A popup needs it to work out where on the real screen its owner's client area landed.
         /// </summary>

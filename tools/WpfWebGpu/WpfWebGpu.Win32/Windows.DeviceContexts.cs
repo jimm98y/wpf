@@ -45,7 +45,7 @@ public static unsafe partial class Exports
             System.Drawing.Size client = c.IsHandleCreated ? c.ClientSize : c.Size;
             // The stack draws a child's frame inside the window (see XplatUIWebGpu.NonClientInset);
             // Windows' client, and with it a client DC, starts inside that frame.
-            int inset = DriverInt("NonClientInset", hwnd);
+            int inset = Forms.Win32Bridge.NonClientInset(hwnd);
             if (inset > 0 && c is not Forms.Form)
             {
                 if (!window) return (client.Width - 2 * inset, client.Height - 2 * inset, inset, inset);
@@ -118,7 +118,7 @@ public static unsafe partial class Exports
                 return 0;
             });
             // The frame is Windows' to draw, outside what the app painted: over it again.
-            if (wdc.OffsetX > 0 || wdc.OffsetY > 0) Ui(c, () => DriverInt("RedrawNonClient", wdc.Hwnd));
+            if (wdc.OffsetX > 0 || wdc.OffsetY > 0) Ui(c, () => { Forms.Win32Bridge.RedrawNonClient(wdc.Hwnd); return 0; });
         }
         finally
         {
@@ -126,16 +126,6 @@ public static unsafe partial class Exports
             GdiDeleteObject(wdc.Dib);
             GdiDeleteDC(wdc.Dc);
         }
-    }
-
-    /// <summary>A WinForms driver method taking a window handle, by name (internal to the stack).</summary>
-    private static int DriverInt(string method, nint hwnd)
-    {
-        object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-            ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
-        object? r = driver?.GetType().GetMethod(method, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?.Invoke(driver, new object[] { (IntPtr)hwnd });
-        return r is int i ? i : 0;
     }
 
     [Win32ExportOnWindows(A0, "GetDC")] public static nint WinGetDC(nint hwnd) => NewWindowDC(hwnd, window: false)?.Dc ?? 0;
@@ -179,9 +169,7 @@ public static unsafe partial class Exports
         if (Resolve(hwnd) is not Forms.Control c) return FALSE;
         RECT area = Ui(c, () =>
         {
-            object? h = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.Hwnd")
-                ?.GetMethod("ObjectFromHandle")?.Invoke(null, new object[] { (IntPtr)hwnd });
-            var invalid = h?.GetType().GetProperty("Invalid")?.GetValue(h) is System.Drawing.Rectangle rc ? rc : System.Drawing.Rectangle.Empty;
+            System.Drawing.Rectangle invalid = Forms.Win32Bridge.UpdateBounds(hwnd);
             return new RECT { Left = invalid.Left, Top = invalid.Top, Right = invalid.Right, Bottom = invalid.Bottom };
         });
         if (r != null) *r = area;

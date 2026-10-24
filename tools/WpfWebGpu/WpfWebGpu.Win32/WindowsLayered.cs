@@ -76,12 +76,8 @@ public static unsafe partial class Exports
         Ui(o, () =>
         {
             if (!control.IsHandleCreated) return 0;
-            object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
-            driver?.GetType().GetMethod("SetLayeredImage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.Invoke(driver, new object[] { control.Handle, rgba, w, h, opacity });
-            driver?.GetType().GetMethod("SetLayeredBits", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.Invoke(driver, new object[] { control.Handle, raw, w, h, (byte)Math.Round(opacity * 255) });
+            Forms.Win32Bridge.SetLayeredImage(control.Handle, rgba, w, h, opacity);
+            Forms.Win32Bridge.SetLayeredBits(control.Handle, raw, w, h, (byte)Math.Round(opacity * 255));
             return 0;
         });
         if (timing)

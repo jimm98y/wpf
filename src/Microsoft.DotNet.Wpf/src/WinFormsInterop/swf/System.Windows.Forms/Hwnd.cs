@@ -146,6 +146,15 @@ namespace System.Windows.Forms {
 			return rv;
 		}
 
+		/// <summary>Every window handle, a snapshot.</summary>
+		internal static IntPtr[] Handles() {
+			lock (windows) {
+				var all = new IntPtr[windows.Count];
+				windows.Keys.CopyTo(all, 0);
+				return all;
+			}
+		}
+
 		public static Hwnd ObjectFromHandle(IntPtr handle) {
 			//return (Hwnd)(((GCHandle)handle).Target);
 			Hwnd rv;

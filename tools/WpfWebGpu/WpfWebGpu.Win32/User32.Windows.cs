@@ -7,7 +7,6 @@
 // Each function acts on whichever of the three the handle is, on that window's own UI thread.
 
 using System.Collections.Concurrent;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using WpfWebGpu.ComInterop;
 using System.Windows;
@@ -168,7 +167,7 @@ public static unsafe partial class Exports
             HwndSource s when WindowOf(s) is Window w && w.Content is FrameworkElement content => RectOf(0, 0, content.ActualWidth, content.ActualHeight),
             HwndSource s when s.RootVisual is FrameworkElement fe => RectOf(0, 0, fe.ActualWidth, fe.ActualHeight),
             // Inside the frame the stack draws within the window, as Windows keeps it out of the client.
-            Forms.Control c => RectOf(0, 0, c.ClientSize.Width - 2 * DriverInt("NonClientInset", hwnd), c.ClientSize.Height - 2 * DriverInt("NonClientInset", hwnd)),
+            Forms.Control c => RectOf(0, 0, c.ClientSize.Width - 2 * Forms.Win32Bridge.NonClientInset(hwnd), c.ClientSize.Height - 2 * Forms.Win32Bridge.NonClientInset(hwnd)),
             AppWindow a => RectOf(0, 0, a.Rect.Right - a.Rect.Left, a.Rect.Bottom - a.Rect.Top),
             _ => default,
         });
@@ -265,10 +264,7 @@ public static unsafe partial class Exports
         if (Resolve(hwnd) is not Forms.Control c) return;
         Ui(c, () =>
         {
-            object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-                ?.GetField("driver", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.GetValue(null);
-            driver?.GetType().GetMethod("RecalculateFrame", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.Invoke(driver, new object[] { (IntPtr)hwnd });
+            Forms.Win32Bridge.RecalculateFrame(hwnd);
             return 0;
         });
     }
@@ -290,9 +286,7 @@ public static unsafe partial class Exports
         // A top-level window that is not a form (a DotNetBar popup and its shadow): the driver's
         // topmost band, which Form.TopMost goes through too.
         else if (o is Forms.Control c && c.IsHandleCreated && c.Parent == null)
-            typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-                ?.GetMethod("SetTopmost", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                ?.Invoke(null, new object[] { c.Handle, topmost });
+            Forms.Win32Bridge.SetTopmost(c.Handle, topmost);
         return 0;
     });
 
@@ -582,11 +576,7 @@ public static unsafe partial class Exports
             return Ui(o, () =>
             {
                 if (!c.IsHandleCreated) return FALSE;
-                object? driver = typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-                    ?.GetField("driver", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
-                MethodInfo? animate = driver?.GetType().GetMethod("AnimateWindow", BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { typeof(IntPtr), typeof(int), typeof(int) }, null);
-                if (animate == null) return FALSE;
-                return (bool)animate.Invoke(driver, new object[] { c.Handle, (int)time, (int)flags })! ? TRUE : FALSE;
+                return Forms.Win32Bridge.AnimateWindow(c.Handle, (int)time, (int)flags) ? TRUE : FALSE;
             });
         }
         bool hide = (flags & AW_HIDE) != 0;
@@ -1031,17 +1021,8 @@ public static unsafe partial class Exports
 
     // WinForms windows have a real Win32-shaped procedure (Control.WndProc), which Mono's message
     // pipeline calls with a Message; the message goes in through the same entry point.
-    private static System.Reflection.MethodInfo? s_formsSendMessage;
-
     private static nint FormsSend(Forms.Control c, uint msg, nint w, nint l)
-    {
-        s_formsSendMessage ??= typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.XplatUI")
-            ?.GetMethod("SendMessage", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
-                        new[] { typeof(IntPtr), typeof(Forms.Control).Assembly.GetType("System.Windows.Forms.Msg")!, typeof(IntPtr), typeof(IntPtr) });
-        if (s_formsSendMessage == null) return 0;
-        object msgValue = Enum.ToObject(s_formsSendMessage.GetParameters()[1].ParameterType, (int)msg);
-        return (nint)(IntPtr)s_formsSendMessage.Invoke(null, new object[] { c.Handle, msgValue, (IntPtr)w, (IntPtr)l })!;
-    }
+        => Forms.Win32Bridge.SendMessage(c.Handle, (int)msg, w, l);
 
     // A WPF window does not run through a Win32 procedure here; the messages that mean something to a
     // window as such are applied to it directly.
