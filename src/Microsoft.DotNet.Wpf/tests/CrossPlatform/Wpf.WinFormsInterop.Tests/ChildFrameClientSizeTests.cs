@@ -98,6 +98,8 @@ namespace Wpf.WinFormsInterop.Tests
         [MemberData(nameof(Cases))]
         public void AChildsBorder_IsOutsideItsClient(string name, Func<Control> make, Size client, int origin, Rectangle display)
         {
+            // a combo box's field is GDI's line height plus eight
+            if (name == "ComboBox") Assert.SkipWhen(WindowsFontFiles.NoSegoeVdmx != null, WindowsFontFiles.NoSegoeVdmx ?? "");
             // Measured from a frameless parent: a form that is never shown has no host frame to be
             // measured against.
             using var f = new Form { ClientSize = new Size(300, 300) };

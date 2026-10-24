@@ -29,6 +29,8 @@ namespace Wpf.WinFormsInterop.Tests
         [InlineData(5, "[-321,2,62,20] [-259,2,75,20] [-184,2,88,20] [-96,2,98,20] [2,2,118,20] [120,2,65,20]")]
         public void AnOverflowingStrip_HasStocksTabRects(int select, string expected)
         {
+            // a tab is as tall as GDI's line of the strip's font plus its padding
+            Assert.SkipWhen(WindowsFontFiles.NoSegoeVdmx != null, WindowsFontFiles.NoSegoeVdmx ?? "");
             using var form = new QuietForm { StartPosition = SWF.FormStartPosition.Manual, Location = new Point(8000, 80),
                 ClientSize = new Size(400, 200), ShowInTaskbar = false };
             var tc = new SWF.TabControl { Left = 5, Top = 5, Width = 300, Height = 150 };

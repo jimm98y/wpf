@@ -30,12 +30,17 @@ namespace System.Windows.Forms
 			}
 		}
 		private static readonly object s_instanceLock = new object();
+
+		// Its own method: the browser host stands on WindowsBase, which another head need not ship.
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("browser")]
+		private static void InstallBrowserScreens() => BrowserFormHost.InstallScreens();
 		private XplatUIWebGpu()
 		{
 			// the driver's windows in the process's focus model (XplatUIWebGpu.Focus.cs)
 			EnsureFocusRegistered();
 			// a head whose screen is the application's main window: every other window is framed (WindowChrome)
-			if (OperatingSystem.IsBrowser()) FramedWindow = WindowChrome.IsFramed;
+			if (OperatingSystem.IsBrowser()) { FramedWindow = WindowChrome.IsFramed; InstallBrowserScreens(); }
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
 			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
 			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",
@@ -2124,12 +2129,14 @@ namespace System.Windows.Forms
 			return true;
 		}
 
-		/// <summary>The non-client frame of a top-level window, as the host draws it: supplied by the
-		/// host (the native title bar and borders belong to it), and on Windows, where Win32Host puts
-		/// the window in a real Windows 11 frame, Windows 11's own at 96 dpi by default. In the browser
-		/// it is Windows 11's too, for the windows that have one there (FramedWindow), whose frame the
-		/// host draws (WindowChrome). Elsewhere it defaults to none.</summary>
-		internal static Func<int, int, bool, int, Padding> FrameProvider = OperatingSystem.IsWindows() || OperatingSystem.IsBrowser() ? Windows11Frame : null;
+		/// <summary>The non-client frame of a top-level window: Windows 11's, on every head, so Form.Size
+		/// is the window and ClientSize what is inside it as on Windows. Win32Host puts the window in a
+		/// real Windows 11 frame; the browser's host draws it (WindowChrome, for the windows that have
+		/// one there: FramedWindow); macOS' shows the client in its window's content and draws its own
+		/// title bar above it (CocoaHost.Frame). With none modelled there, a form an app sized by Size,
+		/// MinimumSize or MaximumSize had a client 16 x 39 larger than on Windows. Linux, iOS and
+		/// Android have no top-level host yet: a host there maps the client the same way.</summary>
+		internal static Func<int, int, bool, int, Padding> FrameProvider = Windows11Frame;
 
 		/// <summary>The DPI a window being created lays out for: its control's (DeviceDpi), which a
 		/// child takes from its parent and a top-level window from the display it opens on.</summary>

@@ -907,10 +907,12 @@ namespace Wpf.WinFormsInterop.Tests
                     }
                     foreach (float a in new [] { 0.25f, 25f, 49.9f, 100f, 150f, -5f }) {
                         PixelFormat f = df; float aa = a;
-                        Try (sink, g, "a" + a + "_d1", () => Converted (s, f, DitherType.Solid, PaletteType.Custom, optT, aa));
-                        Try (sink, g, "a" + a + "_d2", () => Converted (s, f, DitherType.Ordered4x4, PaletteType.FixedHalftone27, new ColorPalette (PaletteType.FixedHalftone27), aa));
-                        Try (sink, g, "a" + a + "_d4", () => Converted (s, f, DitherType.Ordered16x16, PaletteType.FixedHalftone256, new ColorPalette (PaletteType.FixedHalftone256), aa));
-                        Try (sink, g, "a" + a + "_d9", () => Converted (s, f, DitherType.ErrorDiffusion, PaletteType.Custom, optT, aa));
+                        // the fixture's names are the invariant culture's ("a0.25", not "a0,25")
+                        string an = a.ToString (System.Globalization.CultureInfo.InvariantCulture);
+                        Try (sink, g, "a" + an + "_d1", () => Converted (s, f, DitherType.Solid, PaletteType.Custom, optT, aa));
+                        Try (sink, g, "a" + an + "_d2", () => Converted (s, f, DitherType.Ordered4x4, PaletteType.FixedHalftone27, new ColorPalette (PaletteType.FixedHalftone27), aa));
+                        Try (sink, g, "a" + an + "_d4", () => Converted (s, f, DitherType.Ordered16x16, PaletteType.FixedHalftone256, new ColorPalette (PaletteType.FixedHalftone256), aa));
+                        Try (sink, g, "a" + an + "_d9", () => Converted (s, f, DitherType.ErrorDiffusion, PaletteType.Custom, optT, aa));
                     }
                 }
                 // Clone and a read lock into every direct format: the same conversions as ConvertFormat's.

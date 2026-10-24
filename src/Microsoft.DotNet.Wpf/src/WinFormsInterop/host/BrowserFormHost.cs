@@ -49,6 +49,42 @@ namespace System.Windows.Forms
 
 		private static bool PerMonitor => ScaleHelper.IsDeviceScaled && ScaleHelper.HostSourceDpi == 0;
 
+		// ---- the screen ----------------------------------------------------------------------
+		//
+		// The page's viewport is the screen: every window of the app lives in it, and there is no desktop
+		// beyond it (BrowserWindow.GetPrimaryScreenPixels, which WPF's SystemParameters read too). Nothing
+		// said so here, and WinForms' screen was the driver's 2560 x 1440 fallback whatever the page's
+		// size: ICONICS' keypad, which makes itself half the primary screen wide, came up 1280 pixels wide
+		// in a 1000-pixel page, its title bar off the top.
+
+		private static Size s_viewport;
+
+		/// <summary>Called by the driver as it starts: WinForms' screens are the page's viewport.</summary>
+		internal static void InstallScreens ()
+		{
+			XplatUIWebGpu.ScreensProvider ??= PageScreens;
+		}
+
+		/// <summary>The viewport in the application's units: device pixels for a per-monitor application,
+		/// else the pixels of the DPI it lays out at (ScaleHelper.HostSourceDpi).</summary>
+		private static Screen[] PageScreens ()
+		{
+			BrowserWindow.GetPrimaryScreenPixels (out _, out _, out int right, out int bottom, out _, out _, out _, out _);
+			double perDevice = PerMonitor || ScaleHelper.HostSourceDpi <= 0 ? 1 : 96.0 / ScaleHelper.HostSourceDpi * Math.Max (0.5, new BrowserWindow ().GetBackingScale ());
+			var size = new Size (Math.Max (1, (int)Math.Round (right / perDevice)), Math.Max (1, (int)Math.Round (bottom / perDevice)));
+			s_viewport = size;
+			var bounds = new Rectangle (Point.Empty, size);
+			return new[] { new Screen (true, "DISPLAY1", bounds, bounds) };
+		}
+
+		/// <summary>The page was resized: Screen keeps the list it read, so it is told.</summary>
+		private static void ViewportChanged ()
+		{
+			if (XplatUIWebGpu.ScreensProvider != PageScreens) return;
+			Size was = s_viewport;
+			if (PageScreens () [0].Bounds.Size != was) Screen.Rescan ();
+		}
+
 		/// <summary>The page's DPI as Windows would give it: 96 per CSS pixel.</summary>
 		internal static int PageDpi ()
 		{
@@ -217,6 +253,7 @@ namespace System.Windows.Forms
 
 		private void OnResized (int widthPixels, int heightPixels)
 		{
+			ViewportChanged ();
 			SyncFromWindow ();
 			_lastVer = -1;
 		}
