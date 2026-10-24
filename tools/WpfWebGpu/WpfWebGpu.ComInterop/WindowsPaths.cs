@@ -12,6 +12,7 @@
 //
 // On Windows nothing is rewritten, and these would be the members themselves.
 
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Xml;
@@ -26,6 +27,55 @@ public static class WindowsPaths
     /// <summary>The path with Windows' separators made this system's.</summary>
     public static string? Native(string? path)
         => path == null || s_windows || path.IndexOf('\\') < 0 ? path : path.Replace('\\', '/');
+
+    // Windows' file names are not case-sensitive: an app asks for "keyPad.xml" and gets KeyPad.xml. A
+    // case-sensitive file system -- the browser's, Linux's as a rule -- found nothing, and app' keypad
+    // reported its layout missing. Where the file system is one, a path that does not exist as written is
+    // found as Windows would find it, a component at a time, the first entry that differs only in case
+    // taken; what does not exist at all (a file about to be made) keeps the rest of its name as written.
+    private static readonly bool s_caseSensitive = !s_windows && CaseSensitive();
+
+    private static bool CaseSensitive()
+    {
+        try
+        {
+            string probe = AppContext.BaseDirectory.TrimEnd('/');
+            string flipped = new string(probe.Select(c => char.IsUpper(c) ? char.ToLowerInvariant(c) : char.ToUpperInvariant(c)).ToArray());
+            if (flipped == probe) return true;
+            return !Directory.Exists(flipped);
+        }
+        catch (Exception) { return true; }
+    }
+
+    /// <summary>The path an app hands a member that opens, lists or checks something: Windows' separators
+    /// made this system's, and found as Windows' case-insensitive names find it.</summary>
+    public static string? Disk(string? path)
+    {
+        string? native = Native(path);
+        if (!s_caseSensitive || string.IsNullOrEmpty(native) || File.Exists(native) || Directory.Exists(native)) return native;
+        try
+        {
+            string full = Path.GetFullPath(native);
+            string root = Path.GetPathRoot(full) ?? "/";
+            string[] parts = full.Substring(root.Length).Split('/', StringSplitOptions.RemoveEmptyEntries);
+            string at = root;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string exact = Path.Combine(at, parts[i]);
+                if (File.Exists(exact) || Directory.Exists(exact)) { at = exact; continue; }
+                string? match = Directory.Exists(at)
+                    ? Directory.EnumerateFileSystemEntries(at).FirstOrDefault(e => string.Equals(Path.GetFileName(e), parts[i], StringComparison.OrdinalIgnoreCase))
+                    : null;
+                if (match == null) return Path.Combine(new[] { at }.Concat(parts.Skip(i)).ToArray());
+                at = match;
+            }
+            return at;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return native;
+        }
+    }
 
     private static string[] Native(string[] paths)
     {
@@ -54,107 +104,107 @@ public static class WindowsPaths
 
     // ---- System.IO.File ----
 
-    public static bool File_Exists(string? path) => File.Exists(Native(path));
-    public static void File_Delete(string path) => File.Delete(Native(path)!);
-    public static void File_Copy(string sourceFileName, string destFileName) => File.Copy(Native(sourceFileName)!, Native(destFileName)!);
-    public static void File_Copy(string sourceFileName, string destFileName, bool overwrite) => File.Copy(Native(sourceFileName)!, Native(destFileName)!, overwrite);
-    public static void File_Move(string sourceFileName, string destFileName) => File.Move(Native(sourceFileName)!, Native(destFileName)!);
-    public static void File_Move(string sourceFileName, string destFileName, bool overwrite) => File.Move(Native(sourceFileName)!, Native(destFileName)!, overwrite);
-    public static string File_ReadAllText(string path) => File.ReadAllText(Native(path)!);
-    public static string File_ReadAllText(string path, Encoding encoding) => File.ReadAllText(Native(path)!, encoding);
-    public static byte[] File_ReadAllBytes(string path) => File.ReadAllBytes(Native(path)!);
-    public static string[] File_ReadAllLines(string path) => File.ReadAllLines(Native(path)!);
-    public static string[] File_ReadAllLines(string path, Encoding encoding) => File.ReadAllLines(Native(path)!, encoding);
-    public static IEnumerable<string> File_ReadLines(string path) => File.ReadLines(Native(path)!);
-    public static IEnumerable<string> File_ReadLines(string path, Encoding encoding) => File.ReadLines(Native(path)!, encoding);
-    public static void File_WriteAllText(string path, string? contents) => File.WriteAllText(Native(path)!, contents);
-    public static void File_WriteAllText(string path, string? contents, Encoding encoding) => File.WriteAllText(Native(path)!, contents, encoding);
-    public static void File_WriteAllBytes(string path, byte[] bytes) => File.WriteAllBytes(Native(path)!, bytes);
-    public static void File_WriteAllLines(string path, string[] contents) => File.WriteAllLines(Native(path)!, contents);
-    public static void File_WriteAllLines(string path, IEnumerable<string> contents) => File.WriteAllLines(Native(path)!, contents);
-    public static void File_WriteAllLines(string path, string[] contents, Encoding encoding) => File.WriteAllLines(Native(path)!, contents, encoding);
-    public static void File_WriteAllLines(string path, IEnumerable<string> contents, Encoding encoding) => File.WriteAllLines(Native(path)!, contents, encoding);
-    public static void File_AppendAllText(string path, string? contents) => File.AppendAllText(Native(path)!, contents);
-    public static void File_AppendAllText(string path, string? contents, Encoding encoding) => File.AppendAllText(Native(path)!, contents, encoding);
-    public static void File_AppendAllLines(string path, IEnumerable<string> contents) => File.AppendAllLines(Native(path)!, contents);
-    public static FileStream File_Open(string path, FileMode mode) => File.Open(Native(path)!, mode);
-    public static FileStream File_Open(string path, FileMode mode, FileAccess access) => File.Open(Native(path)!, mode, access);
-    public static FileStream File_Open(string path, FileMode mode, FileAccess access, FileShare share) => File.Open(Native(path)!, mode, access, share);
-    public static FileStream File_OpenRead(string path) => File.OpenRead(Native(path)!);
-    public static FileStream File_OpenWrite(string path) => File.OpenWrite(Native(path)!);
-    public static StreamReader File_OpenText(string path) => File.OpenText(Native(path)!);
-    public static FileStream File_Create(string path) => File.Create(Native(path)!);
-    public static FileStream File_Create(string path, int bufferSize) => File.Create(Native(path)!, bufferSize);
-    public static StreamWriter File_CreateText(string path) => File.CreateText(Native(path)!);
-    public static StreamWriter File_AppendText(string path) => File.AppendText(Native(path)!);
-    public static FileAttributes File_GetAttributes(string path) => File.GetAttributes(Native(path)!);
-    public static void File_SetAttributes(string path, FileAttributes fileAttributes) => File.SetAttributes(Native(path)!, fileAttributes);
-    public static DateTime File_GetLastWriteTime(string path) => File.GetLastWriteTime(Native(path)!);
-    public static DateTime File_GetLastWriteTimeUtc(string path) => File.GetLastWriteTimeUtc(Native(path)!);
-    public static DateTime File_GetCreationTime(string path) => File.GetCreationTime(Native(path)!);
-    public static DateTime File_GetCreationTimeUtc(string path) => File.GetCreationTimeUtc(Native(path)!);
-    public static void File_SetLastWriteTime(string path, DateTime lastWriteTime) => File.SetLastWriteTime(Native(path)!, lastWriteTime);
-    public static void File_SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => File.SetLastWriteTimeUtc(Native(path)!, lastWriteTimeUtc);
+    public static bool File_Exists(string? path) => File.Exists(Disk(path));
+    public static void File_Delete(string path) => File.Delete(Disk(path)!);
+    public static void File_Copy(string sourceFileName, string destFileName) => File.Copy(Disk(sourceFileName)!, Disk(destFileName)!);
+    public static void File_Copy(string sourceFileName, string destFileName, bool overwrite) => File.Copy(Disk(sourceFileName)!, Disk(destFileName)!, overwrite);
+    public static void File_Move(string sourceFileName, string destFileName) => File.Move(Disk(sourceFileName)!, Disk(destFileName)!);
+    public static void File_Move(string sourceFileName, string destFileName, bool overwrite) => File.Move(Disk(sourceFileName)!, Disk(destFileName)!, overwrite);
+    public static string File_ReadAllText(string path) => File.ReadAllText(Disk(path)!);
+    public static string File_ReadAllText(string path, Encoding encoding) => File.ReadAllText(Disk(path)!, encoding);
+    public static byte[] File_ReadAllBytes(string path) => File.ReadAllBytes(Disk(path)!);
+    public static string[] File_ReadAllLines(string path) => File.ReadAllLines(Disk(path)!);
+    public static string[] File_ReadAllLines(string path, Encoding encoding) => File.ReadAllLines(Disk(path)!, encoding);
+    public static IEnumerable<string> File_ReadLines(string path) => File.ReadLines(Disk(path)!);
+    public static IEnumerable<string> File_ReadLines(string path, Encoding encoding) => File.ReadLines(Disk(path)!, encoding);
+    public static void File_WriteAllText(string path, string? contents) => File.WriteAllText(Disk(path)!, contents);
+    public static void File_WriteAllText(string path, string? contents, Encoding encoding) => File.WriteAllText(Disk(path)!, contents, encoding);
+    public static void File_WriteAllBytes(string path, byte[] bytes) => File.WriteAllBytes(Disk(path)!, bytes);
+    public static void File_WriteAllLines(string path, string[] contents) => File.WriteAllLines(Disk(path)!, contents);
+    public static void File_WriteAllLines(string path, IEnumerable<string> contents) => File.WriteAllLines(Disk(path)!, contents);
+    public static void File_WriteAllLines(string path, string[] contents, Encoding encoding) => File.WriteAllLines(Disk(path)!, contents, encoding);
+    public static void File_WriteAllLines(string path, IEnumerable<string> contents, Encoding encoding) => File.WriteAllLines(Disk(path)!, contents, encoding);
+    public static void File_AppendAllText(string path, string? contents) => File.AppendAllText(Disk(path)!, contents);
+    public static void File_AppendAllText(string path, string? contents, Encoding encoding) => File.AppendAllText(Disk(path)!, contents, encoding);
+    public static void File_AppendAllLines(string path, IEnumerable<string> contents) => File.AppendAllLines(Disk(path)!, contents);
+    public static FileStream File_Open(string path, FileMode mode) => File.Open(Disk(path)!, mode);
+    public static FileStream File_Open(string path, FileMode mode, FileAccess access) => File.Open(Disk(path)!, mode, access);
+    public static FileStream File_Open(string path, FileMode mode, FileAccess access, FileShare share) => File.Open(Disk(path)!, mode, access, share);
+    public static FileStream File_OpenRead(string path) => File.OpenRead(Disk(path)!);
+    public static FileStream File_OpenWrite(string path) => File.OpenWrite(Disk(path)!);
+    public static StreamReader File_OpenText(string path) => File.OpenText(Disk(path)!);
+    public static FileStream File_Create(string path) => File.Create(Disk(path)!);
+    public static FileStream File_Create(string path, int bufferSize) => File.Create(Disk(path)!, bufferSize);
+    public static StreamWriter File_CreateText(string path) => File.CreateText(Disk(path)!);
+    public static StreamWriter File_AppendText(string path) => File.AppendText(Disk(path)!);
+    public static FileAttributes File_GetAttributes(string path) => File.GetAttributes(Disk(path)!);
+    public static void File_SetAttributes(string path, FileAttributes fileAttributes) => File.SetAttributes(Disk(path)!, fileAttributes);
+    public static DateTime File_GetLastWriteTime(string path) => File.GetLastWriteTime(Disk(path)!);
+    public static DateTime File_GetLastWriteTimeUtc(string path) => File.GetLastWriteTimeUtc(Disk(path)!);
+    public static DateTime File_GetCreationTime(string path) => File.GetCreationTime(Disk(path)!);
+    public static DateTime File_GetCreationTimeUtc(string path) => File.GetCreationTimeUtc(Disk(path)!);
+    public static void File_SetLastWriteTime(string path, DateTime lastWriteTime) => File.SetLastWriteTime(Disk(path)!, lastWriteTime);
+    public static void File_SetLastWriteTimeUtc(string path, DateTime lastWriteTimeUtc) => File.SetLastWriteTimeUtc(Disk(path)!, lastWriteTimeUtc);
 
     // ---- System.IO.Directory ----
 
-    public static bool Directory_Exists(string? path) => Directory.Exists(Native(path));
-    public static DirectoryInfo Directory_CreateDirectory(string path) => Directory.CreateDirectory(Native(path)!);
-    public static void Directory_Delete(string path) => Directory.Delete(Native(path)!);
-    public static void Directory_Delete(string path, bool recursive) => Directory.Delete(Native(path)!, recursive);
-    public static void Directory_Move(string sourceDirName, string destDirName) => Directory.Move(Native(sourceDirName)!, Native(destDirName)!);
-    public static DirectoryInfo? Directory_GetParent(string path) => Directory.GetParent(Native(path)!);
-    public static string[] Directory_GetFiles(string path) => Directory.GetFiles(Native(path)!);
-    public static string[] Directory_GetFiles(string path, string searchPattern) => Directory.GetFiles(Native(path)!, searchPattern);
-    public static string[] Directory_GetFiles(string path, string searchPattern, SearchOption searchOption) => Directory.GetFiles(Native(path)!, searchPattern, searchOption);
-    public static string[] Directory_GetDirectories(string path) => Directory.GetDirectories(Native(path)!);
-    public static string[] Directory_GetDirectories(string path, string searchPattern) => Directory.GetDirectories(Native(path)!, searchPattern);
-    public static string[] Directory_GetDirectories(string path, string searchPattern, SearchOption searchOption) => Directory.GetDirectories(Native(path)!, searchPattern, searchOption);
-    public static string[] Directory_GetFileSystemEntries(string path) => Directory.GetFileSystemEntries(Native(path)!);
-    public static string[] Directory_GetFileSystemEntries(string path, string searchPattern) => Directory.GetFileSystemEntries(Native(path)!, searchPattern);
-    public static IEnumerable<string> Directory_EnumerateFiles(string path) => Directory.EnumerateFiles(Native(path)!);
-    public static IEnumerable<string> Directory_EnumerateFiles(string path, string searchPattern) => Directory.EnumerateFiles(Native(path)!, searchPattern);
-    public static IEnumerable<string> Directory_EnumerateFiles(string path, string searchPattern, SearchOption searchOption) => Directory.EnumerateFiles(Native(path)!, searchPattern, searchOption);
-    public static IEnumerable<string> Directory_EnumerateDirectories(string path) => Directory.EnumerateDirectories(Native(path)!);
-    public static IEnumerable<string> Directory_EnumerateDirectories(string path, string searchPattern) => Directory.EnumerateDirectories(Native(path)!, searchPattern);
-    public static IEnumerable<string> Directory_EnumerateDirectories(string path, string searchPattern, SearchOption searchOption) => Directory.EnumerateDirectories(Native(path)!, searchPattern, searchOption);
-    public static DateTime Directory_GetLastWriteTime(string path) => Directory.GetLastWriteTime(Native(path)!);
-    public static void Directory_SetCurrentDirectory(string path) => Directory.SetCurrentDirectory(Native(path)!);
+    public static bool Directory_Exists(string? path) => Directory.Exists(Disk(path));
+    public static DirectoryInfo Directory_CreateDirectory(string path) => Directory.CreateDirectory(Disk(path)!);
+    public static void Directory_Delete(string path) => Directory.Delete(Disk(path)!);
+    public static void Directory_Delete(string path, bool recursive) => Directory.Delete(Disk(path)!, recursive);
+    public static void Directory_Move(string sourceDirName, string destDirName) => Directory.Move(Disk(sourceDirName)!, Disk(destDirName)!);
+    public static DirectoryInfo? Directory_GetParent(string path) => Directory.GetParent(Disk(path)!);
+    public static string[] Directory_GetFiles(string path) => Directory.GetFiles(Disk(path)!);
+    public static string[] Directory_GetFiles(string path, string searchPattern) => Directory.GetFiles(Disk(path)!, searchPattern);
+    public static string[] Directory_GetFiles(string path, string searchPattern, SearchOption searchOption) => Directory.GetFiles(Disk(path)!, searchPattern, searchOption);
+    public static string[] Directory_GetDirectories(string path) => Directory.GetDirectories(Disk(path)!);
+    public static string[] Directory_GetDirectories(string path, string searchPattern) => Directory.GetDirectories(Disk(path)!, searchPattern);
+    public static string[] Directory_GetDirectories(string path, string searchPattern, SearchOption searchOption) => Directory.GetDirectories(Disk(path)!, searchPattern, searchOption);
+    public static string[] Directory_GetFileSystemEntries(string path) => Directory.GetFileSystemEntries(Disk(path)!);
+    public static string[] Directory_GetFileSystemEntries(string path, string searchPattern) => Directory.GetFileSystemEntries(Disk(path)!, searchPattern);
+    public static IEnumerable<string> Directory_EnumerateFiles(string path) => Directory.EnumerateFiles(Disk(path)!);
+    public static IEnumerable<string> Directory_EnumerateFiles(string path, string searchPattern) => Directory.EnumerateFiles(Disk(path)!, searchPattern);
+    public static IEnumerable<string> Directory_EnumerateFiles(string path, string searchPattern, SearchOption searchOption) => Directory.EnumerateFiles(Disk(path)!, searchPattern, searchOption);
+    public static IEnumerable<string> Directory_EnumerateDirectories(string path) => Directory.EnumerateDirectories(Disk(path)!);
+    public static IEnumerable<string> Directory_EnumerateDirectories(string path, string searchPattern) => Directory.EnumerateDirectories(Disk(path)!, searchPattern);
+    public static IEnumerable<string> Directory_EnumerateDirectories(string path, string searchPattern, SearchOption searchOption) => Directory.EnumerateDirectories(Disk(path)!, searchPattern, searchOption);
+    public static DateTime Directory_GetLastWriteTime(string path) => Directory.GetLastWriteTime(Disk(path)!);
+    public static void Directory_SetCurrentDirectory(string path) => Directory.SetCurrentDirectory(Disk(path)!);
 
     // ---- what is made for a path ----
 
-    public static FileInfo FileInfo_new(string fileName) => new FileInfo(Native(fileName)!);
-    public static DirectoryInfo DirectoryInfo_new(string path) => new DirectoryInfo(Native(path)!);
-    public static FileStream FileStream_new(string path, FileMode mode) => new FileStream(Native(path)!, mode);
-    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access) => new FileStream(Native(path)!, mode, access);
-    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share) => new FileStream(Native(path)!, mode, access, share);
-    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize) => new FileStream(Native(path)!, mode, access, share, bufferSize);
-    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, bool useAsync) => new FileStream(Native(path)!, mode, access, share, bufferSize, useAsync);
-    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, FileOptions options) => new FileStream(Native(path)!, mode, access, share, bufferSize, options);
-    public static StreamReader StreamReader_new(string path) => new StreamReader(Native(path)!);
-    public static StreamReader StreamReader_new(string path, bool detectEncodingFromByteOrderMarks) => new StreamReader(Native(path)!, detectEncodingFromByteOrderMarks);
-    public static StreamReader StreamReader_new(string path, Encoding encoding) => new StreamReader(Native(path)!, encoding);
-    public static StreamReader StreamReader_new(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks) => new StreamReader(Native(path)!, encoding, detectEncodingFromByteOrderMarks);
-    public static StreamWriter StreamWriter_new(string path) => new StreamWriter(Native(path)!);
-    public static StreamWriter StreamWriter_new(string path, bool append) => new StreamWriter(Native(path)!, append);
-    public static StreamWriter StreamWriter_new(string path, bool append, Encoding encoding) => new StreamWriter(Native(path)!, append, encoding);
-    public static XmlTextReader XmlTextReader_new(string url) => new XmlTextReader(Native(url)!);
-    public static XmlTextWriter XmlTextWriter_new(string filename, Encoding? encoding) => new XmlTextWriter(Native(filename)!, encoding);
+    public static FileInfo FileInfo_new(string fileName) => new FileInfo(Disk(fileName)!);
+    public static DirectoryInfo DirectoryInfo_new(string path) => new DirectoryInfo(Disk(path)!);
+    public static FileStream FileStream_new(string path, FileMode mode) => new FileStream(Disk(path)!, mode);
+    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access) => new FileStream(Disk(path)!, mode, access);
+    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share) => new FileStream(Disk(path)!, mode, access, share);
+    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize) => new FileStream(Disk(path)!, mode, access, share, bufferSize);
+    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, bool useAsync) => new FileStream(Disk(path)!, mode, access, share, bufferSize, useAsync);
+    public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, FileOptions options) => new FileStream(Disk(path)!, mode, access, share, bufferSize, options);
+    public static StreamReader StreamReader_new(string path) => new StreamReader(Disk(path)!);
+    public static StreamReader StreamReader_new(string path, bool detectEncodingFromByteOrderMarks) => new StreamReader(Disk(path)!, detectEncodingFromByteOrderMarks);
+    public static StreamReader StreamReader_new(string path, Encoding encoding) => new StreamReader(Disk(path)!, encoding);
+    public static StreamReader StreamReader_new(string path, Encoding encoding, bool detectEncodingFromByteOrderMarks) => new StreamReader(Disk(path)!, encoding, detectEncodingFromByteOrderMarks);
+    public static StreamWriter StreamWriter_new(string path) => new StreamWriter(Disk(path)!);
+    public static StreamWriter StreamWriter_new(string path, bool append) => new StreamWriter(Disk(path)!, append);
+    public static StreamWriter StreamWriter_new(string path, bool append, Encoding encoding) => new StreamWriter(Disk(path)!, append, encoding);
+    public static XmlTextReader XmlTextReader_new(string url) => new XmlTextReader(Disk(url)!);
+    public static XmlTextWriter XmlTextWriter_new(string filename, Encoding? encoding) => new XmlTextWriter(Disk(filename)!, encoding);
 
     // ---- XML from a file ----
 
-    public static void XmlDocument_Load(XmlDocument document, string filename) => document.Load(Native(filename)!);
-    public static void XmlDocument_Save(XmlDocument document, string filename) => document.Save(Native(filename)!);
-    public static XmlReader XmlReader_Create(string inputUri) => XmlReader.Create(Native(inputUri)!);
-    public static XmlReader XmlReader_Create(string inputUri, XmlReaderSettings? settings) => XmlReader.Create(Native(inputUri)!, settings);
-    public static XmlWriter XmlWriter_Create(string outputFileName) => XmlWriter.Create(Native(outputFileName)!);
-    public static XmlWriter XmlWriter_Create(string outputFileName, XmlWriterSettings? settings) => XmlWriter.Create(Native(outputFileName)!, settings);
-    public static XDocument XDocument_Load(string uri) => XDocument.Load(Native(uri)!);
-    public static XDocument XDocument_Load(string uri, LoadOptions options) => XDocument.Load(Native(uri)!, options);
-    public static void XDocument_Save(XDocument document, string fileName) => document.Save(Native(fileName)!);
-    public static XElement XElement_Load(string uri) => XElement.Load(Native(uri)!);
-    public static XElement XElement_Load(string uri, LoadOptions options) => XElement.Load(Native(uri)!, options);
-    public static void XElement_Save(XElement element, string fileName) => element.Save(Native(fileName)!);
+    public static void XmlDocument_Load(XmlDocument document, string filename) => document.Load(Disk(filename)!);
+    public static void XmlDocument_Save(XmlDocument document, string filename) => document.Save(Disk(filename)!);
+    public static XmlReader XmlReader_Create(string inputUri) => XmlReader.Create(Disk(inputUri)!);
+    public static XmlReader XmlReader_Create(string inputUri, XmlReaderSettings? settings) => XmlReader.Create(Disk(inputUri)!, settings);
+    public static XmlWriter XmlWriter_Create(string outputFileName) => XmlWriter.Create(Disk(outputFileName)!);
+    public static XmlWriter XmlWriter_Create(string outputFileName, XmlWriterSettings? settings) => XmlWriter.Create(Disk(outputFileName)!, settings);
+    public static XDocument XDocument_Load(string uri) => XDocument.Load(Disk(uri)!);
+    public static XDocument XDocument_Load(string uri, LoadOptions options) => XDocument.Load(Disk(uri)!, options);
+    public static void XDocument_Save(XDocument document, string fileName) => document.Save(Disk(fileName)!);
+    public static XElement XElement_Load(string uri) => XElement.Load(Disk(uri)!);
+    public static XElement XElement_Load(string uri, LoadOptions options) => XElement.Load(Disk(uri)!, options);
+    public static void XElement_Save(XElement element, string fileName) => element.Save(Disk(fileName)!);
 
     // ---- a path as a URI ----
     //
@@ -181,6 +231,6 @@ public static class WindowsPaths
 
     // ---- assemblies from a file ----
 
-    public static Assembly Assembly_LoadFrom(string assemblyFile) => Assembly.LoadFrom(Native(assemblyFile)!);
-    public static Assembly Assembly_LoadFile(string path) => Assembly.LoadFile(Native(path)!);
+    public static Assembly Assembly_LoadFrom(string assemblyFile) => Assembly.LoadFrom(Disk(assemblyFile)!);
+    public static Assembly Assembly_LoadFile(string path) => Assembly.LoadFile(Disk(path)!);
 }

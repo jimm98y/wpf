@@ -18,7 +18,7 @@ namespace System.Windows.Forms {
 		// The caption buttons and the sizing frame, as a stock app on Windows 11 reads them. Mono's
 		// 18 x 18 buttons and 8-pixel frame put DotNetBar's ribbon-form caption buttons three rows
 		// higher than Windows' (it sizes them from CaptionButtonSize less the resize border).
-		// CaptionHeight and FrameBorderSize stay the driver's own: its forms are framed by the host.
+		// CaptionHeight and FrameBorderSize stay the driver's own (the base's).
 		internal override Size CaptionButtonSize { get { return new Size (36, 22); } }        // SM_CXSIZE/SM_CYSIZE
 		internal override Size SmallCaptionButtonSize { get { return new Size (22, 22); } }   // SM_CXSMSIZE/SM_CYSMSIZE
 		public override Size ToolWindowCaptionButtonSize { get { return new Size (22, 22); } } // SM_CXSMSIZE/SM_CYSMSIZE

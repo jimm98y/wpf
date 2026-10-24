@@ -819,6 +819,7 @@ namespace Wpf.WinFormsInterop.Tests
             {
                 n++;
                 if (Pending.Contains(kv.Key)) continue;
+                if (WindowsFontFiles.Missing(kv.Key) != null) continue;
                 if (!GdiPlus.TryGetValue(kv.Key, out string want)) bad.Add(kv.Key + ": no fixture");
                 else if (want != kv.Value) bad.Add(kv.Key);
             }

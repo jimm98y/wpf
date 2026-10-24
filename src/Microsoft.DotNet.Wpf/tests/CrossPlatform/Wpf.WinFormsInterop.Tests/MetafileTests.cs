@@ -323,6 +323,8 @@ namespace Wpf.WinFormsInterop.Tests
         [MemberData(nameof(EmfPlusPlaybackScenarios))]
         public void Played_EmfPlus_matches_GdiPlus_pixels(string scenario)
         {
+            string? noFonts = WindowsFontFiles.Missing(scenario);
+            Assert.SkipWhen(noFonts != null, noFonts ?? "");
             using var mf = new Metafile(Path.Combine(Dir, "plus", scenario + ".emf"));
             using Bitmap ours = PlayInto(mf, 120, 90, new RectangleF(5, 5, 110, 80));
             using var theirs = (Bitmap)Image.FromFile(Path.Combine(Dir, "play", scenario + ".png"));
@@ -521,6 +523,8 @@ namespace Wpf.WinFormsInterop.Tests
         [MemberData(nameof(GdiExactScenarios))]
         public void EmfOnly_records_are_GdiPlus_bytes(string scenario)
         {
+            string? noFonts = WindowsFontFiles.Missing(scenario);
+            Assert.SkipWhen(noFonts != null, noFonts ?? "");
             string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfOnly), File.ReadAllBytes(Path.Combine(Dir, "emfonly", scenario + ".emf")));
             Assert.True(diff.Length == 0, diff);
         }
@@ -529,6 +533,8 @@ namespace Wpf.WinFormsInterop.Tests
         [MemberData(nameof(GdiExactScenarios))]
         public void EmfPlusDual_records_are_GdiPlus_bytes(string scenario)
         {
+            string? noFonts = WindowsFontFiles.Missing(scenario);
+            Assert.SkipWhen(noFonts != null, noFonts ?? "");
             string diff = GdiDiff(RecordDownLevel(scenario, EmfType.EmfPlusDual), File.ReadAllBytes(Path.Combine(Dir, "dual", scenario + ".emf")));
             Assert.True(diff.Length == 0, diff);
         }
@@ -573,6 +579,8 @@ namespace Wpf.WinFormsInterop.Tests
         [MemberData(nameof(PlaybackScenarios))]
         public void Played_down_level_recording_matches_GdiPlus_pixels(string scenario)
         {
+            string? noFonts = WindowsFontFiles.Missing(scenario);
+            Assert.SkipWhen(noFonts != null, noFonts ?? "");
             foreach (EmfType t in new[] { EmfType.EmfOnly, EmfType.EmfPlusDual })
             {
                 string kind = t == EmfType.EmfOnly ? "emfonly" : "dual";
