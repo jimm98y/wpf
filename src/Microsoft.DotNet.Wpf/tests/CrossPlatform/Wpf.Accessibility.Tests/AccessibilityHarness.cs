@@ -140,7 +140,7 @@ namespace Wpf.Accessibility.Tests
             // in the default apartment there.
             if (OperatingSystem.IsWindows())
             {
-                thread.SetApartmentState(ApartmentState.STA);
+                thread.TrySetApartmentState(ApartmentState.STA);
             }
 
             thread.IsBackground = true;

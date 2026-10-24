@@ -89,7 +89,7 @@ namespace Wpf.WinFormsInterop.Tests
                 }
                 catch (Exception ex) { failure ??= ex; }
             });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             Assert.True(t.Join(TimeSpan.FromSeconds(60)), "the UI thread did not finish");
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

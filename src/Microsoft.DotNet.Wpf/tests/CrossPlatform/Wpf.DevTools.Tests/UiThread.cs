@@ -52,7 +52,7 @@ namespace Wpf.DevTools.Tests
                     // Dispatcher's, not the apartment's, so off Windows the default is fine.
                     if (OperatingSystem.IsWindows())
                     {
-                        thread.SetApartmentState(ApartmentState.STA);
+                        thread.TrySetApartmentState(ApartmentState.STA);
                     }
 
                     thread.Start();

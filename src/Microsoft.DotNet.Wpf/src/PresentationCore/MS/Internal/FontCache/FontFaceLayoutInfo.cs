@@ -37,6 +37,10 @@ namespace MS.Internal.FontCache
         private byte[] _gpos;
         private byte[] _gdef;
 
+        // the legacy TrueType 'kern' table, for the kerning a font keeps outside GPOS (ManagedOpenTypeShaper)
+        private bool _kernInitialized;
+        private byte[] _kern;
+
         private Text.TextInterface.Font _font;
 
         private ushort _blankGlyphIndex;
@@ -299,6 +303,20 @@ namespace MS.Internal.FontCache
             return _gpos;
         }
 
+        internal byte[] Kern()
+        {
+            if (!_kernInitialized)
+            {
+                _kern = GetFontTable(Text.TextInterface.OpenTypeTableTag.Kerning);
+                _kernInitialized = true;
+            }
+            return _kern;
+        }
+
+        /// <summary>The legacy kerning pairs, parsed once (null: none to apply). Set by the shaper.</summary>
+        internal object LegacyKerning;
+        internal bool LegacyKerningInitialized;
+
         internal byte[] Gdef()
         {
             if (!_gdefInitialized)
@@ -546,6 +564,17 @@ namespace MS.Internal.FontCache
                         typography |= TypographyAvailabilities.Available;
                     }
                 }
+            }
+
+            // Off Windows the system's copies of Windows' fonts keep the kerning Windows' own copies keep
+            // in GPOS in the TrueType 'kern' table instead (macOS's Verdana and Times New Roman: the same
+            // pairs, to the unit), and GSUB/GPOS alone find nothing for Latin in them, so their text took
+            // the nominal fast path and came out unkerned -- wider than on Windows by all of its kerning.
+            // Kerned like Windows' copies they need shaping, which applies the table (ManagedOpenTypeShaper).
+            // On Windows the fonts are Windows' own, and stock's choice stands.
+            if (!OperatingSystem.IsWindows() && MS.Internal.TextFormatting.ManagedOpenTypeShaper.HasLegacyKerning(this))
+            {
+                typography |= TypographyAvailabilities.FastTextTypographyAvailable;
             }
 
             if (typography != TypographyAvailabilities.None)

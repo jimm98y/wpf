@@ -100,6 +100,21 @@
                       SetTargetFramework="TargetFramework=net10.0-windows" />
   </ItemGroup>
 
+  <!-- The runtime detours wpfrun installs in every app on macOS (WpfWebGpu.Detours: STA threads, the
+       system colours asked of the stack's user32 rather than .NET's compiled-in Windows XP palette,
+       machine-wide folders, ...), from wpfrun's payload when it has been built: the tests then run in
+       the process an app gets (PlatformDetours.cs). -->
+  <PropertyGroup>
+    <_WpfrunPayload>$(MSBuildThisFileDirectory)../../../../../artifacts/wpfrun/$(NETCoreSdkRuntimeIdentifier)/overlay/wpfrun.payload/</_WpfrunPayload>
+    <DefineConstants Condition="$([MSBuild]::IsOSPlatform('OSX')) And Exists('$(_WpfrunPayload)WpfWebGpu.Detours.dll')">$(DefineConstants);WPFRUN_DETOURS</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) And Exists('$(_WpfrunPayload)WpfWebGpu.Detours.dll')">
+    <Reference Include="WpfWebGpu.Detours"><HintPath>$(_WpfrunPayload)WpfWebGpu.Detours.dll</HintPath><Private>true</Private></Reference>
+    <!-- the stack's user32, which the system colours are asked of (loaded by name, so in the deps) -->
+    <Reference Include="WpfWebGpu.Win32"><HintPath>$(_WpfrunPayload)WpfWebGpu.Win32.dll</HintPath><Private>true</Private></Reference>
+    <None Include="$(_WpfrunPayload)MonoMod.*.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
   <!-- The PDF reader the printing tests next door read WPF's PDFs back with; WinForms' printed
        PDFs are written by the same writer and read back the same way (PrintingTests). -->
   <ItemGroup>

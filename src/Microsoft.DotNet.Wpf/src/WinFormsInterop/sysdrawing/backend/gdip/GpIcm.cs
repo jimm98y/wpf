@@ -1167,9 +1167,33 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         // ---- GpICMHolder::Init @1800fccf8 as SetupCmykSeparation @1800fd028 asks for it ---------------
 
-        /// <summary>Where mscms resolves a bare profile name: the colour directory.</summary>
-        static string ColorDirectory =>
-            OperatingSystem.IsWindows () ? Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.System), "spool", "drivers", "color") : null;
+        /// <summary>Where mscms resolves a bare profile name: the colour directory. Elsewhere the
+        /// system's own profile folder, which has an sRGB profile as Windows' does: without one every
+        /// separation was "no ICM", ArgumentException, where Windows reports the profile it cannot
+        /// open (macOS ColorSync's, the shared ICC folder on Linux).</summary>
+        static string ColorDirectory
+        {
+            get
+            {
+                if (OperatingSystem.IsWindows ()) return Path.Combine (Environment.GetFolderPath (Environment.SpecialFolder.System), "spool", "drivers", "color");
+                foreach (string d in OperatingSystem.IsMacOS () ? new[] { "/System/Library/ColorSync/Profiles", "/Library/ColorSync/Profiles" }
+                                                               : new[] { "/usr/share/color/icc", "/usr/share/color/icc/colord", "/usr/local/share/color/icc" })
+                    if (SrgbIn (d) != null) return d;
+                return null;
+            }
+        }
+
+        /// <summary>The standard sRGB profile in <paramref name="dir"/>: Windows' name, then the ones macOS
+        /// and Linux ship it under.</summary>
+        static string SrgbIn (string dir)
+        {
+            if (dir == null) return null;
+            foreach (string name in new[] { "sRGB Color Space Profile.icm", "sRGB Profile.icc", "sRGB.icc", "sRGB.icm" }) {
+                string p = Path.Combine (dir, name);
+                if (File.Exists (p)) return p;
+            }
+            return null;
+        }
 
         static readonly object s_lock = new object ();
         static readonly System.Collections.Generic.Dictionary<string, (long, long, GpIcm, int)> s_cache = new System.Collections.Generic.Dictionary<string, (long, long, GpIcm, int)> ();
@@ -1185,8 +1209,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
         public static GpIcm Setup (string profile, out int status)
         {
             string dir = ColorDirectory;
-            string srgb = dir == null ? null : Path.Combine (dir, "sRGB Color Space Profile.icm");
-            if (srgb == null || !File.Exists (srgb)) { status = 2; return null; }
+            string srgb = SrgbIn (dir);
+            if (srgb == null) { status = 2; return null; }
             string path = profile;
             try {
                 if (dir != null && !Path.IsPathRooted (profile) && Path.GetFileName (profile) == profile) path = Path.Combine (dir, profile);

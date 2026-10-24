@@ -4514,6 +4514,12 @@ namespace System.Drawing
 		// GetHdc: a memory DC over the bitmap (Windows), or a handle FromHdc maps back to this.
 		WebGpuBackend.Gdip.GpHdcSurface gethdc_surface;
 		static readonly Dictionary<IntPtr, Graphics> s_pseudoHdc = new Dictionary<IntPtr, Graphics> ();
+
+		/// <summary>Whether <paramref name="hdc"/> is one GetHdc handed out where there is no GDI.</summary>
+		internal static bool IsPseudoHdc (IntPtr hdc)
+		{
+			lock (s_pseudoHdc) return s_pseudoHdc.ContainsKey (hdc);
+		}
 		static long s_pseudoNext = 0x7EF00000;
 
 		void EnsureHdcCaptured ()

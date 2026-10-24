@@ -25,7 +25,7 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.SkipWhen(IsSessionLocked(), "reads the real screen, and a locked session's screen is the lock screen");
             Exception? failure = null;
             var t = new Thread(() => { try { Run(); } catch (Exception ex) { failure = ex; } });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();

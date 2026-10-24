@@ -248,9 +248,10 @@ namespace WgpuInterop.Tests.Text
         public void BoldCapitals_StandAsTallAsRegularOnes()
         {
             TrueTypeFont regular = TestFonts.Load();
-            string? boldFile = FontFiles.Find("Segoe UI", bold: true, italic: false);
+            // Segoe UI's bold where it is installed; else Selawik's, the regular's own family
+            string? boldFile = TestFonts.Installed("Segoe UI", bold: true) ?? TestFonts.RepoFont("Selawik-Bold.ttf");
             Assert.SkipWhen(boldFile is null, "this machine has no bold face to compare");
-            var bold = new TrueTypeFont(System.IO.File.ReadAllBytes(boldFile!));
+            var bold = TestFonts.Open(boldFile!, "Segoe UI", bold: true);
 
             Assert.Equal(CapRows(regular), CapRows(bold));
         }

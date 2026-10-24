@@ -122,6 +122,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// D3D's can be spelled so).</summary>
         public const string CullSemantic = "\u0001CULL";
 
+        /// <summary>The linked element that carries clip distances to the pixel shader on an adapter
+        /// without WebGPU's clip-distances feature (see LinkageOf).</summary>
+        public const string ClipSemantic = "\u0001CLIP";
+
         /// <summary>WebGPU's default maxInterStageShaderVariables.</summary>
         public const int MaxInterStageVariables = 16;
 
@@ -163,6 +167,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (cullElements > 0 && list.Count + cullElements + builtins <= MaxInterStageVariables)
                 for (int k = 0; k < cullElements; k++)
                     list.Add(new LinkedElement { Semantic = CullSemantic, Index = k, Location = list.Count, ComponentType = 3, ComponentCount = 4, Interpolation = 5 });
+            // SV_ClipDistance on an adapter without clip distances (Metal on Apple GPUs through this wgpu):
+            // D3D clips away the part of a primitive where a distance, interpolated across it, is
+            // negative. The distances go to the pixel shader as they are, interpolated as clipping
+            // interpolates them (perspective-correct, as in clip space), and it discards where one is
+            // below zero -- the clipped part, depth included.
+            int clip = rasterized == null || D3DDevice.HasFeature(D3DDevice.FeatureClipDistances) ? 0 : ClipComponents(rasterized, stream).Count;
+            int clipElements = (clip + 3) / 4;
+            if (clipElements > 0 && list.Count + clipElements + builtins <= MaxInterStageVariables)
+                for (int k = 0; k < clipElements; k++)
+                    list.Add(new LinkedElement { Semantic = ClipSemantic, Index = k, Location = list.Count, ComponentType = 3, ComponentCount = 4, Interpolation = 2 });
+            return list;
+        }
+
+        /// <summary>The stage's clip-distance components of <paramref name="stream"/>, in register order (register, component).</summary>
+        internal static List<(int Register, int Component)> ClipComponents(DxbcShader s, int stream = 0)
+        {
+            var list = new List<(int, int)>();
+            foreach (var e in s.Outputs.Where(e => e.Stream == stream && e.SystemValue == SvClipDistance).OrderBy(e => e.Register).ThenBy(e => e.Mask))
+                for (int c = 0; c < 4; c++) if ((e.Mask & (1 << c)) != 0) list.Add((e.Register, c));
             return list;
         }
 

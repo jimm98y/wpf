@@ -314,7 +314,7 @@ namespace Wpf.Window.Tests
                     catch (Exception e) { failure = e; }
                     finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
                 }) { IsBackground = true };
-                thread.SetApartmentState(ApartmentState.STA);
+                thread.TrySetApartmentState(ApartmentState.STA);
                 thread.Start();
                 Assert.True(thread.Join(30000), "the second UI thread did not finish");
                 if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();

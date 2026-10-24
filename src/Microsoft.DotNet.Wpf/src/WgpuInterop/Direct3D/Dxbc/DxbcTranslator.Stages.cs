@@ -125,9 +125,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                         ? "SV_CullDistance: not applied (no pixel shader or inter-stage variable to carry it, and no clip-distances feature); primitives it would cull are drawn"
                         : "SV_CullDistance: not applied (more than 8 clip and cull distances together); primitives it would cull are drawn");
             }
+            // no clip-distances feature: the distances go to the pixel shader, which discards (LinkageOf)
+            var clipByDiscard = new List<(int Register, int Component)>();
+            if (clip.Count > 0 && !HasFeature(D3DDevice.FeatureClipDistances))
+            {
+                if (_link.Any(l => l.Semantic == ClipSemantic))
+                    clipByDiscard = ClipComponents(_s, _options.RasterizedStream);
+                else
+                    Approximate("SV_ClipDistance: not applied (no pixel shader to discard the clipped part, or no inter-stage variable left, and no clip-distances feature); primitives are drawn unclipped");
+                clip.Clear();
+            }
             if (clip.Count > 0)
             {
-                if (!HasFeature(D3DDevice.FeatureClipDistances)) throw new NotSupportedException("SV_ClipDistance: this adapter has no clip-distances feature");
                 if (clip.Count > 8) throw new NotSupportedException($"{clip.Count} clip distances (WebGPU takes 8)");
                 _enables.Add("clip_distances");
             }
@@ -150,6 +159,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                         int i = l.Index * 4 + c;
                         parts[c] = i < cull.Count && _outputRegs.Contains(cull[i].Register)
                             ? $"select(1.0f, 0.0f, {OutReg(cull[i].Register)}.{"xyzw"[cull[i].Component]} < 0.0f)" : "1.0f";
+                    }
+                    w.Append($"    out.l{l.Location} = vec4<f32>({string.Join(", ", parts)});\n");
+                    continue;
+                }
+                if (l.Semantic == ClipSemantic)
+                {
+                    // the distances themselves, 1 where there is none (never clips)
+                    var parts = new string[4];
+                    for (int c = 0; c < 4; c++)
+                    {
+                        int i = l.Index * 4 + c;
+                        parts[c] = i < clipByDiscard.Count && _outputRegs.Contains(clipByDiscard[i].Register)
+                            ? $"{OutReg(clipByDiscard[i].Register)}.{"xyzw"[clipByDiscard[i].Component]}" : "1.0f";
                     }
                     w.Append($"    out.l{l.Location} = vec4<f32>({string.Join(", ", parts)});\n");
                     continue;
@@ -237,6 +259,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             // a primitive every vertex of which has a negative cull distance is culled (see LinkageOf)
             foreach (var l in _link.Where(l => l.Semantic == CullSemantic))
                 w.Append($"    if (any(input.l{l.Location} <= vec4<f32>(0.0f))) {{ discard; }}\n");
+            // where an interpolated clip distance is negative the primitive is clipped away (see LinkageOf)
+            foreach (var l in _link.Where(l => l.Semantic == ClipSemantic))
+                w.Append($"    if (any(input.l{l.Location} < vec4<f32>(0.0f))) {{ discard; }}\n");
             w.Append(_body);
             w.Append("    return shader_out();\n}\n");
         }

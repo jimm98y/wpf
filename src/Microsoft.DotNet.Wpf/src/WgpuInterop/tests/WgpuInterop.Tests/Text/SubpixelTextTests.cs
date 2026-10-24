@@ -69,9 +69,9 @@ namespace WgpuInterop.Tests.Text
 
         private TrueTypeFont UiFont()
         {
-            string? file = FontFiles.Find("Segoe UI", bold: false, italic: false);
+            string? file = TestFonts.Installed("Segoe UI");
             Assert.SkipWhen(file is null, "this machine has no Segoe UI");
-            return new TrueTypeFont(File.ReadAllBytes(file!));
+            return TestFonts.Open(file!, "Segoe UI");
         }
 
         [Fact]

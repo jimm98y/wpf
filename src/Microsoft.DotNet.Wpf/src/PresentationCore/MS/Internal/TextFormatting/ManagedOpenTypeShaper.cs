@@ -551,9 +551,16 @@ namespace MS.Internal.TextFormatting
             )
         {
             FontFaceLayoutInfo layout = glyphTypeface.FontFaceLayoutInfo;
-            if (layout == null || layout.Gpos() == null)
+            if (layout == null)
             {
-                return;   // no GPOS table -> nominal advances stand
+                return;
+            }
+            bool hasGpos = layout.Gpos() != null;
+            // the kerning a font keeps in its 'kern' table, when GPOS has none (LegacyKerning)
+            LegacyKerning legacyKern = isRightToLeft ? null : LegacyKerning.For(layout);
+            if (!hasGpos && legacyKern == null)
+            {
+                return;   // nothing positions -> nominal advances stand
             }
 
             ShapingPlan plan = ShapingPlan.For(text, charCount);
@@ -611,6 +618,7 @@ namespace MS.Internal.TextFormatting
             uint used = 0;
 
             int[] rtlShift = isRightToLeft ? new int[glyphCount] : null;
+            if (hasGpos)
             fixed (int* pWorkAdvances = workAdvances)
             fixed (LayoutOffset* pWorkOffsets = workOffsets)
             {
@@ -649,17 +657,20 @@ namespace MS.Internal.TextFormatting
                     $"glyphs={glyphCount} result={result}");
             }
 
-            if (result != OpenTypeLayoutResult.Success)
-            {
-                return;
-            }
-
             // A positioning lookup must not change the glyph count; if it somehow did, the buffers
             // no longer describe the caller's run and applying them would corrupt it.
-            if (buffers.GlyphInfoList.Length != glyphCount)
+            if (result != OpenTypeLayoutResult.Success || buffers.GlyphInfoList.Length != glyphCount)
             {
-                return;
+                if (legacyKern == null)
+                {
+                    return;
+                }
+                // GPOS had nothing for this run: the 'kern' table alone
+                Array.Copy(designAdvances, workAdvances, glyphCount);
+                Array.Clear(workOffsets, 0, glyphCount);
             }
+
+            legacyKern?.Apply(glyphs, glyphCount, designAdvances, workAdvances, pixels ? (double)ppem / designEm : 1.0);
 
             for (int g = 0; g < glyphCount; g++)
             {
@@ -682,6 +693,134 @@ namespace MS.Internal.TextFormatting
                 int dx = isRightToLeft ? rtlShift[g] - workOffsets[g].dx : workOffsets[g].dx;
                 offsets[g].du += pixels ? (int)(dx * unitToIdeal) : TruncateOffset(dx, designToIdeal, designEm);
                 offsets[g].dv += pixels ? (int)(workOffsets[g].dy * unitToIdeal) : TruncateOffset(workOffsets[g].dy, designToIdeal, designEm);
+            }
+        }
+
+        // ---- the legacy 'kern' table ------------------------------------------------------------
+
+        /// <summary>
+        ///  The kerning of a font that keeps it in the TrueType 'kern' table rather than in GPOS: Times
+        ///  New Roman's GPOS has mark positioning only, Verdana has no GPOS at all, and both kern
+        ///  ("AV", "To") from 'kern'. DirectWrite applies the table when the font's GPOS has no 'kern'
+        ///  feature, as other shapers do, and stock WPF's widths have that kerning in them.
+        /// </summary>
+        /// <remarks>
+        ///  Format 0 subtables (sorted glyph pairs), horizontal, neither cross-stream nor minimum
+        ///  values, of the Microsoft table (version 0); a pair adjusts the first glyph's advance, a
+        ///  zero-advance glyph (a mark) between the two skipped. Left to right only: a right-to-left
+        ///  font kerns in GPOS.
+        /// </remarks>
+        /// <summary>Whether the font kerns from its 'kern' table (GPOS has no 'kern' feature): see LegacyKerning.</summary>
+        internal static bool HasLegacyKerning(FontFaceLayoutInfo layout) => layout != null && LegacyKerning.For(layout) != null;
+
+        private sealed class LegacyKerning
+        {
+            private readonly System.Collections.Generic.Dictionary<uint, short> _pairs;
+
+            private LegacyKerning(System.Collections.Generic.Dictionary<uint, short> pairs) => _pairs = pairs;
+
+            internal static LegacyKerning For(FontFaceLayoutInfo layout)
+            {
+                if (layout.LegacyKerningInitialized)
+                {
+                    return (LegacyKerning)layout.LegacyKerning;
+                }
+                LegacyKerning made = null;
+                try
+                {
+                    if (!GposKerns(layout.Gpos()) && Parse(layout.Kern()) is { Count: > 0 } pairs)
+                    {
+                        made = new LegacyKerning(pairs);
+                    }
+                }
+                catch (Exception e) when (e is IndexOutOfRangeException or ArgumentException)
+                {
+                    // a malformed table kerns nothing
+                }
+                layout.LegacyKerning = made;
+                layout.LegacyKerningInitialized = true;
+                return made;
+            }
+
+            // whether GPOS has a 'kern' feature at all (then it, not the 'kern' table, kerns)
+            private static bool GposKerns(byte[] gpos)
+            {
+                if (gpos == null || gpos.Length < 10)
+                {
+                    return false;
+                }
+                int featureList = U16(gpos, 6);
+                int count = U16(gpos, featureList);
+                uint kern = Tag("kern");
+                for (int i = 0; i < count; i++)
+                {
+                    int at = featureList + 2 + 6 * i;
+                    if (((uint)U16(gpos, at) << 16 | (uint)U16(gpos, at + 2)) == kern)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            private static System.Collections.Generic.Dictionary<uint, short> Parse(byte[] kern)
+            {
+                if (kern == null || kern.Length < 4 || U16(kern, 0) != 0)
+                {
+                    return null;   // absent, or Apple's version 1 table
+                }
+                var pairs = new System.Collections.Generic.Dictionary<uint, short>();
+                int tables = U16(kern, 2), at = 4;
+                for (int t = 0; t < tables && at + 6 <= kern.Length; t++)
+                {
+                    int length = U16(kern, at + 2), coverage = U16(kern, at + 4);
+                    // format 0, horizontal (bit 0), not minimum (1), not cross-stream (2)
+                    if ((coverage >> 8) == 0 && (coverage & 0x7) == 1 && at + 14 <= kern.Length)
+                    {
+                        int n = U16(kern, at + 6);
+                        for (int i = 0, p = at + 14; i < n && p + 6 <= kern.Length; i++, p += 6)
+                        {
+                            uint key = (uint)U16(kern, p) << 16 | (uint)U16(kern, p + 2);
+                            short value = (short)U16(kern, p + 4);
+                            // bit 3: this subtable's value replaces what earlier ones added
+                            pairs[key] = (coverage & 0x8) != 0 || !pairs.TryGetValue(key, out short sum) ? value : (short)(sum + value);
+                        }
+                    }
+                    if (length <= 0)
+                    {
+                        break;
+                    }
+                    at += length;
+                }
+                return pairs;
+            }
+
+            private static int U16(byte[] b, int at) => b[at] << 8 | b[at + 1];
+
+            /// <summary>Adds each pair's value to its first glyph's advance (<paramref name="scale"/>: design
+            /// units to the advances' units, rounded per pair as Display mode's pixels are).</summary>
+            internal unsafe void Apply(ushort* glyphs, int glyphCount, int[] designAdvances, int[] advances, double scale)
+            {
+                for (int g = 0; g < glyphCount - 1; g++)
+                {
+                    if (designAdvances[g] == 0)
+                    {
+                        continue;
+                    }
+                    int next = g + 1;
+                    while (next < glyphCount && designAdvances[next] == 0)
+                    {
+                        next++;
+                    }
+                    if (next >= glyphCount)
+                    {
+                        break;
+                    }
+                    if (_pairs.TryGetValue((uint)glyphs[g] << 16 | glyphs[next], out short value))
+                    {
+                        advances[g] += scale == 1.0 ? value : (int)Math.Round(value * scale, MidpointRounding.AwayFromZero);
+                    }
+                }
             }
         }
 

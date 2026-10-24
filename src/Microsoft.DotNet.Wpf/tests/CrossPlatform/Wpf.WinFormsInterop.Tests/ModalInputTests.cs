@@ -37,7 +37,7 @@ namespace Wpf.WinFormsInterop.Tests
         {
             Exception? failure = null;
             var t = new Thread(() => { try { a(); } catch (Exception ex) { failure = ex; } });
-            t.SetApartmentState(ApartmentState.STA);
+            t.TrySetApartmentState(ApartmentState.STA);
             t.Start();
             t.Join();
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
@@ -219,14 +219,16 @@ namespace Wpf.WinFormsInterop.Tests
             SWF.Application.DoEvents();
         }
 
-        /// <summary>The form's real host window's OS enabled state (true when it has no host).</summary>
+        /// <summary>The form's real host window's OS enabled state (the driver's where there is no such window).</summary>
         private static bool RealEnabled(SWF.Form form)
         {
             object? host = typeof(SWF.Form).Assembly.GetType("System.Windows.Forms.PresentationHost")!
                 .GetMethod("HostOf", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.Invoke(null, new object[] { form });
-            if (host == null) return true;
-            var h = (IntPtr)host.GetType().GetField("_hwnd", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(host)!;
-            return h == IntPtr.Zero || IsWindowEnabledReal(h);
+            // no host, or one with no OS window whose enabled state it keeps (macOS, where the host drops a
+            // disabled form's input itself -- CocoaHost.BlockedByModal): as enabled as the driver says
+            if (host == null) return IsEnabled(form.Handle);
+            var h = host.GetType().GetField("_hwnd", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(host) as IntPtr? ?? IntPtr.Zero;
+            return h == IntPtr.Zero ? IsEnabled(form.Handle) : IsWindowEnabledReal(h);
         }
 
         [System.Runtime.InteropServices.DllImport("user32", EntryPoint = "IsWindowEnabled")] private static extern bool IsWindowEnabledReal(IntPtr h);

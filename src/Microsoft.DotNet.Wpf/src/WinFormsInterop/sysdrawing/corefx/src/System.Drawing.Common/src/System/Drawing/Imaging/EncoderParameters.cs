@@ -12,6 +12,10 @@ namespace System.Drawing.Imaging
 
         public EncoderParameters(int count)
         {
+            // A negative length is the runtime's OverflowException, whose message is the JIT helper's:
+            // Windows x64's is the arithmetic overflow, arm64 elsewhere words it as an array dimension.
+            // Thrown here, it is Windows' everywhere.
+            if (count < 0) throw new OverflowException();
             _param = new EncoderParameter[count];
         }
 

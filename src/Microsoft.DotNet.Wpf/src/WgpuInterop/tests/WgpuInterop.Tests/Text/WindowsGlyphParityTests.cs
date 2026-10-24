@@ -9117,10 +9117,10 @@ namespace WgpuInterop.Tests.Text
         [InlineData("Tahoma", 0)]
         public void EveryFacesOwnHinting_SurvivesItsOwnProgram(string family, int allowed)
         {
-            string? file = FontFiles.Find(family, bold: false, italic: false);
+            string? file = TestFonts.Installed(family);
             Assert.SkipWhen(file is null, $"this machine has no {family}");
 
-            var font = new TrueTypeFont(File.ReadAllBytes(file!));
+            var font = TestFonts.Open(file!, family);
             TrueTypeFont.ResetImplausibleFits();
             int before = TrueTypeFont.ImplausibleFits;
 

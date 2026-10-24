@@ -70,10 +70,13 @@ namespace System.Drawing {
 		// Windows has not used Microsoft Sans Serif for its shell since XP: everything from the
 		// window caption to a dialog's body text is Segoe UI at 9 point, which is also what the
 		// WinForms that ships with .NET reports here. Saying otherwise made every control on this
-		// stack a different size and shape from the same control next door. Other platforms keep
-		// the old answer, which is the best guess available there.
-		static string ShellFamily => OperatingSystem.IsWindows () ? "Segoe UI" : "Microsoft Sans Serif";
-		static float ShellSize => OperatingSystem.IsWindows () ? 9f : 8.25f;
+		// stack a different size and shape from the same control next door. Elsewhere the same,
+		// wherever Segoe UI can be had -- the stack's Selawik is its metric-compatible stand-in
+		// (GpFontFamily.Canonical) -- and the old answer only where it cannot: a TextBox there was
+		// 20 pixels high where Windows' is 23, and every form laid out from the font with it.
+		static bool HasShellFamily => OperatingSystem.IsWindows () || WebGpuBackend.Gdip.GpFontFamily.Canonical ("Segoe UI") != null;
+		static string ShellFamily => HasShellFamily ? "Segoe UI" : "Microsoft Sans Serif";
+		static float ShellSize => HasShellFamily ? 9f : 8.25f;
 
 		public static Font CaptionFont { 
 			get { return new Font (ShellFamily, ShellSize, "CaptionFont"); }
@@ -87,12 +90,13 @@ namespace System.Drawing {
 			get {
 				if (OperatingSystem.IsWindows () && DefaultGuiFont (out string face, out float points, out byte charSet))
 					return new Font (face, points, charSet, "DefaultFont");
-				return new Font (ShellFamily, ShellSize, "DefaultFont");
+				// DEFAULT_GUI_FONT where there is no GDI to ask: MS Shell Dlg, Microsoft Sans Serif 8.25
+				return new Font ("Microsoft Sans Serif", 8.25f, "DefaultFont");
 			}
 		}
 
 		public static Font DialogFont  {
-			get { return OperatingSystem.IsWindows () ? new Font ("Tahoma", 8f, "DialogFont") : new Font (ShellFamily, ShellSize, "DialogFont"); }
+			get { return OperatingSystem.IsWindows () || WebGpuBackend.Gdip.GpFontFamily.Canonical ("Tahoma") != null ? new Font ("Tahoma", 8f, "DialogFont") : new Font (ShellFamily, ShellSize, "DialogFont"); }
 		}
 
 		[System.Runtime.InteropServices.StructLayout (System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]

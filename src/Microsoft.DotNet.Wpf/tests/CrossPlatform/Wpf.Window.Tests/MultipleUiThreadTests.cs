@@ -212,7 +212,7 @@ namespace Wpf.Window.Tests
                 }
                 catch (Exception e) { failure = e; }
             });
-            worker.SetApartmentState(ApartmentState.STA);
+            worker.TrySetApartmentState(ApartmentState.STA);
             worker.Start();
             worker.Join();
 

@@ -80,6 +80,8 @@ namespace Wpf.Text.Tests
             var typeface = new Typeface(new FontFamily(family), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
             Assert.SkipUnless(typeface.TryGetGlyphTypeface(out GlyphTypeface? gt)
                               && gt!.Win32FamilyNames.Values.Contains(family), $"{family} is not installed");
+            string? notWindows = TextHarness.NotWindowsCopy(gt!, family);
+            Assert.SkipWhen(notWindows != null, notWindows ?? "");
 
             (string actualGlyphs, string actualOffsets) = Shape(family, size, text);
             Assert.Equal(glyphs, actualGlyphs);
@@ -115,6 +117,8 @@ namespace Wpf.Text.Tests
             var typeface = new Typeface(new FontFamily("Arial"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
             Assert.SkipUnless(typeface.TryGetGlyphTypeface(out GlyphTypeface? gt)
                               && gt!.Win32FamilyNames.Values.Contains("Arial"), "Arial is not installed");
+            string? notWindows = TextHarness.NotWindowsCopy(gt!, "Arial");
+            Assert.SkipWhen(notWindows != null, notWindows ?? "");
 
             (_, string offsets) = Shape("Arial", 16, "\u0628\u0650\u0633\u0652\u0645\u0650", TextFormattingMode.Display);
             Assert.Equal("0,0 0,-2 0,0 0,-1 0,0 -2,-2", offsets);

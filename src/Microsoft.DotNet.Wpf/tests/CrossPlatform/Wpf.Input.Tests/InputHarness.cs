@@ -87,7 +87,7 @@ namespace Wpf.Input.Tests
                     // Dispatcher's, not the apartment's, so off Windows the default apartment is fine.
                     if (OperatingSystem.IsWindows())
                     {
-                        thread.SetApartmentState(ApartmentState.STA);
+                        thread.TrySetApartmentState(ApartmentState.STA);
                     }
 
                     thread.Start();
