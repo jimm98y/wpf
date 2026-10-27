@@ -6,16 +6,20 @@
 // Main -- and publishes it. The publish then does what it does for any app on that head: the app's
 // Windows P/Invokes and COM types rewritten onto the stack (wpf-rewrite), trimming, the bundle, the page.
 //
-// - The assemblies: the app's, the ones its entry assembly reaches by reference, from its folder. Not
-//   the stack's own (the overlay has them; the SDK brings its own), and not mixed-mode ones, which no
-//   browser can load.
+// - The assemblies: every one in the app's folder and what they reference, as on Windows, where any
+//   of them can be loaded by name -- an app that loads its parts by reflection, from a configuration
+//   file (app's controls: app, app), references none of them. Not the stack's own (the
+//   overlay has them; the SDK brings its own), not mixed-mode ones, which no browser can load, and not
+//   the Windows Runtime's (CsWinRT's WinRT.Runtime and the Windows SDK's projection): there is no WinRT
+//   in a browser, and the wasm build cannot even take WinRT.Runtime (its ABI vtables' callbacks share
+//   names). What references them gets placeholders, which throw where WinRT is reached.
 // - The data: the app folder's own files and folders (configuration, displays, images), mounted at the
 //   page's file system root where the app finds them beside itself (AppContext.BaseDirectory is "/").
 //   Not native libraries (runtimes/, and any folder holding only native code), and not satellite
 //   assemblies' culture folders yet.
 // - The app reads its own configuration (App.dll.config), not the host's: APP_CONFIG_FILE.
 //
-// The generated project lives in the cache (bundles/<app>/); the page goes to --out.
+// The generated project lives in the cache (bundles/<app>/, an AOT one bundles/<app>-aot/); the page goes to --out.
 
 using System.Diagnostics;
 using System.Reflection.Metadata;
@@ -55,14 +59,18 @@ internal static class Bundle
 
         var stack = StackAssemblies(feed);
 
-        var (assemblies, left) = Closure(app, stack);
+        var (assemblies, left, referenced) = Closure(app, stack);
         Console.WriteLine($"wpfrun bundle: {app.Name}: {assemblies.Count} app assemblies" + (left.Count > 0 ? $" ({left.Count} left out: {string.Join(", ", left.Take(8))}{(left.Count > 8 ? ", ..." : "")})" : ""));
         var (files, folders) = Payload(app);
         Console.WriteLine($"wpfrun bundle: data: {files.Count} files and {folders.Count} folders ({string.Join(", ", folders)})");
 
-        string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name);
+        // One project per mode: an AOT publish strips the IL of what it compiled (WasmStripILAfterAOT) and
+        // leaves those assemblies in obj, newer than their inputs, and an interpreted publish in the same
+        // project took them as up to date -- it shipped methods with no body, and the interpreter ran
+        // into nothing ("NIY") wherever the AOT build had compiled one.
+        string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name + (aot ? "-aot" : ""));
         Directory.CreateDirectory(project);
-        WriteProject(project, app, assemblies, files, folders, feed, aot);
+        WriteProject(project, app, assemblies, aot ? Interpreted(assemblies, referenced) : new List<string>(), files, folders, feed, aot);
 
         string csproj = Path.Combine(project, "Bundle.csproj");
         // The host page first (WpfWebGpu.Sdk scaffolds it into wwwroot/): the web SDK takes the page's
@@ -116,29 +124,99 @@ internal static class Bundle
         return names;
     }
 
-    /// <summary>The app's assemblies its entry assembly reaches by reference, in its folder; and the ones left
-    /// out (mixed-mode, or the stack's). What it references and does not ship gets a placeholder at publish
-    /// (wpf-rewrite, Placeholders).</summary>
-    private static (List<string> Files, List<string> Left) Closure(AppFiles app, HashSet<string> stack)
+    /// <summary>The app's assemblies: every managed one in its folder, the entry assembly first, and what they
+    /// reference from there; and the ones left out (mixed-mode, or the stack's). What they reference and the
+    /// folder does not ship gets a placeholder at publish (wpf-rewrite, Placeholders).</summary>
+    private static readonly HashSet<string> s_windowsRuntime = new(StringComparer.OrdinalIgnoreCase) { "WinRT.Runtime", "Microsoft.Windows.SDK.NET" };
+
+    // AOT compiles the page into one WebAssembly module, and a browser takes at most 1,000,000 functions
+    // in one: app's configurator, every assembly compiled, came to 1,375,998 and the page did not
+    // load. The runtime and the stack are about 370,000 of them, and an app's method about 1.2 more
+    // (wrappers, generic instances). So the app's assemblies are compiled up to a budget of methods, and
+    // what does not fit runs in the interpreter, as the runtime does for any method it has no code for:
+    // the largest assemblies the entry assembly does not reference first -- the parts an app reaches by
+    // name, of which an app uses a corner (document formats, GIS, IFC models) -- and never the ones it
+    // does. app's controls themselves are small, and compiled: interpreted, a display with an
+    // alarm, a trend and a grid in it dropped its frame rate.
+    private const int AotMethodBudget = 450_000;
+
+    private static List<string> Interpreted(List<string> assemblies, int referenced)
+    {
+        var sizes = assemblies.ToDictionary(a => a, Methods, StringComparer.OrdinalIgnoreCase);
+        long total = sizes.Values.Sum(v => (long)v);
+        var interpreted = new List<string>();
+        foreach (string a in assemblies.Skip(referenced).OrderByDescending(a => sizes[a]))
+        {
+            if (total <= AotMethodBudget) break;
+            interpreted.Add(a);
+            total -= sizes[a];
+        }
+        Console.WriteLine($"wpfrun bundle: AOT: {assemblies.Count - interpreted.Count} assemblies compiled ({total:N0} methods), {interpreted.Count} interpreted");
+        return interpreted;
+    }
+
+    /// <summary>The methods of an assembly that have a body: what AOT compiles.</summary>
+    private static int Methods(string file)
+    {
+        try
+        {
+            using var pe = new PEReader(File.OpenRead(file));
+            MetadataReader md = pe.GetMetadataReader();
+            int n = 0;
+            foreach (MethodDefinitionHandle h in md.MethodDefinitions)
+                if (md.GetMethodDefinition(h).RelativeVirtualAddress != 0) n++;
+            return n;
+        }
+        catch (BadImageFormatException) { return 0; }
+    }
+
+    // An app folder holds copies of the runtime's own assemblies, from the NuGet packages that carried
+    // them before .NET did (Microsoft.Win32.Registry 5.0): .NET loads the framework's, the newer, and
+    // so does the bundle -- the copy, built for .NET Framework, is no assembly the browser's runtime can
+    // run (Registry's static constructor stopped the interpreter dead).
+    private static bool FrameworkHasNewer(string name, string file)
+    {
+        string framework = Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), name + ".dll");
+        if (!File.Exists(framework)) return false;
+        try { return System.Reflection.AssemblyName.GetAssemblyName(framework).Version >= System.Reflection.AssemblyName.GetAssemblyName(file).Version; }
+        catch (BadImageFormatException) { return true; }
+    }
+
+    private static (List<string> Files, List<string> Left, int Referenced) Closure(AppFiles app, HashSet<string> stack)
     {
         var files = new List<string>();
         var left = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<string>();
+        // first what the entry assembly reaches by reference, then the rest of the folder
         queue.Enqueue(app.Name);
-        while (queue.Count > 0)
+        Walk();
+        int referenced = files.Count;
+        foreach (string dll in Directory.EnumerateFiles(app.Directory, "*.dll").Order(StringComparer.OrdinalIgnoreCase))
         {
-            string name = queue.Dequeue();
-            if (!seen.Add(name)) continue;
-            string file = Path.Combine(app.Directory, name + ".dll");
-            if (!File.Exists(file)) continue;                   // the framework's, or not shipped
-            if (name != app.Name && stack.Contains(name)) { left.Add(name + " (the stack's)"); continue; }
-            if (AssemblyScan.Read(file) is not { } scan) continue;
-            if (!scan.ILOnly) { left.Add(name + " (mixed-mode)"); continue; }
-            files.Add(file);
-            foreach (string r in scan.References) queue.Enqueue(r);
+            if (dll.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase) || !FileIdentity.IsManaged(dll)) continue;
+            queue.Enqueue(Path.GetFileNameWithoutExtension(dll));
         }
-        return (files, left);
+        Walk();
+        return (files, left, referenced);
+
+        void Walk()
+        {
+            while (queue.Count > 0)
+            {
+                string name = queue.Dequeue();
+                if (!seen.Add(name)) continue;
+                string file = Path.Combine(app.Directory, name + ".dll");
+                if (!File.Exists(file)) continue;                   // the framework's, or not shipped
+                if (name != app.Name && stack.Contains(name)) { left.Add(name + " (the stack's)"); continue; }
+                if (s_windowsRuntime.Contains(name)) { left.Add(name + " (Windows Runtime)"); continue; }
+                if (FrameworkHasNewer(name, file)) { left.Add(name + " (the runtime's)"); continue; }
+                if (AssemblyScan.Read(file) is not { } scan) continue;
+                if (!scan.ILOnly) { left.Add(name + " (mixed-mode)"); continue; }
+                files.Add(file);
+                foreach (string r in scan.References) queue.Enqueue(r);
+            }
+        }
     }
 
     /// <summary>The app folder's data: its loose files that are not code, and its folders that are not a
@@ -173,11 +251,13 @@ internal static class Bundle
 
     private static string Xml(string s) => System.Security.SecurityElement.Escape(s)!;
 
-    private static void WriteProject(string dir, AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, bool aot)
+    private static void WriteProject(string dir, AppFiles app, List<string> assemblies, List<string> interpreted, List<string> files, List<string> folders, string feed, bool aot)
     {
         var refs = new StringBuilder();
         foreach (string a in assemblies)
             refs.Append($"    <Reference Include=\"{Xml(Path.GetFileNameWithoutExtension(a))}\"><HintPath>{Xml(a)}</HintPath><Private>true</Private></Reference>\n");
+        foreach (string a in interpreted)
+            refs.Append($"    <_AOT_InternalForceInterpretAssemblies Include=\"{Xml(Path.GetFileName(a))}\" />\n");
         var data = new StringBuilder();
         foreach (string f in files)
             data.Append($"    <None Include=\"{Xml(Path.Combine(app.Directory, f))}\" Link=\"{Xml(f)}\" CopyToOutputDirectory=\"PreserveNewest\" Visible=\"false\" />\n");

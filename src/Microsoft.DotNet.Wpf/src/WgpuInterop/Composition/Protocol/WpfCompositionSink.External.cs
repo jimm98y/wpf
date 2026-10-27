@@ -28,9 +28,7 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
-#if !WGPU_BROWSER
 using Microsoft.Wpf.Interop.WebGpu.Direct3D;
-#endif
 using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
@@ -178,9 +176,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// </summary>
         public bool SendSurface(int channelId, uint handle, long key, IntPtr surface, int width, int height, bool premultiplied, int dx, int dy, int dw, int dh)
         {
-#if WGPU_BROWSER
-            return false;   // no Direct3D shim surfaces in the browser: the caller sends the pixels
-#else
             var ctx = _ctx;
             if (s_trace && (_tracedSend++ < 3 || _tracedSend % 100 == 0))
                 Log($"d3dimage: send h{handle} shares={SharesShimDevice} hosted={HostedWpfContent.Any} shim surface={(ComObject.From(surface) is Direct3DSurface9 s9 ? (ReferenceEquals(s9.Gpu?.Device.Gpu, ctx) ? "this device" : "another device") : "no")} foreign={ForeignRenderer} thread {Environment.CurrentManagedThreadId} {ProcessGpu.Describe()}");
@@ -203,7 +198,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             ZeroCopyPresents++;
             Publish(front);
             return true;
-#endif
         }
 
         /// <summary>
@@ -247,7 +241,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             w = r - x; h = b - y;
         }
 
-#if !WGPU_BROWSER
         // ---- the GPU copy -------------------------------------------------------------------------------
 
         private IntPtr _unpremultiply, _opaque, _unpremultiplyLayout;
@@ -371,6 +364,5 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 return wgpuDeviceCreateRenderPipeline(ctx.Device, &desc);
             }
         }
-#endif
     }
 }

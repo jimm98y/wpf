@@ -38,9 +38,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static int s_events;
         private static void Trace(string what)
         {
-#if !WGPU_BROWSER
             if (Direct3D.D3DLog.Trace || s_trace) Direct3D.D3DLog.Once("processgpu" + System.Threading.Interlocked.Increment(ref s_events), "process device: " + what);
-#endif
         }
 
         private static WgpuContext Device()
@@ -48,11 +46,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (s_ctx != null) return s_ctx;
             s_thread = Environment.CurrentManagedThreadId;
             Trace($"made on thread {s_thread}");
-#if WGPU_BROWSER
-            s_ctx = WgpuContext.Create();
-#else
             s_ctx = Direct3D.D3DDevice.CreateGpu();
-#endif
             return s_ctx;
         }
 

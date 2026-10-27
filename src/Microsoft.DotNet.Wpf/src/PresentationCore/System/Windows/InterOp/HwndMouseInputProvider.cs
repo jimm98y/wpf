@@ -1635,6 +1635,33 @@ namespace System.Windows.Interop
                 return;
             }
 
+            // Offered to the thread's message loop first, as the message it stands for (see the keyboard
+            // provider's ReportMacKey): a WinForms loop hosting this tree closes its menus from its
+            // message filters when the mouse is pressed elsewhere.
+            int message =
+                (actions & RawMouseActions.Button1Press) != 0 ? 0x0201 : (actions & RawMouseActions.Button1Release) != 0 ? 0x0202 :
+                (actions & RawMouseActions.Button2Press) != 0 ? 0x0204 : (actions & RawMouseActions.Button2Release) != 0 ? 0x0205 :
+                (actions & RawMouseActions.Button3Press) != 0 ? 0x0207 : (actions & RawMouseActions.Button3Release) != 0 ? 0x0208 :
+                (actions & RawMouseActions.AbsoluteMove) != 0 ? 0x0200 : 0;
+            // The thread's WH_MOUSE hooks first (see the keyboard provider's ReportMacKey): DotNetBar
+            // closes its open menu from one on a press anywhere outside it.
+            if (message != 0 && AppContext.GetData("WpfWebGpu.Win32.MouseHook") is Func<int, int, int, IntPtr, int, bool> hook)
+            {
+                int sx = x, sy = y;
+                if (MS.Internal.Interop.PlatformWindow.FromHandle(_source.Handle) is MS.Internal.Interop.IPlatformWindow window)
+                {
+                    window.GetClientScreenOriginPixels(out int ox, out int oy);
+                    sx += ox;
+                    sy += oy;
+                }
+                if (hook(message, sx, sy, _source.Handle, 1 /* HTCLIENT */)) return;
+            }
+            if (message != 0)
+            {
+                var thread = new MSG(_source.Handle, message, IntPtr.Zero, (IntPtr)((y & 0xFFFF) << 16 | (x & 0xFFFF)), timestamp, 0, 0);
+                if (ComponentDispatcher.RaiseThreadMessage(ref thread)) return;
+            }
+
             bool isWheel = (actions & (RawMouseActions.VerticalWheelRotate | RawMouseActions.HorizontalWheelRotate)) != 0;
 
             // If only a button/wheel event was delivered but the cursor moved, report the move too so

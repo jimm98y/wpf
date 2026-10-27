@@ -100,6 +100,9 @@ namespace System.Windows.Input
             if (!System.OperatingSystem.IsWindows())
             {
                 if (System.OperatingSystem.IsMacOS() && MacModifierState(virtualKeyCode) is KeyStates modifier) return modifier;
+                // the browser: a modifier as the page last reported it, over any of its canvases
+                if (System.OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserWindow.ModifierDown(virtualKeyCode) is bool held)
+                    return held ? KeyStates.Down : KeyStates.None;
                 return ((uint)virtualKeyCode <= 255) ? s_macKeyStates[virtualKeyCode] : KeyStates.None;
             }
 

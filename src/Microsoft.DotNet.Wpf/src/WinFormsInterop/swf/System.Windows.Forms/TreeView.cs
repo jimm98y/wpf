@@ -75,6 +75,16 @@ namespace System.Windows.Forms {
 		// their own there (of images that are not 16x16); StateImageIndex i is entry i+1 of it.
 		private ImageList _internalStateImageList;
 		internal ImageList InternalStateImageList => _internalStateImageList;
+
+		/// <summary>The size a node's state image is drawn at and laid out for: its image list's, as
+		/// comctl32 takes it (cxState, cyState) -- not a check box's 16x16. app's explorer gives
+		/// its nodes a 32x16 strip of two glyphs, which was squeezed into half its width.</summary>
+		internal Size StateImageSize {
+			get {
+				ImageList list = _internalStateImageList ?? state_image_list;
+				return list != null ? list.ImageSize : new Size (16, 16);
+			}
+		}
 		private TreeNode tooltip_currently_showing;
 		private ToolTip tooltip_window;
 		// WF_TRACE_INPUT=1: what the tree decides to draw behind a selected node.
@@ -1276,7 +1286,7 @@ namespace System.Windows.Forms {
 				l -= 19;
 			// StateImage is basically a custom checkbox
 			else if (node.StateImage != null)
-				l -= 19;
+				l -= StateImageSize.Width + 3;
 			return (x > l && x < l + 8);
 		}
 
@@ -1322,6 +1332,11 @@ namespace System.Windows.Forms {
 				
 			if (ImageList != null)
 				l -= ImageList.ImageSize.Width + 3;
+
+			// the text was put after a state image wider than a check box's 16 (TreeNode.GetX): the
+			// image itself still starts where a check box would
+			if (!checkboxes && node.StateImage != null)
+				l -= StateImageSize.Width - 16;
 
 			return l;
 		}
@@ -1811,7 +1826,7 @@ namespace System.Windows.Forms {
 					DrawNodeState (node, dc, CheckBoxLeft (node) - 3, y);
 
 				if (!checkboxes && node.StateImage != null)
-					dc.DrawImage (node.StateImage, new Rectangle (CheckBoxLeft (node) - 3, y, 16, 16));
+					dc.DrawImage (node.StateImage, new Rectangle (new Point (CheckBoxLeft (node) - 3, y), StateImageSize));
 
 				// After the lines, not before: the button stands ON the line that runs into it, and Windows
 				// draws the line up to the box and no further. Drawn first, the dotted line was laid

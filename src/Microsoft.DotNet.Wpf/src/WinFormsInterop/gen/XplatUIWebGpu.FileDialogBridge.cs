@@ -102,10 +102,13 @@ namespace System.Windows.Forms
         /// runs exactly as before.</para></summary>
         internal static IFileDialogBridge FileDialogBridge
         {
-            get => s_fileDialogBridge ?? Win32FileDialogBridge.Default ?? MacFileDialogBridge.Default;
+            get => s_fileDialogBridge ?? Win32FileDialogBridge.Default ?? MacFileDialogBridge.Default ?? BrowserDefault;
             set => s_fileDialogBridge = value;
         }
 
         private static IFileDialogBridge s_fileDialogBridge;
+
+        // the browser's pickers (BrowserFileDialogBridge), on the head that has them
+        private static IFileDialogBridge BrowserDefault => OperatingSystem.IsBrowser() ? BrowserFileDialogBridge.Default : null;
     }
 }

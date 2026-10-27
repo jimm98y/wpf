@@ -133,7 +133,13 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public IntPtr userdata2;
         }
 
-#if !WGPU_BROWSER
+#if !WGPU_BROWSER     // the browser's: Browser/Wgpu.Browser.cs
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint wgpuAdapterHasFeature(IntPtr adapter, uint feature);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int wgpuAdapterGetLimits(IntPtr adapter, byte* limits);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr wgpuDeviceCreateBindGroupLayout(IntPtr device, WGPUBindGroupLayoutDescriptor* descriptor);
 

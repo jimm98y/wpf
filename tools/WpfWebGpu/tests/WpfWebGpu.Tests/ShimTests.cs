@@ -62,10 +62,58 @@ public class ShimTests
         byte[] secret = { 1, 2, 3, 4 }, entropy = { 9 };
         byte[] blob = ProtectedData.Protect(secret, entropy, DataProtectionScope.CurrentUser);
         Assert.Equal(secret, ProtectedData.Unprotect(blob, entropy, DataProtectionScope.CurrentUser));
-        Assert.Throws<CryptographicException>(() => ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser));
-        Assert.Throws<CryptographicException>(() => ProtectedData.Unprotect(blob, entropy, DataProtectionScope.LocalMachine));
-        blob[^1] ^= 0xFF;
-        Assert.Throws<CryptographicException>(() => ProtectedData.Unprotect(blob, entropy, DataProtectionScope.CurrentUser));
+        Assert.Equal("The data is invalid.", Assert.Throws<CryptographicException>(() => ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser)).Message);
+        // the blob says whose it is; the scope Unprotect is given is not asked, as on Windows
+        Assert.Equal(secret, ProtectedData.Unprotect(blob, entropy, DataProtectionScope.LocalMachine));
+        foreach (int at in new[] { 0, 60, blob.Length - 70, blob.Length - 1 })
+        {
+            byte[] changed = (byte[])blob.Clone();
+            changed[at] ^= 0x01;
+            Assert.Throws<CryptographicException>(() => ProtectedData.Unprotect(changed, entropy, DataProtectionScope.CurrentUser));
+        }
+    }
+
+    [Fact]
+    public void ProtectedData_blobs_are_laid_out_as_DPAPIs()
+    {
+        // what code that recognises a DPAPI blob looks for: version 1, the provider GUID, master key version 1
+        byte[] user = ProtectedData.Protect(new byte[20], null, DataProtectionScope.CurrentUser);
+        Assert.StartsWith("AQAAANCMnd8BFdERjHoAwE/Cl+sBAAAA", Convert.ToBase64String(user));
+        Assert.Equal(214 + 32, user.Length);
+        byte[] machine = ProtectedData.Protect(new byte[20], null, DataProtectionScope.LocalMachine);
+        Assert.Equal(4, BitConverter.ToInt32(machine, 40));                       // CRYPTPROTECT_LOCAL_MACHINE
+        Assert.Equal(new byte[20], ProtectedData.Unprotect(machine, null, DataProtectionScope.CurrentUser));
+        Assert.NotEqual(user[24..40], machine[24..40]);                           // each scope its own master key
+        Assert.NotEqual(user, ProtectedData.Protect(new byte[20], null, DataProtectionScope.CurrentUser));   // salted
+        Span<byte> small = stackalloc byte[10];
+        Assert.False(ProtectedData.TryUnprotect(user, DataProtectionScope.CurrentUser, small, out _));
+        Assert.True(ProtectedData.TryUnprotect(user, DataProtectionScope.CurrentUser, new byte[20], out int written));
+        Assert.Equal(20, written);
+    }
+
+    [Fact]
+    public void ProtectedData_refuses_another_keys_blob_as_Windows_does()
+    {
+        byte[] blob = ProtectedData.Protect(new byte[] { 7 }, null, DataProtectionScope.CurrentUser);
+        blob[30] ^= 0xFF;                                                         // the master key's GUID
+        Assert.Equal("Key not valid for use in specified state.",
+            Assert.Throws<CryptographicException>(() => ProtectedData.Unprotect(blob, null, DataProtectionScope.CurrentUser)).Message);
+    }
+
+    [Fact]
+    public void ProtectedData_still_opens_its_first_formats_blobs()
+    {
+        // "WMDP" | 1 | scope | nonce | tag | AES-GCM ciphertext, with the scope and entropy as associated data
+        ProtectedData.Protect(new byte[1], null, DataProtectionScope.CurrentUser);       // makes the key
+        byte[] key = File.ReadAllBytes(Path.Combine(TestEnvironment.Root, "dpapi", "user.key"));
+        byte[] secret = { 5, 6, 7 }, entropy = { 1, 2 };
+        var blob = new byte[34 + secret.Length];
+        "WMDP"u8.CopyTo(blob);
+        blob[4] = 1;
+        RandomNumberGenerator.Fill(blob.AsSpan(6, 12));
+        using (var gcm = new AesGcm(key, 16))
+            gcm.Encrypt(blob.AsSpan(6, 12), secret, blob.AsSpan(34), blob.AsSpan(18, 16), new byte[] { 0, 1, 2 });
+        Assert.Equal(secret, ProtectedData.Unprotect(blob, entropy, DataProtectionScope.CurrentUser));
     }
 
     [Fact]

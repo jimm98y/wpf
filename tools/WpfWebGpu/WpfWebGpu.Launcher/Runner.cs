@@ -119,8 +119,8 @@ internal sealed class Runner
             // The registry shim's store. Shared by every app run through wpfrun, like the real registry,
             // and kept with the rest of wpfrun's state so that removing wpfrun removes it.
             psi.Environment["WPFWEBGPU_REGISTRY_DIR"] = Path.Combine(Locations.StateRoot, "registry");
-            // The ProtectedData shim's per-user and per-machine keys, likewise.
-            psi.Environment["WPFWEBGPU_DPAPI_DIR"] = Path.Combine(Locations.StateRoot, "dpapi");
+            // The ProtectedData shim's keys are not set here: on macOS they are in the login keychain,
+            // where the shim moves the ones it used to keep in this state folder (dpapi/).
         }
         // The app's own children must not inherit a startup hook a parent shell may have set.
         psi.Environment.Remove("DOTNET_STARTUP_HOOKS");

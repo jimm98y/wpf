@@ -53,7 +53,7 @@ public static unsafe partial class Com
     /// and written back into <paramref name="args"/>). Returns the result VARIANT's value.</summary>
     public static object? DispInvoke(object self, RuntimeTypeHandle iface, int dispid, string name, int flags, object?[] args, long byRefMask)
     {
-        if (self is not ComObject c) throw new InvalidCastException($"{self.GetType()} is not a COM object");
+        if (Unwrap(self) is not ComObject c) throw new InvalidCastException($"{self.GetType()} is not a COM object");
         IntPtr disp = c.For(IID_IDispatch, throwIfNot: true);
         if (dispid == DispIdUnknown) dispid = IdOfName(disp, name);
         int n = args.Length;

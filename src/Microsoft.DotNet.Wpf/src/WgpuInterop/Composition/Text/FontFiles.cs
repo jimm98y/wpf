@@ -88,6 +88,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 dirs.Add(Path.Combine(AppContext.BaseDirectory, "fonts"));
                 if (AppContext.GetData("WpfWebGpu.FontDirectory") is string stack && stack.Length > 0) dirs.Add(stack);
+                // Windows faces made where the system has none of that name (StandInFaces)
+                if (StandInFaces.Directory(dirs) is string standIns) dirs.Add(standIns);
             }
             return dirs.ToArray();
         });

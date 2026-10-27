@@ -14,9 +14,10 @@
 //   Environment             GetCommandLineArgs, CommandLine: what the app was started as. In a page the
 //                           runtime's first argument is the page's host assembly; the app's own file
 //                           (WPFWEBGPU_APP_PATH, set by the host that calls its Main) is what Windows
-//                           puts there, and app names its client by it.
-//   ServicePointManager     the connection limits and policies of System.Net.Requests, which the browser
-//                           has no part of: the values an app sets and reads back.
+//                           puts there, and app names its client by it; OSVersion: Windows'.
+//
+// System.Net.Requests (ServicePointManager with it) and System.Net.WebClient are not stood in for member by
+// member: the browser bundle carries working replacements of the assemblies (shims/).
 
 using System.Net;
 using System.Net.Security;
@@ -26,7 +27,7 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace WpfWebGpu.ComInterop;
 
-public static class BrowserApis
+public static partial class BrowserApis
 {
     private sealed class Options
     {
@@ -112,28 +113,12 @@ public static class BrowserApis
             a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 ? a : "\"" + a.Replace("\"", "\\\"") + "\""));
     }
 
-#pragma warning disable SYSLIB0014
-    // ServicePointManager: what a desktop process starts with, as set and read back
-    private static int s_connectionLimit = 2, s_maxIdle = 100_000, s_dnsTimeout = 120_000;
-    private static bool s_expect100 = true, s_nagle = true, s_checkRevocation;
-    private static SecurityProtocolType s_protocol = SecurityProtocolType.SystemDefault;
-    private static RemoteCertificateValidationCallback? s_serverValidation;
+    // What .NET on Windows answers: Win32NT and the version the stack reports itself as everywhere
+    // (Kernel32's GetVersionEx, Windows 11 23H2). The browser's build says "Other 1.0", and DotNetBar,
+    // which wants Windows 2000 or later (Major >= 5) for its alpha-blended menu shadows, fell back to
+    // the in-menu shadow of Windows 98: the border drawn two pixels in, white past it.
+    private static readonly OperatingSystem s_windows = new(PlatformID.Win32NT, new Version(10, 0, 22631, 0));
 
-    public static int ServicePointManager_get_DefaultConnectionLimit() => OperatingSystem.IsBrowser() ? s_connectionLimit : ServicePointManager.DefaultConnectionLimit;
-    public static void ServicePointManager_set_DefaultConnectionLimit(int value) { if (value <= 0) throw new ArgumentOutOfRangeException(nameof(value)); if (OperatingSystem.IsBrowser()) s_connectionLimit = value; else ServicePointManager.DefaultConnectionLimit = value; }
-    public static int ServicePointManager_get_MaxServicePointIdleTime() => OperatingSystem.IsBrowser() ? s_maxIdle : ServicePointManager.MaxServicePointIdleTime;
-    public static void ServicePointManager_set_MaxServicePointIdleTime(int value) { if (OperatingSystem.IsBrowser()) s_maxIdle = value; else ServicePointManager.MaxServicePointIdleTime = value; }
-    public static int ServicePointManager_get_DnsRefreshTimeout() => OperatingSystem.IsBrowser() ? s_dnsTimeout : ServicePointManager.DnsRefreshTimeout;
-    public static void ServicePointManager_set_DnsRefreshTimeout(int value) { if (OperatingSystem.IsBrowser()) s_dnsTimeout = value; else ServicePointManager.DnsRefreshTimeout = value; }
-    public static bool ServicePointManager_get_Expect100Continue() => OperatingSystem.IsBrowser() ? s_expect100 : ServicePointManager.Expect100Continue;
-    public static void ServicePointManager_set_Expect100Continue(bool value) { if (OperatingSystem.IsBrowser()) s_expect100 = value; else ServicePointManager.Expect100Continue = value; }
-    public static bool ServicePointManager_get_UseNagleAlgorithm() => OperatingSystem.IsBrowser() ? s_nagle : ServicePointManager.UseNagleAlgorithm;
-    public static void ServicePointManager_set_UseNagleAlgorithm(bool value) { if (OperatingSystem.IsBrowser()) s_nagle = value; else ServicePointManager.UseNagleAlgorithm = value; }
-    public static bool ServicePointManager_get_CheckCertificateRevocationList() => OperatingSystem.IsBrowser() ? s_checkRevocation : ServicePointManager.CheckCertificateRevocationList;
-    public static void ServicePointManager_set_CheckCertificateRevocationList(bool value) { if (OperatingSystem.IsBrowser()) s_checkRevocation = value; else ServicePointManager.CheckCertificateRevocationList = value; }
-    public static SecurityProtocolType ServicePointManager_get_SecurityProtocol() => OperatingSystem.IsBrowser() ? s_protocol : ServicePointManager.SecurityProtocol;
-    public static void ServicePointManager_set_SecurityProtocol(SecurityProtocolType value) { if (OperatingSystem.IsBrowser()) s_protocol = value; else ServicePointManager.SecurityProtocol = value; }
-    public static RemoteCertificateValidationCallback? ServicePointManager_get_ServerCertificateValidationCallback() => OperatingSystem.IsBrowser() ? s_serverValidation : ServicePointManager.ServerCertificateValidationCallback;
-    public static void ServicePointManager_set_ServerCertificateValidationCallback(RemoteCertificateValidationCallback? value) { if (OperatingSystem.IsBrowser()) s_serverValidation = value; else ServicePointManager.ServerCertificateValidationCallback = value; }
-#pragma warning restore SYSLIB0014
+    public static OperatingSystem Environment_get_OSVersion() => OperatingSystem.IsWindows() ? Environment.OSVersion : s_windows;
+
 }

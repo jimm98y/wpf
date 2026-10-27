@@ -245,6 +245,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                 _vmtxLong = U16(vhea + 34);
             }
             _vdmx = tables.TryGetValue("VDMX", out int vdmx) ? vdmx : -1;
+            _vdmxData = _data;
+            // a stand-in for a Windows face answers that face's line boxes and dropout control (StandInVdmx)
+            if (tables.TryGetValue("head", out int vdmxHead) && vdmxHead + 12 <= _data.Length)
+            {
+                uint standInKey = U32(vdmxHead + 8);
+                if (_vdmx < 0 && StandInVdmx.For(standInKey) is { } standIn)
+                {
+                    _vdmxData = standIn;
+                    _vdmx = 0;
+                }
+                _standInDropout = StandInVdmx.Dropout(standInKey);
+            }
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;
             GdiContrastPalette = ComputeGdiContrastPalette(tables);
@@ -935,24 +947,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal bool TryGetGdiPlusVdmx(int ppem, out int yMax, out int yMin)
         {
             yMax = yMin = 0;
-            if (_vdmx < 0 || _vdmx + 6 > _data.Length) return false;
-            int numRatios = U16(_vdmx + 4);
+            if (_vdmx < 0 || _vdmx + 6 > _vdmxData.Length) return false;
+            int numRatios = V16(_vdmx + 4);
             int ratios = _vdmx + 6, offsets = ratios + numRatios * 4;
-            if (offsets + numRatios * 2 > _data.Length) return false;
+            if (offsets + numRatios * 2 > _vdmxData.Length) return false;
             for (int i = 0; i < numRatios; i++)
             {
                 int r = ratios + i * 4;
-                int cs = _data[r], xr = _data[r + 1], ys = _data[r + 2], ye = _data[r + 3];
+                int cs = _vdmxData[r], xr = _vdmxData[r + 1], ys = _vdmxData[r + 2], ye = _vdmxData[r + 3];
                 if (cs != 1 || !(xr == 0 || (ys * 96 <= xr * 96 && xr * 96 <= ye * 96))) continue;
-                int group = _vdmx + U16(offsets + i * 2);
-                if (group + 4 > _data.Length) return false;
-                int recs = U16(group), startSize = _data[group + 2], endSize = _data[group + 3];
+                int group = _vdmx + V16(offsets + i * 2);
+                if (group + 4 > _vdmxData.Length) return false;
+                int recs = V16(group), startSize = _vdmxData[group + 2], endSize = _vdmxData[group + 3];
                 if (ppem < startSize || ppem > endSize) return false;
-                for (int k = 0; k < recs && group + 10 + 6 * k <= _data.Length; k++)
+                for (int k = 0; k < recs && group + 10 + 6 * k <= _vdmxData.Length; k++)
                 {
                     int e = group + 4 + 6 * k;
-                    int size = U16(e);
-                    if (size == ppem) { yMax = (short)U16(e + 2); yMin = (short)U16(e + 4); return true; }
+                    int size = V16(e);
+                    if (size == ppem) { yMax = (short)V16(e + 2); yMin = (short)V16(e + 4); return true; }
                     if (size > ppem) return false;
                 }
                 return false;
@@ -1305,41 +1317,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             yMax = yMin = 0;
             if (_vdmx < 0 || ppem <= 0 || ppem > 0xFFFF) return false;
-            if (_vdmx + 6 > _data.Length) return false;
+            if (_vdmx + 6 > _vdmxData.Length) return false;
 
-            int numRatios = U16(_vdmx + 4);
+            int numRatios = V16(_vdmx + 4);
             if (numRatios <= 0) return false;
             int ratios = _vdmx + 6;
             int offsets = ratios + numRatios * 4;
-            if (offsets + numRatios * 2 > _data.Length) return false;
+            if (offsets + numRatios * 2 > _vdmxData.Length) return false;
 
             for (int i = 0; i < numRatios; i++)
             {
                 int r = ratios + i * 4;
                 // bCharSet 1 is the only one GDI honours -- see the remarks on TryGetGdiLineMetrics.
-                if (_data[r] != 1) continue;
+                if (_vdmxData[r] != 1) continue;
                 // Square pixels: the aspect ratio is 1, so the range has to bracket it. An xRatio of
                 // zero is the "applies to everything" record.
-                int xRatio = _data[r + 1], yStart = _data[r + 2], yEnd = _data[r + 3];
+                int xRatio = _vdmxData[r + 1], yStart = _vdmxData[r + 2], yEnd = _vdmxData[r + 3];
                 if (xRatio != 0 && !(xRatio == 1 && yStart <= 1 && yEnd >= 1)) continue;
 
-                int group = _vdmx + U16(offsets + i * 2);
-                if (group + 4 > _data.Length) continue;
-                int recs = U16(group);
-                int startSize = _data[group + 2], endSize = _data[group + 3];
+                int group = _vdmx + V16(offsets + i * 2);
+                if (group + 4 > _vdmxData.Length) continue;
+                int recs = V16(group);
+                int startSize = _vdmxData[group + 2], endSize = _vdmxData[group + 3];
                 if (ppem < startSize || ppem > endSize) continue;
-                if (group + 4 + recs * 6 > _data.Length) continue;
+                if (group + 4 + recs * 6 > _vdmxData.Length) continue;
 
                 for (int j = 0; j < recs; j++)
                 {
                     int e = group + 4 + j * 6;
-                    int size = U16(e);
+                    int size = V16(e);
                     if (size < ppem) continue;
                     // The records are ordered by size; the first one at or above the size asked for
                     // is the one that governs, so a gap in the table rounds UP rather than missing.
                     if (size > ppem) break;
-                    yMax = (short) U16(e + 2);
-                    yMin = (short) U16(e + 4);
+                    yMax = (short) V16(e + 2);
+                    yMin = (short) V16(e + 4);
                     return yMax != 0 || yMin != 0;
                 }
             }
@@ -1873,7 +1885,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private int _gasp = -1;
         private int _sxHeight, _sCapHeight;
         private int _winAscent, _winDescent;
-        private int _vdmx = -1;         // 'VDMX' table offset, or -1 when the face ships none
+        private int _vdmx = -1;         // 'VDMX' table offset in _vdmxData, or -1 when the face has none
+        private byte[] _vdmxData = Array.Empty<byte>();   // the face's data, or its stand-in's VDMX alone
+        private int V16(int offset) => (_vdmxData[offset] << 8) | _vdmxData[offset + 1];
         private int _vmtx = -1, _vmtxLong;   // 'vmtx' and vhea.numOfLongVerMetrics
 
         /// <summary>The design advance height DirectWrite's GetDesignGlyphAdvances gives sideways
@@ -2054,7 +2068,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         /// + 1, or 0 for none), or -1 when nothing was recorded.</summary>
         internal int GlyphDropout(int gid, float pixelsPerEm)
             => s_perGlyphScan && _glyphScan.TryGetValue((gid, SpanSizeKey(pixelsPerEm), DWriteScanRule), out int t)
-               ? ((t & 2) != 0 ? 0 : t + 1) : -1;
+               ? ((t & 2) != 0 ? 0 : t + 1) : _standInDropout > 0 ? _standInDropout : -1;
+
+        // The dropout control the Windows face this one stands in for turns on in its prep (StandInVdmx):
+        // an unhinted stand-in has no prep of its own, and its thin strokes fell between pixel rows.
+        private int _standInDropout;
+        internal int StandInDropout => _standInDropout;
 
         /// <summary>DIRECTWRITE'S SCALER MERGES DIFFERENTLY. Its fsg_ExecuteGlyph@180078e70 writes a
         /// SIMPLE element's scan word (+0x98) unconditionally -- fsg_DoScanControl(SCANCTRL, ppem) ?
@@ -2755,7 +2774,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         {
             if (prepPpem <= 0) prepPpem = ppem;
             TrueTypeInterpreter? interpreter = Interpreter();
-            if (interpreter is null || ppem < 1) return 0;
+            if (ppem < 1) return 0;
+            if (interpreter is null || (_controlProgramTable < 0 && _standInDropout > 0)) return _standInDropout;
             int savedFlags = TrueTypeInterpreter.DWriteFlags;
             bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
             try
@@ -2869,7 +2889,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal int DWriteUnfittedDropout(float pixelsPerEm, int flags)
         {
             TrueTypeInterpreter? interpreter = Interpreter();
-            if (interpreter is null) return 0;
+            if (interpreter is null || (_controlProgramTable < 0 && _standInDropout > 0)) return _standInDropout;
             int savedFlags = TrueTypeInterpreter.DWriteFlags;
             bool savedBi = TrueTypeInterpreter.BiLevelPass, savedSub = SubpixelFitting;
             try
@@ -2956,6 +2976,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             figures = s_noFigures;
             GlyphProgram? glyph = DWriteFit(glyphId, pixelsPerEm, flags, out dropout);
             if (glyph is null) return false;
+            if (dropout == 0 && _controlProgramTable < 0) dropout = _standInDropout;   // a stand-in's Windows face's (StandInVdmx)
             int[] gx = glyph.X, gy = glyph.Y;
             if (postFit is not null)
             {

@@ -2484,6 +2484,16 @@ namespace System.Windows.Forms
 						return true;
 					}
 
+					// IsChild(Handle, GetFocus()) on Windows, where a window hosted in this control (an
+					// ElementHost's WPF window) is a child window of it: with the keyboard in the WPF
+					// content, the ElementHost and every container of it contain the focus. app
+					// gives Delete to its display only then (MainViewContainsFocus), and it did nothing.
+					if (focused_window != IntPtr.Zero && ForeignChildOwner (focused_window) is Control owner) {
+						for (Control c = owner; c != null; c = c.Parent)
+							if (c == this)
+								return true;
+					}
+
 					for (int i=0; i < child_controls.Count; i++) {
 						if (child_controls[i].ContainsFocus) {
 							return true;

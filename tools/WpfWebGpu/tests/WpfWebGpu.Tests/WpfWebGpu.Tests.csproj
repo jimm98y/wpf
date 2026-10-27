@@ -35,8 +35,19 @@
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Management/System.Management.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <!-- the browser's System.Net.Requests and System.Net.WebClient, in place of the framework's for this process
+         (NetShimTests checks them against what .NET's own do) -->
+    <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Net.Requests/System.Net.Requests.csproj" />
+    <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Net.WebClient/System.Net.WebClient.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
   </ItemGroup>
+
+  <!-- compiled against the shims' System.Net.Requests and System.Net.WebClient, not the framework's -->
+  <Target Name="WpfWebGpuNetShimsOnly" AfterTargets="ResolveTargetingPackAssets">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'System.Net.Requests' or '%(Filename)' == 'System.Net.WebClient'" />
+    </ItemGroup>
+  </Target>
 
 </Project>

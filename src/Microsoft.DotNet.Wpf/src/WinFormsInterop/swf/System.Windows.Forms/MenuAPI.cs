@@ -876,6 +876,7 @@ namespace System.Windows.Forms {
 				CreateParams cp = base.CreateParams;
 				cp.Caption = "Menu PopUp";
 				cp.Style = unchecked ((int)(WindowStyles.WS_POPUP));
+				cp.ClassStyle |= (int)XplatUIWin32.ClassStyle.CS_DROPSHADOW;   // #32768's
 				cp.ExStyle |= (int)(WindowExStyles.WS_EX_TOOLWINDOW | WindowExStyles.WS_EX_TOPMOST);
 				return cp;
 			}

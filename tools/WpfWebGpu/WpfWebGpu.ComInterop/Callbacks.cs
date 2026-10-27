@@ -56,6 +56,9 @@ public static unsafe class Callbacks
     public static Delegate? FromNative(nint p, Type type)
     {
         if (p == 0) return null;
+        // a function of the stack's own with a managed twin (WgpuInterop's NativeTwins: Mono cannot call it
+        // through its pointer): a delegate of the app's type that calls the twin with what native code would
+        if (Of(p) == null && NativeTwin(p) is { } twin) return ToTwin(twin, type);
         if (Of(p) is not { } d) return Marshal.GetDelegateForFunctionPointer(p, type);
         if (type.IsInstanceOfType(d)) return d;
         // the pointer of one delegate type read back as another (a WNDPROC kept as an IntPtr, called through
@@ -74,6 +77,36 @@ public static unsafe class Callbacks
             System.Linq.Expressions.Expression.Constant(invoke.ReturnType)), invoke.ReturnType);
         return System.Linq.Expressions.Expression.Lambda(type, call, ps).Compile();
     }
+
+    private static Func<IntPtr, Delegate?>? s_twinOf;
+
+    private static Delegate? NativeTwin(nint p)
+        => (s_twinOf ??= AppContext.GetData("WpfWebGpu.NativeTwin") as Func<IntPtr, Delegate?>)?.Invoke(p);
+
+    /// <summary>A delegate of <paramref name="type"/> calling <paramref name="twin"/> as native code would call
+    /// the function: each argument a machine word -- a by-reference one the address of what it refers to.</summary>
+    private static Delegate ToTwin(Delegate twin, Type type)
+    {
+        MethodInfo invoke = type.GetMethod("Invoke")!;
+        var ps = invoke.GetParameters().Select(p => System.Linq.Expressions.Expression.Parameter(p.ParameterType, p.Name)).ToArray();
+        // a by-reference parameter's expression has the referent's type, and IsByRef
+        var words = ps.Select(p => p.IsByRef
+            ? (System.Linq.Expressions.Expression)System.Linq.Expressions.Expression.Call(
+                typeof(Callbacks).GetMethod(nameof(AddressOf), BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(p.Type), p)
+            : System.Linq.Expressions.Expression.Call(typeof(Callbacks).GetMethod(nameof(WordOf), BindingFlags.NonPublic | BindingFlags.Static)!,
+                System.Linq.Expressions.Expression.Convert(p, typeof(object))));
+        System.Linq.Expressions.Expression call = System.Linq.Expressions.Expression.Call(
+            typeof(Callbacks).GetMethod(nameof(Call), BindingFlags.NonPublic | BindingFlags.Static)!, System.Linq.Expressions.Expression.Constant(twin),
+            System.Linq.Expressions.Expression.NewArrayInit(typeof(nint), words));
+        if (invoke.ReturnType == typeof(void)) call = System.Linq.Expressions.Expression.Block(typeof(void), call);
+        else call = System.Linq.Expressions.Expression.Convert(System.Linq.Expressions.Expression.Call(
+            typeof(Callbacks).GetMethod(nameof(FromWord), BindingFlags.NonPublic | BindingFlags.Static)!, call,
+            System.Linq.Expressions.Expression.Constant(invoke.ReturnType)), invoke.ReturnType);
+        return System.Linq.Expressions.Expression.Lambda(type, call, ps).Compile();
+    }
+
+    // a by-reference argument: the caller's variable, which stays where it is for the call
+    private static nint AddressOf<T>(ref T v) => (nint)Unsafe.AsPointer(ref v);
 
     private static nint WordOf(object? v) => v is Pointer ptr ? (nint)Pointer.Unbox(ptr) : ToWord(v);
     private static object? FromWord(nint w, Type t) => ToManaged(w, t);

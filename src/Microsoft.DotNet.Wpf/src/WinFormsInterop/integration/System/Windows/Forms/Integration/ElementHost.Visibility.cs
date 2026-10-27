@@ -31,8 +31,10 @@ namespace System.Windows.Forms.Integration
 
         /// <summary>The part of this control that is on screen, in its own client coordinates (driver
         /// units), cut to its ancestors' client areas; and the rectangles of controls above it that
-        /// cover parts of that. Empty when the control is not effectively visible at all.</summary>
-        internal SD.Rectangle VisiblePart(List<SD.Rectangle> covered)
+        /// cover parts of that, with the top-level windows over its form when <paramref name="windowsOver"/>
+        /// (for input: a menu over the hosted window takes its own clicks). Empty when the control is not
+        /// effectively visible at all.</summary>
+        internal SD.Rectangle VisiblePart(List<SD.Rectangle> covered, bool windowsOver = true)
         {
             covered?.Clear();
             if (IsDisposed || Disposing || _child == null || !IsHandleCreated) return SD.Rectangle.Empty;
@@ -60,6 +62,15 @@ namespace System.Windows.Forms.Integration
                     }
                 }
             }
+            // ...and the top-level windows over its form: its menus and popups (a DotNetBar gallery dropped
+            // over a 3D view was drawn over it but pointed at under it, and none of its items could be picked)
+            if (covered != null && windowsOver && XplatUI.RunningWebGpuDriver && XplatUIWebGpu.GetInstance() is { } webgpu)
+                foreach (SD.Rectangle w in webgpu.WindowsOver(form.Handle))
+                {
+                    SD.Rectangle wr = w;
+                    wr.Intersect(r);
+                    if (!wr.IsEmpty) covered.Add(wr);
+                }
             SD.Point o = PointToScreen(SD.Point.Empty);
             r.Offset(-o.X, -o.Y);
             if (covered != null)
@@ -73,11 +84,15 @@ namespace System.Windows.Forms.Integration
         }
 
         /// <summary>What of this control shows, as disjoint rectangles in its client coordinates: the
-        /// visible part (see VisiblePart) minus every control above it. Empty when nothing shows.</summary>
-        internal List<SD.Rectangle> VisiblePieces()
+        /// visible part (see VisiblePart) minus every control above it, and minus the top-level windows
+        /// over its form when <paramref name="windowsOver"/>. Empty when nothing shows.</summary>
+        /// <remarks>The picture is not cut by those windows: the host draws them over it (a menu, and the
+        /// drop shadow DotNetBar gives a menu, a window of its own that is mostly transparent). Cut out,
+        /// the hole showed the form's background through the shadow, a white band around the menu.</remarks>
+        internal List<SD.Rectangle> VisiblePieces(bool windowsOver = true)
         {
             var covered = new List<SD.Rectangle>();
-            SD.Rectangle vis = VisiblePart(covered);
+            SD.Rectangle vis = VisiblePart(covered, windowsOver);
             var pieces = new List<SD.Rectangle>();
             if (vis.IsEmpty) return pieces;
             pieces.Add(vis);
@@ -108,7 +123,8 @@ namespace System.Windows.Forms.Integration
             // the browser's hosted canvas lies over the whole control; it shows and takes the pointer
             // only where the control does, as a clipped child window
             if (OperatingSystem.IsBrowser()) SyncHostedRegion();
-            List<SD.Rectangle> pieces = VisiblePieces();
+            // shown while any of it shows: a menu over all of it does not hide it
+            List<SD.Rectangle> pieces = VisiblePieces(windowsOver: false);
             bool on = pieces.Count > 0 && _placedW > 0 && _placedH > 0;
             if (on != _shown)
             {

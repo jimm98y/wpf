@@ -278,6 +278,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserDialogs.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\ScreenPixels.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserHostScript.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitAlerts.cs" />

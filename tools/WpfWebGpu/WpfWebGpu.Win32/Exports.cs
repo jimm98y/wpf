@@ -23,6 +23,7 @@ public static unsafe partial class Exports
         // for the Direct3D shim (DXGI's EnqueueSetEvent signals an event of ours)
         AppContext.SetData("WpfWebGpu.SetEvent", (Action<IntPtr>)(h => SetEvent(h)));
         RegisterGdi();
+        RegisterHooks();
     }
 
     /// <summary>

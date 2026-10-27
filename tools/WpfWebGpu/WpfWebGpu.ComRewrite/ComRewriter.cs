@@ -236,6 +236,7 @@ public static partial class ComRewriter
             _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack, _takeElemArray,
             _sbOfNative, _sbBack, _nativeRoom, _structToShadow, _freeStructAt, _structFromShadow;
         private readonly TypeReference _variant;
+        private readonly MethodReference _castTo, _asTo, _proxyCtor;
         private readonly MethodReference _adopt, _toBstr, _freeBstr, _takeBstr, _takeCoTaskUni;
         private readonly MethodReference _this, _borrow, _borrowUnknown, _release, _take, _check, _unsupported, _createInstance, _keepAlive;
         private readonly TypeReference _intPtr, _int32, _int16, _byte, _object, _void, _guid;
@@ -260,6 +261,9 @@ public static partial class ComRewriter
             _unsupported = Imp(nameof(Com.Unsupported), typeof(string), typeof(string));
             _createInstance = Imp(nameof(Com.CreateInstance), typeof(Guid));
             _adopt = Imp(nameof(Com.Adopt), typeof(object));
+            _castTo = Imp(nameof(Com.CastTo), typeof(object), typeof(RuntimeTypeHandle));
+            _asTo = Imp(nameof(Com.AsTo), typeof(object), typeof(RuntimeTypeHandle));
+            _proxyCtor = m.ImportReference(typeof(ComProxy).GetConstructor(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic, new[] { typeof(ComObject) })!);
             _toBstr = Imp(nameof(Com.ToBstr), typeof(string));
             _toVariant = Imp(nameof(Com.ToVariant), typeof(object), typeof(IntPtr));
             _fromVariant = Imp(nameof(Com.FromVariant), typeof(IntPtr));
@@ -384,6 +388,7 @@ public static partial class ComRewriter
                 if (_external == null || _external.Contains(t.IsNested ? t.Name : t.FullName))
                     _r.Unsupported.Add($"{t.FullName} is {(_external == null ? "visible to" : "used by")} other assemblies (they may hand it built-in RCWs)");
             foreach (var t in _comTypes.Where(t => t.IsInterface).ToList()) RewriteInterface(t);
+            foreach (var t in _m.Types.SelectMany(AllTypes).Where(t => t.IsInterface).ToList()) AddProxy(t);
             foreach (var b in _bclGen.ToList()) GenerateBcl(b);
             // a managed class implementing a COM interface: its CCW must cover every method
             foreach (var (cls, it) in _ccwUsers)
@@ -407,6 +412,9 @@ public static partial class ComRewriter
                 foreach (var md in t.Methods.ToList())
                     if (md.HasBody) RewriteCallSites(md);
             foreach (var t in _comTypes.Where(t => !t.IsInterface).ToList()) RewriteCoClass(t);
+            foreach (var t in _m.Types.SelectMany(AllTypes).ToList())
+                foreach (var md in t.Methods.ToList())
+                    if (md.HasBody) RewriteCasts(md);
         }
 
         // ---- types ------------------------------------------------------------------------------
@@ -931,6 +939,45 @@ public static partial class ComRewriter
                 EmitVtableCall(t, md, body, slot++);
                 _r.Methods++;
             }
+        }
+
+        /// <summary>I.ComProxy, for a runtime that does not cast a ComObject dynamically (Mono never asks an
+        /// IDynamicInterfaceCastable): a sealed class implementing I -- and the rewritten COM interfaces I
+        /// derives from -- through their ComImpls, the same vtable calls; Com.CastTo hands it out. None where
+        /// I derives from an interface without a ComImpl, which the class could not implement.</summary>
+        private void AddProxy(TypeDefinition t)
+        {
+            if (AnalyzeOnly) return;
+            var impl = t.NestedTypes.FirstOrDefault(n => n.Name == "ComImpl");
+            if (impl == null || t.NestedTypes.Any(n => n.Name == "ComProxy")) return;
+            var impls = new List<TypeReference> { impl };
+            foreach (var i in t.Interfaces)
+            {
+                var d = Safe(i.InterfaceType);
+                if (d == null) return;
+                var baseImpl = d.NestedTypes.FirstOrDefault(n => n.Name == "ComImpl");
+                if (baseImpl != null) { impls.Add(d.Module == _m ? baseImpl : _m.ImportReference(baseImpl)); continue; }
+                if (IsForeignCom(d))
+                {
+                    // rewritten with its own assembly: its ComImpl is there at run time
+                    var r = _m.ImportReference(d);
+                    impls.Add(new TypeReference("", "ComImpl", _m, r.Scope) { DeclaringType = r });
+                    continue;
+                }
+                return;
+            }
+            var proxy = new TypeDefinition("", "ComProxy", TypeAttributes.NestedPublic | TypeAttributes.Sealed | TypeAttributes.Class | TypeAttributes.BeforeFieldInit,
+                _m.ImportReference(typeof(ComProxy)));
+            foreach (var x in impls) proxy.Interfaces.Add(new InterfaceImplementation(x));
+            var ctor = new MethodDefinition(".ctor", MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName, _void);
+            ctor.Parameters.Add(new ParameterDefinition("target", ParameterAttributes.None, _m.ImportReference(typeof(ComObject))));
+            var il = ctor.Body.GetILProcessor();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _proxyCtor);
+            il.Emit(OpCodes.Ret);
+            proxy.Methods.Add(ctor);
+            t.NestedTypes.Add(proxy);
         }
 
         // ---- the BCL's other COM interfaces: generated here ---------------------------------------------
@@ -2161,19 +2208,32 @@ public static partial class ComRewriter
                     var t = Safe(tr);
                     if (t != null && _comTypes.Contains(t) && !t.IsInterface)
                         _r.Unsupported.Add($"{md.DeclaringType.FullName}.{md.Name}: casts to the COM class {t.Name}");
-                    // An object of unknown origin cast to a rewritten interface may be a built-in RCW (from
-                    // another assembly, an ActiveX control, the BCL), which would no longer convert: it is
-                    // adopted first (Com.Adopt: the same native object, as a ComObject).
-                    else if (t != null && (_comTypes.Contains(t) || IsForeignCom(t)) && !FromComWrapper(ins.Previous) && !IsCom(StackType(md, ins.Previous)))
-                    {
-                        // in place (a branch to the cast reaches the adoption), then the cast again
-                        var cast = il.Create(ins.OpCode, (TypeReference)ins.Operand);
-                        ins.OpCode = OpCodes.Call; ins.Operand = _adopt;
-                        il.InsertAfter(ins, cast);
-                        _r.CallSites++;
-
-                    }
+                    // (a cast to a rewritten interface: RewriteCasts)
                 }
+            }
+        }
+
+        /// <summary>A cast to a rewritten interface goes through Com.CastTo / Com.AsTo: an object of unknown
+        /// origin may be a built-in RCW (from another assembly, an ActiveX control, the BCL), adopted as the
+        /// ComObject of the same native object; and where the runtime does not cast a ComObject dynamically
+        /// (Mono, the browser) the object handed on is its I.ComProxy. Every method's, the generated ones
+        /// too -- the wrappers' casts of what Com.Take returned, the delegate shims' -- so it runs last.</summary>
+        private void RewriteCasts(MethodDefinition md)
+        {
+            var il = md.Body.GetILProcessor();
+            foreach (var ins in md.Body.Instructions.ToList())
+            {
+                if ((ins.OpCode != OpCodes.Castclass && ins.OpCode != OpCodes.Isinst) || ins.Operand is not TypeReference tr) continue;
+                if (ins.Previous is { OpCode.Code: Code.Call, Operand: MethodReference prev } && (prev.Name is nameof(Com.CastTo) or nameof(Com.AsTo)) && prev.DeclaringType.FullName == typeof(Com).FullName) continue;
+                var t = Safe(tr);
+                if (t == null || !t.IsInterface || !(_comTypes.Contains(t) || IsForeignCom(t) || IsBclCom(t) || IsBclGen(t))) continue;
+                // in place (a branch to the cast reaches the conversion), then the cast again
+                var cast = il.Create(ins.OpCode, tr);
+                var call = il.Create(OpCodes.Call, ins.OpCode == OpCodes.Castclass ? _castTo : _asTo);
+                ins.OpCode = OpCodes.Ldtoken; ins.Operand = tr;
+                il.InsertAfter(ins, call);
+                il.InsertAfter(call, cast);
+                _r.CallSites++;
             }
         }
 

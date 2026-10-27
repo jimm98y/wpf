@@ -5,8 +5,7 @@
 // What GDI+ records and draws for TEXT is a property of Windows' own font files and of the system's
 // ANSI code page as much as of GDI+: the glyph indices and extents are the installed Arial's (macOS's
 // 5.01 is another file), the LOGFONT's charset the code page's (the references were recorded on a
-// Windows whose code page is 1250), a line's height Segoe UI's VDMX (which Selawik, its stand-in, does
-// not carry). Those references hold only where those files are; elsewhere the cases are left out, as
+// Windows whose code page is 1250). Those references hold only where those files are; elsewhere the cases are left out, as
 // the batteries already leave out the ones that need Windows' colour profiles.
 //
 
@@ -29,9 +28,10 @@ namespace Wpf.WinFormsInterop.Tests
             return false;
         }
 
-        /// <summary>Why a size GDI takes from Segoe UI's VDMX (a line's height: a combo box's field, a
-        /// tab's height) cannot be held to stock's here, or null where Windows' Segoe UI is.</summary>
-        public static string? NoSegoeVdmx => Present ? null : "a GDI line height of Segoe UI's own VDMX, which its stand-in Selawik does not carry";
+        /// <summary>Why a width GDI takes from Segoe UI's hinted advances ('hdmx': a tab's width) cannot be
+        /// held to stock's here, or null where Windows' Segoe UI is. Its stand-in Selawik is unhinted and
+        /// carries none; its line heights it does answer (StandInVdmx).</summary>
+        public static string? NoSegoeHdmx => Present ? null : "a GDI width of Segoe UI's hinted advances ('hdmx'), which its stand-in Selawik does not carry";
 
         /// <summary>The reason to skip a text case here, or null.</summary>
         public static string? Missing(string name)

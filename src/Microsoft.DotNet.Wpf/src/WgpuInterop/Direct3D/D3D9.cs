@@ -317,9 +317,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetDeviceCaps, (delegate* unmanaged<IntPtr, uint*, int>)&GetDeviceCaps);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetDisplayMode, (delegate* unmanaged<IntPtr, uint, D3DDISPLAYMODE*, int>)&GetDisplayMode);
             vt.Set(Vtbl.IDirect3DDevice9Ex.Present, (delegate* unmanaged<IntPtr, void*, void*, IntPtr, void*, int>)&Present);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateTexture, (delegate* unmanaged<IntPtr, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateTexture);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateRenderTarget, (delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateRenderTarget);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurface, (delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateDepthStencilSurface);
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateTexture, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateTexture, (Func<IntPtr, uint, uint, uint, uint, int, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateTextureImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateRenderTarget, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateRenderTarget, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateRenderTargetImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurface, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateDepthStencilSurface, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateDepthStencilSurfaceImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.UpdateSurface, (delegate* unmanaged<IntPtr, IntPtr, D3DRECT9*, IntPtr, int*, int>)&UpdateSurface);
             vt.Set(Vtbl.IDirect3DDevice9Ex.UpdateTexture, (delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)&UpdateTexture);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetRenderTargetData, (delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)&GetRenderTargetData);
@@ -338,9 +338,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.IDirect3DDevice9Ex.SetMaximumFrameLatency, (delegate* unmanaged<IntPtr, uint, int>)&Ok1u);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetMaximumFrameLatency, (delegate* unmanaged<IntPtr, uint*, int>)&GetMaximumFrameLatency);
             vt.Set(Vtbl.IDirect3DDevice9Ex.WaitForVBlank, (delegate* unmanaged<IntPtr, uint, int>)&Ok1u);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateRenderTargetEx, (delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, uint, int>)&CreateRenderTargetEx);
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateRenderTargetEx, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, uint, int>)&CreateRenderTargetEx, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, uint, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8, p9) => CreateRenderTargetExImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8, p9))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateOffscreenPlainSurfaceEx, (delegate* unmanaged<IntPtr, uint, uint, int, int, IntPtr*, IntPtr*, uint, int>)&CreateOffscreenPlainSurfaceEx);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurfaceEx, (delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, uint, int>)&CreateDepthStencilSurfaceEx);
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurfaceEx, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, uint, int>)&CreateDepthStencilSurfaceEx, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, uint, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8, p9) => CreateDepthStencilSurfaceExImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8, p9))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetDisplayModeEx, (delegate* unmanaged<IntPtr, uint, D3DDISPLAYMODEEX*, int*, int>)&GetDisplayModeEx);
             return vt;
         }
@@ -419,7 +419,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         [UnmanagedCallersOnly]
-        private static int CreateTexture(IntPtr self, uint w, uint h, uint levels, uint usage, int format, int pool, IntPtr* texture, IntPtr* shared)
+
+        private static int CreateTexture(IntPtr self, uint w, uint h, uint levels, uint usage, int format, int pool, IntPtr* texture, IntPtr* shared) => CreateTextureImpl(self, w, h, levels, usage, format, pool, texture, shared);
+
+
+        // CreateTexture's body, and its managed twin's (NativeTwins.cs)
+
+        private static int CreateTextureImpl(IntPtr self, uint w, uint h, uint levels, uint usage, int format, int pool, IntPtr* texture, IntPtr* shared)
         {
             var d = Self(self);
             if (d == null || texture == null || w == 0 || h == 0) return D3D9Const.D3DERR_INVALIDCALL;
@@ -464,28 +470,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         [UnmanagedCallersOnly]
-        private static int CreateRenderTarget(IntPtr self, uint w, uint h, int format, int ms, uint msq, int lockable, IntPtr* surface, IntPtr* shared)
+
+        private static int CreateRenderTarget(IntPtr self, uint w, uint h, int format, int ms, uint msq, int lockable, IntPtr* surface, IntPtr* shared) => CreateRenderTargetImpl(self, w, h, format, ms, msq, lockable, surface, shared);
+
+
+        // CreateRenderTarget's body, and its managed twin's (NativeTwins.cs)
+
+        private static int CreateRenderTargetImpl(IntPtr self, uint w, uint h, int format, int ms, uint msq, int lockable, IntPtr* surface, IntPtr* shared)
         {
             var d = Self(self);
             return d == null ? D3D9Const.D3DERR_INVALIDCALL : Guard("CreateRenderTarget", () => d.MakeSurface(w, h, format, D3D9Const.D3DPOOL_DEFAULT, D3D9Const.D3DUSAGE_RENDERTARGET, true, surface, shared));
         }
 
         [UnmanagedCallersOnly]
-        private static int CreateRenderTargetEx(IntPtr self, uint w, uint h, int format, int ms, uint msq, int lockable, IntPtr* surface, IntPtr* shared, uint usage)
+
+        private static int CreateRenderTargetEx(IntPtr self, uint w, uint h, int format, int ms, uint msq, int lockable, IntPtr* surface, IntPtr* shared, uint usage) => CreateRenderTargetExImpl(self, w, h, format, ms, msq, lockable, surface, shared, usage);
+
+
+        // CreateRenderTargetEx's body, and its managed twin's (NativeTwins.cs)
+
+        private static int CreateRenderTargetExImpl(IntPtr self, uint w, uint h, int format, int ms, uint msq, int lockable, IntPtr* surface, IntPtr* shared, uint usage)
         {
             var d = Self(self);
             return d == null ? D3D9Const.D3DERR_INVALIDCALL : Guard("CreateRenderTargetEx", () => d.MakeSurface(w, h, format, D3D9Const.D3DPOOL_DEFAULT, usage | D3D9Const.D3DUSAGE_RENDERTARGET, true, surface, shared));
         }
 
         [UnmanagedCallersOnly]
-        private static int CreateDepthStencilSurface(IntPtr self, uint w, uint h, int format, int ms, uint msq, int discard, IntPtr* surface, IntPtr* shared)
+
+        private static int CreateDepthStencilSurface(IntPtr self, uint w, uint h, int format, int ms, uint msq, int discard, IntPtr* surface, IntPtr* shared) => CreateDepthStencilSurfaceImpl(self, w, h, format, ms, msq, discard, surface, shared);
+
+
+        // CreateDepthStencilSurface's body, and its managed twin's (NativeTwins.cs)
+
+        private static int CreateDepthStencilSurfaceImpl(IntPtr self, uint w, uint h, int format, int ms, uint msq, int discard, IntPtr* surface, IntPtr* shared)
         {
             var d = Self(self);
             return d == null ? D3D9Const.D3DERR_INVALIDCALL : Guard("CreateDepthStencilSurface", () => d.MakeSurface(w, h, format, D3D9Const.D3DPOOL_DEFAULT, D3D9Const.D3DUSAGE_DEPTHSTENCIL, false, surface, shared));
         }
 
         [UnmanagedCallersOnly]
-        private static int CreateDepthStencilSurfaceEx(IntPtr self, uint w, uint h, int format, int ms, uint msq, int discard, IntPtr* surface, IntPtr* shared, uint usage)
+
+        private static int CreateDepthStencilSurfaceEx(IntPtr self, uint w, uint h, int format, int ms, uint msq, int discard, IntPtr* surface, IntPtr* shared, uint usage) => CreateDepthStencilSurfaceExImpl(self, w, h, format, ms, msq, discard, surface, shared, usage);
+
+
+        // CreateDepthStencilSurfaceEx's body, and its managed twin's (NativeTwins.cs)
+
+        private static int CreateDepthStencilSurfaceExImpl(IntPtr self, uint w, uint h, int format, int ms, uint msq, int discard, IntPtr* surface, IntPtr* shared, uint usage)
         {
             var d = Self(self);
             return d == null ? D3D9Const.D3DERR_INVALIDCALL : Guard("CreateDepthStencilSurfaceEx", () => d.MakeSurface(w, h, format, D3D9Const.D3DPOOL_DEFAULT, usage | D3D9Const.D3DUSAGE_DEPTHSTENCIL, false, surface, shared));

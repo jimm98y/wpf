@@ -1004,6 +1004,20 @@ namespace MS.Internal.Interop
             screenY = (int)Math.Round(flippedY * scale);
         }
 
+        /// <summary>GetCursorPos: NSEvent.mouseLocation, flipped to the top-left origin and scaled to
+        /// device pixels like every other screen point here.</summary>
+        internal static bool TryGetCursorPixels(out int x, out int y)
+        {
+            NSPoint p = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
+            double scale = PrimaryScreenScale();
+            x = (int)Math.Floor(p.x * scale);
+            y = (int)Math.Floor((PrimaryScreenHeightPoints() - p.y) * scale);
+            return true;
+        }
+
+        /// <summary>The primary screen's backing scale (ScreenPixels converts the screen's device pixels with it).</summary>
+        internal static double PrimaryBackingScale() => PrimaryScreenScale();
+
         /// <summary>The primary screen's backing scale, for conversions with no window in hand.</summary>
         private static double PrimaryScreenScale()
         {
@@ -2206,9 +2220,12 @@ namespace MS.Internal.Interop
         private const string ForeignEventsKey = "WinFormsWebGpu.CocoaEvents";
         private const string DispatchEventKey = "WpfWebGpu.CocoaWindow.DispatchEvent";
 
+        private const string DispatchKeyToKey = "WpfWebGpu.CocoaWindow.DispatchKeyTo";
+
         static CocoaWindow()
         {
             AppContext.SetData(DispatchEventKey, (Action<IntPtr>)DispatchEvent);
+            AppContext.SetData(DispatchKeyToKey, (Action<IntPtr, IntPtr>)ReportKeyEventTo);
         }
 
         private static bool DispatchToForeignHost(IntPtr evt)
@@ -2658,7 +2675,18 @@ namespace MS.Internal.Interop
             _            => 0,
         };
 
-        private static void ReportKeyEvent(IntPtr evt)
+        private static void ReportKeyEvent(IntPtr evt) => ReportKeyEvent(evt, IntPtr.Zero);
+
+        /// <summary>A key event for the window that has the focus, which is not the one AppKit gave it
+        /// to: a WPF window hosted in a WinForms form (an ElementHost's) is not the key window -- the
+        /// form is -- and on Windows the keyboard's messages go to the focus window, whichever window
+        /// is active. The WinForms host hands such keys on here (WinFormsWebGpu's CocoaHost).</summary>
+        private static void ReportKeyEventTo(IntPtr evt, IntPtr view)
+        {
+            if (view != IntPtr.Zero) ReportKeyEvent(evt, view);
+        }
+
+        private static void ReportKeyEvent(IntPtr evt, IntPtr target)
         {
             Action<CocoaKeyMessage> handler = KeyInput;
             if (handler == null || evt == IntPtr.Zero) return;
@@ -2666,9 +2694,13 @@ namespace MS.Internal.Interop
             ulong type = SendNUInt(evt, Sel("type"));
             if (type != NSKeyDown && type != NSKeyUp && type != NSFlagsChanged) return;
 
-            IntPtr window = Send(evt, Sel("window"));
-            if (window == IntPtr.Zero) return;
-            IntPtr view = Send(window, Sel("contentView"));
+            IntPtr view = target;
+            if (view == IntPtr.Zero)
+            {
+                IntPtr window = Send(evt, Sel("window"));
+                if (window == IntPtr.Zero) return;
+                view = Send(window, Sel("contentView"));
+            }
             CocoaWindow w = FromHandle(view);
             if (w == null) return;
 

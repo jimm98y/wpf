@@ -55,11 +55,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [JSImport("surfacePresent", ModuleName)]
         internal static partial void SurfacePresent(int surface);
 
+        [JSImport("deviceHasFeature", ModuleName)]
+        internal static partial bool DeviceHasFeature(int device, int feature);
+
         [JSImport("createTexture", ModuleName)]
-        internal static partial int CreateTexture(int device, int width, int height, string format, double usage, int mipLevelCount, int sampleCount);
+        internal static partial int CreateTexture(int device, string descJson);
 
         [JSImport("createTextureView", ModuleName)]
-        internal static partial int CreateTextureView(int texture);
+        internal static partial int CreateTextureView(int texture, string descJson);
 
         [JSImport("createBuffer", ModuleName)]
         internal static partial int CreateBuffer(int device, double size, double usage, bool mappedAtCreation);
@@ -68,13 +71,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         internal static partial void WriteBuffer(int queue, int buffer, double bufferOffset, [JSMarshalAs<JSType.MemoryView>] Span<byte> data);
 
         [JSImport("writeTexture", ModuleName)]
-        internal static partial void WriteTexture(int queue, int texture, int mipLevel, int originX, int originY, [JSMarshalAs<JSType.MemoryView>] Span<byte> data, int bytesPerRow, int rowsPerImage, int width, int height);
+        internal static partial void WriteTexture(int queue, string descJson, [JSMarshalAs<JSType.MemoryView>] Span<byte> data);
 
         [JSImport("createShaderModule", ModuleName)]
         internal static partial int CreateShaderModule(int device, string code);
 
         [JSImport("createRenderPipeline", ModuleName)]
         internal static partial int CreateRenderPipeline(int device, string descJson);
+
+        [JSImport("createComputePipeline", ModuleName)]
+        internal static partial int CreateComputePipeline(int device, string descJson);
+
+        [JSImport("createBindGroupLayout", ModuleName)]
+        internal static partial int CreateBindGroupLayout(int device, string entriesJson);
+
+        [JSImport("createPipelineLayout", ModuleName)]
+        internal static partial int CreatePipelineLayout(int device, string layoutsJson);
 
         [JSImport("getBindGroupLayout", ModuleName)]
         internal static partial int GetBindGroupLayout(int pipeline, int groupIndex);
@@ -89,39 +101,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         internal static partial int CreateCommandEncoder(int device);
 
         [JSImport("beginRenderPass", ModuleName)]
-        internal static partial int BeginRenderPass(int encoder, int colorView, int resolveView, string loadOp, string storeOp,
-            double r, double g, double b, double a, int depthView, string depthLoadOp, string depthStoreOp, double depthClearValue);
+        internal static partial int BeginRenderPass(int encoder, string descJson);
 
-        [JSImport("setPipeline", ModuleName)]
-        internal static partial void SetPipeline(int pass, int pipeline);
+        [JSImport("beginComputePass", ModuleName)]
+        internal static partial int BeginComputePass(int encoder);
 
-        [JSImport("setBindGroup", ModuleName)]
-        internal static partial void SetBindGroup(int pass, int groupIndex, int group);
-
-        [JSImport("setVertexBuffer", ModuleName)]
-        internal static partial void SetVertexBuffer(int pass, int slot, int buffer, double offset, double size);
-
-        [JSImport("setIndexBuffer", ModuleName)]
-        internal static partial void SetIndexBuffer(int pass, int buffer, string format, double offset, double size);
-
-        [JSImport("drawIndexed", ModuleName)]
-        internal static partial void DrawIndexed(int pass, int indexCount, int instanceCount, int firstIndex, int baseVertex, int firstInstance);
-
-        [JSImport("setScissorRect", ModuleName)]
-        internal static partial void SetScissorRect(int pass, int x, int y, int width, int height);
-
-
-        [JSImport("setViewport", ModuleName)]
-        internal static partial void SetViewport(int pass, float x, float y, float width, float height, float minDepth, float maxDepth);
-
-        [JSImport("endPass", ModuleName)]
-        internal static partial void EndPass(int pass);
+        /// <summary>Recorded encoder and pass commands, replayed in order (Wgpu.Browser.cs Op).</summary>
+        [JSImport("runPassCommands", ModuleName)]
+        internal static partial void RunPassCommands([JSMarshalAs<JSType.MemoryView>] Span<double> commands);
 
         [JSImport("finishEncoder", ModuleName)]
         internal static partial int FinishEncoder(int encoder);
 
         [JSImport("submit", ModuleName)]
-        internal static partial void Submit(int queue, int commandBuffer);
+        internal static partial void Submit(int queue, [JSMarshalAs<JSType.MemoryView>] Span<int> commandBuffers);
+
+        [JSImport("outstandingWork", ModuleName)]
+        internal static partial int OutstandingWork();
+
+        // ---- buffer maps (Wgpu.Browser.cs: a mapped range is a copy in wasm memory) ----
+
+        [JSImport("mapAsync", ModuleName)]
+        internal static partial void MapAsync(int buffer, int mode, double offset, double size);
+
+        [JSImport("mapState", ModuleName)]
+        internal static partial int MapState(int buffer);
+
+        [JSImport("mappedSize", ModuleName)]
+        internal static partial double MappedSize(int buffer);
+
+        [JSImport("readMapped", ModuleName)]
+        internal static partial void ReadMapped(int buffer, double offset, [JSMarshalAs<JSType.MemoryView>] Span<byte> destination);
+
+        [JSImport("writeMapped", ModuleName)]
+        internal static partial void WriteMapped(int buffer, double offset, [JSMarshalAs<JSType.MemoryView>] Span<byte> source);
+
+        [JSImport("unmap", ModuleName)]
+        internal static partial void Unmap(int buffer);
+
+        // ---- error scopes ----
+
+        [JSImport("pushErrorScope", ModuleName)]
+        internal static partial void PushErrorScope(int device, int filter);
+
+        [JSImport("popErrorScope", ModuleName)]
+        internal static partial int PopErrorScope(int device);
+
+        [JSImport("errorScopeState", ModuleName)]
+        internal static partial int ErrorScopeState(int scope);
+
+        [JSImport("takeErrorScopeMessage", ModuleName)]
+        internal static partial string TakeErrorScopeMessage(int scope);
 
         // Task<byte[]> is not supported by the JSImport generator: the async half
         // parks the bytes JS-side and returns a handle; TakeBytes fetches them.

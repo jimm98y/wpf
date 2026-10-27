@@ -4,6 +4,8 @@
 // Objective-C runtime P/Invoke, same style as the WPF fork's CocoaWindow. Presentation is a
 // CoreGraphics bitmap for now; a WebGPU-texture path is the later swap.
 
+extern alias WindowsBase;
+
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -202,7 +204,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private Rectangle? GetCaretRect(int ox, int oy)
     {
-        if (!_driver.GetCaret(out int cx, out int cy, out int cw, out int ch)) return null;
+        if (!_driver.GetCaret(_form.Handle, out int cx, out int cy, out int cw, out int ch)) return null;
         if ((BlinkMs() / 530) % 2 != 0) return null;   // ~530ms blink
         return new Rectangle(cx - ox, cy - oy, Math.Max(1, cw), ch);
     }
@@ -210,7 +212,7 @@ internal sealed class CocoaHost : IWinFormsHost
     // Caret on/off state only (no position) — the cheap change-check for present-on-change.
     private bool CaretOn()
     {
-        if (!_driver.GetCaret(out _, out _, out _, out _)) return false;
+        if (!_driver.GetCaret(_form.Handle, out _, out _, out _, out _)) return false;
         return (BlinkMs() / 530) % 2 == 0;
     }
 
@@ -1397,7 +1399,7 @@ internal sealed class CocoaHost : IWinFormsHost
     // Overlay the blinking text caret onto the composite (the backing bitmaps don't contain it).
     private void DrawCaret(Bitmap dest)
     {
-        if (!_driver.GetCaret(out int x, out int y, out int w, out int h)) return;
+        if (!_driver.GetCaret(_form.Handle, out int x, out int y, out int w, out int h)) return;
         if ((BlinkMs() / 530) % 2 != 0) return;   // ~530ms blink
         w = Math.Max(1, w);
         using var g = Graphics.FromImage(dest);
@@ -1523,6 +1525,7 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static readonly System.Collections.Generic.List<CocoaHost> s_live = new();
     private static Action<IntPtr> s_wpfDispatch;
+    private static Action<IntPtr, IntPtr> s_wpfKeyTo;
     private static volatile bool s_wpfLoaded;
 
     static CocoaHost()
@@ -1577,6 +1580,8 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static bool RouteFromWpf(IntPtr evt)
     {
+        if (KeyTrace.On && (nint)Send(evt, Sel("type")) is 10 or 11)
+            KeyTrace.Log($"cocoa key event (from WPF's pump) code {(nint)Send(evt, Sel("keyCode"))} window 0x{Send(evt, Sel("window")):x} host {(HostFor(Send(evt, Sel("window"))) != null)}");
         if (BlockedByModal(evt)) return true;
         CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
         if (host == null) return FilterEmbeddedPress(evt);
@@ -1586,6 +1591,11 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private static void Route(IntPtr evt)
     {
+        if (KeyTrace.On && (nint)Send(evt, Sel("type")) is 10 or 11)
+        {
+            IntPtr w = Send(evt, Sel("window"));
+            KeyTrace.Log($"cocoa key event type {(nint)Send(evt, Sel("type"))} code {(nint)Send(evt, Sel("keyCode"))} window 0x{w:x} host {(HostFor(w) != null)} key 0x{Send(App(), Sel("keyWindow")):x} wpfDispatch {(s_wpfDispatch != null)} blocked {BlockedByModal(evt)}");
+        }
         if (BlockedByModal(evt)) return;
         CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
         if (host != null) host.HandleEvent(evt);
@@ -2035,6 +2045,17 @@ internal sealed class CocoaHost : IWinFormsHost
     private void HandleKey(IntPtr evt, nint type)
     {
         if (_driver is not XplatUIWebGpu d) return;
+        // The keyboard's messages go to the focus window (GetFocus), whichever window AppKit made key:
+        // with a hosted WPF window focused (an ElementHost's, clicked), the form is still the key window,
+        // and the keys went to the form's WinForms controls -- Delete over app's display did nothing.
+        IntPtr focus = WindowsBase::MS.Internal.Interop.PlatformFocus.GetFocus();
+        if (focus != IntPtr.Zero && Control.ForeignChildOwner(focus) != null
+            && (s_wpfKeyTo ??= AppContext.GetData("WpfWebGpu.CocoaWindow.DispatchKeyTo") as Action<IntPtr, IntPtr>) is { } keyTo)
+        {
+            if (KeyTrace.On) KeyTrace.Log($"cocoa key event to the focus window 0x{focus:x} (hosted)");
+            keyTo(evt, focus);
+            return;
+        }
         ulong flags = (ulong)(nint)Send(evt, Sel("modifierFlags"));
         const ulong Shift = 1UL << 17, Ctrl = 1UL << 18, Option = 1UL << 19, Command = 1UL << 20;
         bool control = (flags & (Ctrl | Command)) != 0;

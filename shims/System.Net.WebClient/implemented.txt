@@ -1,0 +1,12 @@
+T:System.Net.DownloadDataCompletedEventArgs
+T:System.Net.DownloadProgressChangedEventArgs
+T:System.Net.DownloadStringCompletedEventArgs
+T:System.Net.OpenReadCompletedEventArgs
+T:System.Net.OpenWriteCompletedEventArgs
+T:System.Net.UploadDataCompletedEventArgs
+T:System.Net.UploadFileCompletedEventArgs
+T:System.Net.UploadProgressChangedEventArgs
+T:System.Net.UploadStringCompletedEventArgs
+T:System.Net.UploadValuesCompletedEventArgs
+T:System.Net.WebClient
+T:System.Net.WriteStreamClosedEventArgs

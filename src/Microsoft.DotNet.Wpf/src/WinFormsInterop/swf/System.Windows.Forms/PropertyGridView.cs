@@ -1456,6 +1456,7 @@ namespace System.Windows.Forms.PropertyGridInternal {
 				get {
 					CreateParams cp = base.CreateParams;
 					cp.Style = unchecked ((int)(WindowStyles.WS_POPUP | WindowStyles.WS_CLIPSIBLINGS | WindowStyles.WS_CLIPCHILDREN));
+					cp.ClassStyle |= (int)XplatUIWin32.ClassStyle.CS_DROPSHADOW;   // as WinForms' DropDownHolder asks for one
 					cp.ExStyle |= (int)(WindowExStyles.WS_EX_TOPMOST);				
 					return cp;
 				}

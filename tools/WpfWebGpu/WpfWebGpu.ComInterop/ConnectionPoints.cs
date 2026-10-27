@@ -27,6 +27,7 @@ public static unsafe partial class Com
     /// provider type, made with the object, as built-in COM interop makes it).</summary>
     public static object EventProvider(object self, RuntimeTypeHandle provider)
     {
+        self = Unwrap(self)!;
         Type t = Type.GetTypeFromHandle(provider)!;
         var byType = s_providers.GetValue(self, _ => new Dictionary<Type, object>());
         lock (byType)

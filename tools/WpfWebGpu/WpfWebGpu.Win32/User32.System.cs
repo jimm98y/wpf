@@ -367,11 +367,7 @@ public static unsafe partial class Exports
     [Win32Export("RegisterWindowMessageW")] public static uint RegisterWindowMessageW(char* name) => RegisterMessage(ReadUtf16(name));
     [Win32Export("RegisterWindowMessage", "RegisterWindowMessageA")] public static uint RegisterWindowMessageBare(byte* name) => RegisterMessage(ReadEither(name));
 
-    // Hooks are accepted and never called: there is no system-wide message stream to hook, and an app
-    // that installs one to watch for activity must not fail to start because of it.
-    [Win32Export("SetWindowsHookExW", "SetWindowsHookEx", "SetWindowsHookExA")] public static nint SetWindowsHookEx(int id, void* proc, nint module, uint thread) => NewHandle(new object());
-    [Win32Export("UnhookWindowsHookEx")] public static int UnhookWindowsHookEx(nint hook) { s_handles.TryRemove(hook, out _); return TRUE; }
-    [Win32Export("CallNextHookEx")] public static nint CallNextHookEx(nint hook, int code, nint w, nint l) => 0;
+    // SetWindowsHookEx / UnhookWindowsHookEx / CallNextHookEx: User32.Hooks.cs.
     [Win32Export("ChangeWindowMessageFilter")] public static int ChangeWindowMessageFilter(uint msg, uint action) => TRUE;
     [Win32Export("ChangeWindowMessageFilterEx")] public static int ChangeWindowMessageFilterEx(nint hwnd, uint msg, uint action, void* status) => TRUE;
 

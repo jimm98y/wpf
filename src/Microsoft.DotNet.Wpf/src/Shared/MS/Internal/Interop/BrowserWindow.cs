@@ -54,6 +54,13 @@ namespace MS.Internal.Interop
         public static BrowserWindow FromHandle(IntPtr handle)
             => s_byHandle.TryGetValue(handle, out BrowserWindow w) ? w : null;
 
+        /// <summary>The window's title: the page's, while it is the frontmost framed window
+        /// (browser-window.js updatePageTitle).</summary>
+        internal static void TitleOf(IntPtr handle, string title)
+        {
+            if (s_byHandle.ContainsKey(handle)) Js.SetWindowTitle((int)handle, title ?? "");
+        }
+
         /// <param name="x">Creation origin in top-left device pixels (borderless windows only;
         /// the main window's canvas is page-positioned).</param>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
@@ -89,7 +96,7 @@ namespace MS.Internal.Interop
             Handle = IntPtr.Zero;
         }
 
-        public void SetContentSize(int width, int height) => Js.SetContentSize((int)Handle, width, height);
+        public void SetContentSize(int width, int height) { _originFrame = -1; Js.SetContentSize((int)Handle, width, height); }
 
         // Device pixels -> content units. Matches the prior in-caller conversion (round(pixels / scale));
         // the browser backend does not have the Retina odd-width issue the macOS path corrects for.
@@ -100,7 +107,7 @@ namespace MS.Internal.Interop
             SetContentSize((int)System.Math.Round(cx / scale), (int)System.Math.Round(cy / scale));
         }
 
-        public void SetFrameOrigin(int xPixels, int yPixels) => Js.SetFrameOrigin((int)Handle, xPixels, yPixels);
+        public void SetFrameOrigin(int xPixels, int yPixels) { _originFrame = -1; Js.SetFrameOrigin((int)Handle, xPixels, yPixels); }
 
         /// <summary>Whether this is a window over the page's own (a dialog): the page's own fills the
         /// page and follows it; this one keeps the place and size it is given.</summary>
@@ -108,7 +115,7 @@ namespace MS.Internal.Interop
 
         /// <summary>The window draws its own frame (a WinForms dialog's title bar and edges): the page
         /// adds no shadow of its own round it.</summary>
-        public void SetOwnFrame() => Js.SetOwnFrame((int)Handle);
+        public void SetOwnFrame() { _originFrame = -1; Js.SetOwnFrame((int)Handle); }
 
         /// <summary>A child window (WS_CHILD) that takes the keyboard when it is pressed, as SetFocus on a
         /// child window does on Windows: an ElementHost's WPF tree, whose keys otherwise went to the
@@ -130,6 +137,10 @@ namespace MS.Internal.Interop
         /// <summary>The parts of the window that show (and take the pointer): x, y, width, height in CSS
         /// pixels from its top-left, four to a rectangle; null for all of it. A child window's clip, as on
         /// Windows (see browser-window.js).</summary>
+        /// <summary>A child window's parent (WS_CHILD): its canvas is kept just above the parent's in the
+        /// page's z-order, as a child window lies on its parent and under the windows above it.</summary>
+        internal void SetParentWindow(IntPtr parent) { if (parent != IntPtr.Zero) Js.SetParentWindow((int)Handle, (int)parent); }
+
         public void SetVisibleRegion(int[] rects) => Js.SetVisibleRegion((int)Handle, rects == null ? "" : string.Join(",", rects));
 
         public void GetContentSize(out int width, out int height)
@@ -250,13 +261,40 @@ namespace MS.Internal.Interop
             return mime => data.TryGetValue(mime, out byte[] bytes) ? bytes : null;
         }
 
+        // A canvas does not move on the page within a frame: its origin is asked of the page once a
+        // frame (PumpEvents counts them). Asked every time, each mouse event and each hosted scene's
+        // frame was two blocking round trips from the app's thread to the page's.
+        private static int s_frame;
+        private int _originFrame = -1, _originX, _originY;
+
         public void GetClientScreenOriginPixels(out int sx, out int sy)
         {
-            sx = Js.GetScreenOriginX((int)Handle);
-            sy = Js.GetScreenOriginY((int)Handle);
+            int frame = System.Threading.Volatile.Read(ref s_frame);
+            if (_originFrame != frame)
+            {
+                _originX = Js.GetScreenOriginX((int)Handle);
+                _originY = Js.GetScreenOriginY((int)Handle);
+                _originFrame = frame;
+            }
+            sx = _originX;
+            sy = _originY;
         }
 
-        public double GetBackingScale() => Js.GetDevicePixelRatio();
+        // the page's pixel ratio, asked once a frame like the origin (it changes only between frames:
+        // a zoom, a move to another display)
+        private static int s_ratioFrame = -1;
+        private static double s_ratio = 1;
+
+        public double GetBackingScale()
+        {
+            int frame = System.Threading.Volatile.Read(ref s_frame);
+            if (s_ratioFrame != frame)
+            {
+                s_ratio = Js.GetDevicePixelRatio();
+                s_ratioFrame = frame;
+            }
+            return s_ratio;
+        }
 
         /// <summary>
         /// The page's animation-frame cadence, which IS the display refresh a browser will give us.
@@ -385,10 +423,83 @@ namespace MS.Internal.Interop
             }
         }
 
+        private static int s_cursorX, s_cursorY;
+        private static bool s_cursorKnown;
+
+        // The modifiers as the page last reported them, with any event over any canvas (Ctrl 1, Shift 2,
+        // Alt 4, Meta 8), and which side of each a key event last said was down (bit per side, left low):
+        // GetKeyState is the thread's keyboard, not the window's, and a page's pointer events say which
+        // modifiers are held. Tracked from WPF's own key reports alone, an Alt pressed while the WinForms
+        // form had the keys read as up in the WPF content it hosts, and Alt+drag never rotated a 3D view.
+        private static int s_modifiers, s_modifierSides;
+        private static bool s_modifiersKnown;
+
+        private static void NoteModifiers(int modifiers)
+        {
+            s_modifiers = modifiers;
+            s_modifiersKnown = true;
+        }
+
+        private static void NoteModifierKey(string code, bool down)
+        {
+            int bit = code switch
+            {
+                "ControlLeft" => 1 << 0, "ControlRight" => 1 << 1, "ShiftLeft" => 1 << 2, "ShiftRight" => 1 << 3,
+                "AltLeft" => 1 << 4, "AltRight" => 1 << 5, "MetaLeft" => 1 << 6, "MetaRight" => 1 << 7,
+                _ => 0,
+            };
+            if (bit == 0) return;
+            if (down) s_modifierSides |= bit;
+            else s_modifierSides &= ~bit;
+        }
+
+        /// <summary>Whether a modifier key (by virtual-key code: VK_SHIFT, VK_LCONTROL, VK_MENU, VK_LWIN,
+        /// ...) is down, as the page last reported it; null for any other key, or before the page has
+        /// reported anything.</summary>
+        internal static bool? ModifierDown(int virtualKey)
+        {
+            if (!s_modifiersKnown) return null;
+            (int held, int side) = virtualKey switch
+            {
+                0x11 => (1, -1), 0xA2 => (1, 0), 0xA3 => (1, 1),     // VK_CONTROL, VK_LCONTROL, VK_RCONTROL
+                0x10 => (2, -1), 0xA0 => (2, 2), 0xA1 => (2, 3),     // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
+                0x12 => (4, -1), 0xA4 => (4, 4), 0xA5 => (4, 5),     // VK_MENU, VK_LMENU, VK_RMENU
+                0x5B => (8, 6), 0x5C => (8, 7),                      // VK_LWIN, VK_RWIN
+                _ => (0, 0),
+            };
+            if (held == 0) return null;
+            if ((s_modifiers & held) == 0) return false;
+            if (side < 0) return true;
+            // which side: as a key event said; held with no key event seen (pressed outside the page), the left
+            int pair = s_modifierSides & (3 << (side & ~1));
+            return pair == 0 ? (side & 1) == 0 : (s_modifierSides & (1 << side)) != 0;
+        }
+
+        // For the WinForms driver, which answers Control.MousePosition: the pointer as the page last
+        // reported it over any canvas, the WPF windows' included (x in the low half, y in the high;
+        // long.MinValue before the first event). It heard of the pointer only over its own windows,
+        // and a menu popped up at the cursor over a hosted WPF scene went where it had last been.
+        static BrowserWindow()
+        {
+            AppContext.SetData("WpfWebGpu.BrowserWindow.Cursor",
+                (Func<long>)(() => s_cursorKnown ? ((long)s_cursorY << 32) | (uint)s_cursorX : long.MinValue));
+        }
+
+        /// <summary>GetCursorPos: the pointer's last place over one of the app's canvases, in screen
+        /// device pixels -- the space ClientToScreen maps into. A context menu opened with no target
+        /// to place it by goes where this says; answering nothing put every one in the corner.</summary>
+        internal static bool TryGetCursorPixels(out int x, out int y)
+        {
+            x = s_cursorX;
+            y = s_cursorY;
+            return s_cursorKnown;
+        }
+
         /// <summary>Drains DOM events queued by browser-window.js and raises the corresponding
         /// managed events. Called once per dispatcher pump tick on the browser.</summary>
         public static void PumpEvents()
         {
+            System.Threading.Interlocked.Increment(ref s_frame);
             // No windows -> the JS module may not even be registered yet; do nothing.
             if (s_byHandle.Count == 0)
                 return;
@@ -446,14 +557,40 @@ namespace MS.Internal.Interop
                         }
                         // A press on a child window that takes the keyboard gave it the page's keys
                         // (browser-window.js): the focus moved to it, and whichever window had it is told.
+                        // Where the pointer is on the screen: what GetCursorPos answers (a canvas has no
+                        // other way to ask -- the page reports the pointer only with its events).
+                        if (e.TryGetProperty("md", out JsonElement md)) NoteModifiers(md.GetInt32());
+                        if (FromHandle((IntPtr)handle) is BrowserWindow under)
+                        {
+                            under.GetClientScreenOriginPixels(out int ox, out int oy);
+                            s_cursorX = ox + e.GetProperty("x").GetInt32();
+                            s_cursorY = oy + e.GetProperty("y").GetInt32();
+                            s_cursorKnown = true;
+                        }
                         if (kind == 1 && FromHandle((IntPtr)handle) is { TakesKeyboardOnPress: true })
                             PlatformFocus.FocusMovedByPlatform((IntPtr)handle);
+                        int mx = e.GetProperty("x").GetInt32(), my = e.GetProperty("y").GetInt32();
+                        // A window holding the mouse capture (SetCapture: WPF's Mouse.Capture, a WinForms
+                        // control's grab on a press) gets the mouse wherever the pointer is, as Windows
+                        // routes it; the page sends each event to the canvas under the pointer. A panel
+                        // dragged out of app's dock lost its moves and its release over the display
+                        // canvas (a WPF window of its own) and was left mid-drag.
+                        IntPtr captured = MouseCaptureHandle;
+                        if (kind != 3 && captured != IntPtr.Zero && captured != (IntPtr)handle
+                            && FromHandle(captured) is BrowserWindow holder && FromHandle((IntPtr)handle) is BrowserWindow from)
+                        {
+                            from.GetClientScreenOriginPixels(out int fx, out int fy);
+                            holder.GetClientScreenOriginPixels(out int hx, out int hy);
+                            mx += fx - hx;
+                            my += fy - hy;
+                            handle = (int)captured;
+                        }
                         MouseInput?.Invoke(new BrowserMouseMessage(
                             kind,
                             (IntPtr)handle,
                             e.GetProperty("b").GetInt32(),
-                            e.GetProperty("x").GetInt32(),
-                            e.GetProperty("y").GetInt32(),
+                            mx,
+                            my,
                             kind == 3 ? wheel : e.GetProperty("w").GetInt32(),
                             e.GetProperty("ts").GetInt32()));
                         break;
@@ -518,6 +655,9 @@ namespace MS.Internal.Interop
                         break;
 
                     case "k":
+                        NoteModifierKey(e.GetProperty("c").GetString(), e.GetProperty("d").GetBoolean());
+                        NoteModifiers((e.GetProperty("ctl").GetBoolean() ? 1 : 0) | (e.GetProperty("sh").GetBoolean() ? 2 : 0)
+                            | (e.GetProperty("alt").GetBoolean() ? 4 : 0) | (e.GetProperty("meta").GetBoolean() ? 8 : 0));
                         KeyInput?.Invoke(new BrowserKeyMessage(
                             (IntPtr)e.GetProperty("h").GetInt32(),
                             e.GetProperty("d").GetBoolean(),
@@ -566,6 +706,9 @@ namespace MS.Internal.Interop
             [JSImport("destroyWindow", Module)]
             internal static partial void DestroyWindow(int handle);
 
+            [JSImport("setWindowTitle", Module)]
+            internal static partial void SetWindowTitle(int handle, string title);
+
             [JSImport("setContentSize", Module)]
             internal static partial void SetContentSize(int handle, int width, int height);
 
@@ -586,6 +729,9 @@ namespace MS.Internal.Interop
 
             [JSImport("setKeyboardWindow", Module)]
             internal static partial void SetKeyboardWindow(int handle);
+
+            [JSImport("setParentWindow", Module)]
+            internal static partial void SetParentWindow(int handle, int parent);
 
             [JSImport("setVisibleRegion", Module)]
             internal static partial void SetVisibleRegion(int handle, string rects);

@@ -212,12 +212,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         public const uint FeatureIndirectFirstInstance = 0xA, FeatureClipDistances = 0x10, FeaturePrimitiveIndex = 0x15, FeatureShaderF64 = 0x3001D, FeatureTextureAtomic = 0x30028, FeatureDualSource = 0x11;
 
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        private static extern uint wgpuAdapterHasFeature(IntPtr adapter, uint feature);
-
-        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int wgpuAdapterGetLimits(IntPtr adapter, byte* limits);
-
         [StructLayout(LayoutKind.Sequential)]
         private struct DeviceDescriptor
         {
@@ -321,7 +315,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11Device.CreateVertexShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateVertexShader);
             vt.Set(Vtbl.ID3D11Device.CreatePixelShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreatePixelShader);
             vt.Set(Vtbl.ID3D11Device.CreateGeometryShader, (delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)&CreateGeometryShader);
-            vt.Set(Vtbl.ID3D11Device.CreateGeometryShaderWithStreamOutput, (delegate* unmanaged<IntPtr, byte*, nuint, D3D11_SO_DECLARATION_ENTRY*, uint, uint*, uint, uint, IntPtr, IntPtr*, int>)&CreateGeometryShaderWithStreamOutput);
+            vt.Set(Vtbl.ID3D11Device.CreateGeometryShaderWithStreamOutput, NativeTwins.Register(
+                (IntPtr)(delegate* unmanaged<IntPtr, byte*, nuint, D3D11_SO_DECLARATION_ENTRY*, uint, uint*, uint, uint, IntPtr, IntPtr*, int>)&CreateGeometryShaderWithStreamOutput,
+                (Func<IntPtr, IntPtr, nuint, IntPtr, uint, IntPtr, uint, uint, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8, p9) =>
+                    CreateGeometryShaderWithStreamOutputImpl(p0, (byte*)p1, p2, (D3D11_SO_DECLARATION_ENTRY*)p3, p4, (uint*)p5, p6, p7, p8, (IntPtr*)p9))));
             vt.Set(Vtbl.ID3D11Device.CreateBlendState, (delegate* unmanaged<IntPtr, D3D11_BLEND_DESC*, IntPtr*, int>)&CreateBlendState);
             vt.Set(Vtbl.ID3D11Device.CreateDepthStencilState, (delegate* unmanaged<IntPtr, D3D11_DEPTH_STENCIL_DESC*, IntPtr*, int>)&CreateDepthStencilState);
             vt.Set(Vtbl.ID3D11Device.CreateRasterizerState, (delegate* unmanaged<IntPtr, D3D11_RASTERIZER_DESC*, IntPtr*, int>)&CreateRasterizerState);
@@ -493,6 +490,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static int CreateGeometryShaderWithStreamOutput(IntPtr self, byte* bytecode, nuint length, D3D11_SO_DECLARATION_ENTRY* decl, uint entries,
                                                                  uint* strides, uint numStrides, uint rasterized, IntPtr linkage, IntPtr* shader)
+            => CreateGeometryShaderWithStreamOutputImpl(self, bytecode, length, decl, entries, strides, numStrides, rasterized, linkage, shader);
+
+        // CreateGeometryShaderWithStreamOutput's body, and its managed twin's (NativeTwins.cs)
+        private static int CreateGeometryShaderWithStreamOutputImpl(IntPtr self, byte* bytecode, nuint length, D3D11_SO_DECLARATION_ENTRY* decl, uint entries,
+                                                                     uint* strides, uint numStrides, uint rasterized, IntPtr linkage, IntPtr* shader)
         {
             var d = Self(self);
             if (d == null || bytecode == null || length < 32 || (entries > 0 && decl == null) || entries > 64) return HResult.E_INVALIDARG;

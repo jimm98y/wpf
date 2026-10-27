@@ -35,6 +35,74 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(255, bmp.GetPixel(37, 27).A);       // outside it: cleared black
         }
 
+        /// <summary>PopupShadow.PaintShadow, step for step, on a shadow the size DotNetBar gives one
+        /// (the menu less two, put five down and right of it): the strip it leaves is the five
+        /// pixels along the right and bottom edges, and everything left of and above them is
+        /// transparent, under the menu.</summary>
+        [Fact]
+        public void PopupShadowsBitmap_IsAFivePixelStripOnTheRightAndBottom()
+        {
+            const int W = 138, H = 90;
+            using var bmp = PaintPopupShadow(W, H);
+            var row = new System.Text.StringBuilder();
+            for (int x = W - 8; x < W; x++) row.Append(bmp.GetPixel(x, H / 2).A).Append(' ');
+            var col = new System.Text.StringBuilder();
+            for (int y = H - 8; y < H; y++) col.Append(bmp.GetPixel(W / 2, y).A).Append(' ');
+            Assert.True(bmp.GetPixel(W - 6, H / 2).A == 0 && bmp.GetPixel(W - 5, H / 2).A > 0
+                && bmp.GetPixel(W / 2, H - 6).A == 0 && bmp.GetPixel(W / 2, H - 5).A > 0, $"row: {row} col: {col}");
+        }
+
+        private static Bitmap PaintPopupShadow(int width, int height)
+        {
+            var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            using var g = Graphics.FromImage(bmp);
+            var region = new Region();
+            var path = new GraphicsPath();
+            var r = new Rectangle(0, 0, width, height);
+            path.StartFigure();
+            path.AddLine(r.Right - 5, r.Top, r.Right, r.Top);
+            path.AddLine(r.Right, r.Top, r.Right, r.Top + 5);
+            path.AddLine(r.Right, r.Top + 5, r.Right - 5, r.Top);
+            path.CloseFigure();
+            path.StartFigure();
+            path.AddLine(r.Left, r.Bottom - 5 - 1, r.Left, r.Bottom);
+            path.AddLine(r.Left, r.Bottom, r.Left + 5, r.Bottom);
+            path.AddLine(r.Left + 5, r.Bottom, r.Left, r.Bottom - 5);
+            path.CloseFigure();
+            path.StartFigure();
+            path.AddRectangle(new Rectangle(0, 0, r.Width - 5, r.Height - 5));
+            path.CloseFigure();
+            region.Xor(path);
+            g.SetClip(region, CombineMode.Replace);
+            path.Dispose();
+            region.Dispose();
+            g.Clear(Color.Transparent);
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Color.Black);
+            r.Width--;
+            r.Height--;
+            Color[] colors = { Color.FromArgb(14, Color.Black), Color.FromArgb(43, Color.Black), Color.FromArgb(84, Color.Black), Color.FromArgb(113, Color.Black), Color.FromArgb(128, Color.Black) };
+            for (int i = 0; i < 4; i++)
+            {
+                using var pen = new Pen(colors[i], 1);
+                using (var p = EdgePath(r, 4 - i)) g.DrawPath(pen, p);
+                r.Inflate(-1, -1);
+            }
+            return bmp;
+        }
+
+        private static GraphicsPath EdgePath(Rectangle r, int d)
+        {
+            var p = new GraphicsPath();
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            p.AddLine(r.Right, r.Y + d, r.Right, r.Bottom - d);
+            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            p.AddLine(r.Right - d, r.Bottom, r.X, r.Bottom);
+            p.AddLine(r.X, r.Bottom, r.X, r.Top);
+            return p;
+        }
+
         [Fact]
         public void GetHbitmap_OverTransparentBlack_KeepsTheAlphaPremultiplied()
         {

@@ -65,6 +65,11 @@ internal static class WpfWebGpuWasmBoot
         var seen = new System.Collections.Generic.HashSet<string>();
         Action<string, string> logOnce = (key, message) => { lock (seen) if (seen.Add(key)) Console.WriteLine(message); };
         win32.GetType("WpfWebGpu.Win32.Exports")?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, new object[] { logOnce });
+        // WPFRUN_SCREENSHOTS=<dir> (?env=WPFRUN_SCREENSHOTS=/shots on the page; diagnostics): what `wpfrun run
+        // --screenshots` starts on a desktop -- with WPFRUN_DUMP_WINDOWS=1 its window and control dumps
+        // go to the console every few seconds, the page's only way to see where WinForms laid things out.
+        if (Environment.GetEnvironmentVariable("WPFRUN_SCREENSHOTS") is { Length: > 0 } shots)
+            win32.GetType("WpfWebGpu.Win32.Screenshots")?.GetMethod("Start", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, new object[] { shots, 5 });
     }
 
     /// <summary>

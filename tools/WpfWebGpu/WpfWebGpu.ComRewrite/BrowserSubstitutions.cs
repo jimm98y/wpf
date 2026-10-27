@@ -1,8 +1,9 @@
 // An app's calls to members .NET's browser build refuses for settings the browser takes care of itself,
 // rewritten at build onto WpfWebGpu.ComInterop's BrowserApis (Documentation/pinvoke-rewriter.md). A method
 // of BrowserApis named <Type>_<member> stands in for that member: Type's short name, the member's own name
-// (set_KeepAliveInterval, get_DefaultConnectionLimit), the instance first for an instance member. So the
-// table is BrowserApis itself, and a member is supported by adding its method there.
+// (set_KeepAliveInterval, get_DefaultConnectionLimit), the instance first for an instance member, and
+// <Type>_new for a constructor (its newobj becomes the call). So the table is BrowserApis itself, and a
+// member is supported by adding its method there.
 
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -13,8 +14,12 @@ public sealed class BrowserSubstitutions
 {
     private static readonly HashSet<string> s_types = new(StringComparer.Ordinal)
     {
-        "System.Net.WebSockets.ClientWebSocketOptions", "System.Net.ServicePointManager", "System.Runtime.InteropServices.Marshal",
+        "System.Net.WebSockets.ClientWebSocketOptions", "System.Runtime.InteropServices.Marshal",
         "System.Environment",
+        // what Ab3d.DXEngine's licence check decrypts and verifies with (and Telerik's, Ab2d's readers')
+        "System.Security.Cryptography.DES", "System.Security.Cryptography.RSACryptoServiceProvider", "System.Security.Cryptography.RSA",
+        // what app keeps its configuration secrets with (IcoSecurityCryptography), SharpZipLib's AES entries
+        "System.Security.Cryptography.Aes",
     };
 
     private readonly ModuleDefinition _apis;
@@ -51,9 +56,10 @@ public sealed class BrowserSubstitutions
     private MethodDefinition? For(MethodReference r)
     {
         if (!s_types.Contains(r.DeclaringType.FullName)) return null;
-        int count = r.Parameters.Count + (r.HasThis ? 1 : 0);
+        bool ctor = r.Name == ".ctor";
+        int count = r.Parameters.Count + (r.HasThis && !ctor ? 1 : 0);
         MethodReference e = r is GenericInstanceMethod g ? g.ElementMethod : r;
-        return _byMember.TryGetValue(Key(r.DeclaringType.Name, r.Name, count, e.GenericParameters.Count), out var m) ? m : null;
+        return _byMember.TryGetValue(Key(r.DeclaringType.Name, ctor ? "new" : r.Name, count, e.GenericParameters.Count), out var m) ? m : null;
     }
 
     /// <summary>Whether <paramref name="module"/> calls a member this substitutes (metadata only).</summary>
@@ -69,7 +75,7 @@ public sealed class BrowserSubstitutions
                 if (!m.HasBody) continue;
                 foreach (Instruction i in m.Body.Instructions)
                 {
-                    if ((i.OpCode != OpCodes.Call && i.OpCode != OpCodes.Callvirt) || i.Operand is not MethodReference r || For(r) is not { } stand) continue;
+                    if ((i.OpCode != OpCodes.Call && i.OpCode != OpCodes.Callvirt && i.OpCode != OpCodes.Newobj) || i.Operand is not MethodReference r || For(r) is not { } stand) continue;
                     i.OpCode = OpCodes.Call;
                     MethodReference to = module.ImportReference(stand);
                     if (r is GenericInstanceMethod g)

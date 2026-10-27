@@ -298,9 +298,11 @@ namespace Microsoft.Win32
             string path = FileName;
             if (string.IsNullOrEmpty(path)) return false;
 
+            // the page sends a saved file on to where the user chose by itself, once it has been written
+            // (or offers it as a download where it has no save picker): nothing is left to do here
             if (OperatingSystem.IsBrowser())
             {
-                return BrowserDialogs.OfferDownload(path, MimeTypeForExtension(path));
+                return true;
             }
 
             if (OperatingSystem.IsIOS())

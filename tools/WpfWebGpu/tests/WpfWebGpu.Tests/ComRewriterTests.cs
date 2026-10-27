@@ -1186,6 +1186,25 @@ public sealed unsafe class ComRewriterTests
     }
 
     [Fact]
+    public void ACast_WithoutDynamicCasts_HandsOutTheInterfacesProxy()
+    {
+        // what Mono (the browser) does: it never asks an IDynamicInterfaceCastable, so a cast of the native
+        // object is its I.ComProxy, calling through the same vtable
+        AppContext.SetSwitch("WpfWebGpu.ComInterop.ProxyCasts", true);
+        try
+        {
+            Assert.Equal(5, WithCalc(0, p => (int)Run("Add", p, 2, 3)!));
+            Assert.Equal(42, WithCalc(0, p => (int)Run("Twice", p, 21)!));
+            Assert.Equal(17, WithCalc(17, p => (int)Run("OtherValue", p)!));
+            Assert.Equal(1009, WithCalc(9, p => (int)Run("ValueOfOther", p)!));
+            Assert.Equal(33, WithCalc(0, p => (int)Run("MadeOther", p, 33)!));
+            Assert.False(WithCalc(0, p => (bool)Run("CastsToMissing", p)!));
+            Assert.Equal("Hi there", WithCalc(0, p => (string)Run("Greet", p, "there")!));
+        }
+        finally { AppContext.SetSwitch("WpfWebGpu.ComInterop.ProxyCasts", false); }
+    }
+
+    [Fact]
     public void SafeArrays_InRetvalByReferenceAndInAVariant()
     {
         // laid out as the SDK's (FADF_HAVEVARTYPE, VT_I4, zero-based), read raw by native code

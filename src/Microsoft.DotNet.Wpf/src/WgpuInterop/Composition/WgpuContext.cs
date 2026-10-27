@@ -262,6 +262,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     static string SVs(WGPUStringView v) => v.data == null ? "" : System.Text.Encoding.UTF8.GetString(v.data, (int)v.length);
                     ctx.AdapterDescription = $"backend={info.backendType} type={info.adapterType} device='{SVs(info.device)}' desc='{SVs(info.description)}'";
                 }
+                // The device was made at boot (WebGPU's requestDevice is a Promise) with what the
+                // descriptor would ask for -- the Direct3D shim's features and the adapter's limits
+                // (wgpu-interop.js requestDevice); asking for the descriptor is how its maker learns
+                // what the device has (D3DDevice.CreateGpu).
+                deviceDescriptor?.Invoke(ctx.Adapter);
                 ctx.Device = (IntPtr)WgpuBrowser.DeviceHandle;
                 ctx.Queue = wgpuDeviceGetQueue(ctx.Device);
                 return ctx;
@@ -438,23 +443,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        private sealed class MapReadState { public volatile bool Done, Ok; }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
+        private static void OnMapRead(WGPUMapAsyncStatus status, WGPUStringView message, IntPtr u1, IntPtr u2) => MapReadDone(status, message, u1, u2);
+
+        // OnMapRead's body, also its managed twin (Wgpu.Callbacks.cs)
+        private static void MapReadDone(WGPUMapAsyncStatus status, WGPUStringView message, IntPtr u1, IntPtr u2)
+        {
+            if (GCHandle.FromIntPtr(u1).Target is not MapReadState s) return;
+            s.Ok = status == WGPUMapAsyncStatus.Success;
+            s.Done = true;
+        }
+
         /// <summary>Maps a MapRead buffer (driving the device queue) and returns its bytes.</summary>
         public byte[] MapRead(IntPtr buffer, ulong size)
         {
-            bool done = false, ok = false;
-            WGPUBufferMapCallback cb = (status, message, u1, u2) =>
+            var state = new MapReadState();
+            var h = GCHandle.Alloc(state);
+            try
             {
-                ok = status == WGPUMapAsyncStatus.Success;
-                done = true;
-            };
-            var info = new WGPUBufferMapCallbackInfo
-            {
-                mode = WGPUCallbackMode.AllowProcessEvents,
-                callback = Marshal.GetFunctionPointerForDelegate(cb),
-            };
-            wgpuBufferMapAsync(buffer, WGPUMapMode.Read, 0, (nuint)size, info);
-            for (int i = 0; i < 2000 && !done; i++) wgpuDevicePoll(Device, WGPU_TRUE, null);
-            GC.KeepAlive(cb);
+                var info = new WGPUBufferMapCallbackInfo
+                {
+                    mode = WGPUCallbackMode.AllowProcessEvents,
+                    callback = MapCallback(&OnMapRead, MapReadDone),
+                    userdata1 = GCHandle.ToIntPtr(h),
+                };
+                wgpuBufferMapAsync(buffer, WGPUMapMode.Read, 0, (nuint)size, info);
+                for (int i = 0; i < 2000 && !state.Done; i++) wgpuDevicePoll(Device, WGPU_TRUE, null);
+            }
+            finally { h.Free(); }
+            bool ok = state.Ok;
 
             if (!ok) throw new InvalidOperationException("Buffer map failed.");
 

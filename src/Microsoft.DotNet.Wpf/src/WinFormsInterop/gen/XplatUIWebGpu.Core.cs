@@ -182,6 +182,26 @@ namespace System.Windows.Forms
 			return h == null ? 0 : (((long)h.width << 32) | (uint)h.height);
 		}
 
+		/// <summary>The top-level windows composited over <paramref name="form"/> -- its menus, drop-downs and
+		/// popups, the topmost windows -- as screen rectangles. They lie over a child window of the form's (an
+		/// ElementHost's WPF view), as top-level windows lie over a child window on Windows: what of the view
+		/// they cover neither shows nor takes the pointer.</summary>
+		internal List<Rectangle> WindowsOver(IntPtr form)
+		{
+			var over = new List<Rectangle>();
+			foreach (IntPtr k in new List<IntPtr>(backing.Keys))
+			{
+				if (k == form) continue;
+				Hwnd h = Hwnd.ObjectFromHandle(k);
+				if (h == null || h.parent != null || !h.visible || IsParkedChild(h) || IsOtherHostsForm(k, form)) continue;
+				if (!IsPopupWindow(k) && !_topmost.Contains(k)) continue;
+				if (h.width <= 0 || h.height <= 0) continue;
+				Point p = ScreenLocation(h);
+				over.Add(new Rectangle(p.X, p.Y, h.width, h.height));
+			}
+			return over;
+		}
+
 		internal long[] GetPresentWindows(IntPtr form)
 		{
 			List<IntPtr> vis = CollectAll(form);
@@ -821,9 +841,8 @@ namespace System.Windows.Forms
 			_cursorX = screenX;
 			_cursorY = screenY;
 			if (target == IntPtr.Zero) return;
-			if (message == Msg.WM_MOUSEMOVE) TrackHover(target);
 			Hwnd h = Hwnd.ObjectFromHandle(target);
-			if (h == null) return;
+			if (h == null) { if (message == Msg.WM_MOUSEMOVE) TrackHover(target); return; }
 			// Windows gives a disabled window no mouse input: a disabled control's message goes to
 			// its parent (WindowFromPoint passes it over), and inside a disabled top-level window --
 			// the owner of a modal dialog -- nothing gets it at all. Delivered regardless, the buttons
@@ -831,9 +850,13 @@ namespace System.Windows.Forms
 			if (!h.Enabled)
 			{
 				while (h != null && !h.enabled && h.parent != null) h = h.parent;
-				if (h == null || !h.Enabled) return;
+				if (h == null || !h.Enabled) { if (message == Msg.WM_MOUSEMOVE) TrackHover(IntPtr.Zero); return; }
 				target = h.Handle;
 			}
+			// The pointer is over the window that gets its input -- not a disabled one it passed over,
+			// which on Windows is told nothing: a disabled button hovered showed its hot state.
+			if (message == Msg.WM_MOUSEMOVE) { TrackHover(target); NoteHover(target, screenX, screenY); }
+			else if (message is Msg.WM_LBUTTONDOWN or Msg.WM_RBUTTONDOWN or Msg.WM_MBUTTONDOWN) _hoverDone = true;   // a press ends the hover, as on Windows
 			Point p = ScreenLocation(h);
 			int cx = screenX - p.X, cy = screenY - p.Y;
 			IntPtr lp = (IntPtr)((cy << 16) | (cx & 0xFFFF));
@@ -843,6 +866,12 @@ namespace System.Windows.Forms
 			// Nothing here did, so no control ever saw a double click: not a list item opening, not a
 			// ribbon caption maximizing its window.
 			message = DoubleClickOf(target, screenX, screenY, message);
+
+			// The thread's WH_MOUSE hooks see it first, as it comes off the queue, and one may discard
+			// it (DotNetBar closes an open menu from its hook on a press anywhere else).
+			bool onFrame = _grabHandle == IntPtr.Zero && InChildFrame(target, h, cx, cy) && NonClientMessage(message) is int;
+			if (MouseHooked(onFrame ? (int)NonClientMessage(message) : (int)message, screenX, screenY, target, onFrame ? HTBORDER : 1))
+				return;
 
 			// Announce a press before delivering it, so a control holding a drop-down open hears about
 			// clicks that are none of its business -- the one thing it needs in order to close.
@@ -887,6 +916,20 @@ namespace System.Windows.Forms
 		/// goes to the window directly, not through the queue, so no filter ever saw a click or a key:
 		/// DotNetBar closes its menus and drop-downs from a filter -- a click outside them, a click on
 		/// an item -- and its File menu could neither be used nor closed. True: a filter took it.</summary>
+		/// <summary>The Win32 shim's thread hooks (SetWindowsHookEx), where it is there to run them: on
+		/// Windows user32 calls them itself and nothing is published.</summary>
+		private static bool MouseHooked(int message, int screenX, int screenY, IntPtr hwnd, int hitTest)
+			=> AppContext.GetData("WpfWebGpu.Win32.MouseHook") is Func<int, int, int, IntPtr, int, bool> hook
+			   && hook(message, screenX, screenY, hwnd, hitTest);
+
+		/// <summary>WH_KEYBOARD: the key, with the keystroke flags its message's lParam has.</summary>
+		private bool KeyHooked(int vkey, bool down)
+		{
+			if (AppContext.GetData("WpfWebGpu.Win32.KeyboardHook") is not Func<int, long, bool> hook) return false;
+			long flags = 1 | ((_modifierKeys & Keys.Alt) != 0 && vkey != 0x12 ? 1L << 29 : 0) | (!down ? 3L << 30 : 0);
+			return hook(vkey, flags);
+		}
+
 		private static bool FilteredOut(ref Message m)
 		{
 			try
@@ -960,6 +1003,7 @@ namespace System.Windows.Forms
 
 			IntPtr handle = NextHandle ();
 			if (frame != Padding.Empty) _frames[handle] = frame;
+			if ((cp.ClassStyle & (int)XplatUIWin32.ClassStyle.CS_DROPSHADOW) != 0 && IsDropShadowEnabled) _dropShadows.Add(handle);
 			_styles[handle] = (cp.Style, cp.ExStyle, cp.menu != null);
 			// A control's own scroll bars and size box are the windows that stand in its non-client
 			// scroll-bar bands when it has them (WS_HSCROLL / WS_VSCROLL).
@@ -1029,6 +1073,7 @@ namespace System.Windows.Forms
 			_reveals.Remove(handle);
 			_frames.Remove(handle);
 			_styles.Remove(handle);
+			_dropShadows.Remove(handle);
 			SetNonClientChild(handle, false);
 			_paintVersion++;   // a window disappeared from the composite
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
@@ -1055,6 +1100,7 @@ namespace System.Windows.Forms
 			_reveals.Remove(handle);
 			_frames.Remove(handle);
 			_styles.Remove(handle);
+			_dropShadows.Remove(handle);
 			SetNonClientChild(handle, false);
 			_paintVersion++;
 			Hwnd.ObjectFromHandle(handle)?.Dispose();
@@ -1481,14 +1527,19 @@ namespace System.Windows.Forms
 			_childFrames.Add(sv, new ChildFrameVisual { Visual = drawn, W = w, H = h, Frame = frame });
 		}
 
-		/// <summary>Give a popup the drop shadow Windows gives it at the window-class level, so
-		/// menus, combo lists, tooltips and drop-down calendars all get one without any of them
-		/// having to know. Drawn in the window's own coordinates, past its right and bottom edges,
-		/// where ApplyWindowClip has left room.</summary>
-		private static void AddPopupShadow(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, Hwnd hwnd)
+		/// <summary>Windows created with CS_DROPSHADOW in their class style (with drop shadows on):
+		/// the popups Windows shades.</summary>
+		private readonly HashSet<IntPtr> _dropShadows = new HashSet<IntPtr>();
+
+		/// <summary>Give a popup the drop shadow Windows gives it at the window-class level
+		/// (CS_DROPSHADOW): menus, combo lists, tooltips and drop-down calendars ask for one. Drawn in
+		/// the window's own coordinates, past its right and bottom edges, where ApplyWindowClip has
+		/// left room. A popup whose class does not ask has none: DotNetBar's menus draw their own,
+		/// a window of its own under the menu, and a second one here stood off the menu's edge.</summary>
+		private void AddPopupShadow(Microsoft.Wpf.Interop.WebGpu.Composition.SceneVisual sv, IntPtr handle, Hwnd hwnd)
 		{
 			if (sv == null || hwnd == null) return;
-			if ((hwnd.initial_style & WindowStyles.WS_POPUP) == 0) return;
+			if ((hwnd.initial_style & WindowStyles.WS_POPUP) == 0 || !_dropShadows.Contains(handle)) return;
 			if (hwnd.width <= 0 || hwnd.height <= 0) return;
 			if (_shadowed.TryGetValue(sv, out _)) return;
 			_shadowed.Add(sv, sv);
@@ -1532,7 +1583,7 @@ namespace System.Windows.Forms
 				// renderer composites it from a texture of its own while this is the scene it hands out.
 				sv.CacheAsSurface = true;
 				Hwnd h = Hwnd.ObjectFromHandle(handle);
-				AddPopupShadow(sv, h);
+				AddPopupShadow(sv, handle, h);
 				Padding frame = HasChildFrame(handle, h) ? FrameOf(handle) : Padding.Empty;
 				if (frame != Padding.Empty) AddChildFrame(sv, handle, h, frame);
 				ApplyWindowClip(sv, h, frame);
@@ -1747,6 +1798,53 @@ namespace System.Windows.Forms
 		internal int TickTimers() => TickTimers(callingThreadOnly: false);
 
 		internal int TickTimers(bool callingThreadOnly)
+		{
+			int hover = callingThreadOnly ? -1 : CheckHover();
+			int timer = TickTimersOnly(callingThreadOnly);
+			return hover < 0 ? timer : timer < 0 ? hover : Math.Min(hover, timer);
+		}
+
+		// ---- WM_MOUSEHOVER ------------------------------------------------------------------------
+		//
+		// A pointer resting on a window for SystemInformation.MouseHoverTime, within the hover rectangle
+		// (MouseHoverSize), gives it WM_MOUSEHOVER -- once, until the pointer moves off or ResetMouseHover
+		// asks again (what TrackMouseEvent's TME_HOVER does, and what Mono's drivers do for every window).
+		// None was ever sent here, so no control ever raised MouseHover: DotNetBar opens a menu's submenu
+		// from its MenuPanel's, and "Show Grid" in app's 3D ribbon never opened.
+
+		private IntPtr _hoverWindow;
+		private int _hoverX, _hoverY;
+		private long _hoverSince;
+		private bool _hoverDone = true;
+
+		private void NoteHover(IntPtr target, int screenX, int screenY)
+		{
+			Size box = SystemInformation.MouseHoverSize;
+			// still within the hover rectangle of the same window: the same hover (or the one already sent)
+			if (target == _hoverWindow && Math.Abs(screenX - _hoverX) <= box.Width / 2 && Math.Abs(screenY - _hoverY) <= box.Height / 2) return;
+			_hoverWindow = target;
+			_hoverX = screenX;
+			_hoverY = screenY;
+			_hoverSince = Timer.StopWatchNowMilliseconds;
+			_hoverDone = target == IntPtr.Zero;
+		}
+
+		/// <summary>Sends a due WM_MOUSEHOVER; the milliseconds until one could be due, -1 for none.</summary>
+		private int CheckHover()
+		{
+			if (_hoverDone || _hoverWindow == IntPtr.Zero) return -1;
+			long left = _hoverSince + SystemInformation.MouseHoverTime - Timer.StopWatchNowMilliseconds;
+			if (left > 0) return (int)left;
+			_hoverDone = true;
+			Hwnd h = Hwnd.ObjectFromHandle(_hoverWindow);
+			if (h == null || !h.visible) return -1;
+			Point origin = ScreenLocation(h);
+			int cx = _hoverX - origin.X, cy = _hoverY - origin.Y;
+			SendMessage(_hoverWindow, Msg.WM_MOUSEHOVER, IntPtr.Zero, (IntPtr)((cy << 16) | (cx & 0xFFFF)));
+			return -1;
+		}
+
+		private int TickTimersOnly(bool callingThreadOnly)
 		{
 			int me = Environment.CurrentManagedThreadId;
 			Timer[] due = null;
@@ -2463,6 +2561,7 @@ namespace System.Windows.Forms
 			// driver posted straight to the focused window's WndProc, so none of it ran -- Tab did
 			// nothing at all, and with nothing moving the focus no control ever showed a focus
 			// rectangle either.
+			if (KeyHooked(vkey, true)) return true;
 			var filtered = Message.Create(target, (int)Msg.WM_KEYDOWN, (IntPtr)vkey, IntPtr.Zero);
 			if (FilteredOut(ref filtered)) return true;
 			Control focused = Control.FromHandle(target);
@@ -2539,6 +2638,7 @@ namespace System.Windows.Forms
 		internal void InjectKeyUp(int vkey)
 		{
 			if (!FocusTakesInput()) return;
+			if (KeyHooked(vkey, false)) return;
 			var m = Message.Create(_focusHandle, (int)Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
 			if (!FilteredOut(ref m)) SendMessage(_focusHandle, Msg.WM_KEYUP, (IntPtr)vkey, IntPtr.Zero);
 		}
@@ -2709,12 +2809,21 @@ namespace System.Windows.Forms
 		{
 			if (InputTrace.On) InputTrace.Log($"capture #{InputTrace.Seq} -> {InputTrace.Describe(hwnd)} (was {InputTrace.Describe(_grabHandle)})");
 			_grabHandle = hwnd;
+			CaptureChanged?.Invoke(hwnd);
 		}
 		internal override void UngrabWindow(IntPtr hwnd)
 		{
 			if (InputTrace.On) InputTrace.Log($"capture #{InputTrace.Seq} released by {InputTrace.Describe(hwnd)} (held by {InputTrace.Describe(_grabHandle)})");
-			if (_grabHandle == hwnd) _grabHandle = IntPtr.Zero;
+			if (_grabHandle == hwnd)
+			{
+				_grabHandle = IntPtr.Zero;
+				CaptureChanged?.Invoke(IntPtr.Zero);
+			}
 		}
+
+		/// <summary>The window holding the mouse changed (Zero: released), for a host whose windows the
+		/// platform routes the mouse to: the window it is in is the platform's capture.</summary>
+		internal static Action<IntPtr> CaptureChanged;
 		/// <summary>Which window holds the mouse (GetCapture). ShowDialog asks, to release it before
 		/// the dialog runs.</summary>
 		internal override void GrabInfo(out IntPtr hwnd, out bool GrabConfined, out Rectangle GrabArea)
@@ -2821,6 +2930,10 @@ namespace System.Windows.Forms
 			if (OperatingSystem.IsMacOS() && !s_syntheticCursor && PresentationHost.Current is CocoaHost && CocoaHost.TryRealCursor(out int mx, out int my)) {
 				x = mx; y = my;
 			}
+			// The browser too: the page reports the pointer over every canvas, a hosted WPF scene's as well.
+			if (OperatingSystem.IsBrowser() && !s_syntheticCursor && AppContext.GetData("WpfWebGpu.BrowserWindow.Cursor") is Func<long> page && page() is long at && at != long.MinValue) {
+				x = (int)(at & 0xFFFFFFFF); y = (int)(at >> 32);
+			}
 			if (InputTrace.On) InputTrace.Log($"cursor #{InputTrace.Seq} asked: real ({x},{y}), last message ({_cursorX},{_cursorY})");
 			if (hwnd == IntPtr.Zero) return;
 			// Asked about a window, Win32 answers in that window's client space.
@@ -2873,13 +2986,31 @@ namespace System.Windows.Forms
 
 		/// <summary>Caret screen rect + logical visibility (the host blinks/draws it).</summary>
 		internal bool GetCaret(out int screenX, out int screenY, out int width, out int height)
+			=> GetCaret(IntPtr.Zero, out screenX, out screenY, out width, out height);
+
+		/// <summary>The caret, when it is in <paramref name="topLevel"/>'s window tree (any tree for
+		/// zero): a host draws the caret of its own form, not the one a dialog over it has.</summary>
+		internal bool GetCaret(IntPtr topLevel, out int screenX, out int screenY, out int width, out int height)
 		{
 			screenX = screenY = width = height = 0;
 			if (!ThreadCaret.Visible || ThreadCaret.Hwnd == IntPtr.Zero) return false;
 			Hwnd h = Hwnd.ObjectFromHandle(ThreadCaret.Hwnd);
 			if (h == null || !h.visible) return false;
+			Hwnd root = h;
+			for (; root.parent != null; root = root.parent)
+				if (!root.parent.visible) return false;   // in a hidden window: not on screen
+			if (topLevel != IntPtr.Zero && root.Handle != topLevel) return false;
 			Point p = ScreenLocation(h);
-			screenX = p.X + ThreadCaret.X; screenY = p.Y + ThreadCaret.Y; width = ThreadCaret.W; height = ThreadCaret.H;
+			// Windows draws the caret in its window's client DC: what lies outside that window's client
+			// area, or outside an ancestor's (a text box scrolled inside a panel), is not drawn. The
+			// overlay went wherever the caret's coordinates were, over the frame and beside the view.
+			var r = new Rectangle(p.X + ThreadCaret.X, p.Y + ThreadCaret.Y, ThreadCaret.W, ThreadCaret.H);
+			for (Hwnd a = h; a != null && a.parent != null; a = a.parent)
+			{
+				r.Intersect(new Rectangle(ScreenLocation(a), a.ClientRect.Size));
+				if (r.Width <= 0 || r.Height <= 0) return false;
+			}
+			screenX = r.X; screenY = r.Y; width = r.Width; height = r.Height;
 			return true;
 		}
 		internal override void RequestNCRecalc(IntPtr hwnd) { }

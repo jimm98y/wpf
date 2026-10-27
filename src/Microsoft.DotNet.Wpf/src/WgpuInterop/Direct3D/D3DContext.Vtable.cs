@@ -75,7 +75,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11DeviceContext.RSSetState, (delegate* unmanaged<IntPtr, IntPtr, void>)&RSSetState);
             vt.Set(Vtbl.ID3D11DeviceContext.RSSetViewports, (delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)&RSSetViewports);
             vt.Set(Vtbl.ID3D11DeviceContext.RSSetScissorRects, (delegate* unmanaged<IntPtr, uint, D3D11_RECT*, void>)&RSSetScissorRects);
-            vt.Set(Vtbl.ID3D11DeviceContext.CopySubresourceRegion, (delegate* unmanaged<IntPtr, IntPtr, uint, uint, uint, uint, IntPtr, uint, D3D11_BOX*, void>)&CopySubresourceRegionSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.CopySubresourceRegion, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, IntPtr, uint, uint, uint, uint, IntPtr, uint, D3D11_BOX*, void>)&CopySubresourceRegionSlot, (Action<IntPtr, IntPtr, uint, uint, uint, uint, IntPtr, uint, IntPtr>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CopySubresourceRegionSlotImpl(p0, p1, p2, p3, p4, p5, p6, p7, (D3D11_BOX*)p8))));
             vt.Set(Vtbl.ID3D11DeviceContext.CopyResource, (delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)&CopyResourceSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.UpdateSubresource, (delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_BOX*, void*, uint, uint, void>)&UpdateSubresourceSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.ClearRenderTargetView, (delegate* unmanaged<IntPtr, IntPtr, float*, void>)&ClearRenderTargetView);
@@ -348,7 +348,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         [UnmanagedCallersOnly]
-        private static void CopySubresourceRegionSlot(IntPtr self, IntPtr dst, uint dstSub, uint x, uint y, uint z, IntPtr src, uint srcSub, D3D11_BOX* box)
+
+        private static void CopySubresourceRegionSlot(IntPtr self, IntPtr dst, uint dstSub, uint x, uint y, uint z, IntPtr src, uint srcSub, D3D11_BOX* box) => CopySubresourceRegionSlotImpl(self, dst, dstSub, x, y, z, src, srcSub, box);
+
+
+        // CopySubresourceRegionSlot's body, and its managed twin's (NativeTwins.cs)
+
+        private static void CopySubresourceRegionSlotImpl(IntPtr self, IntPtr dst, uint dstSub, uint x, uint y, uint z, IntPtr src, uint srcSub, D3D11_BOX* box)
         {
             var c = C(self);
             var d = From<D3DResource>(dst);

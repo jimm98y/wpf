@@ -2660,6 +2660,28 @@ namespace System.Windows.Forms
 				// Nothing but the tab on show to go by, so take its nudge back off.
 				row = new Rectangle (row.X, row.Y + TabRise, row.Width, Math.Max (1, row.Height - TabRise));
 
+			// A MULTILINE control has a row of its own for every line of tabs, each tab standing in
+			// its own: drawing them all on the one measured above stacked two rows of tabs on top of
+			// each other (app's grid settings, twelve tabs in two rows, read "Source dicator
+			// Text Translator ..."). A row is found from a tab in it that is not the one on show;
+			// the one on show always has its row dropped to the front, against the body.
+			Rectangle RowOf (int index)
+			{
+				int line = tab.TabPages [index].Row;
+				for (int j = 0; j < tab.TabCount; j++) {
+					if (j == tab.SelectedIndex || tab.TabPages [j].Row != line)
+						continue;
+					Rectangle r = tab.DrawnTabRect (j);
+					return new Rectangle (row.X, r.Y, row.Width, row.Height);
+				}
+				if (index != tab.SelectedIndex)
+					return new Rectangle (row.X, tab.DrawnTabRect (index).Y, row.Width, row.Height);
+				// Alone in its row: take its nudge back off.
+				return new Rectangle (row.X, tab.DrawnTabRect (index).Y + TabRise, row.Width, row.Height);
+			}
+			if (tab.Multiline && tab.RowCount > 1 && tab.SelectedIndex >= 0 && tab.SelectedIndex < tab.TabCount)
+				row = RowOf (tab.SelectedIndex);
+
 			// The body is the whole control below the row of tabs, framed on all four sides, and its top
 			// edge is the very line the tabs stand on -- one line, not one each. It is the control's own
 			// rectangle and not its display rectangle: the display rectangle is where the page goes,
@@ -2698,15 +2720,16 @@ namespace System.Windows.Forms
 					if (selected != (pass == 1))
 						continue;
 					Rectangle bounds = tab.DrawnTabRect (i);
+					Rectangle strip = tab.Multiline && tab.RowCount > 1 ? RowOf (i) : row;
 					if (bounds.Width <= 0 || bounds.Height <= 0)
 						continue;
 
 					// The one on show stands a little taller and reaches down past the body's edge, so the
 					// two run into one another; the rest stand on that edge.
 					Rectangle face = selected
-						? Rectangle.FromLTRB (bounds.X, row.Y - TabRise, bounds.Right,
+						? Rectangle.FromLTRB (bounds.X, strip.Y - TabRise, bounds.Right,
 									Math.Min (area.Bottom, body.Y + 2))
-						: new Rectangle (bounds.X, row.Y, bounds.Width, row.Height);
+						: new Rectangle (bounds.X, strip.Y, bounds.Width, strip.Height);
 					if (face.Right > area.Right)
 						face.Width = Math.Max (0, area.Right - face.X);
 					if (face.Width <= 0)
@@ -2717,19 +2740,17 @@ namespace System.Windows.Forms
 					// both; the TOP variants on the top row. The TABITEM image has no left border --
 					// neighbours share one -- and the right-edge one stops two columns short.
 					int last = tab.TabCount - 1;
-					bool leftEdge = i == 0, rightEdge = i == last || bounds.Right >= tab.ClientRectangle.Right - 4;
+					// First and last IN ITS ROW, where there is more than one.
+					int line = tab.TabPages [i].Row;
+					bool leftEdge = i == 0 || tab.TabPages [i - 1].Row != line;
+					bool rightEdge = i == last || tab.TabPages [i + 1].Row != line
+						|| bounds.Right >= tab.ClientRectangle.Right - 4;
 					int part = leftEdge && rightEdge ? 4 : rightEdge ? 3 : leftEdge ? 2 : 1;
 					part += 4;
 					int state = selected ? 3 : tab.EnteredTabPage == tab.TabPages [i] ? 2 : 1;
 					Win11Frames.Draw (dc, Win11Frames.Get ("TAB", part, state), face);
 
 					TabPage page = tab.TabPages[i];
-					var format = new StringFormat {
-						Alignment = StringAlignment.Center,
-						LineAlignment = StringAlignment.Center,
-						HotkeyPrefix = System.Drawing.Text.HotkeyPrefix.Show,
-						FormatFlags = StringFormatFlags.NoWrap,
-					};
 					// In the tab's own rectangle rather than the face just drawn, so the label sits at the
 					// same height whether or not its tab is the one standing proud.
 					Color fore = page.Enabled ? tab.ForeColor : ColorGrayText;
@@ -2743,10 +2764,14 @@ namespace System.Windows.Forms
 					// From the tab's BASE left edge: the selected one is drawn standing proud, two pixels
 					// wider to the left, and its caption does not move with the decoration.
 					int capX = bounds.X + (selected ? tab.SelectedDelta.X : 0);
-					dc.DrawStringMono (page.Text, tab.Font, ResPool.GetSolidBrush (fore),
-						       new Rectangle (capX, row.Y + (selected ? -1 : 1),
-						                      Math.Min (capBox, bounds.Width), row.Height),
-						       format);
+					// Drawn as it was measured, with GDI (comctl32's DrawText): GDI+ lays a string out
+					// wider than GDI, and a long caption ran past its tab into the next one
+					// (app's "Advanced Grouping").
+					TextRenderer.DrawText (dc, page.Text, tab.Font,
+						       new Rectangle (capX, strip.Y + (selected ? -1 : 1),
+						                      Math.Min (capBox, bounds.Width), strip.Height),
+						       fore, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+						             | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
 				}
 			}
 

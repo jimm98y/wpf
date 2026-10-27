@@ -136,6 +136,8 @@ namespace MS.Win32
                         if (width > 0 && height > 0) browser.SetContentSizePixels(cw, ch);
                         // A child window takes the keyboard when pressed, as SetFocus on one does there.
                         browser.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
+                        // ...and lies on its parent, under the windows above that (z-order).
+                        if ((style & WS_CHILD) != 0) browser.SetParentWindow(parent);
                         // Route content-size changes to a synthetic WM_SIZE exactly like Cocoa below.
                         browser.Resized += OnCocoaResized;
                         _platformWindow = browser;

@@ -485,6 +485,8 @@ namespace MS.Win32
 
         internal static bool GetCursorPos(ref NativeMethods.POINT pt)
         {
+            if (!System.OperatingSystem.IsWindows())
+                return TryGetCursorPos(ref pt);
             bool returnValue = IntGetCursorPos(ref pt);
             if (!returnValue)
             {
@@ -511,6 +513,23 @@ namespace MS.Win32
                     pt.y = py;
                     return true;
                 }
+
+#if BASE_NATIVEMETHODS || CORE_NATIVEMETHODS || FRAMEWORK_NATIVEMETHODS
+                // The browser and macOS know where it is too: a Popup with nothing to place it by
+                // (a ContextMenu opened from code) goes where this says, and 0,0 was the corner.
+                if (System.OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserWindow.TryGetCursorPixels(out int bx, out int by))
+                {
+                    pt.x = bx;
+                    pt.y = by;
+                    return true;
+                }
+                if (System.OperatingSystem.IsMacOS() && MS.Internal.Interop.CocoaWindow.TryGetCursorPixels(out int mx, out int my))
+                {
+                    pt.x = mx;
+                    pt.y = my;
+                    return true;
+                }
+#endif
 
                 // Elsewhere: report failure, which callers treat as "unknown" and fall back on.
                 pt.x = 0;

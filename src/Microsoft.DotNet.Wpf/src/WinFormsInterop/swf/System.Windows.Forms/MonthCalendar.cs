@@ -852,6 +852,7 @@ namespace System.Windows.Forms {
 					CreateParams cp = base.CreateParams;
 					cp.Style ^= (int) WindowStyles.WS_CHILD;
 					cp.Style |= (int) WindowStyles.WS_POPUP;
+					cp.ClassStyle |= (int)XplatUIWin32.ClassStyle.CS_DROPSHADOW;   // the date picker's drop-down
 					cp.ExStyle |= (int)(WindowExStyles.WS_EX_TOOLWINDOW | WindowExStyles.WS_EX_TOPMOST);
 
 					return cp;

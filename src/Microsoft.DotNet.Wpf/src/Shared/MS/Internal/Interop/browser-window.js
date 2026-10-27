@@ -101,9 +101,10 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
         canvas.style.left = "0px";
         canvas.style.top  = "0px";
     }
-    canvas.style.zIndex = String((borderless || secondary) ? ++zTop : 1);
+    // top-level windows two apart, so a child window's canvas fits just above its parent's (setParentWindow)
+    canvas.style.zIndex = String((borderless || secondary) ? (zTop += 2) : 1);
     host().appendChild(canvas);
-    windows.set(handle, { canvas, borderless, secondary });
+    windows.set(handle, { canvas, borderless, secondary, title: title || "" });
     canvases().set(handle, canvas);
     // A TOP-LEVEL window fills the viewport from the start. The browser has exactly one viewport and
     // no desktop to be a window on, so the only sensible reading of a main window here is the one the
@@ -111,8 +112,28 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
     // opened at whatever size it was designed for (a corner of the page) and only snapped to full size
     // on the first resize event. Popups keep their requested size: they are positioned, not maximized.
     setContentSize(handle, width, height);
-    if (!borderless && title) document.title = title;
+    updatePageTitle();
     installListeners();
+}
+
+// The page's title is the title bar the user would be looking at: the frontmost framed window's that
+// shows -- a dialog's while it is open, its owner's again once it closes. It was set as each window was
+// made and never again, so a closed dialog's title stayed on the page until the next one opened.
+function updatePageTitle() {
+    let best = null, bestZ = -Infinity;
+    for (const [, w] of windows) {                    // in creation order: a later window wins a tie
+        if (w.borderless || !w.title || w.canvas.style.display === "none") continue;
+        const z = Number(w.canvas.style.zIndex) || 0;
+        if (z >= bestZ) { best = w; bestZ = z; }
+    }
+    if (best && document.title !== best.title) document.title = best.title;
+}
+
+export function setWindowTitle(handle, title) {
+    const w = windows.get(handle);
+    if (!w) return;
+    w.title = title || "";
+    updatePageTitle();
 }
 
 // The parts of a window that show, as Windows clips a child window to its ancestors' client areas and
@@ -187,7 +208,38 @@ export function setOwnFrame(handle) {
 export function setWindowVisible(handle, visible) {
     const w = windows.get(handle);
     if (!w) return;
+    const wasHidden = w.canvas.style.display === "none";
     w.canvas.style.display = visible ? "block" : "none";
+    // A popup or dialog shown again comes up over what was made since it was first shown: a menu
+    // DotNetBar keeps and shows again opened under the WPF canvas of a view made after it, and every
+    // click on it went to the view.
+    if (visible && wasHidden && !w.parent && (w.borderless || w.secondary)) raise(handle);
+    updatePageTitle();
+}
+
+// z-order as Windows keeps it for child windows: a child's canvas lies just above its parent's, and goes
+// up with it. A hosted WPF view (an ElementHost's window, a child of its form's) was a canvas of its own,
+// ordered by when it was made -- over every popup made before it, which it then hid from the pointer.
+function raise(handle) {
+    const w = windows.get(handle);
+    if (!w) return;
+    w.canvas.style.zIndex = String(zTop += 2);
+    restackChildren(handle);
+}
+
+function restackChildren(parent) {
+    const pw = windows.get(parent);
+    if (!pw) return;
+    const z = (parseInt(pw.canvas.style.zIndex || "0", 10) || 0) + 1;
+    for (const [h, c] of windows)
+        if (c.parent === parent) { c.canvas.style.zIndex = String(z); restackChildren(h); }
+}
+
+export function setParentWindow(handle, parent) {
+    const w = windows.get(handle);
+    if (!w || !windows.has(parent)) return;
+    w.parent = parent;
+    restackChildren(parent);
 }
 
 export function destroyWindow(handle) {
@@ -197,6 +249,7 @@ export function destroyWindow(handle) {
     windows.delete(handle);
     if (keyWindow === handle) keyWindow = 0;
     canvases().delete(handle);
+    updatePageTitle();
 }
 
 export function setContentSize(handle, width, height) {
@@ -562,6 +615,9 @@ function pushMouse(kind, e, wheel = 0) {
         x: Math.round((e.clientX - r.left) * dpr()),
         y: Math.round((e.clientY - r.top) * dpr()),
         w: wheel,
+        // the modifiers held as the pointer moved: what GetKeyState answers for them, whichever
+        // canvas had the keys when they went down
+        md: (e.ctrlKey ? 1 : 0) | (e.shiftKey ? 2 : 0) | (e.altKey ? 4 : 0) | (e.metaKey ? 8 : 0),
         ts: Math.round(e.timeStamp),
     });
 }
@@ -958,33 +1014,188 @@ export function pickColorAsync(initialHex) {
     });
 }
 
+// ---- the screen's pixels -------------------------------------------------------------------------
+//
+// What GetPixel and a BitBlt from the screen read on Windows: here the screen is the page, and what is
+// on it is the app's canvases. They are drawn into a 2D canvas the size of the area asked for, bottom
+// to top as they are stacked, over the page's own background, and the pixels read back -- an eye
+// dropper over app's display samples what the display shows. x, y, w, h are the screen's device
+// pixels; the answer is the area's pixels, BGRA, top row first, as base64 ("" when nothing can be read).
+export function capturePage(x, y, w, h) {
+    try {
+        const r = dpr();
+        const out = document.createElement("canvas");
+        out.width = w; out.height = h;
+        const g = out.getContext("2d", { willReadFrequently: true });
+        g.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
+        g.fillRect(0, 0, w, h);
+        const canvases = [...windows.values()].map(v => v.canvas)
+            .filter(c => c.isConnected && c.style.display !== "none" && c.width > 0 && c.height > 0)
+            .sort((a, b) => (+a.style.zIndex || 0) - (+b.style.zIndex || 0));
+        for (const c of canvases) {
+            const b = c.getBoundingClientRect();
+            if (b.width <= 0 || b.height <= 0) continue;
+            const kx = c.width / b.width, ky = c.height / b.height;
+            const sx = (x / r - b.left) * kx, sy = (y / r - b.top) * ky;
+            const sw = (w / r) * kx, sh = (h / r) * ky;
+            if (sx + sw <= 0 || sy + sh <= 0 || sx >= c.width || sy >= c.height) continue;
+            g.drawImage(c, sx, sy, sw, sh, 0, 0, w, h);
+        }
+        const rgba = g.getImageData(0, 0, w, h).data;
+        let bin = "";
+        for (let i = 0; i < rgba.length; i += 4)
+            bin += String.fromCharCode(rgba[i + 2], rgba[i + 1], rgba[i], rgba[i + 3]);
+        return btoa(bin);
+    } catch (e) {
+        console.warn("WpfWebGpu: the page's pixels could not be read:", e);
+        return "";
+    }
+}
+
 // ---- file dialogs -----------------------------------------------------------------------------
 //
-// A browser has no file SYSTEM to show a path from, so "open a file" and "save a file" mean
-// something different here and the difference is not hidden:
+// The browser's own pickers, as an application on Windows gets Windows' and one on macOS NSOpenPanel.
+// Where the page can have them (the File System Access API: Chromium, a secure context) they are the
+// real thing -- showOpenFilePicker, showSaveFilePicker, showDirectoryPicker -- and a save writes the
+// file the user chose. Elsewhere an open is an <input type=file> and a save a download.
 //
-//   open  an <input type=file> click. The user picks from their real machine; what comes back is a
-//         NAME and the BYTES, never a path -- the page is never told where the file lives. The bytes
-//         are written into the wasm virtual file system under /wpf-picked, and THAT path is what
-//         FileName returns, so an application that does File.ReadAllBytes(dlg.FileName) works
-//         unchanged. This is the same trick the head already uses to make bundled fonts visible.
-//
-//   save  a download. There is no way to write to a chosen location and no way to learn where the
-//         browser put it, so SaveFileDialog hands back a path inside the same virtual file system;
-//         the application writes there as usual and the head then offers the result as a download.
-//         Calling code does not change; only the last step is a browser gesture rather than a write.
-//
-// showOpenFilePicker (the File System Access API) would give a real handle and a genuine save, but
-// it is Chromium-only and needs a secure context, so the input element is what actually works
-// everywhere. The picker is deliberately NOT reused between calls: a fresh element each time avoids
-// a stale change listener firing an old promise.
+// The application keeps working on paths either way. What is picked is copied into the wasm virtual
+// file system under /wpf-picked, and that path is what the dialog answers; a save answers a path there
+// too, which the application writes as it would any file. The file is then LINKED to what the user
+// chose: a watcher (syncLinked) sees it written -- changed, then left alone for a moment -- and writes
+// it through to the chosen file's handle, or, without the API, offers it as a download. A file opened
+// through the picker is linked as well, so saving over it writes back where it came from, where the
+// browser lets the page write there.
 
 let pickedSequence = 0;
+const linked = new Map();      // vfs path -> { handle, download, seen, pending }
 
-/// Opens the file picker and resolves to a JSON envelope the managed side parses:
+function hasFsAccess() { return typeof window.showOpenFilePicker === "function"; }
+
+// [{ description, extensions: [".gdfx", ...] }] -> the pickers' types; an "all files" group is the
+// picker's own option rather than a type
+function pickerTypes(typesJson) {
+    let groups = [];
+    try { groups = JSON.parse(typesJson || "[]"); } catch { groups = []; }
+    const types = [];
+    for (const g of groups) {
+        const exts = (g.extensions || []).filter(e => /^\.[A-Za-z0-9_+-]+$/.test(e));
+        if (exts.length) types.push({ description: g.description || exts.join(", "), accept: { "application/octet-stream": exts } });
+    }
+    return types;
+}
+
+async function copyIn(file, path) {
+    mkdirp(path.slice(0, path.lastIndexOf("/")));
+    writeFile(path, new Uint8Array(await file.arrayBuffer()));
+}
+
+function link(path, entry) {
+    const f = fs();
+    let mtime = 0;
+    try { mtime = f.stat(path).mtime.getTime(); } catch { }
+    linked.set(path, Object.assign({ seen: mtime, pending: 0 }, entry));
+    if (!syncTimer) syncTimer = setInterval(syncLinked, 700);
+}
+
+let syncTimer = 0;
+async function syncLinked() {
+    const f = fs();
+    if (!f) return;
+    for (const [path, l] of linked) {
+        let st;
+        try { st = f.stat(path); } catch { continue; }
+        const m = st.mtime.getTime();
+        if (m === l.seen) { l.pending = 0; continue; }
+        // written: wait until it has been left alone for a tick, then send it on
+        if (l.pending !== m) { l.pending = m; continue; }
+        l.seen = m; l.pending = 0;
+        const bytes = readFile(path);
+        if (!bytes) continue;
+        try {
+            if (l.handle) {
+                if (l.handle.queryPermission && (await l.handle.queryPermission({ mode: "readwrite" })) !== "granted") {
+                    console.warn(`WpfWebGpu: no permission to write ${l.handle.name}; it stays in the page`);
+                    continue;
+                }
+                const w = await l.handle.createWritable();
+                await w.write(bytes);
+                await w.close();
+            } else if (l.download) {
+                offerDownload(path, "");
+            }
+        } catch (e) {
+            console.warn("WpfWebGpu: a saved file could not be written to the chosen place:", e);
+        }
+    }
+}
+
+// a directory picked whole: its tree copied in, each file linked to its own handle
+async function copyTree(dirHandle, base, names) {
+    for await (const [name, h] of dirHandle.entries()) {
+        const path = `${base}/${name}`;
+        if (h.kind === "directory") { mkdirp(path); await copyTree(h, path, names); }
+        else { await copyIn(await h.getFile(), path); link(path, { handle: h }); }
+    }
+}
+
+/// Opens the picker and resolves to a JSON envelope the managed side parses:
 ///   { "ok": bool, "names": [ "/wpf-picked/3/report.csv", ... ] }
-/// Rejection is never propagated: a cancelled picker is an ordinary answer, not an error.
-export function pickFilesAsync(accept, multiple, directory) {
+/// A directory pick answers the directory's path. Rejection is never propagated: a cancelled picker
+/// is an ordinary answer, not an error.
+export async function pickFilesAsync(accept, multiple, directory, typesJson) {
+    if (hasFsAccess()) {
+        try {
+            const dir = `/wpf-picked/${++pickedSequence}`;
+            mkdirp(dir);
+            if (directory) {
+                const d = await window.showDirectoryPicker({ mode: "readwrite" });
+                const root = `${dir}/${d.name}`;
+                mkdirp(root);
+                await copyTree(d, root, []);
+                return JSON.stringify({ ok: true, names: [root] });
+            }
+            const handles = await window.showOpenFilePicker({ multiple: !!multiple, types: pickerTypes(typesJson), excludeAcceptAllOption: false });
+            const names = [];
+            for (const h of handles) {
+                const path = `${dir}/${h.name}`;
+                await copyIn(await h.getFile(), path);
+                link(path, { handle: h });
+                names.push(path);
+            }
+            return JSON.stringify({ ok: names.length > 0, names });
+        } catch (e) {
+            if (e && e.name !== "AbortError") console.warn("WPF file picker failed:", e);
+            return JSON.stringify({ ok: false, names: [] });
+        }
+    }
+    return pickWithInput(accept, multiple, directory);
+}
+
+/// The save picker: resolves to { "ok": bool, "path": "/wpf-picked/4/report.gdfx" }, the path the
+/// application writes and the watcher sends on to the chosen file (or offers as a download).
+export async function pickSaveAsync(suggestedName, typesJson) {
+    const dir = `/wpf-picked/${++pickedSequence}`;
+    mkdirp(dir);
+    if (typeof window.showSaveFilePicker === "function") {
+        try {
+            const h = await window.showSaveFilePicker({ suggestedName: suggestedName || undefined, types: pickerTypes(typesJson), excludeAcceptAllOption: false });
+            const path = `${dir}/${h.name}`;
+            link(path, { handle: h });
+            return JSON.stringify({ ok: true, path });
+        } catch (e) {
+            if (e && e.name !== "AbortError") console.warn("WPF save picker failed:", e);
+            return JSON.stringify({ ok: false, path: "" });
+        }
+    }
+    const path = `${dir}/${suggestedName || "download"}`;
+    link(path, { download: true });
+    return JSON.stringify({ ok: true, path });
+}
+
+// The fallback: an <input type=file>. The picker is deliberately NOT reused between calls: a fresh
+// element each time avoids a stale change listener firing an old promise.
+function pickWithInput(accept, multiple, directory) {
     return new Promise((resolve) => {
         try {
             const input = document.createElement("input");

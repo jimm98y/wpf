@@ -564,6 +564,13 @@ namespace System.Windows.Interop
 
             try
             {
+                // Off Windows the heads' own raw keys (TranslateAccelerator from a hosting loop).
+                if (!OperatingSystem.IsWindows())
+                {
+                    if (_source == null || _site == null || _source.IsDisposed) return;
+                    handled = ReportMacKeyRaw(GetKeyUpKeyDown((WindowMessage)msg.message), (int)msg.wParam, msg.time);
+                    return;
+                }
                 int virtualKey = GetVirtualKey(msg.wParam, msg.lParam);
                 int scanCode = GetScanCode(msg.wParam, msg.lParam);
                 bool isExtendedKey = IsExtendedKey(msg.lParam);
@@ -854,7 +861,9 @@ namespace System.Windows.Interop
             int virtualKey = MapDomCodeToVirtualKey(msg.Code);
             if (virtualKey != 0)
             {
-                ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, virtualKey, msg.TimestampMs);
+                if (!ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, virtualKey, msg.TimestampMs,
+                                  alt: msg.Alt, repeat: msg.IsRepeat))
+                    return;
             }
 
             // Printable text: KeyboardEvent.key is the composed character ("a", "A", "é"), or a
@@ -938,7 +947,10 @@ namespace System.Windows.Interop
             int virtualKey = MapMacKeyCodeToVirtualKey(msg.KeyCode);
             if (virtualKey != 0)
             {
-                ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, virtualKey, msg.TimestampMs);
+                const ulong Option = 0x80000;   // NSEventModifierFlagOption: Alt
+                if (!ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, virtualKey, msg.TimestampMs,
+                                  alt: (msg.ModifierFlags & Option) != 0))
+                    return;
             }
 
             // Deliver typed characters on key-down, unless a Command/Control shortcut is active or the
@@ -1064,10 +1076,44 @@ namespace System.Windows.Interop
             }
         }
 
-        private void ReportMacKey(RawKeyboardActions action, int virtualKey, int timestamp)
+        /// <summary>A key of a head with no message queue of its own, into WPF. False when the thread's
+        /// message loop took it (see below) and nothing more is to be made of it.</summary>
+        private bool ReportMacKey(RawKeyboardActions action, int virtualKey, int timestamp, bool alt = false, bool repeat = false)
         {
-            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (_source == null || _site == null || _source.IsDisposed) return true;
 
+            // Offered to the thread's message loop first, as the WM_KEYDOWN it stands for: on Windows a
+            // window's messages come off the thread's queue through ComponentDispatcher, which is how a
+            // WinForms loop hosting this tree sees them -- its message filters, DotNetBar's command
+            // shortcuts and its menus' keys among them. The heads' events skipped that, and Delete over a
+            // app display, which its filter turns into the Delete command, did nothing.
+            bool down = (action & RawKeyboardActions.KeyDown) != 0;
+            bool sys = alt && virtualKey != 0x12;
+            int message = down ? (sys ? 0x0104 : 0x0100) : (sys ? 0x0105 : 0x0101);   // WM_(SYS)KEYDOWN / UP
+            long lParam = 1 | (sys ? 1L << 29 : 0) | (repeat || !down ? 1L << 30 : 0) | (!down ? 1L << 31 : 0);
+            var thread = new MSG(_source.Handle, message, (IntPtr)virtualKey, (IntPtr)lParam, timestamp, 0, 0);
+            // Before even that, the thread's WH_KEYBOARD hooks (the Win32 shim's; on Windows user32
+            // calls them itself): one that discards the key leaves nothing for anyone else.
+            if (AppContext.GetData("WpfWebGpu.Win32.KeyboardHook") is Func<int, long, bool> hook && hook(virtualKey, lParam))
+            {
+                System.Windows.Input.Win32KeyboardDevice.TrackMacKey(virtualKey, down);
+                return false;
+            }
+            if (ComponentDispatcher.RaiseThreadMessage(ref thread)) return false;
+
+            // WPF had it already, from the loop (an ElementHost's ProcessCmdKey -> TranslateAccelerator):
+            // the window procedure skips a message it has seen, as on Windows.
+            if (_source.IsRepeatedKeyboardMessage(thread.hwnd, thread.message, thread.wParam, thread.lParam))
+                return true;
+
+            ReportMacKeyRaw(action, virtualKey, timestamp);
+            return true;
+        }
+
+        /// <summary>The key as raw input to WPF, with nothing offered to the loop first: what the
+        /// window procedure does with it, and what TranslateAccelerator does off Windows.</summary>
+        private bool ReportMacKeyRaw(RawKeyboardActions action, int virtualKey, int timestamp)
+        {
             if (!_active || _partialActive)
             {
                 action |= RawKeyboardActions.Activate;
@@ -1081,7 +1127,7 @@ namespace System.Windows.Interop
                 _source, InputMode.Foreground, timestamp, action,
                 /*scanCode*/ 0, /*isExtendedKey*/ false, /*isSystemKey*/ false, virtualKey, IntPtr.Zero);
 
-            _site.ReportInput(report);
+            return _site.ReportInput(report);
         }
 
         private void ReportMacText(char c, int timestamp)

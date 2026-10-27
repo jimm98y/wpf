@@ -89,6 +89,10 @@ namespace System.Drawing
 			Brush b = p.IsDisposed ? p.Brush : p.BrushRef;
 			if (b is SolidBrush sb) return sb.Color.ToArgb ();
 			if (b is Drawing2D.HatchBrush hb) return Blend (hb.ForegroundColor, hb.BackgroundColor);
+			// a gradient or texture pen where a stroke is drawn in one colour: its brush's first
+			if (b is Drawing2D.LinearGradientBrush lg) { lg.GetGpuGradient (out _, out _, out Color c1, out _); return c1.ToArgb (); }
+			if (b is Drawing2D.PathGradientBrush pg) return pg.CenterArgb;
+			if (b is TextureBrush) return unchecked ((int) 0xFF000000);
 			return p.Color.ToArgb ();
 		}
 		// A pen's dash pattern, in GDI+ units (multiples of the pen width), or null when solid.
@@ -1114,6 +1118,11 @@ namespace System.Drawing
 			if (!Enum.IsDefined (typeof (CopyPixelOperation), copyPixelOperation))
 				throw new InvalidEnumArgumentException (Locale.GetText ("Enum argument value '{0}' is not valid for CopyPixelOperation", copyPixelOperation));
 
+			// The screen's pixels as the stack reads them on every platform (WindowsBase's ScreenPixels:
+			// GDI on Windows, the app's windows on macOS, the page in a browser), so CopyFromScreen copies
+			// the same thing everywhere.
+			if (CopyFromScreenPortable (sourceX, sourceY, destinationX, destinationY, blockRegionSize))
+				return;
 			if (GDIPlus.UseX11Drawable) {
 				CopyFromScreenX11 (sourceX, sourceY, destinationX, destinationY, blockRegionSize, copyPixelOperation);
 			} else if (GDIPlus.UseCarbonDrawable) {
@@ -1123,6 +1132,43 @@ namespace System.Drawing
 			} else {
 				CopyFromScreenWin32 (sourceX, sourceY, destinationX, destinationY, blockRegionSize, copyPixelOperation);
 			}
+		}
+
+		[System.Diagnostics.CodeAnalysis.DynamicDependency (System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods, "MS.Internal.Interop.ScreenPixels", "WindowsBase")]
+		private static Func<int, int, int, int, byte []> ResolveScreenCapture ()
+		{
+			var m = Type.GetType ("MS.Internal.Interop.ScreenPixels, WindowsBase")?.GetMethod ("Capture", new [] { typeof (int), typeof (int), typeof (int), typeof (int) });
+			return m == null ? null : (Func<int, int, int, int, byte []>) Delegate.CreateDelegate (typeof (Func<int, int, int, int, byte []>), m);
+		}
+
+		private static Func<int, int, int, int, byte []> s_screenCapture;
+		private static bool s_screenCaptureResolved;
+
+		private bool CopyFromScreenPortable (int sourceX, int sourceY, int destinationX, int destinationY, Size size)
+		{
+			if (size.Width <= 0 || size.Height <= 0)
+				return true;
+			if (!s_screenCaptureResolved) {
+				s_screenCaptureResolved = true;
+				try { s_screenCapture = ResolveScreenCapture (); } catch (Exception) { }
+			}
+			byte [] bgra = s_screenCapture?.Invoke (sourceX, sourceY, size.Width, size.Height);
+			if (bgra == null)
+				return false;
+			using (var shot = new Bitmap (size.Width, size.Height, System.Drawing.Imaging.PixelFormat.Format32bppRgb)) {
+				var data = shot.LockBits (new Rectangle (0, 0, size.Width, size.Height), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+				try {
+					for (int y = 0; y < size.Height; y++)
+						System.Runtime.InteropServices.Marshal.Copy (bgra, y * size.Width * 4, data.Scan0 + y * data.Stride, size.Width * 4);
+				} finally {
+					shot.UnlockBits (data);
+				}
+				var mode = CompositingMode;
+				CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+				DrawImageUnscaled (shot, destinationX, destinationY);
+				CompositingMode = mode;
+			}
+			return true;
 		}
 
 		private void CopyFromScreenWin32 (int sourceX, int sourceY, int destinationX, int destinationY, Size blockRegionSize, CopyPixelOperation copyPixelOperation)
@@ -2534,7 +2580,7 @@ namespace System.Drawing
 			CheckUse (pen);
 			CheckTarget ();
 			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
-			if (print_mode && PrintLine (pen, x1, y1, x2, y2)) return;
+			if ((print_mode || IsBrushPen (pen)) && PrintLine (pen, x1, y1, x2, y2)) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (RecordPen (pen)) {
@@ -2556,7 +2602,7 @@ namespace System.Drawing
 			CheckUse (pen);
 			CheckTarget ();
 			if (EngineDrawLine (pen, x1, y1, x2, y2)) return;
-			if (print_mode && PrintLine (pen, x1, y1, x2, y2)) return;
+			if ((print_mode || IsBrushPen (pen)) && PrintLine (pen, x1, y1, x2, y2)) return;
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
 			if (!float.IsNaN(x1) && !float.IsNaN(y1) &&

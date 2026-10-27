@@ -797,6 +797,9 @@
       <!-- references: the stack, the implementations, the runtime pack -->
       <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/wpf-browser;--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
       <_WpfWebGpuRewriteArg Include="@(_ManagedRuntimePackAssembly->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
+      <!-- and the placeholders: a rewritten assembly can name a type of one (a parameter's default of an
+           enum declared there, which writing the assembly resolves) -->
+      <_WpfWebGpuRewriteArg Include="--search=$(ProjectDir)$(IntermediateOutputPath)wpf-placeholders/" Condition="Exists('$(ProjectDir)$(IntermediateOutputPath)wpf-placeholders')" />
       <_WpfWebGpuRewriteArg Include="@(_WpfWebGpuRewriteInput->'%(FullPath)')" />
       <!-- System.Drawing.Primitives: off Windows its SystemColors are a palette compiled in, Windows XP's;
            made its Windows build, which asks user32 (BuildRewrite.cs, SystemColorsPatch) -->
@@ -967,6 +970,21 @@
            folder-per-store over the page's file system (app keeps its settings there). -->
       <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.IO.IsolatedStorage'))" />
       <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.IO.IsolatedStorage.dll" />
+
+      <!-- System.Security.Cryptography.ProtectedData's package throws PlatformNotSupportedException
+           off Windows; the shim is DPAPI over keys of its own, kept in the origin's private file
+           system (main.js). MSAL's token cache, EmailCommon and CloudCore.Genesis protect with it. -->
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Security.Cryptography.ProtectedData'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Security.Cryptography.ProtectedData.dll" />
+
+      <!-- System.Net.Requests and System.Net.WebClient refuse every member in the browser, WebRequest's
+           and WebException's constructors included; the shims are .NET's design over HttpClient
+           (app reads its templates' thumbnails with WebClient.OpenRead; RestSharp, OData and
+           AWSSDK.S3 send with HttpWebRequest). -->
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Net.Requests'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Net.Requests.dll" />
+      <WasmAssembliesToBundle Remove="@(WasmAssembliesToBundle->WithMetadataValue('Filename','System.Net.WebClient'))" />
+      <WasmAssembliesToBundle Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/System.Net.WebClient.dll" />
     </ItemGroup>
   </Target>
 
@@ -980,7 +998,8 @@
           Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <_WpfWebGpuShimmed Include="@(ResolvedFileToPublish)"
-                         Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry' or '%(Filename)' == 'System.Diagnostics.Process' or '%(Filename)' == 'System.IO.IsolatedStorage')
+                         Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry' or '%(Filename)' == 'System.Diagnostics.Process' or '%(Filename)' == 'System.IO.IsolatedStorage' or '%(Filename)' == 'System.Security.Cryptography.ProtectedData'
+                                    or '%(Filename)' == 'System.Net.Requests' or '%(Filename)' == 'System.Net.WebClient')
                                     and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and Exists('$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
       <ResolvedFileToPublish Remove="@(_WpfWebGpuShimmed)" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
@@ -1095,6 +1114,22 @@
     <Copy SourceFiles="@(_WpfWebGpuAotResolvable)" DestinationFolder="$(IntermediateOutputPath)linked"
           SkipUnchangedFiles="true"
           Condition="'@(_WpfWebGpuAotResolvable)' != '' And Exists('$(IntermediateOutputPath)linked')" />
+  </Target>
+
+  <!-- The WebAssembly SDK compiles runtime.c, which #includes the interp-to-native table it generates
+       (wasm_m2n_invoke.g.h: one trampoline per signature its P/Invokes have), without listing that table
+       among runtime.c's dependencies. A build whose P/Invokes added signatures (the rewrite declares those
+       of an app's calls through function pointers, CalliSignatures) regenerated the table and linked the
+       runtime.o of the first build: the new trampolines were never compiled, and the first SharpDX call of
+       one stopped the runtime. The table is made a dependency of runtime.c here. -->
+  <Target Name="_WpfWebGpuRuntimeCDependsOnInterpToNativeTable"
+          AfterTargets="_PrepareForBrowserWasmBuildNative" BeforeTargets="_WasmCompileNativeSourceFiles"
+          Condition="'$(_WasmInterpToNativeTablePath)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuRuntimeC Include="@(_WasmRuntimePackSrcFile)" Condition="'%(Filename)' == 'runtime'" />
+      <_WasmRuntimePackSrcFile Remove="@(_WpfWebGpuRuntimeC)" />
+      <_WasmRuntimePackSrcFile Include="@(_WpfWebGpuRuntimeC)" Dependencies="%(_WpfWebGpuRuntimeC.Dependencies);$(_WasmInterpToNativeTablePath)" />
+    </ItemGroup>
   </Target>
 
 </Project>

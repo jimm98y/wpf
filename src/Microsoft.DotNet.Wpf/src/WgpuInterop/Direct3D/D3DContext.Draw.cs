@@ -123,6 +123,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
         private static void OnScopePopped(WGPUPopErrorScopeStatus status, WGPUErrorType type, WGPUStringView message, IntPtr u1, IntPtr u2)
+            => ScopePopped(status, type, message, u1, u2);
+
+        // OnScopePopped's body, also its managed twin (Wgpu.Callbacks.cs)
+        private static void ScopePopped(WGPUPopErrorScopeStatus status, WGPUErrorType type, WGPUStringView message, IntPtr u1, IntPtr u2)
         {
             var r = (ScopeResult?)GCHandle.FromIntPtr(u1).Target;
             if (r == null) return;
@@ -145,7 +149,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var info = new WGPUPopErrorScopeCallbackInfo
                 {
                     mode = WGPUCallbackMode.AllowProcessEvents,
-                    callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPUPopErrorScopeStatus, WGPUErrorType, WGPUStringView, IntPtr, IntPtr, void>)&OnScopePopped,
+                    callback = ScopeCallback(&OnScopePopped, ScopePopped),
                     userdata1 = GCHandle.ToIntPtr(h),
                 };
                 wgpuDevicePopErrorScope(dev, info);

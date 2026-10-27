@@ -320,7 +320,12 @@ namespace MS.Internal.Interop
         public static void SetTitle(IntPtr handle, string title)
         {
             if (handle == IntPtr.Zero) return;
-            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid() || OperatingSystem.IsBrowser())
+            if (OperatingSystem.IsBrowser())
+            {
+                BrowserWindow.TitleOf(handle, title);   // the page's title, for the frontmost window
+                return;
+            }
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid())
                 return;   // no window chrome to put a title in
             if (OperatingSystem.IsMacOS())
                 CocoaWindow.SetTitle(handle, title);

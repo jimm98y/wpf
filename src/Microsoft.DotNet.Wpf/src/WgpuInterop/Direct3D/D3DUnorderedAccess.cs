@@ -172,7 +172,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
     }
 
-    internal static unsafe class WgpuCompute
+    internal static unsafe partial class WgpuCompute
     {
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUConstantEntry { public IntPtr nextInChain; public WGPUStringView key; public double value; }
@@ -186,6 +186,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [StructLayout(LayoutKind.Sequential)]
         internal struct WGPUComputePassDescriptor { public IntPtr nextInChain; public WGPUStringView label; public IntPtr timestampWrites; }
 
+#if !WGPU_BROWSER     // the browser's: Browser/Wgpu.Browser.Compute.cs
         private const string Lib = Microsoft.Wpf.Interop.WebGpu.Wgpu.Library;
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern IntPtr wgpuDeviceCreateComputePipeline(IntPtr device, WGPUComputePipelineDescriptor* d);
@@ -200,5 +201,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuCommandEncoderClearBuffer(IntPtr encoder, IntPtr buffer, ulong offset, ulong size);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuRenderPassEncoderDrawIndirect(IntPtr pass, IntPtr buffer, ulong offset);
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)] internal static extern void wgpuRenderPassEncoderDrawIndexedIndirect(IntPtr pass, IntPtr buffer, ulong offset);
+#endif
     }
 }

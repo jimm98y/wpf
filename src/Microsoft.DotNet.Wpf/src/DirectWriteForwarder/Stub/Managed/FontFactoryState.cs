@@ -284,8 +284,18 @@ namespace MS.Internal.Text.TextInterface.Managed
         private static bool TryGetVdmxExtents(OpenTypeFontData d, int ppem, out int yMax, out int yMin)
         {
             yMax = yMin = 0;
-            if (!d.TryGetTable("VDMX", out int vdmx, out int length) || length < 6 || ppem > 0xFFFF) return false;
             byte[] data = d.Raw;
+            if (!d.TryGetTable("VDMX", out int vdmx, out int length))
+            {
+                // a stand-in for a Windows face answers that face's line boxes (StandInVdmx)
+                if (!d.TryGetTable("head", out int head, out int headLength) || headLength < 12) return false;
+                uint key = (uint)(data[head + 8] << 24 | data[head + 9] << 16 | data[head + 10] << 8 | data[head + 11]);
+                if (Microsoft.Wpf.Interop.WebGpu.Composition.Text.StandInVdmx.For(key) is not { } standIn) return false;
+                data = standIn;
+                vdmx = 0;
+                length = standIn.Length;
+            }
+            if (length < 6 || ppem > 0xFFFF) return false;
             int U16(int o) => data[o] << 8 | data[o + 1];
             int end = vdmx + length;
             int numRatios = U16(vdmx + 4);

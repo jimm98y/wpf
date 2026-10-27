@@ -12,6 +12,17 @@ namespace System.Windows.Forms {
 		internal override Size SmallIconSize { get { return new Size (16, 16); } }     // SM_CXSMICON/SM_CYSMICON
 		internal override Size DragSize { get { return new Size (4, 4); } }            // SM_CXDRAG/SM_CYDRAG
 		internal override bool DragFullWindows { get { return true; } }                // SPI_GETDRAGFULLWINDOWS
+		// SPI_GETDROPSHADOW: on, as Windows comes. DotNetBar draws its menus' shadows only when this
+		// says so, and the base's false had it draw none.
+		internal override bool IsDropShadowEnabled {
+			get {
+				if (OperatingSystem.IsWindows ()) {
+					uint on = 0;
+					if (SystemParametersInfoW (0x1024, 0, ref on, 0)) return on != 0;
+				}
+				return true;
+			}
+		}
 		internal override int MouseButtonCount { get { return 3; } }                   // SM_CMOUSEBUTTONS
 		internal override int KeyboardSpeed { get { return 31; } }                     // SPI_GETKEYBOARDSPEED default
 		internal override int KeyboardDelay { get { return 1; } }                      // SPI_GETKEYBOARDDELAY default

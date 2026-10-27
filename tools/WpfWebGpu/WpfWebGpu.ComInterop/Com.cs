@@ -43,7 +43,7 @@ public static unsafe partial class Com
     /// it, and the caller keeps the object alive across the call.</summary>
     public static IntPtr This(object self, RuntimeTypeHandle iface)
     {
-        if (self is not ComObject c) throw new InvalidCastException($"{self.GetType()} is not a COM object");
+        if (Unwrap(self) is not ComObject c) throw new InvalidCastException($"{self.GetType()} is not a COM object");
         return c.For(Type.GetTypeFromHandle(iface)!.GUID, throwIfNot: true);
     }
 
@@ -168,7 +168,7 @@ public static unsafe partial class Com
 
     private static IntPtr PointerFor(object o, Guid iid)
     {
-        if (o is ComObject c) return c.QueryInterface(iid);
+        if (Unwrap(o) is ComObject c) return c.QueryInterface(iid);
         // a built-in RCW (Windows: from an assembly left on built-in COM, or the BCL): its native object
         if (OperatingSystem.IsWindows() && Marshal.IsComObject(o))
         {
@@ -203,8 +203,38 @@ public static unsafe partial class Com
     /// is returned as it is.</summary>
     public static object? Adopt(object? o)
     {
-        if (o == null || o is ComObject || !OperatingSystem.IsWindows() || !Marshal.IsComObject(o)) return o;
+        if (o == null || o is ComObject || o is ComProxy || !OperatingSystem.IsWindows() || !Marshal.IsComObject(o)) return o;
         return Take(Marshal.GetIUnknownForObject(o));
+    }
+
+    /// <summary>The native object behind a <see cref="ComProxy"/>; anything else as it is.</summary>
+    internal static object? Unwrap(object? o) => o is ComProxy p ? p.Target : o;
+
+    /// <summary>A cast to a rewritten COM interface (<c>castclass I</c>, which follows): the object itself
+    /// where it is one -- a managed implementation, or a native object the runtime casts dynamically
+    /// (IDynamicInterfaceCastable) -- and otherwise, where the native object answers the interface, its
+    /// <see cref="ComProxy"/> for it. Mono (the browser) never asks an IDynamicInterfaceCastable: there a
+    /// cast of the native object failed whatever it answered, and Ab3d.DXEngine.Wpf's IDirect3D9Ex was the
+    /// first to be refused. Throws as the cast would where the object does not answer the interface.</summary>
+    public static object? CastTo(object? o, RuntimeTypeHandle iface) => CastOrProxy(o, Type.GetTypeFromHandle(iface)!, throwIfNot: true);
+
+    /// <summary>As <see cref="CastTo"/>, for <c>isinst I</c>: null where the object does not answer it.</summary>
+    public static object? AsTo(object? o, RuntimeTypeHandle iface) => CastOrProxy(o, Type.GetTypeFromHandle(iface)!, throwIfNot: false);
+
+    /// <summary>The AppContext switch WpfWebGpu.ComInterop.ProxyCasts: casts as on a runtime without
+    /// dynamic casts, everywhere (the tests run the proxies on CoreCLR with it).</summary>
+    private static bool ProxyCasts => AppContext.TryGetSwitch("WpfWebGpu.ComInterop.ProxyCasts", out bool on) && on;
+
+    private static object? CastOrProxy(object? o, Type t, bool throwIfNot)
+    {
+        o = Adopt(o);
+        if (o == null) return o;
+        bool dynamic = !ProxyCasts;
+        if ((dynamic || o is not ComObject) && t.IsInstanceOfType(o)) return o;
+        if (Unwrap(o) is not ComObject c) return o;                 // the cast that follows decides
+        if (dynamic && t.IsInstanceOfType(c)) return c;
+        if (!c.Implements(t, throwIfNot)) return throwIfNot ? o : null;
+        return c.ProxyFor(t) ?? (throwIfNot ? o : null);
     }
 
     // ---- System.Runtime.InteropServices.Marshal, rewritten -----------------------------------
@@ -233,19 +263,19 @@ public static unsafe partial class Com
 
     public static int ReleaseComObject(object o)
     {
-        if (o is ComObject c) return c.ReleaseRcw(final: false);
+        if (Unwrap(o) is ComObject c) return c.ReleaseRcw(final: false);
         if (OperatingSystem.IsWindows()) return Marshal.ReleaseComObject(o);
         throw new ArgumentException("The object's type must be __ComObject or derived from __ComObject.", nameof(o));
     }
 
     public static int FinalReleaseComObject(object o)
     {
-        if (o is ComObject c) return c.ReleaseRcw(final: true);
+        if (Unwrap(o) is ComObject c) return c.ReleaseRcw(final: true);
         if (OperatingSystem.IsWindows()) return Marshal.FinalReleaseComObject(o);
         throw new ArgumentException("The object's type must be __ComObject or derived from __ComObject.", nameof(o));
     }
 
-    public static bool IsComObject(object o) => o is ComObject || (OperatingSystem.IsWindows() && Marshal.IsComObject(o));
+    public static bool IsComObject(object o) => o is ComObject || o is ComProxy || (OperatingSystem.IsWindows() && Marshal.IsComObject(o));
 
     /// <summary>new C() of a ComImport coclass: CoCreateInstance where the OS has it.</summary>
     public static object CreateInstance(Guid clsid)
@@ -378,8 +408,11 @@ public sealed unsafe class ComObject : IDynamicInterfaceCastable
         ?? (Com.Generated.TryGetValue(t, out var g) ? g.Impl : null));
 
     bool IDynamicInterfaceCastable.IsInterfaceImplemented(RuntimeTypeHandle interfaceType, bool throwIfNotImplemented)
+        => Implements(Type.GetTypeFromHandle(interfaceType)!, throwIfNotImplemented);
+
+    /// <summary>Whether the native object answers the rewritten interface <paramref name="t"/>.</summary>
+    internal bool Implements(Type t, bool throwIfNotImplemented)
     {
-        Type t = Type.GetTypeFromHandle(interfaceType)!;
         if (ImplOf(t) == null)
         {
             if (throwIfNotImplemented) throw new InvalidCastException($"{t} is not a COM interface wpfrun rewrote");
@@ -394,6 +427,43 @@ public sealed unsafe class ComObject : IDynamicInterfaceCastable
         return For(t.GUID, throwIfNotImplemented) != IntPtr.Zero;
     }
 
+    private readonly Dictionary<Type, ComProxy> _proxies = new();
+
+    /// <summary>This object as <paramref name="t"/> where the runtime does not cast it dynamically: the
+    /// interface's generated I.ComProxy (one per interface, kept), or null where there is none.</summary>
+    internal ComProxy? ProxyFor(Type t)
+    {
+        lock (_proxies)
+        {
+            if (_proxies.TryGetValue(t, out ComProxy? p)) return p;
+            Type? pt = t.GetNestedType("ComProxy", BindingFlags.Public | BindingFlags.NonPublic);
+            if (pt == null)
+            {
+                Com.LogOnce("noproxy:" + t.FullName, $"comimport: {t.FullName} has no proxy for a runtime without dynamic casts; the cast fails");
+                return null;
+            }
+            p = (ComProxy)Activator.CreateInstance(pt, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new object[] { this }, null)!;
+            _proxies[t] = p;
+            return p;
+        }
+    }
+
     RuntimeTypeHandle IDynamicInterfaceCastable.GetInterfaceImplementation(RuntimeTypeHandle interfaceType)
         => ImplOf(Type.GetTypeFromHandle(interfaceType)!)!.TypeHandle;
+}
+
+/// <summary>A native COM object as one rewritten interface, where the runtime cannot cast the object itself
+/// dynamically (Mono: IDynamicInterfaceCastable is never asked). Each rewritten interface I has a sealed
+/// I.ComProxy deriving from this and implementing I through I.ComImpl -- the same vtable calls a dynamic
+/// cast reaches. <see cref="Com.CastTo"/> hands it out; everything that takes a COM object takes it too.</summary>
+public abstract class ComProxy
+{
+    /// <summary>The native object.</summary>
+    public ComObject Target { get; }
+
+    protected ComProxy(ComObject target) => Target = target;
+
+    public override bool Equals(object? obj) => obj is ComProxy p ? ReferenceEquals(p.Target, Target) : ReferenceEquals(obj, Target);
+
+    public override int GetHashCode() => Target.GetHashCode();
 }

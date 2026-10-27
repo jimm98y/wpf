@@ -80,11 +80,14 @@ public static class BuildRewrite
             bool c = com.Contains(f.Name), p = pinvokes.Contains(f.Name), w = pathSubs != null && pathSubs.MayUse(f.File);
             // every location call, its own assembly's too: no assembly of a bundle has a file
             bool l = !c && f.MayReadLocations;
-            bool b = false;
-            if (subs != null)
-                using (var probe = ModuleDefinition.ReadModule(f.File, new ReaderParameters { ReadingMode = ReadingMode.Deferred }))
-                    b = subs.Uses(probe);
-            if (!c && !p && !l && !b && !w) continue;
+            bool b = false, k = false;
+            using (var probe = ModuleDefinition.ReadModule(f.File, new ReaderParameters { ReadingMode = ReadingMode.Deferred }))
+            {
+                if (subs != null) b = subs.Uses(probe);
+                // calls through native function pointers: their signatures declared (CalliSignatures)
+                k = CalliSignatures.Uses(probe);
+            }
+            if (!c && !p && !l && !b && !w && !k) continue;
             if (!f.ILOnly) { log($"comimport {f.Name}: mixed-mode (not IL-only): not rewritten"); continue; }
             string output = Path.Combine(outDir, Path.GetFileName(f.File));
             string summary = "";
@@ -100,20 +103,22 @@ public static class BuildRewrite
                 summary = (c ? result.ToString() : l ? $"its location calls ({result.CallSites})" : "") + (p ? (c || l ? "; " : "") + result.Win32Summary : "")
                     + (w ? (c || l || p ? "; " : "") + result.PathSummary : "");
             }
-            if (b)
+            if (b || k)
             {
                 // over what was just written, or the original (without symbols: the image is not the one they describe)
                 string from = File.Exists(output) ? output : f.File;
                 var resolver = new DefaultAssemblyResolver();
                 foreach (string d in dirs) if (Directory.Exists(d)) resolver.AddSearchDirectory(d);
                 using var m = ModuleDefinition.ReadModule(from, new ReaderParameters { InMemory = true, AssemblyResolver = resolver });
-                int n = subs!.Apply(m);
+                int n = b ? subs!.Apply(m) : 0;
+                int sigs = k ? CalliSignatures.Apply(m) : 0;
                 m.Attributes &= ~ModuleAttributes.StrongNameSigned;
                 var ms = new MemoryStream();
                 m.Write(ms);
                 ms.Position = 0;
                 Write(output, ms);
-                summary += (summary.Length > 0 ? "; " : "") + $"{n} calls of members the browser refuses";
+                if (b) summary += (summary.Length > 0 ? "; " : "") + $"{n} calls of members the browser refuses";
+                if (k) summary += (summary.Length > 0 ? "; " : "") + $"{sigs} signatures of its calls through function pointers declared";
             }
             done.Add(new Rewritten(f.File, output, summary));
             log($"rewriter: {f.Name}: {summary}");

@@ -325,9 +325,15 @@ namespace MS.Internal.Interop
     {
         public static bool IsAvailable { get { throw null; } }
         public static string FilterToAccept(string filter) { throw null; }
+        public static string FilterToTypes(string filter) { throw null; }
         public static bool OfferDownload(string path, string mimeType) { throw null; }
         public static string ReserveSavePath(string suggestedName) { throw null; }
+        public static string[] ShowOpenPanel(bool multiple, bool directory, string filter) { throw null; }
         public static System.Threading.Tasks.Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory) { throw null; }
+        public static System.Threading.Tasks.Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory, string filter) { throw null; }
+        public static string ShowSavePanel(string suggestedName, string filter) { throw null; }
+        public static System.Threading.Tasks.Task<string> ShowSavePanelAsync(string suggestedName, string filter) { throw null; }
+        public static T WaitForAnswer<T>(System.Func<System.Threading.Tasks.Task<T>> start) { throw null; }
     }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
     public sealed partial class BrowserHostScript : System.Dynamic.DynamicObject
@@ -522,6 +528,11 @@ namespace MS.Internal.Interop
             public static bool operator !=(MS.Internal.Interop.UIKitWindow.TouchMessage left, MS.Internal.Interop.UIKitWindow.TouchMessage right) { throw null; }
             public override string ToString() { throw null; }
         }
+    }
+    public static partial class ScreenPixels
+    {
+        public static byte[] Capture(int x, int y, int width, int height) { throw null; }
+        public static uint GetPixel(int x, int y) { throw null; }
     }
 }
 

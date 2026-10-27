@@ -1,0 +1,16 @@
+T:System.Net.AuthenticationManager
+T:System.Net.Authorization
+T:System.Net.Cache.HttpRequestCachePolicy
+T:System.Net.FileWebRequest
+T:System.Net.FileWebResponse
+T:System.Net.FtpWebRequest
+T:System.Net.FtpWebResponse
+T:System.Net.GlobalProxySelection
+T:System.Net.HttpWebRequest
+T:System.Net.HttpWebResponse
+T:System.Net.ProtocolViolationException
+T:System.Net.ServicePoint
+T:System.Net.ServicePointManager
+T:System.Net.WebException
+T:System.Net.WebRequest
+T:System.Net.WebResponse

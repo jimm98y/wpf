@@ -1,13 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Replacement for the System.Security.Cryptography.ProtectedData package's runtime assembly, for
-       macOS, where the package throws PlatformNotSupportedException. It keeps DPAPI's contract:
-       data protected for the current user (or the machine) round-trips, optional entropy must match,
-       tampered or foreign data is refused with CryptographicException, using AES-GCM under a key
-       of its own: 32 random bytes per scope in WPFWEBGPU_DPAPI_DIR (wpfrun points that at its state
-       folder), else ~/Library/Application Support/WpfWebGpu/DataProtection, readable by the user
-       only. Blobs are not Windows DPAPI blobs: what a Windows machine protected cannot be read here,
-       which is also true between two Windows machines.
+       macOS and the browser, where the package throws PlatformNotSupportedException. It keeps DPAPI's
+       contract: data protected for the current user (or the machine) round-trips, optional entropy must
+       match, tampered or foreign data is refused with CryptographicException. Blobs have DPAPI's layout,
+       under master keys of its own (ProtectedData.cs): in the login keychain on macOS, in the origin's
+       private file system in the browser, in WPFWEBGPU_DPAPI_DIR when that is set. What a Windows
+       machine protected cannot be read here, which is also true between two Windows machines.
+
+       AES is the managed one WpfWebGpu.ComInterop's Aes stand-in uses, compiled in from there: the
+       browser's .NET refuses Aes and AesGcm, and this assembly may depend on the framework only.
 
        Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
        as the package, AssemblyVersion above it. -->
@@ -31,5 +33,9 @@
     <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../tools/WpfWebGpu/WpfWebGpu.ComInterop/Crypto/AesCore.cs" Link="AesCore.cs" />
+  </ItemGroup>
 
 </Project>

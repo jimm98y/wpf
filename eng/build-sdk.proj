@@ -74,6 +74,9 @@
     <_Proj Include="$(RepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" />
     <_Proj Include="$(RepoRoot)shims/System.Diagnostics.Process/System.Diagnostics.Process.csproj" />
     <_Proj Include="$(RepoRoot)shims/System.IO.IsolatedStorage/System.IO.IsolatedStorage.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Net.Requests/System.Net.Requests.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Net.WebClient/System.Net.WebClient.csproj" />
 
     <_Proj Include="$(_Src)PresentationFramework/PresentationFramework.csproj" />
 

@@ -41,6 +41,10 @@ namespace System.Windows.Forms
         internal static void Log(string what)
         {
             if (!On) return;
+            // a page's file system is its own memory: there the console is where a trace can be read
+            if (OperatingSystem.IsBrowser()) { Console.WriteLine($"[keys {s_clock.ElapsedMilliseconds,6}] {what}"); return; }
+            // a page's file system is its own memory: there the console is where a trace can be read
+            if (OperatingSystem.IsBrowser()) { Console.WriteLine($"[keys {s_clock.ElapsedMilliseconds,6}] {what}"); return; }
             lock (s_lock)
             {
                 if (s_out == null && !s_failed)

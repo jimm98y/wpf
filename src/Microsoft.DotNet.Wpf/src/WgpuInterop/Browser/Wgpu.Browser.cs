@@ -3,12 +3,20 @@
 
 //
 // Browser/WebAssembly implementation of the wgpu-native C-ABI surface declared
-// across Wgpu*.cs. Compiled ONLY by Browser/WgpuInterop.Browser.csproj in place
-// of Wgpu.Native.cs (DllImport) + Wgpu.Lifecycle.cs (release externs): identical
-// signatures, managed bodies. Descriptor structs are decoded here in C# (they
-// are already C# structs — no JS-side memory parsing) and forwarded to
-// Browser/wgpu-interop.js as primitives / JSON, where a handle table maps the
-// integer ids we surface as IntPtr onto live WebGPU objects.
+// across Wgpu*.cs and the Direct3D shim's part of it (Direct3D/Wgpu.D3D.cs,
+// D3DUnorderedAccess.cs). Compiled ONLY by Browser/WgpuInterop.Browser.csproj in
+// place of the DllImports: identical signatures, managed bodies. Descriptor structs
+// are read here in C# and handed to Browser/wgpu-interop.js as JSON of webgpu.h's
+// own values (the JS side names them), where a handle table maps the integer ids
+// we surface as IntPtr onto live WebGPU objects -- with webgpu.h's reference
+// semantics: a view holds its texture, a bind group what it binds.
+//
+// What webgpu.h does synchronously and the browser only with a Promise -- a buffer
+// map, an error scope's pop, the queue's progress -- is a future here: the page
+// starts it, and wgpuDevicePoll / wgpuInstanceProcessEvents ask the page how far
+// it has got and run the callbacks, as wgpu-native runs them from the same calls.
+// A mapped range is a block of wasm memory: the page copies the mapped bytes into
+// it, and a writable one back at unmap.
 //
 // Async boundary: browser WebGPU acquires adapter/device via Promises. The app
 // must await WgpuBrowser.InitializeAsync() BEFORE the WPF stack boots; the
@@ -102,103 +110,735 @@ namespace Microsoft.Wpf.Interop.WebGpu
         private static WGPUStringView SV(string s)
             => new WGPUStringView { data = AllocUtf8(s), length = (nuint)Encoding.UTF8.GetByteCount(s) };
 
-        // ---- Enum -> WebGPU JS string maps -------------------------------------
+        // webgpu.h's "undefined" sentinels go to the page as -1
+        private static double U32(uint v) => v == uint.MaxValue ? -1 : v;
+        private static double U64(ulong v) => v == ulong.MaxValue ? -1 : v;
 
-        private static string FormatName(WGPUTextureFormat f) => f switch
+        // WGPU_STRLEN (SIZE_MAX): a NUL-terminated string
+        private static string Str(WGPUStringView v)
         {
-            WGPUTextureFormat.R8Unorm => "r8unorm",
-            WGPUTextureFormat.RGBA8Unorm => "rgba8unorm",
-            WGPUTextureFormat.RGBA8UnormSrgb => "rgba8unorm-srgb",
-            WGPUTextureFormat.BGRA8Unorm => "bgra8unorm",
-            WGPUTextureFormat.BGRA8UnormSrgb => "bgra8unorm-srgb",
-            WGPUTextureFormat.Depth24Plus => "depth24plus",
-            // The glyph atlas's lookup texture. Missing here, the browser head threw out of the
-            // dispatcher pump the first time text was rendered and the app stopped dead -- the
-            // native backends carry the format straight through, so nothing else noticed.
-            WGPUTextureFormat.RG32Uint => "rg32uint",
-            _ => throw new NotSupportedException($"Texture format {f} not mapped for the browser backend."),
-        };
+            if (v.data == null) return "";
+            if (v.length == nuint.MaxValue) return Marshal.PtrToStringUTF8((IntPtr)v.data) ?? "";
+            return Encoding.UTF8.GetString(v.data, (int)v.length);
+        }
 
-        private static string LoadOpName(WGPULoadOp op) => op switch
+        private static void WriteConstants(Utf8JsonWriter w, nuint count, IntPtr constants)
         {
-            WGPULoadOp.Load => "load",
-            WGPULoadOp.Clear => "clear",
-            _ => "",
-        };
+            if (count == 0 || constants == IntPtr.Zero) return;
+            var c = (Direct3D.WgpuCompute.WGPUConstantEntry*)constants;
+            w.WriteStartArray("constants");
+            for (nuint i = 0; i < count; i++)
+            {
+                w.WriteStartArray();
+                w.WriteStringValue(Str(c[i].key));
+                w.WriteNumberValue(c[i].value);
+                w.WriteEndArray();
+            }
+            w.WriteEndArray();
+        }
 
-        private static string StoreOpName(WGPUStoreOp op) => op switch
+        // ---- Adapter features and limits (the Direct3D shim's) -------------------------------------
+
+        /// <summary>The feature on the device: the browser's device is made at boot with every
+        /// feature of the shim's list the adapter has (wgpu-interop.js requestDevice).</summary>
+        internal static uint wgpuAdapterHasFeature(IntPtr adapter, uint feature)
+            => WgpuBrowserJs.DeviceHasFeature(WgpuBrowser.DeviceHandle, (int)feature) ? 1u : 0u;
+
+        /// <summary>The device already has the adapter's limits (requestDevice): nothing to ask for.</summary>
+        internal static int wgpuAdapterGetLimits(IntPtr adapter, byte* limits) => (int)WGPUStatus.Error;
+
+        // ---- Resources ----------------------------------------------------------
+
+        // usage: webgpu.h's flags are WebGPU's (GPUTextureUsage / GPUBufferUsage) bit for bit
+        internal static IntPtr wgpuDeviceCreateTexture(IntPtr device, WGPUTextureDescriptor* d)
         {
-            WGPUStoreOp.Store => "store",
-            WGPUStoreOp.Discard => "discard",
-            _ => "",
-        };
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteNumber("usage", (ulong)d->usage);
+            w.WriteNumber("dimension", (int)d->dimension);
+            w.WriteNumber("w", d->size.width);
+            w.WriteNumber("h", d->size.height);
+            w.WriteNumber("d", d->size.depthOrArrayLayers == 0 ? 1 : d->size.depthOrArrayLayers);
+            w.WriteNumber("format", (int)d->format);
+            w.WriteNumber("mips", d->mipLevelCount == 0 ? 1 : d->mipLevelCount);
+            w.WriteNumber("samples", d->sampleCount == 0 ? 1 : d->sampleCount);
+            if (d->viewFormatCount != 0)
+            {
+                w.WriteStartArray("viewFormats");
+                for (nuint i = 0; i < d->viewFormatCount; i++) w.WriteNumberValue((int)d->viewFormats[i]);
+                w.WriteEndArray();
+            }
+            w.WriteEndObject();
+            return (IntPtr)WgpuBrowserJs.CreateTexture((int)device, FinishJson(w, buffer));
+        }
 
-        private static string TopologyName(WGPUPrimitiveTopology t) => t switch
+        // Buffer sizes and mapped ranges, for the mapping below.
+        private sealed class MapRecord
         {
-            WGPUPrimitiveTopology.PointList => "point-list",
-            WGPUPrimitiveTopology.LineList => "line-list",
-            WGPUPrimitiveTopology.LineStrip => "line-strip",
-            WGPUPrimitiveTopology.TriangleStrip => "triangle-strip",
-            _ => "triangle-list",
-        };
+            public ulong Offset;
+            public bool Writable;
+            public readonly List<(IntPtr Ptr, ulong Offset, int Size, bool Write)> Ranges = new();
+        }
 
-        private static string IndexFormatName(WGPUIndexFormat f)
-            => f == WGPUIndexFormat.Uint16 ? "uint16" : "uint32";
+        private static readonly Dictionary<IntPtr, MapRecord> s_maps = new();
 
-        private static string VertexFormatName(WGPUVertexFormat f) => f switch
+        internal static IntPtr wgpuDeviceCreateBuffer(IntPtr device, WGPUBufferDescriptor* descriptor)
         {
-            WGPUVertexFormat.Unorm8x4 => "unorm8x4",
-            WGPUVertexFormat.Float32x2 => "float32x2",
-            WGPUVertexFormat.Float32x3 => "float32x3",
-            WGPUVertexFormat.Float32x4 => "float32x4",
-            _ => throw new NotSupportedException($"Vertex format {f} not mapped."),
-        };
+            var b = (IntPtr)WgpuBrowserJs.CreateBuffer(
+                (int)device, descriptor->size, (double)(ulong)descriptor->usage,
+                descriptor->mappedAtCreation != 0);
+            if (descriptor->mappedAtCreation != 0)
+                lock (s_maps) s_maps[b] = new MapRecord { Offset = 0, Writable = true };
+            return b;
+        }
 
-        private static string BlendOpName(WGPUBlendOperation op) => op switch
+        internal static IntPtr wgpuDeviceCreateCommandEncoder(IntPtr device, IntPtr descriptor)
+            => (IntPtr)WgpuBrowserJs.CreateCommandEncoder((int)device);
+
+        internal static IntPtr wgpuTextureCreateView(IntPtr texture, IntPtr descriptor)
         {
-            WGPUBlendOperation.Subtract => "subtract",
-            WGPUBlendOperation.ReverseSubtract => "reverse-subtract",
-            WGPUBlendOperation.Min => "min",
-            WGPUBlendOperation.Max => "max",
-            _ => "add",
-        };
+            if (descriptor == IntPtr.Zero) return (IntPtr)WgpuBrowserJs.CreateTextureView((int)texture, "");
+            var d = (WGPUTextureViewDescriptor*)descriptor;
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteNumber("format", (int)d->format);
+            w.WriteNumber("dimension", (int)d->dimension);
+            w.WriteNumber("baseMip", d->baseMipLevel);
+            w.WriteNumber("mips", U32(d->mipLevelCount));
+            w.WriteNumber("baseLayer", d->baseArrayLayer);
+            w.WriteNumber("layers", U32(d->arrayLayerCount));
+            w.WriteNumber("aspect", (int)d->aspect);
+            w.WriteNumber("usage", (ulong)d->usage);
+            w.WriteEndObject();
+            return (IntPtr)WgpuBrowserJs.CreateTextureView((int)texture, FinishJson(w, buffer));
+        }
 
-        private static string BlendFactorName(WGPUBlendFactor f) => f switch
+        internal static IntPtr wgpuDeviceCreateSampler(IntPtr device, WGPUSamplerDescriptor* d)
         {
-            WGPUBlendFactor.Zero => "zero",
-            WGPUBlendFactor.One => "one",
-            WGPUBlendFactor.Src => "src",
-            WGPUBlendFactor.OneMinusSrc => "one-minus-src",
-            WGPUBlendFactor.SrcAlpha => "src-alpha",
-            WGPUBlendFactor.OneMinusSrcAlpha => "one-minus-src-alpha",
-            WGPUBlendFactor.Dst => "dst",
-            WGPUBlendFactor.OneMinusDst => "one-minus-dst",
-            WGPUBlendFactor.DstAlpha => "dst-alpha",
-            WGPUBlendFactor.OneMinusDstAlpha => "one-minus-dst-alpha",
-            WGPUBlendFactor.SrcAlphaSaturated => "src-alpha-saturated",
-            _ => "one",
-        };
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteStartArray("address");
+            w.WriteNumberValue((int)d->addressModeU);
+            w.WriteNumberValue((int)d->addressModeV);
+            w.WriteNumberValue((int)d->addressModeW);
+            w.WriteEndArray();
+            w.WriteNumber("mag", (int)d->magFilter);
+            w.WriteNumber("min", (int)d->minFilter);
+            w.WriteNumber("mip", (int)d->mipmapFilter);
+            w.WriteNumber("lodMin", d->lodMinClamp);
+            w.WriteNumber("lodMax", d->lodMaxClamp);
+            w.WriteNumber("compare", (int)d->compare);
+            w.WriteNumber("anisotropy", d->maxAnisotropy);
+            w.WriteEndObject();
+            return (IntPtr)WgpuBrowserJs.CreateSampler((int)device, FinishJson(w, buffer));
+        }
 
-        private static string AddressModeName(WGPUAddressMode m) => m switch
+        internal static IntPtr wgpuDeviceCreateBindGroupLayout(IntPtr device, WGPUBindGroupLayoutDescriptor* d)
         {
-            WGPUAddressMode.Repeat => "repeat",
-            WGPUAddressMode.MirrorRepeat => "mirror-repeat",
-            _ => "clamp-to-edge",
-        };
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartArray();
+            for (nuint i = 0; i < d->entryCount; i++)
+            {
+                WGPUBindGroupLayoutEntry* e = d->entries + i;
+                w.WriteStartObject();
+                w.WriteNumber("binding", e->binding);
+                w.WriteNumber("visibility", e->visibility);
+                if (e->buffer.type != WGPUBufferBindingType.BindingNotUsed)
+                {
+                    w.WriteStartArray("buffer");
+                    w.WriteNumberValue((int)e->buffer.type);
+                    w.WriteNumberValue(e->buffer.hasDynamicOffset);
+                    w.WriteNumberValue(e->buffer.minBindingSize);
+                    w.WriteEndArray();
+                }
+                else if (e->sampler.type != WGPUSamplerBindingType.BindingNotUsed)
+                    w.WriteNumber("sampler", (int)e->sampler.type);
+                else if (e->texture.sampleType != WGPUTextureSampleType.BindingNotUsed)
+                {
+                    w.WriteStartArray("texture");
+                    w.WriteNumberValue((int)e->texture.sampleType);
+                    w.WriteNumberValue((int)e->texture.viewDimension);
+                    w.WriteNumberValue(e->texture.multisampled);
+                    w.WriteEndArray();
+                }
+                else if (e->storageTexture.access != 0)
+                {
+                    w.WriteStartArray("storage");
+                    w.WriteNumberValue(e->storageTexture.access);
+                    w.WriteNumberValue((int)e->storageTexture.format);
+                    w.WriteNumberValue((int)e->storageTexture.viewDimension);
+                    w.WriteEndArray();
+                }
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+            return (IntPtr)WgpuBrowserJs.CreateBindGroupLayout((int)device, FinishJson(w, buffer));
+        }
 
-        private static string FilterName(WGPUFilterMode f)
-            => f == WGPUFilterMode.Linear ? "linear" : "nearest";
-
-        private static string MipFilterName(WGPUMipmapFilterMode f)
-            => f == WGPUMipmapFilterMode.Linear ? "linear" : "nearest";
-
-        private static string? CompareName(WGPUCompareFunction f) => f switch
+        internal static IntPtr wgpuDeviceCreatePipelineLayout(IntPtr device, WGPUPipelineLayoutDescriptor* d)
         {
-            WGPUCompareFunction.Less => "less",
-            WGPUCompareFunction.LessEqual => "less-equal",
-            WGPUCompareFunction.Always => "always",
-            _ => null,
-        };
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartArray();
+            for (nuint i = 0; i < d->bindGroupLayoutCount; i++) w.WriteNumberValue((int)d->bindGroupLayouts[i]);
+            w.WriteEndArray();
+            return (IntPtr)WgpuBrowserJs.CreatePipelineLayout((int)device, FinishJson(w, buffer));
+        }
+
+        internal static IntPtr wgpuDeviceCreateBindGroup(IntPtr device, WGPUBindGroupDescriptor* descriptor)
+        {
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartArray();
+            for (nuint i = 0; i < descriptor->entryCount; i++)
+            {
+                WGPUBindGroupEntry* e = descriptor->entries + i;
+                w.WriteStartObject();
+                w.WriteNumber("binding", e->binding);
+                if (e->buffer != IntPtr.Zero)
+                {
+                    w.WriteNumber("buffer", (int)e->buffer);
+                    w.WriteNumber("offset", e->offset);
+                    w.WriteNumber("size", U64(e->size));
+                }
+                else if (e->sampler != IntPtr.Zero)
+                {
+                    w.WriteNumber("sampler", (int)e->sampler);
+                }
+                else
+                {
+                    w.WriteNumber("textureView", (int)e->textureView);
+                }
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+            return (IntPtr)WgpuBrowserJs.CreateBindGroup((int)device, (int)descriptor->layout, FinishJson(w, buffer));
+        }
+
+        internal static IntPtr wgpuRenderPipelineGetBindGroupLayout(IntPtr renderPipeline, uint groupIndex)
+            => (IntPtr)WgpuBrowserJs.GetBindGroupLayout((int)renderPipeline, (int)groupIndex);
+
+        internal static IntPtr wgpuDeviceCreateShaderModule(IntPtr device, WGPUShaderModuleDescriptor* descriptor)
+        {
+            // WGSL is the only source either the engine or the Direct3D shim's translator makes.
+            var chain = (WGPUChainedStruct*)descriptor->nextInChain;
+            if (chain == null || chain->sType != WGPUSType_ShaderSourceWGSL)
+                throw new NotSupportedException("Browser backend expects a WGSL shader source chain.");
+            var wgsl = (WGPUShaderSourceWGSL*)chain;
+            return (IntPtr)WgpuBrowserJs.CreateShaderModule((int)device, Str(wgsl->code));
+        }
+
+        internal static IntPtr wgpuDeviceCreateRenderPipeline(IntPtr device, WGPURenderPipelineDescriptor* descriptor)
+        {
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteNumber("layout", (int)descriptor->layout);
+
+            w.WriteStartObject("vertex");
+            w.WriteNumber("module", (int)descriptor->vertex.module);
+            w.WriteString("entryPoint", Str(descriptor->vertex.entryPoint));
+            WriteConstants(w, descriptor->vertex.constantCount, descriptor->vertex.constants);
+            w.WriteStartArray("buffers");
+            for (nuint i = 0; i < descriptor->vertex.bufferCount; i++)
+            {
+                WGPUVertexBufferLayout* bl = descriptor->vertex.buffers + i;
+                // webgpu.h's unused slot: no attributes and no step mode
+                if (bl->attributeCount == 0 && bl->stepMode == WGPUVertexStepMode.Undefined) { w.WriteNullValue(); continue; }
+                w.WriteStartObject();
+                w.WriteNumber("stride", bl->arrayStride);
+                w.WriteNumber("step", (int)bl->stepMode);
+                w.WriteStartArray("attributes");
+                for (nuint j = 0; j < bl->attributeCount; j++)
+                {
+                    WGPUVertexAttribute* at = bl->attributes + j;
+                    w.WriteStartArray();
+                    w.WriteNumberValue((int)at->format);
+                    w.WriteNumberValue(at->offset);
+                    w.WriteNumberValue(at->shaderLocation);
+                    w.WriteEndArray();
+                }
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+            w.WriteEndObject();
+
+            w.WriteStartObject("primitive");
+            w.WriteNumber("topology", (int)descriptor->primitive.topology);
+            w.WriteNumber("stripIndexFormat", (int)descriptor->primitive.stripIndexFormat);
+            w.WriteNumber("frontFace", (int)descriptor->primitive.frontFace);
+            w.WriteNumber("cullMode", (int)descriptor->primitive.cullMode);
+            w.WriteBoolean("unclippedDepth", descriptor->primitive.unclippedDepth != 0);
+            w.WriteEndObject();
+
+            w.WriteStartObject("multisample");
+            w.WriteNumber("count", descriptor->multisample.count == 0 ? 1u : descriptor->multisample.count);
+            w.WriteNumber("mask", descriptor->multisample.mask);
+            w.WriteBoolean("alphaToCoverage", descriptor->multisample.alphaToCoverageEnabled != 0);
+            w.WriteEndObject();
+
+            if (descriptor->depthStencil != IntPtr.Zero)
+            {
+                var ds = (WGPUDepthStencilState*)descriptor->depthStencil;
+                w.WriteStartObject("depthStencil");
+                w.WriteNumber("format", (int)ds->format);
+                w.WriteNumber("depthWrite", (int)ds->depthWriteEnabled);
+                w.WriteNumber("depthCompare", (int)ds->depthCompare);
+                WriteFace(w, "front", ds->stencilFront);
+                WriteFace(w, "back", ds->stencilBack);
+                w.WriteNumber("readMask", ds->stencilReadMask);
+                w.WriteNumber("writeMask", ds->stencilWriteMask);
+                w.WriteNumber("bias", ds->depthBias);
+                w.WriteNumber("slope", ds->depthBiasSlopeScale);
+                w.WriteNumber("clamp", ds->depthBiasClamp);
+                w.WriteEndObject();
+            }
+
+            if (descriptor->fragment != null)
+            {
+                w.WriteStartObject("fragment");
+                w.WriteNumber("module", (int)descriptor->fragment->module);
+                w.WriteString("entryPoint", Str(descriptor->fragment->entryPoint));
+                WriteConstants(w, descriptor->fragment->constantCount, descriptor->fragment->constants);
+                w.WriteStartArray("targets");
+                for (nuint i = 0; i < descriptor->fragment->targetCount; i++)
+                {
+                    WGPUColorTargetState* t = descriptor->fragment->targets + i;
+                    if (t->format == WGPUTextureFormat.Undefined) { w.WriteNullValue(); continue; }
+                    w.WriteStartObject();
+                    w.WriteNumber("format", (int)t->format);
+                    w.WriteNumber("writeMask", t->writeMask);
+                    if (t->blend != null)
+                    {
+                        w.WriteStartArray("blend");
+                        WriteBlend(w, t->blend->color);
+                        WriteBlend(w, t->blend->alpha);
+                        w.WriteEndArray();
+                    }
+                    w.WriteEndObject();
+                }
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+
+            w.WriteEndObject();
+            return (IntPtr)WgpuBrowserJs.CreateRenderPipeline((int)device, FinishJson(w, buffer));
+
+            static void WriteBlend(Utf8JsonWriter w, WGPUBlendComponent c)
+            {
+                w.WriteStartArray();
+                w.WriteNumberValue((int)c.operation);
+                w.WriteNumberValue((int)c.srcFactor);
+                w.WriteNumberValue((int)c.dstFactor);
+                w.WriteEndArray();
+            }
+
+            static void WriteFace(Utf8JsonWriter w, string name, WGPUStencilFaceState f)
+            {
+                w.WriteStartArray(name);
+                w.WriteNumberValue((int)f.compare);
+                w.WriteNumberValue((int)f.failOp);
+                w.WriteNumberValue((int)f.depthFailOp);
+                w.WriteNumberValue((int)f.passOp);
+                w.WriteEndArray();
+            }
+        }
+
+        internal static IntPtr ComputePipeline(IntPtr device, Direct3D.WgpuCompute.WGPUComputePipelineDescriptor* d)
+        {
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteNumber("layout", (int)d->layout);
+            w.WriteNumber("module", (int)d->compute.module);
+            w.WriteString("entryPoint", Str(d->compute.entryPoint));
+            WriteConstants(w, d->compute.constantCount, (IntPtr)d->compute.constants);
+            w.WriteEndObject();
+            return (IntPtr)WgpuBrowserJs.CreateComputePipeline((int)device, FinishJson(w, buffer));
+        }
+
+        // ---- Uploads --------------------------------------------------------------
+
+        internal static void wgpuQueueWriteBuffer(IntPtr queue, IntPtr buffer, ulong bufferOffset, void* data, nuint size)
+            => WgpuBrowserJs.WriteBuffer((int)queue, (int)buffer, bufferOffset, new Span<byte>(data, (int)size));
+
+        internal static void wgpuQueueWriteTexture(
+            IntPtr queue, WGPUTexelCopyTextureInfo* destination, void* data, nuint dataSize,
+            WGPUTexelCopyBufferLayout* dataLayout, WGPUExtent3D* writeSize)
+        {
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteNumber("texture", (int)destination->texture);
+            w.WriteNumber("mip", destination->mipLevel);
+            w.WriteNumber("x", destination->origin.x);
+            w.WriteNumber("y", destination->origin.y);
+            w.WriteNumber("z", destination->origin.z);
+            w.WriteNumber("aspect", (int)destination->aspect);
+            w.WriteNumber("offset", dataLayout->offset);
+            w.WriteNumber("bytesPerRow", U32(dataLayout->bytesPerRow));
+            w.WriteNumber("rowsPerImage", U32(dataLayout->rowsPerImage));
+            w.WriteNumber("w", writeSize->width);
+            w.WriteNumber("h", writeSize->height);
+            w.WriteNumber("d", writeSize->depthOrArrayLayers == 0 ? 1 : writeSize->depthOrArrayLayers);
+            w.WriteEndObject();
+            WgpuBrowserJs.WriteTexture((int)queue, FinishJson(w, buffer), new Span<byte>(data, (int)dataSize));
+        }
+
+        // ---- Command encoding -------------------------------------------------------
+
+        internal static IntPtr wgpuCommandEncoderBeginRenderPass(IntPtr commandEncoder, WGPURenderPassDescriptor* descriptor)
+        {
+            Utf8JsonWriter w = NewJsonWriter(out var buffer);
+            w.WriteStartObject();
+            w.WriteStartArray("color");
+            for (nuint i = 0; i < descriptor->colorAttachmentCount; i++)
+            {
+                WGPURenderPassColorAttachment* c = descriptor->colorAttachments + i;
+                if (c->view == IntPtr.Zero) { w.WriteNullValue(); continue; }
+                w.WriteStartObject();
+                w.WriteNumber("view", (int)c->view);
+                w.WriteNumber("depthSlice", U32(c->depthSlice));
+                w.WriteNumber("resolve", (int)c->resolveTarget);
+                w.WriteNumber("load", (int)c->loadOp);
+                w.WriteNumber("store", (int)c->storeOp);
+                w.WriteStartArray("clear");
+                w.WriteNumberValue(c->clearValue.r);
+                w.WriteNumberValue(c->clearValue.g);
+                w.WriteNumberValue(c->clearValue.b);
+                w.WriteNumberValue(c->clearValue.a);
+                w.WriteEndArray();
+                w.WriteEndObject();
+            }
+            w.WriteEndArray();
+            if (descriptor->depthStencilAttachment != IntPtr.Zero)
+            {
+                var dsa = (WGPURenderPassDepthStencilAttachment*)descriptor->depthStencilAttachment;
+                w.WriteStartObject("depth");
+                w.WriteNumber("view", (int)dsa->view);
+                w.WriteNumber("depthLoad", (int)dsa->depthLoadOp);
+                w.WriteNumber("depthStore", (int)dsa->depthStoreOp);
+                w.WriteNumber("depthClear", float.IsNaN(dsa->depthClearValue) ? 1f : dsa->depthClearValue);
+                w.WriteBoolean("depthReadOnly", dsa->depthReadOnly != 0);
+                w.WriteNumber("stencilLoad", (int)dsa->stencilLoadOp);
+                w.WriteNumber("stencilStore", (int)dsa->stencilStoreOp);
+                w.WriteNumber("stencilClear", dsa->stencilClearValue);
+                w.WriteBoolean("stencilReadOnly", dsa->stencilReadOnly != 0);
+                w.WriteEndObject();
+            }
+            w.WriteEndObject();
+            FlushPassCommands();
+            return (IntPtr)WgpuBrowserJs.BeginRenderPass((int)commandEncoder, FinishJson(w, buffer));
+        }
+
+        internal static IntPtr BeginComputePass(IntPtr commandEncoder)
+        {
+            FlushPassCommands();
+            return (IntPtr)WgpuBrowserJs.BeginComputePass((int)commandEncoder);
+        }
+
+        // ---- Encoder and pass commands, recorded and replayed in one call --------------------------
+        //
+        // The app's UI thread is a worker and WebGPU lives on the page's thread, so every [JSImport] is
+        // a blocking round trip between the two. A pass is a few calls per draw, a display with
+        // app's alarm, trend and grid controls in it some two hundred draws, and the round trips
+        // alone took the frame to half a second (2 fps dragging them). Commands that return nothing and
+        // name only objects that already exist -- a pass's, the encoder's copies, releases -- are
+        // recorded here, [op, argument count, arguments...], and the page replays them in one call
+        // (wgpu-interop.js runPassCommands) before anything that must see them: a pass begun or the
+        // encoder finished, a submit, a map, an error scope, presenting, and when the record is full.
+
+        private const int OpSetPipeline = 1, OpSetBindGroup = 2, OpSetVertexBuffer = 3, OpSetIndexBuffer = 4,
+                          OpDrawIndexed = 5, OpSetScissorRect = 6, OpSetViewport = 7, OpEnd = 8, OpRelease = 9,
+                          OpDraw = 10, OpDrawIndirect = 11, OpDrawIndexedIndirect = 12, OpBlendConstant = 13,
+                          OpStencilReference = 14, OpDynamicOffsets = 15, OpDispatch = 16, OpDispatchIndirect = 17,
+                          OpCopyBufferToBuffer = 18, OpCopyTextureToTexture = 19, OpCopyBufferToTexture = 20,
+                          OpCopyTextureToBuffer = 21, OpClearBuffer = 22;
+        [ThreadStatic] private static double[]? t_passCommands;
+        [ThreadStatic] private static int t_passCount;
+
+        /// <summary>Starts a record of <paramref name="count"/> arguments; Arg adds each.</summary>
+        private static void Op(int op, int count)
+        {
+            double[] cmds = t_passCommands ??= new double[8192];
+            if (t_passCount + count + 2 > cmds.Length) FlushPassCommands();
+            cmds[t_passCount++] = op;
+            cmds[t_passCount++] = count;
+        }
+
+        private static void Arg(double v) => t_passCommands![t_passCount++] = v;
+
+        private static void Record(int op, double a, double b = 0, double c = 0, double d = 0, double e = 0, double f = 0, double g = 0, int count = -1)
+        {
+            if (count < 0) count = 7;
+            Op(op, count);
+            Span<double> args = stackalloc double[] { a, b, c, d, e, f, g };
+            for (int i = 0; i < count; i++) Arg(args[i]);
+        }
+
+        private static void FlushPassCommands()
+        {
+            if (t_passCount == 0) return;
+            int n = t_passCount;
+            t_passCount = 0;
+            WgpuBrowserJs.RunPassCommands(new Span<double>(t_passCommands, 0, n));
+        }
+
+        internal static void wgpuRenderPassEncoderEnd(IntPtr renderPassEncoder) => Record(OpEnd, (int)renderPassEncoder, count: 1);
+
+        internal static void wgpuRenderPassEncoderSetPipeline(IntPtr renderPassEncoder, IntPtr pipeline)
+            => Record(OpSetPipeline, (int)renderPassEncoder, (int)pipeline, count: 2);
+
+        internal static void SetBindGroup(IntPtr pass, uint groupIndex, IntPtr group, nuint dynamicOffsetCount, uint* dynamicOffsets)
+        {
+            if (dynamicOffsetCount != 0)
+            {
+                Op(OpDynamicOffsets, (int)dynamicOffsetCount);
+                for (nuint i = 0; i < dynamicOffsetCount; i++) Arg(dynamicOffsets[i]);
+            }
+            Record(OpSetBindGroup, (int)pass, (int)groupIndex, (int)group, count: 3);
+        }
+
+        internal static void wgpuRenderPassEncoderSetBindGroup(
+            IntPtr renderPassEncoder, uint groupIndex, IntPtr group, nuint dynamicOffsetCount, uint* dynamicOffsets)
+            => SetBindGroup(renderPassEncoder, groupIndex, group, dynamicOffsetCount, dynamicOffsets);
+
+        internal static void wgpuRenderPassEncoderSetVertexBuffer(IntPtr renderPassEncoder, uint slot, IntPtr buffer, ulong offset, ulong size)
+            => Record(OpSetVertexBuffer, (int)renderPassEncoder, (int)slot, (int)buffer, offset, U64(size), count: 5);
+
+        internal static void wgpuRenderPassEncoderSetIndexBuffer(IntPtr renderPassEncoder, IntPtr buffer, WGPUIndexFormat format, ulong offset, ulong size)
+            => Record(OpSetIndexBuffer, (int)renderPassEncoder, (int)buffer, (int)format, offset, U64(size), count: 5);
+
+        internal static void wgpuRenderPassEncoderDrawIndexed(IntPtr renderPassEncoder, uint indexCount, uint instanceCount, uint firstIndex, int baseVertex, uint firstInstance)
+            => Record(OpDrawIndexed, (int)renderPassEncoder, indexCount, instanceCount, firstIndex, baseVertex, firstInstance, count: 6);
+
+        internal static void wgpuRenderPassEncoderDraw(IntPtr pass, uint vertexCount, uint instanceCount, uint firstVertex, uint firstInstance)
+            => Record(OpDraw, (int)pass, vertexCount, instanceCount, firstVertex, firstInstance, count: 5);
+
+        internal static void DrawIndirect(IntPtr pass, IntPtr buffer, ulong offset)
+            => Record(OpDrawIndirect, (int)pass, (int)buffer, offset, count: 3);
+
+        internal static void DrawIndexedIndirect(IntPtr pass, IntPtr buffer, ulong offset)
+            => Record(OpDrawIndexedIndirect, (int)pass, (int)buffer, offset, count: 3);
+
+        internal static void wgpuRenderPassEncoderSetBlendConstant(IntPtr pass, WGPUColor* color)
+            => Record(OpBlendConstant, (int)pass, color->r, color->g, color->b, color->a, count: 5);
+
+        internal static void wgpuRenderPassEncoderSetStencilReference(IntPtr pass, uint reference)
+            => Record(OpStencilReference, (int)pass, reference, count: 2);
+
+        internal static void wgpuRenderPassEncoderSetScissorRect(IntPtr renderPassEncoder, uint x, uint y, uint width, uint height)
+            => Record(OpSetScissorRect, (int)renderPassEncoder, x, y, width, height, count: 5);
+
+        // A pass drawing a frame into the top-left of a larger persistent target (the partial-redraw
+        // target is kept at its high-water size) maps its NDC to the frame, not to the whole texture.
+        // Without it the browser drew every partial frame stretched over the target: a WinForms window
+        // 1000x557 on a 1024x768 target had each control 38% lower than its own clip.
+        internal static void wgpuRenderPassEncoderSetViewport(IntPtr renderPassEncoder, float x, float y, float width, float height, float minDepth, float maxDepth)
+            => Record(OpSetViewport, (int)renderPassEncoder, x, y, width, height, minDepth, maxDepth);
+
+        internal static void Dispatch(IntPtr pass, uint x, uint y, uint z) => Record(OpDispatch, (int)pass, x, y, z, count: 4);
+
+        internal static void DispatchIndirect(IntPtr pass, IntPtr buffer, ulong offset) => Record(OpDispatchIndirect, (int)pass, (int)buffer, offset, count: 3);
+
+        internal static void wgpuCommandEncoderClearBuffer(IntPtr encoder, IntPtr buffer, ulong offset, ulong size)
+            => Record(OpClearBuffer, (int)encoder, (int)buffer, offset, U64(size), count: 4);
+
+        internal static void wgpuCommandEncoderCopyBufferToBuffer(IntPtr encoder, IntPtr source, ulong sourceOffset, IntPtr destination, ulong destinationOffset, ulong size)
+            => Record(OpCopyBufferToBuffer, (int)encoder, (int)source, sourceOffset, (int)destination, destinationOffset, size, count: 6);
+
+        private static void ArgTexture(WGPUTexelCopyTextureInfo* t)
+        {
+            Arg((int)t->texture); Arg(t->mipLevel); Arg(t->origin.x); Arg(t->origin.y); Arg(t->origin.z); Arg((int)t->aspect);
+        }
+
+        private static void ArgBuffer(WGPUTexelCopyBufferInfo* b)
+        {
+            Arg((int)b->buffer); Arg(b->layout.offset); Arg(U32(b->layout.bytesPerRow)); Arg(U32(b->layout.rowsPerImage));
+        }
+
+        private static void ArgExtent(WGPUExtent3D* e)
+        {
+            Arg(e->width); Arg(e->height); Arg(e->depthOrArrayLayers == 0 ? 1 : e->depthOrArrayLayers);
+        }
+
+        internal static void wgpuCommandEncoderCopyTextureToTexture(IntPtr encoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
+        {
+            Op(OpCopyTextureToTexture, 16);
+            Arg((int)encoder); ArgTexture(source); ArgTexture(destination); ArgExtent(copySize);
+        }
+
+        internal static void wgpuCommandEncoderCopyBufferToTexture(
+            IntPtr commandEncoder, WGPUTexelCopyBufferInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
+        {
+            Op(OpCopyBufferToTexture, 14);
+            Arg((int)commandEncoder); ArgBuffer(source); ArgTexture(destination); ArgExtent(copySize);
+        }
+
+        internal static void wgpuCommandEncoderCopyTextureToBuffer(
+            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyBufferInfo* destination, WGPUExtent3D* copySize)
+        {
+            Op(OpCopyTextureToBuffer, 14);
+            Arg((int)commandEncoder); ArgTexture(source); ArgBuffer(destination); ArgExtent(copySize);
+        }
+
+        internal static IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor)
+        {
+            FlushPassCommands();
+            return (IntPtr)WgpuBrowserJs.FinishEncoder((int)commandEncoder);
+        }
+
+        internal static void wgpuQueueSubmit(IntPtr queue, nuint commandCount, IntPtr* commands)
+        {
+            FlushPassCommands();
+            Span<int> ids = commandCount <= 16 ? stackalloc int[(int)commandCount] : new int[(int)commandCount];
+            for (int i = 0; i < ids.Length; i++) ids[i] = (int)commands[i];
+            WgpuBrowserJs.Submit((int)queue, ids);
+        }
+
+        // ---- Futures: buffer maps and error scopes --------------------------------------------------
+
+        private enum FutureKind { Map, Scope }
+
+        private sealed class Future
+        {
+            public ulong Id;
+            public FutureKind Kind;
+            public IntPtr Buffer;
+            public int Scope;
+            public IntPtr Callback, User1, User2;
+        }
+
+        private static readonly List<Future> s_futures = new();
+        private static ulong s_nextFuture = 1;
+
+        private static T? Twin<T>(IntPtr callback) where T : Delegate
+        {
+            T? twin = TwinOf<T>(callback);
+            if (twin == null) Console.Error.WriteLine($"[wgpu] a callback without a managed twin (0x{callback:x}) was not called: Mono cannot call it (Wgpu.Callbacks.cs)");
+            return twin;
+        }
+
+        private static WGPUFuture Pend(Future f)
+        {
+            lock (s_futures)
+            {
+                f.Id = s_nextFuture++;
+                s_futures.Add(f);
+            }
+            return new WGPUFuture { id = f.Id };
+        }
+
+        /// <summary>Runs the callbacks of what the page has finished (wgpu-native runs them from
+        /// wgpuInstanceProcessEvents and wgpuDevicePoll).</summary>
+        private static void ProcessFutures()
+        {
+            Future[] pending;
+            lock (s_futures)
+            {
+                if (s_futures.Count == 0) return;
+                pending = s_futures.ToArray();
+            }
+            foreach (Future f in pending)
+            {
+                if (f.Kind == FutureKind.Map)
+                {
+                    int state = WgpuBrowserJs.MapState((int)f.Buffer);
+                    if (state == 0) continue;
+                    lock (s_futures) s_futures.Remove(f);
+                    if (state != 1) lock (s_maps) s_maps.Remove(f.Buffer);
+                    // the callback's managed twin, never the pointer (Wgpu.Callbacks.cs)
+                    if (f.Callback != IntPtr.Zero)
+                        Twin<MapTwin>(f.Callback)?.Invoke(state == 1 ? WGPUMapAsyncStatus.Success : WGPUMapAsyncStatus.Error, default, f.User1, f.User2);
+                }
+                else
+                {
+                    int state = WgpuBrowserJs.ErrorScopeState(f.Scope);
+                    if (state == 0) continue;
+                    lock (s_futures) s_futures.Remove(f);
+                    string message = WgpuBrowserJs.TakeErrorScopeMessage(f.Scope);
+                    if (f.Callback == IntPtr.Zero) continue;
+                    byte[] text = Encoding.UTF8.GetBytes(message);
+                    fixed (byte* p = text)
+                    {
+                        var view = new WGPUStringView { data = p, length = (nuint)text.Length };
+                        Twin<ScopeTwin>(f.Callback)?.Invoke(
+                            state == 5 ? WGPUPopErrorScopeStatus.Error : WGPUPopErrorScopeStatus.Success,
+                            state == 5 ? WGPUErrorType.Unknown : (WGPUErrorType)state, view, f.User1, f.User2);
+                    }
+                }
+            }
+        }
+
+        internal static WGPUFuture wgpuBufferMapAsync(
+            IntPtr buffer, WGPUMapMode mode, nuint offset, nuint size, WGPUBufferMapCallbackInfo callbackInfo)
+        {
+            FlushPassCommands();
+            lock (s_maps) s_maps[buffer] = new MapRecord { Offset = offset, Writable = (mode & WGPUMapMode.Write) != 0 };
+            WgpuBrowserJs.MapAsync((int)buffer, (int)(ulong)mode, offset, size == nuint.MaxValue ? -1 : size);
+            return Pend(new Future { Kind = FutureKind.Map, Buffer = buffer, Callback = callbackInfo.callback, User1 = callbackInfo.userdata1, User2 = callbackInfo.userdata2 });
+        }
+
+        /// <summary>A copy of the mapped bytes in wasm memory, valid until unmap; a writable one goes
+        /// back to the buffer then.</summary>
+        private static void* MappedRange(IntPtr buffer, nuint offset, nuint size, bool write)
+        {
+            MapRecord? rec;
+            lock (s_maps) s_maps.TryGetValue(buffer, out rec);
+            if (rec == null) return null;
+            if (size == nuint.MaxValue)
+                size = (nuint)Math.Max(0L, (long)WgpuBrowserJs.MappedSize((int)buffer) - (long)(offset - rec.Offset));
+            void* p = NativeMemory.Alloc(Math.Max((nuint)1, size));
+            if (size != 0) WgpuBrowserJs.ReadMapped((int)buffer, offset, new Span<byte>(p, (int)size));
+            lock (s_maps) rec.Ranges.Add(((IntPtr)p, offset, (int)size, write && rec.Writable));
+            return p;
+        }
+
+        internal static void* wgpuBufferGetMappedRange(IntPtr buffer, nuint offset, nuint size) => MappedRange(buffer, offset, size, write: true);
+
+        internal static void* wgpuBufferGetConstMappedRange(IntPtr buffer, nuint offset, nuint size) => MappedRange(buffer, offset, size, write: false);
+
+        internal static void wgpuBufferUnmap(IntPtr buffer)
+        {
+            MapRecord? rec;
+            lock (s_maps) { s_maps.TryGetValue(buffer, out rec); s_maps.Remove(buffer); }
+            if (rec != null)
+                foreach (var (ptr, offset, size, write) in rec.Ranges)
+                {
+                    if (write && size != 0) WgpuBrowserJs.WriteMapped((int)buffer, offset, new Span<byte>((void*)ptr, size));
+                    NativeMemory.Free((void*)ptr);
+                }
+            WgpuBrowserJs.Unmap((int)buffer);
+        }
+
+        internal static void wgpuDevicePushErrorScope(IntPtr device, WGPUErrorFilter filter)
+        {
+            FlushPassCommands();
+            WgpuBrowserJs.PushErrorScope((int)device, (int)filter);
+        }
+
+        internal static WGPUFuture wgpuDevicePopErrorScope(IntPtr device, WGPUPopErrorScopeCallbackInfo callbackInfo)
+        {
+            FlushPassCommands();
+            int scope = WgpuBrowserJs.PopErrorScope((int)device);
+            return Pend(new Future { Kind = FutureKind.Scope, Scope = scope, Callback = callbackInfo.callback, User1 = callbackInfo.userdata1, User2 = callbackInfo.userdata2 });
+        }
+
+        internal static void wgpuInstanceProcessEvents(IntPtr instance)
+        {
+            FlushPassCommands();
+            ProcessFutures();
+        }
+
+        /// <summary>wgpu-native's poll: with <paramref name="wait"/>, until the queue has run what was
+        /// submitted; the callbacks of whatever finished; whether the queue is empty.</summary>
+        internal static uint wgpuDevicePoll(IntPtr device, uint wait, ulong* submissionIndex)
+        {
+            FlushPassCommands();
+            if (wait != 0)
+            {
+                long until = Environment.TickCount64 + 10_000;
+                while (WgpuBrowserJs.OutstandingWork() != 0 && Environment.TickCount64 < until) { }
+            }
+            ProcessFutures();
+            return WgpuBrowserJs.OutstandingWork() == 0 ? 1u : 0u;
+        }
 
         // ---- Diagnostics --------------------------------------------------------
 
@@ -212,8 +852,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
             WgpuBrowser.EnsureInitialized();
             return s_instanceSentinel;
         }
-
-        internal static void wgpuInstanceProcessEvents(IntPtr instance) { }
 
         // The callback-style request entry points are never used on the browser:
         // WgpuContext.Create has a WGPU_BROWSER branch that reads the pre-acquired
@@ -243,303 +881,6 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
         internal static IntPtr wgpuDeviceGetQueue(IntPtr device)
             => (IntPtr)WgpuBrowserJs.GetQueue((int)device);
-
-        // ---- Resources ----------------------------------------------------------
-
-        internal static IntPtr wgpuDeviceCreateTexture(IntPtr device, WGPUTextureDescriptor* descriptor)
-        {
-            return (IntPtr)WgpuBrowserJs.CreateTexture(
-                (int)device,
-                (int)descriptor->size.width, (int)descriptor->size.height,
-                FormatName(descriptor->format),
-                (double)(ulong)descriptor->usage,
-                (int)descriptor->mipLevelCount, (int)descriptor->sampleCount);
-        }
-
-        internal static IntPtr wgpuDeviceCreateBuffer(IntPtr device, WGPUBufferDescriptor* descriptor)
-        {
-            return (IntPtr)WgpuBrowserJs.CreateBuffer(
-                (int)device, descriptor->size, (double)(ulong)descriptor->usage,
-                descriptor->mappedAtCreation != 0);
-        }
-
-        internal static IntPtr wgpuDeviceCreateCommandEncoder(IntPtr device, IntPtr descriptor)
-            => (IntPtr)WgpuBrowserJs.CreateCommandEncoder((int)device);
-
-        internal static IntPtr wgpuTextureCreateView(IntPtr texture, IntPtr descriptor)
-            => (IntPtr)WgpuBrowserJs.CreateTextureView((int)texture);
-
-        internal static IntPtr wgpuDeviceCreateSampler(IntPtr device, WGPUSamplerDescriptor* descriptor)
-        {
-            Utf8JsonWriter w = NewJsonWriter(out var buffer);
-            w.WriteStartObject();
-            w.WriteString("addressModeU", AddressModeName(descriptor->addressModeU));
-            w.WriteString("addressModeV", AddressModeName(descriptor->addressModeV));
-            w.WriteString("addressModeW", AddressModeName(descriptor->addressModeW));
-            w.WriteString("magFilter", FilterName(descriptor->magFilter));
-            w.WriteString("minFilter", FilterName(descriptor->minFilter));
-            w.WriteString("mipmapFilter", MipFilterName(descriptor->mipmapFilter));
-            w.WriteNumber("lodMinClamp", descriptor->lodMinClamp);
-            w.WriteNumber("lodMaxClamp", descriptor->lodMaxClamp);
-            w.WriteNumber("maxAnisotropy", descriptor->maxAnisotropy);
-            string? cmp = CompareName(descriptor->compare);
-            if (cmp != null) w.WriteString("compare", cmp);
-            w.WriteEndObject();
-            return (IntPtr)WgpuBrowserJs.CreateSampler((int)device, FinishJson(w, buffer));
-        }
-
-        internal static IntPtr wgpuDeviceCreateBindGroup(IntPtr device, WGPUBindGroupDescriptor* descriptor)
-        {
-            Utf8JsonWriter w = NewJsonWriter(out var buffer);
-            w.WriteStartArray();
-            for (nuint i = 0; i < descriptor->entryCount; i++)
-            {
-                WGPUBindGroupEntry* e = descriptor->entries + i;
-                w.WriteStartObject();
-                w.WriteNumber("binding", e->binding);
-                if (e->buffer != IntPtr.Zero)
-                {
-                    w.WriteNumber("buffer", (int)e->buffer);
-                    w.WriteNumber("offset", e->offset);
-                    w.WriteNumber("size", e->size);
-                }
-                else if (e->sampler != IntPtr.Zero)
-                {
-                    w.WriteNumber("sampler", (int)e->sampler);
-                }
-                else
-                {
-                    w.WriteNumber("textureView", (int)e->textureView);
-                }
-                w.WriteEndObject();
-            }
-            w.WriteEndArray();
-            return (IntPtr)WgpuBrowserJs.CreateBindGroup((int)device, (int)descriptor->layout, FinishJson(w, buffer));
-        }
-
-        internal static IntPtr wgpuRenderPipelineGetBindGroupLayout(IntPtr renderPipeline, uint groupIndex)
-            => (IntPtr)WgpuBrowserJs.GetBindGroupLayout((int)renderPipeline, (int)groupIndex);
-
-        internal static IntPtr wgpuDeviceCreateShaderModule(IntPtr device, WGPUShaderModuleDescriptor* descriptor)
-        {
-            // The only chained source the engine uses is WGSL.
-            var chain = (WGPUChainedStruct*)descriptor->nextInChain;
-            if (chain == null || chain->sType != WGPUSType_ShaderSourceWGSL)
-                throw new NotSupportedException("Browser backend expects a WGSL shader source chain.");
-            var wgsl = (WGPUShaderSourceWGSL*)chain;
-            return (IntPtr)WgpuBrowserJs.CreateShaderModule((int)device, S(wgsl->code));
-        }
-
-        internal static IntPtr wgpuDeviceCreateRenderPipeline(IntPtr device, WGPURenderPipelineDescriptor* descriptor)
-        {
-            Utf8JsonWriter w = NewJsonWriter(out var buffer);
-            w.WriteStartObject();
-
-            w.WriteStartObject("vertex");
-            w.WriteNumber("module", (int)descriptor->vertex.module);
-            w.WriteString("entryPoint", S(descriptor->vertex.entryPoint));
-            w.WriteStartArray("buffers");
-            for (nuint i = 0; i < descriptor->vertex.bufferCount; i++)
-            {
-                WGPUVertexBufferLayout* bl = descriptor->vertex.buffers + i;
-                w.WriteStartObject();
-                w.WriteNumber("arrayStride", bl->arrayStride);
-                w.WriteString("stepMode", bl->stepMode == WGPUVertexStepMode.Instance ? "instance" : "vertex");
-                w.WriteStartArray("attributes");
-                for (nuint j = 0; j < bl->attributeCount; j++)
-                {
-                    WGPUVertexAttribute* at = bl->attributes + j;
-                    w.WriteStartObject();
-                    w.WriteString("format", VertexFormatName(at->format));
-                    w.WriteNumber("offset", at->offset);
-                    w.WriteNumber("shaderLocation", at->shaderLocation);
-                    w.WriteEndObject();
-                }
-                w.WriteEndArray();
-                w.WriteEndObject();
-            }
-            w.WriteEndArray();
-            w.WriteEndObject();
-
-            w.WriteStartObject("primitive");
-            w.WriteString("topology", TopologyName(descriptor->primitive.topology));
-            w.WriteString("frontFace", descriptor->primitive.frontFace == WGPUFrontFace.CW ? "cw" : "ccw");
-            w.WriteString("cullMode", descriptor->primitive.cullMode switch
-            {
-                WGPUCullMode.Front => "front",
-                WGPUCullMode.Back => "back",
-                _ => "none",
-            });
-            w.WriteEndObject();
-
-            w.WriteStartObject("multisample");
-            w.WriteNumber("count", descriptor->multisample.count == 0 ? 1u : descriptor->multisample.count);
-            w.WriteEndObject();
-
-            if (descriptor->depthStencil != IntPtr.Zero)
-            {
-                var ds = (WGPUDepthStencilState*)descriptor->depthStencil;
-                w.WriteStartObject("depthStencil");
-                w.WriteString("format", FormatName(ds->format));
-                w.WriteBoolean("depthWriteEnabled", ds->depthWriteEnabled == WGPUOptionalBool.True);
-                w.WriteString("depthCompare", CompareName(ds->depthCompare) ?? "always");
-                w.WriteEndObject();
-            }
-
-            if (descriptor->fragment != null)
-            {
-                w.WriteStartObject("fragment");
-                w.WriteNumber("module", (int)descriptor->fragment->module);
-                w.WriteString("entryPoint", S(descriptor->fragment->entryPoint));
-                w.WriteStartArray("targets");
-                for (nuint i = 0; i < descriptor->fragment->targetCount; i++)
-                {
-                    WGPUColorTargetState* t = descriptor->fragment->targets + i;
-                    w.WriteStartObject();
-                    w.WriteString("format", FormatName(t->format));
-                    w.WriteNumber("writeMask", t->writeMask);
-                    if (t->blend != null)
-                    {
-                        w.WriteStartObject("blend");
-                        WriteBlend(w, "color", t->blend->color);
-                        WriteBlend(w, "alpha", t->blend->alpha);
-                        w.WriteEndObject();
-                    }
-                    w.WriteEndObject();
-                }
-                w.WriteEndArray();
-                w.WriteEndObject();
-            }
-
-            w.WriteEndObject();
-            return (IntPtr)WgpuBrowserJs.CreateRenderPipeline((int)device, FinishJson(w, buffer));
-
-            static void WriteBlend(Utf8JsonWriter w, string name, WGPUBlendComponent c)
-            {
-                w.WriteStartObject(name);
-                w.WriteString("operation", BlendOpName(c.operation));
-                w.WriteString("srcFactor", BlendFactorName(c.srcFactor));
-                w.WriteString("dstFactor", BlendFactorName(c.dstFactor));
-                w.WriteEndObject();
-            }
-        }
-
-        // ---- Uploads --------------------------------------------------------------
-
-        internal static void wgpuQueueWriteBuffer(IntPtr queue, IntPtr buffer, ulong bufferOffset, void* data, nuint size)
-            => WgpuBrowserJs.WriteBuffer((int)queue, (int)buffer, bufferOffset, new Span<byte>(data, (int)size));
-
-        internal static void wgpuQueueWriteTexture(
-            IntPtr queue, WGPUTexelCopyTextureInfo* destination, void* data, nuint dataSize,
-            WGPUTexelCopyBufferLayout* dataLayout, WGPUExtent3D* writeSize)
-        {
-            if (dataLayout->offset != 0)
-                throw new NotSupportedException("writeTexture with a non-zero data offset is not used by the engine.");
-            WgpuBrowserJs.WriteTexture(
-                (int)queue, (int)destination->texture, (int)destination->mipLevel,
-                (int)destination->origin.x, (int)destination->origin.y,
-                new Span<byte>(data, (int)dataSize),
-                (int)dataLayout->bytesPerRow, (int)dataLayout->rowsPerImage,
-                (int)writeSize->width, (int)writeSize->height);
-        }
-
-        // ---- Command encoding -------------------------------------------------------
-
-        internal static IntPtr wgpuCommandEncoderBeginRenderPass(IntPtr commandEncoder, WGPURenderPassDescriptor* descriptor)
-        {
-            if (descriptor->colorAttachmentCount != 1)
-                throw new NotSupportedException("Browser backend supports exactly one color attachment.");
-            WGPURenderPassColorAttachment* c = descriptor->colorAttachments;
-
-            int depthView = 0;
-            string depthLoad = "", depthStore = "";
-            double depthClear = 1.0;
-            if (descriptor->depthStencilAttachment != IntPtr.Zero)
-            {
-                var dsa = (WGPURenderPassDepthStencilAttachment*)descriptor->depthStencilAttachment;
-                depthView = (int)dsa->view;
-                depthLoad = LoadOpName(dsa->depthLoadOp);
-                depthStore = StoreOpName(dsa->depthStoreOp);
-                depthClear = dsa->depthClearValue;
-            }
-
-            return (IntPtr)WgpuBrowserJs.BeginRenderPass(
-                (int)commandEncoder, (int)c->view, (int)c->resolveTarget,
-                LoadOpName(c->loadOp), StoreOpName(c->storeOp),
-                c->clearValue.r, c->clearValue.g, c->clearValue.b, c->clearValue.a,
-                depthView, depthLoad, depthStore, depthClear);
-        }
-
-        internal static void wgpuRenderPassEncoderEnd(IntPtr renderPassEncoder)
-            => WgpuBrowserJs.EndPass((int)renderPassEncoder);
-
-        internal static void wgpuRenderPassEncoderSetPipeline(IntPtr renderPassEncoder, IntPtr pipeline)
-            => WgpuBrowserJs.SetPipeline((int)renderPassEncoder, (int)pipeline);
-
-        internal static void wgpuRenderPassEncoderSetBindGroup(
-            IntPtr renderPassEncoder, uint groupIndex, IntPtr group, nuint dynamicOffsetCount, uint* dynamicOffsets)
-        {
-            if (dynamicOffsetCount != 0)
-                throw new NotSupportedException("Dynamic bind-group offsets are not used by the engine.");
-            WgpuBrowserJs.SetBindGroup((int)renderPassEncoder, (int)groupIndex, (int)group);
-        }
-
-        internal static void wgpuRenderPassEncoderSetVertexBuffer(IntPtr renderPassEncoder, uint slot, IntPtr buffer, ulong offset, ulong size)
-            => WgpuBrowserJs.SetVertexBuffer((int)renderPassEncoder, (int)slot, (int)buffer, offset,
-                size == ulong.MaxValue ? -1d : size);
-
-        internal static void wgpuRenderPassEncoderSetIndexBuffer(IntPtr renderPassEncoder, IntPtr buffer, WGPUIndexFormat format, ulong offset, ulong size)
-            => WgpuBrowserJs.SetIndexBuffer((int)renderPassEncoder, (int)buffer, IndexFormatName(format), offset,
-                size == ulong.MaxValue ? -1d : size);
-
-        internal static void wgpuRenderPassEncoderDrawIndexed(IntPtr renderPassEncoder, uint indexCount, uint instanceCount, uint firstIndex, int baseVertex, uint firstInstance)
-            => WgpuBrowserJs.DrawIndexed((int)renderPassEncoder, (int)indexCount, (int)instanceCount, (int)firstIndex, baseVertex, (int)firstInstance);
-
-        internal static void wgpuRenderPassEncoderSetScissorRect(IntPtr renderPassEncoder, uint x, uint y, uint width, uint height)
-            => WgpuBrowserJs.SetScissorRect((int)renderPassEncoder, (int)x, (int)y, (int)width, (int)height);
-
-        // A pass drawing a frame into the top-left of a larger persistent target (the partial-redraw
-        // target is kept at its high-water size) maps its NDC to the frame, not to the whole texture.
-        // Without it the browser drew every partial frame stretched over the target: a WinForms window
-        // 1000x557 on a 1024x768 target had each control 38% lower than its own clip.
-        internal static void wgpuRenderPassEncoderSetViewport(IntPtr renderPassEncoder, float x, float y, float width, float height, float minDepth, float maxDepth)
-            => WgpuBrowserJs.SetViewport((int)renderPassEncoder, x, y, width, height, minDepth, maxDepth);
-
-        internal static void wgpuCommandEncoderCopyTextureToBuffer(
-            IntPtr commandEncoder, WGPUTexelCopyTextureInfo* source, WGPUTexelCopyBufferInfo* destination, WGPUExtent3D* copySize)
-            => throw new NotSupportedException("GPU->CPU readback is not wired on the browser backend yet.");
-
-        // The browser CreateTexture path uploads via queue.writeTexture (no command-buffer leak there),
-        // so FlushPendingTexUploads is always a no-op on the browser and this is never invoked.
-        internal static void wgpuCommandEncoderCopyBufferToTexture(
-            IntPtr commandEncoder, WGPUTexelCopyBufferInfo* source, WGPUTexelCopyTextureInfo* destination, WGPUExtent3D* copySize)
-            => throw new NotSupportedException("Buffer->texture copy is not wired on the browser backend (uploads use queue.writeTexture).");
-
-
-
-        internal static IntPtr wgpuCommandEncoderFinish(IntPtr commandEncoder, IntPtr descriptor)
-            => (IntPtr)WgpuBrowserJs.FinishEncoder((int)commandEncoder);
-
-        internal static void wgpuQueueSubmit(IntPtr queue, nuint commandCount, IntPtr* commands)
-        {
-            if (commandCount != 1)
-                throw new NotSupportedException("Browser backend expects single-command-buffer submits.");
-            WgpuBrowserJs.Submit((int)queue, (int)commands[0]);
-        }
-
-
-        // ---- Buffer readback (async-only in the browser; not wired yet) -------------
-
-        internal static WGPUFuture wgpuBufferMapAsync(
-            IntPtr buffer, WGPUMapMode mode, nuint offset, nuint size, WGPUBufferMapCallbackInfo callbackInfo)
-            => throw new NotSupportedException("Blocking buffer map is impossible on the browser main thread.");
-
-        internal static void* wgpuBufferGetConstMappedRange(IntPtr buffer, nuint offset, nuint size)
-            => throw new NotSupportedException("Blocking buffer map is impossible on the browser main thread.");
-
-        internal static void wgpuBufferUnmap(IntPtr buffer) { }
-
-        internal static uint wgpuDevicePoll(IntPtr device, uint wait, ulong* submissionIndex) => 0;
 
         // ---- Surface -------------------------------------------------------------------
 
@@ -611,29 +952,49 @@ namespace Microsoft.Wpf.Interop.WebGpu
             // The browser presents the canvas's current texture automatically when
             // the current JS task returns to the event loop; a surface drawn from a worker
             // (the multithreaded runtime) is copied onto it here (wgpu-interop.js surfacePresent).
+            FlushPassCommands();
             WgpuBrowserJs.SurfacePresent((int)surface);
             return WGPUStatus.Success;
         }
 
         // ---- Releases (Wgpu.Lifecycle.cs equivalents) ---------------------------------
 
-        internal static void wgpuTextureRelease(IntPtr texture) => WgpuBrowserJs.Release((int)texture);
-        internal static void wgpuTextureViewRelease(IntPtr textureView) => WgpuBrowserJs.Release((int)textureView);
-        internal static void wgpuBufferRelease(IntPtr buffer) => WgpuBrowserJs.Release((int)buffer);
-        internal static void wgpuBindGroupRelease(IntPtr bindGroup) => WgpuBrowserJs.Release((int)bindGroup);
+        // A release goes in the record too, after the commands that name the object: in order, and no
+        // round trip of its own (a frame frees its bind groups and buffers by the dozen). Ids are never
+        // reused, so nothing made after it can be mistaken for it. Only on a thread that records passes,
+        // which flushes every frame: elsewhere (a finalizer) it goes now, as it did.
+        private static void Release(int id)
+        {
+            if (t_passCommands != null) Record(OpRelease, id, count: 1);
+            else WgpuBrowserJs.Release(id);
+        }
+
+        internal static void wgpuTextureRelease(IntPtr texture) => Release((int)texture);
+        internal static void wgpuTextureViewRelease(IntPtr textureView) => Release((int)textureView);
+        internal static void wgpuBufferRelease(IntPtr buffer)
+        {
+            // a buffer let go of while mapped: its ranges go with it
+            MapRecord? rec;
+            lock (s_maps) { s_maps.TryGetValue(buffer, out rec); s_maps.Remove(buffer); }
+            if (rec != null) foreach (var r in rec.Ranges) NativeMemory.Free((void*)r.Ptr);
+            Release((int)buffer);
+        }
+        internal static void wgpuBindGroupRelease(IntPtr bindGroup) => Release((int)bindGroup);
         // The 3D path releases layouts as well as bind groups; without this the browser flavor does
         // not compile at all, so the whole head silently kept running last-known-good binaries.
-        internal static void wgpuBindGroupLayoutRelease(IntPtr bindGroupLayout) => WgpuBrowserJs.Release((int)bindGroupLayout);
-        internal static void wgpuSamplerRelease(IntPtr sampler) => WgpuBrowserJs.Release((int)sampler);
-        internal static void wgpuCommandEncoderRelease(IntPtr commandEncoder) => WgpuBrowserJs.Release((int)commandEncoder);
-        internal static void wgpuCommandBufferRelease(IntPtr commandBuffer) => WgpuBrowserJs.Release((int)commandBuffer);
-        internal static void wgpuRenderPassEncoderRelease(IntPtr renderPassEncoder) => WgpuBrowserJs.Release((int)renderPassEncoder);
-        internal static void wgpuRenderPipelineRelease(IntPtr renderPipeline) => WgpuBrowserJs.Release((int)renderPipeline);
-        internal static void wgpuShaderModuleRelease(IntPtr shaderModule) => WgpuBrowserJs.Release((int)shaderModule);
-        internal static void wgpuQueueRelease(IntPtr queue) => WgpuBrowserJs.Release((int)queue);
+        internal static void wgpuBindGroupLayoutRelease(IntPtr bindGroupLayout) => Release((int)bindGroupLayout);
+        internal static void wgpuPipelineLayoutRelease(IntPtr pipelineLayout) => Release((int)pipelineLayout);
+        internal static void wgpuSamplerRelease(IntPtr sampler) => Release((int)sampler);
+        internal static void wgpuCommandEncoderRelease(IntPtr commandEncoder) => Release((int)commandEncoder);
+        internal static void wgpuCommandBufferRelease(IntPtr commandBuffer) => Release((int)commandBuffer);
+        internal static void wgpuRenderPassEncoderRelease(IntPtr renderPassEncoder) => Release((int)renderPassEncoder);
+        internal static void wgpuRenderPipelineRelease(IntPtr renderPipeline) => Release((int)renderPipeline);
+        internal static void ComputeRelease(IntPtr computeObject) => Release((int)computeObject);
+        internal static void wgpuShaderModuleRelease(IntPtr shaderModule) => Release((int)shaderModule);
+        internal static void wgpuQueueRelease(IntPtr queue) => Release((int)queue);
         internal static void wgpuDeviceRelease(IntPtr device) { /* device outlives contexts on the browser */ }
         internal static void wgpuAdapterRelease(IntPtr adapter) { }
         internal static void wgpuInstanceRelease(IntPtr instance) { }
-        internal static void wgpuSurfaceRelease(IntPtr surface) => WgpuBrowserJs.Release((int)surface);
+        internal static void wgpuSurfaceRelease(IntPtr surface) => Release((int)surface);
     }
 }

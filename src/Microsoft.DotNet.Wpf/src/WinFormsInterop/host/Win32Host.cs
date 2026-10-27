@@ -1920,13 +1920,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
 
     private Rectangle? GetCaretRect(int ox, int oy)
     {
-        if (!_driver.GetCaret(out int cx, out int cy, out int cw, out int ch)) return null;
+        if (!_driver.GetCaret(_formHandle, out int cx, out int cy, out int cw, out int ch)) return null;
         if ((BlinkMs() / 530) % 2 != 0) return null;
         return new Rectangle(cx - ox, cy - oy, Math.Max(1, cw), ch);
     }
     private bool CaretOn()
     {
-        if (!_driver.GetCaret(out _, out _, out _, out _)) return false;
+        if (!_driver.GetCaret(_formHandle, out _, out _, out _, out _)) return false;
         return (BlinkMs() / 530) % 2 == 0;
     }
 

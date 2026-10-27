@@ -445,6 +445,36 @@ public static unsafe partial class Exports
     /// (copied, top-down). Null when the DC has none, which a blit from a window DC is: what a window
     /// shows is the stack's to compose, not a buffer that can be read back here.
     /// </summary>
+    /// <summary>The screen's area under a screen or window DC (GetDC(NULL), GetDC(hwnd)) as an image:
+    /// what the platform shows there (ScreenPixels). Null for any other DC, or where it cannot be read.</summary>
+    private static System.Drawing.Bitmap? ScreenImage(DeviceContext dc, int sx, int sy, int sw, int sh)
+    {
+        if (dc.Memory || sw <= 0 || sh <= 0) return null;
+        POINT at = ScreenPointOf(dc, sx, sy);
+        byte[]? bgra = MS.Internal.Interop.ScreenPixels.Capture(at.X, at.Y, sw, sh);
+        if (bgra == null) return null;
+        var image = new System.Drawing.Bitmap(sw, sh, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+        var data = image.LockBits(new System.Drawing.Rectangle(0, 0, sw, sh), System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+        try
+        {
+            for (int y = 0; y < sh; y++)
+                Marshal.Copy(bgra, y * sw * 4, data.Scan0 + y * data.Stride, sw * 4);
+        }
+        finally
+        {
+            image.UnlockBits(data);
+        }
+        return image;
+    }
+
+    // a screen DC's point as it is; a window DC's from the window's client origin
+    private static POINT ScreenPointOf(DeviceContext dc, int x, int y)
+    {
+        var p = new POINT { X = x, Y = y };
+        if (dc.Hwnd != 0) ClientToScreen(dc.Hwnd, &p);
+        return p;
+    }
+
     private static System.Drawing.Bitmap? SourceImage(nint src)
     {
         if (!s_dcs.TryGetValue(src, out var dc) || !dc.Memory) return null;
@@ -497,6 +527,13 @@ public static unsafe partial class Exports
     {
         // Not disposed here: a recording destination draws it later, when it is composited.
         System.Drawing.Bitmap? image = SourceImage(src);
+        // From the screen or a window (a magnifier, an eye dropper's loupe): what is shown there.
+        if (image == null && s_dcs.TryGetValue(src, out var from) && !from.Memory
+            && ScreenImage(from, sx, sy, sw, sh) is { } shown)
+        {
+            image = shown;
+            sx = 0; sy = 0;
+        }
         if (image == null)
         {
             LogOnce("gdi:blit", "win32: a blit whose source is not a memory DC with a 32-bit DIB is accepted but not drawn");
@@ -522,7 +559,25 @@ public static unsafe partial class Exports
 
     [Win32Export("BitBlt")] public static int BitBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, uint rop) => Blit(dst, x, y, w, h, src, sx, sy, w, h, rop);
     [Win32Export("StretchBlt")] public static int StretchBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, int sw, int sh, uint rop) => Blit(dst, x, y, w, h, src, sx, sy, sw, sh, rop);
-    [Win32Export("GetPixel")] public static uint GetPixel(nint hdc, int x, int y) => 0xFFFFFFFF;   // CLR_INVALID
+    // GetPixel: from a memory DC, its bitmap's pixel; from the screen or a window, what is shown there
+    // (an eye dropper: app's colour picker reads GetPixel(GetDC(NULL), x, y) under the pointer).
+    // CLR_INVALID outside the bitmap, or where the screen cannot be read.
+    [Win32Export("GetPixel")]
+    public static uint GetPixel(nint hdc, int x, int y)
+    {
+        const uint CLR_INVALID = 0xFFFFFFFF;
+        if (!s_dcs.TryGetValue(hdc, out var dc)) return CLR_INVALID;
+        if (!dc.Memory)
+        {
+            POINT at = ScreenPointOf(dc, x, y);
+            return MS.Internal.Interop.ScreenPixels.GetPixel(at.X, at.Y);
+        }
+        if (!s_gdi.TryGetValue(dc.Bitmap, out var bmp) || bmp.Stock || bmp.Bits == null || bmp.BitsPerPixel != 32
+            || x < 0 || y < 0 || x >= bmp.Width || y >= bmp.Height) return CLR_INVALID;
+        SyncBits(bmp);
+        byte* px = (byte*)bmp.Bits + ((long)(bmp.BottomUp ? bmp.Height - 1 - y : y) * bmp.Width + x) * 4;
+        return (uint)(px[2] | px[1] << 8 | px[0] << 16);
+    }
 
     [Win32Export("FillRect", "FrameRect")]
     public static int FillRect(nint hdc, RECT* r, nint brush)

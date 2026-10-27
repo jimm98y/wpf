@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Browser replacement for System.Net.Requests, whose wasm build throws PlatformNotSupportedException
+       from every member, WebRequest's and WebException's constructors included, so neither an app's
+       own HttpWebRequest nor anything built on the types (WebClient, RestSharp, OData, AWSSDK) gets a
+       first step. HttpWebRequest is .NET's own design over HttpClient: the request is buffered and sent
+       on GetResponse, an error status is a WebException carrying the response, the synchronous calls
+       wait on the asynchronous ones (the page's fetch runs on its own thread, not on the app's). file:
+       requests read and write the page's file system, paths read as Windows reads them (WindowsPathCore):
+       ftp: has no transport in a browser. Same strong-name identity as the real assembly, version above
+       it; bundled for the browser head only (Sdk.targets), like the IsolatedStorage and Process shims.
+
+       Public surface: Surface.g.cs (../Surface/gen-surface.sh . System.Net.Requests framework) less
+       implemented.txt, which lists the types written by hand here. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Net.Requests</AssemblyName>
+    <RootNamespace>System.Net</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>msft.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;CS0067;CS0618;SYSLIB0014;SYSLIB0051;CS8632</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../tools/WpfWebGpu/WpfWebGpu.ComInterop/WindowsPathCore.cs" Link="WindowsPathCore.cs" />
+  </ItemGroup>
+
+  <!-- This assembly is the framework's System.Net.Requests: compiled without the reference assembly of
+       that name, so its types are these. -->
+  <Target Name="WpfWebGpuDropOwnReference" AfterTargets="ResolveTargetingPackAssets">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == '$(AssemblyName)'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

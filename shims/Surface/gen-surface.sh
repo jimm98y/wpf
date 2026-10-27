@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Regenerates a shim's Surface.g.cs from the package it stands in for:
 #   shims/Surface/gen-surface.sh <ShimDir> <PackageId> <Version>
+# or from the shared framework's reference assembly of that name, for a framework assembly:
+#   shims/Surface/gen-surface.sh <ShimDir> <AssemblyName> framework
 # The shim's implemented.txt lists the doc IDs it implements by hand (T:, M:, P:, E:, F:); they are
 # left out of the generated file. Everything else throws PlatformNotSupportedException, exactly as
 # the package's own non-Windows build does.
@@ -9,10 +11,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHIM="$(cd "$1" && pwd)"; ID="$2"; VER="$3"
 PKGS="${NUGET_PACKAGES:-$HOME/.nuget/packages}/"
 lower="$(echo "$ID" | tr '[:upper:]' '[:lower:]')"
-IN="$PKGS$lower/$VER/lib/net10.0/$ID.dll"
-[ -f "$IN" ] || { echo "error: $IN not found; restore $ID $VER first" >&2; exit 1; }
 ROOT="$(dirname "$(readlink -f "$(command -v dotnet)")")"
 REF="$(ls -d "$ROOT"/packs/Microsoft.NETCore.App.Ref/10.* | sort -V | tail -1)/ref/net10.0"
+if [ "$VER" = "framework" ]; then IN="$REF/$ID.dll"; else IN="$PKGS$lower/$VER/lib/net10.0/$ID.dll"; fi
+[ -f "$IN" ] || { echo "error: $IN not found; restore $ID $VER first" >&2; exit 1; }
 # Its dependencies outside the framework (System.CodeDom, System.Diagnostics.EventLog, ...).
 LIB="$REF"
 for d in "$PKGS"system.codedom/"$VER"/lib/net10.0 "$PKGS"system.diagnostics.eventlog/"$VER"/lib/net10.0; do [ -d "$d" ] && LIB="$LIB%3B$d"; done

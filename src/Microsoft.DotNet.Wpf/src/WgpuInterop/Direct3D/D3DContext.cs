@@ -493,7 +493,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private sealed class MapState { public volatile bool Done; public volatile bool Ok; }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        private static void OnMapped(WGPUMapAsyncStatus status, WGPUStringView message, IntPtr u1, IntPtr u2)
+        private static void OnMapped(WGPUMapAsyncStatus status, WGPUStringView message, IntPtr u1, IntPtr u2) => Mapped(status, message, u1, u2);
+
+        // OnMapped's body, also its managed twin (Wgpu.Callbacks.cs)
+        private static void Mapped(WGPUMapAsyncStatus status, WGPUStringView message, IntPtr u1, IntPtr u2)
         {
             var s = (MapState?)GCHandle.FromIntPtr(u1).Target;
             if (s == null) return;
@@ -512,7 +515,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var info = new WGPUBufferMapCallbackInfo
                 {
                     mode = WGPUCallbackMode.AllowProcessEvents,
-                    callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPUMapAsyncStatus, WGPUStringView, IntPtr, IntPtr, void>)&OnMapped,
+                    callback = MapCallback(&OnMapped, Mapped),
                     userdata1 = GCHandle.ToIntPtr(h),
                 };
                 ulong mapSize = (size + 3) & ~3UL;

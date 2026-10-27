@@ -739,7 +739,7 @@ namespace System.Windows.Forms.Integration
             }
         }
 
-        private sealed class WpfClipboardBridge : SWF.IClipboardBridge
+        internal sealed class WpfClipboardBridge : SWF.IClipboardBridge
         {
             public bool TryGetText(out string text)
             {
@@ -1126,7 +1126,7 @@ namespace System.Windows.Forms.Integration
             try { origin = TransformToAncestor(src.RootVisual).Transform(new Point(0, 0)); }
             catch { return; }
 
-            if (_driver.GetCaret(out int cx, out int cy, out int cw, out int ch))
+            if (_driver.GetCaret(_container.Handle, out int cx, out int cy, out int cw, out int ch))
             {
                 float s = (float)(dpi / PixelsPerDip);
                 EmbeddedContent.SetCaret(owner, (src as HwndSource)?.Handle ?? IntPtr.Zero,

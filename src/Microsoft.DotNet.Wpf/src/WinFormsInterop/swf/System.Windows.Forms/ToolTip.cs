@@ -113,6 +113,7 @@ namespace System.Windows.Forms {
 
 					cp.Style = (int)WindowStyles.WS_POPUP;
 					cp.Style |= (int)WindowStyles.WS_CLIPSIBLINGS;
+					cp.ClassStyle |= (int)XplatUIWin32.ClassStyle.CS_DROPSHADOW;   // tooltips_class32's
 
 					cp.ExStyle = (int)(WindowExStyles.WS_EX_TOOLWINDOW | WindowExStyles.WS_EX_TOPMOST);
 

@@ -189,15 +189,23 @@ namespace MS.Internal.Text.TextInterface.Managed
 
         private static IEnumerable<string> FontDirectories()
         {
-            foreach (string dir in PlatformFontDirectories()) yield return dir;
+            var dirs = new List<string>(PlatformFontDirectories());
 
             // Fonts that travel with the STACK rather than with the app: a launcher that runs a
             // prebuilt app on this stack (wpfrun) keeps them beside its own copy of the stack, since
             // it never writes into the app's folder. Probed after the app's own.
             if (AppContext.GetData("WpfWebGpu.FontDirectory") is string extra && extra.Length > 0)
             {
-                yield return extra;
+                dirs.Add(extra);
             }
+
+            // Windows faces made where the system has none of that name (StandInFaces): the same
+            // Microsoft Sans Serif WinForms text measures with.
+            if (Microsoft.Wpf.Interop.WebGpu.Composition.Text.StandInFaces.Directory(dirs) is string standIns)
+            {
+                dirs.Add(standIns);
+            }
+            return dirs;
         }
 
         private static IEnumerable<string> PlatformFontDirectories()

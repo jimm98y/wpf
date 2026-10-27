@@ -20,6 +20,38 @@ namespace System.Windows.Forms.Integration
     public partial class ElementHost
     {
         private HwndSource _keysFor;
+        private bool _translating;
+
+        /// <summary>As the Windows ElementHost: a key the loop pre-processes for the hosted window goes to
+        /// WPF first (IKeyboardInputSink.TranslateAccelerator, which raises PreviewKeyDown/KeyDown and
+        /// marks the message seen, so the window does not take it a second time), and on to WinForms
+        /// only if WPF leaves it. Without this an open ContextMenu never had its arrow keys: the loop's
+        /// message filters ran ProcessDialogKey, which took Up and Down for moving between controls.</summary>
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (_source != null && !_source.IsDisposed && !_translating && msg.HWnd == _source.Handle && IsKeyMessage(msg.Msg))
+            {
+                var wpf = new System.Windows.Interop.MSG { hwnd = msg.HWnd, message = msg.Msg, wParam = msg.WParam, lParam = msg.LParam };
+                bool handled;
+                _translating = true;
+                try { handled = ((IKeyboardInputSink)_source).TranslateAccelerator(ref wpf, ModifiersOf(keyData)); }
+                finally { _translating = false; }
+                if (KeyTrace.On) KeyTrace.Log($"  ElementHost.ProcessCmdKey({keyData}): WPF TranslateAccelerator -> {handled}");
+                if (handled) return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private static bool IsKeyMessage(int m) => m is 0x0100 or 0x0101 or 0x0104 or 0x0105;
+
+        private static SWI.ModifierKeys ModifiersOf(Keys keyData)
+        {
+            SWI.ModifierKeys m = SWI.ModifierKeys.None;
+            if ((keyData & Keys.Shift) != 0) m |= SWI.ModifierKeys.Shift;
+            if ((keyData & Keys.Control) != 0) m |= SWI.ModifierKeys.Control;
+            if ((keyData & Keys.Alt) != 0) m |= SWI.ModifierKeys.Alt;
+            return m;
+        }
 
         /// <summary>Starts following the hosted window's keyboard input (see the file's comment).</summary>
         private void HookKeyboard()
@@ -41,7 +73,8 @@ namespace System.Windows.Forms.Integration
         private void OnPostProcessInput(object sender, SWI.ProcessInputEventArgs e)
         {
             SWI.InputEventArgs input = e.StagingItem.Input;
-            if (input.Handled || IsDisposed || _keysFor == null) return;
+            // Inside ProcessCmdKey's TranslateAccelerator, which goes on to WinForms itself.
+            if (input.Handled || IsDisposed || _keysFor == null || _translating) return;
             try
             {
                 if (input.RoutedEvent == SWI.Keyboard.KeyDownEvent && input is SWI.KeyEventArgs ke && ReferenceEquals(ke.InputSource, _keysFor))
@@ -51,7 +84,10 @@ namespace System.Windows.Forms.Integration
                     if (vk == 0) return;
                     Keys keyData = (Keys)vk | ModifiersNow();
                     var msg = Message.Create(_keysFor.Handle, system ? 0x0104 : 0x0100, (IntPtr)vk, IntPtr.Zero);
-                    bool taken = ProcessCmdKey(ref msg, keyData);
+                    _translating = true;
+                    bool taken;
+                    try { taken = ProcessCmdKey(ref msg, keyData); }
+                    finally { _translating = false; }
                     if (KeyTrace.On) KeyTrace.Log($"  ElementHost: WPF left {ke.Key} unhandled -> WinForms ProcessCmdKey({keyData}) from {GetType().Name} '{Name}' -> {taken}");
                     if (taken) input.Handled = true;
                 }

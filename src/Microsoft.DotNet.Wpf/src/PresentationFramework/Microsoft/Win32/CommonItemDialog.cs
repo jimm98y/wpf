@@ -297,8 +297,14 @@ namespace Microsoft.Win32
         /// <summary>
         ///  True on the heads whose run loop cannot be re-entered, so no modal call can wait here.
         /// </summary>
+        /// <remarks>
+        ///  The browser's multithreaded runtime CAN wait: the app's thread is a worker there, and a modal
+        ///  loop runs to its end on it (BrowserBlocking), as WinForms' ShowDialog does. The page's picker
+        ///  answers asynchronously and the dialog waits for it, so an application's ShowDialog works
+        ///  there as written.
+        /// </remarks>
         private static bool CannotBlock =>
-            OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid();
+            (OperatingSystem.IsBrowser() && !MS.Internal.Interop.BrowserBlocking.CanBlock) || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid();
 
         /// <summary>
         ///  Refuses a synchronous ShowDialog on the three heads that cannot serve one.
@@ -487,20 +493,22 @@ namespace Microsoft.Win32
                     ? System.IO.Path.GetFileName(MutableItemNames[0])
                     : null;
 
-                string reserved = MS.Internal.Interop.BrowserDialogs.ReserveSavePath(suggested);
-                if (string.IsNullOrEmpty(reserved))
+                // the page's save picker; the path answered is written by the app and sent on to the
+                // file the user chose once it has been (or offered as a download without the picker)
+                string saved = await MS.Internal.Interop.BrowserDialogs
+                    .ShowSavePanelAsync(suggested, (this as FileDialog)?.Filter).ConfigureAwait(true);
+                if (string.IsNullOrEmpty(saved))
                 {
                     return false;
                 }
 
-                MutableItemNames = new[] { reserved };
+                MutableItemNames = new[] { saved };
                 return true;
             }
 
             // Filter belongs to FileDialog; OpenFolderDialog is a CommonItemDialog that has none.
-            string accept = MS.Internal.Interop.BrowserDialogs.FilterToAccept((this as FileDialog)?.Filter);
             string[] chosen = await MS.Internal.Interop.BrowserDialogs
-                .ShowOpenPanelAsync(accept, GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS))
+                .ShowOpenPanelAsync(null, GetOption(FOS.ALLOWMULTISELECT), GetOption(FOS.PICKFOLDERS), (this as FileDialog)?.Filter)
                 .ConfigureAwait(true);
 
             if (chosen is null || chosen.Length == 0)
@@ -516,6 +524,12 @@ namespace Microsoft.Win32
         {
             string title = string.IsNullOrEmpty(Title) ? null : Title;
             string dir = string.IsNullOrEmpty(InitialDirectory) ? null : InitialDirectory;
+
+            // The browser: its own picker, waited for (CannotBlock is false only where that is possible).
+            if (OperatingSystem.IsBrowser())
+            {
+                return MS.Internal.Interop.BrowserDialogs.WaitForAnswer(RunBrowserDialogAsync) == true;
+            }
 
             // Linux: xdg-desktop-portal's FileChooser. The dialog is drawn by the DESKTOP, not by
             // us, so it matches the user's file manager, bookmarks and recent files -- and it is the

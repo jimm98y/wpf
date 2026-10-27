@@ -809,6 +809,7 @@ namespace System.Windows.Forms {
 					cp.Style ^= (int)WindowStyles.WS_CHILD;
 					cp.Style ^= (int)WindowStyles.WS_VISIBLE;
 					cp.Style |= (int)WindowStyles.WS_POPUP;
+					cp.ClassStyle |= (int)XplatUIWin32.ClassStyle.CS_DROPSHADOW;   // the Auto-Suggest Dropdown's
 					cp.ExStyle |= (int)WindowExStyles.WS_EX_TOPMOST | (int)WindowExStyles.WS_EX_TOOLWINDOW;
 					return cp;
 				}

@@ -34,7 +34,13 @@ namespace System.Windows.Forms
 		// (ScaleHelper.HostSourceDpi 0) and is rendered 1:1
 		private double _scale = 1, _k = 1;
 		private int _lastVer = -1, _surfaceW, _surfaceH;
-		private bool _lastCaretOn, _lastPresentOk, _leftDown, _closed;
+		private bool _lastCaretOn, _lastPresentOk, _closed;
+		// The left button as the system has it, not as each window saw it: pressed in one form's window and
+		// moved over another's (a panel dragged out of its dock, the drag carried past its floating window),
+		// the moves are WM_MOUSEMOVEs with MK_LBUTTON to the window that captured the mouse, wherever they
+		// arrive. Kept per window, the window the pointer had moved over sent them as moves with no button.
+		private static bool _leftDown;
+		private string _title;
 		private int _traced, _tracedScenes;
 		// the frame the page has no window manager to draw (WindowChrome): a dialog's title bar and edges
 		private readonly WindowChrome _chrome;
@@ -115,6 +121,39 @@ namespace System.Windows.Forms
 			_lastVer = -1;
 		}
 
+		// The page's capture follows the driver's: a control that grabs the mouse (WinForms does on every
+		// press) gets it in its window wherever the pointer goes, over another form's canvas or a hosted
+		// WPF one (BrowserWindow routes by PlatformWindow.MouseCaptureHandle, as WPF's own capture does).
+		static BrowserFormHost ()
+		{
+			XplatUIWebGpu.CaptureChanged += OnCaptureChanged;
+		}
+
+		private static IntPtr s_capturedWindow;
+
+		private static void OnCaptureChanged (IntPtr hwnd)
+		{
+			if (hwnd == IntPtr.Zero) {
+				// released: the page's capture too, unless WPF has taken it since
+				if (s_capturedWindow != IntPtr.Zero && WindowsBase::MS.Internal.Interop.PlatformWindow.MouseCaptureHandle == s_capturedWindow)
+					WindowsBase::MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = IntPtr.Zero;
+				s_capturedWindow = IntPtr.Zero;
+				return;
+			}
+			// the window the control is drawn in: its form's, or for a popup (a menu, a drop-down) the
+			// active form's, whose canvas draws it
+			BrowserFormHost host = null;
+			if (Control.FromHandle (hwnd)?.TopLevelControl is Form top)
+				foreach (BrowserFormHost h in s_activation)
+					if (h._form == top)
+						host = h;
+			host ??= s_active;
+			if (host?._window == null || host._closed)
+				return;
+			s_capturedWindow = host._window.Handle;
+			WindowsBase::MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = s_capturedWindow;
+		}
+
 		internal BrowserFormHost (Form form)
 		{
 			_form = form;
@@ -143,6 +182,8 @@ namespace System.Windows.Forms
 			_form.VisibleChanged += OnVisibleChanged;
 			// ShowDialog's end destroys the dialog's handle: its window goes, and a later Show makes another
 			_form.HandleDestroyed += OnHandleDestroyed;
+			// the app moving its form moves the window, as SetWindowPos does
+			_form.LocationChanged += OnFormMoved;
 			BrowserWindow.MouseInput += OnMouse;
 			BrowserWindow.KeyInput += OnKey;
 
@@ -230,8 +271,27 @@ namespace System.Windows.Forms
 				XplatUI.SetWindowPos (_form.Handle, bounds.X, bounds.Y, bounds.Width, bounds.Height);
 		}
 
-		// the page's own window, which fills it (the first framed one the window manager is given)
-		private bool IsScreenWindow => _window != null && !_window.IsSecondary;
+		/// <summary>The form moved by the app (Location, SetBounds, SetWindowPos): its window goes there, as a
+		/// window does on Windows. The page's window placement went only the other way -- the window
+		/// manager's decision, taken by the form -- and a DotNetBar panel dragged out of its dock, which
+		/// moves its floating window to the pointer itself, stayed where it was first put.</summary>
+		private void OnFormMoved (object sender, EventArgs e)
+		{
+			if (_closed || _window == null || IsScreenWindow || _form.IsDisposed || !_form.IsHandleCreated)
+				return;
+			_window.GetClientScreenOriginPixels (out int px, out int py);
+			int x = (int)Math.Round (_form.Left * _scale), y = (int)Math.Round (_form.Top * _scale);
+			if (x == px && y == py)
+				return;                        // where the window already is (SyncFromWindow's own move)
+			_window.SetFrameOrigin (x, y);
+			_lastVer = -1;
+		}
+
+		// the page's own window, which fills it (the first framed one the window manager is given). Not a
+		// borderless one, which the window manager never counts as secondary: a floating DotNetBar panel
+		// (a borderless form that draws its own caption) was taken for the screen's window, kept the
+		// canvas's size, and ignored every move its app gave it.
+		private bool IsScreenWindow => _window != null && !_window.IsSecondary && !_window.IsBorderless;
 
 		private void OnVisibleChanged (object sender, EventArgs e)
 		{
@@ -264,6 +324,10 @@ namespace System.Windows.Forms
 		{
 			if (_wgpu == null || _closed)
 				return;
+			// The form's title as it changes ("*Display1.gdfx" once there is something to save): the
+			// page shows it while this is the frontmost window (browser-window.js updatePageTitle).
+			string title = _form.IsDisposed ? _title : _form.Text ?? "";
+			if (title != _title) { _title = title; WindowsBase::MS.Internal.Interop.PlatformWindow.SetTitle (_window.Handle, title); }
 			// the page's devicePixelRatio changed (zoom, another display): a per-monitor form lays itself
 			// out again, any other is drawn at the new scale
 			double backing = Math.Max (0.5, _window.GetBackingScale ());
@@ -290,7 +354,7 @@ namespace System.Windows.Forms
 				_surfaceH = needH;
 				_window.SetContentSize ((int)Math.Round (needW / _k), (int)Math.Round (needH / _k));
 			}
-			Rectangle? caret = caretOn && _driver.GetCaret (out int cx, out int cy, out int cw, out int ch)
+			Rectangle? caret = caretOn && _driver.GetCaret(_form.Handle, out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, needW, needH);
 			if (s_trace && (_traced++ < 6 || scenes.Count != _tracedScenes)) {
@@ -365,7 +429,7 @@ namespace System.Windows.Forms
 			}
 		}
 
-		private bool CaretOn () => _driver.GetCaret (out _, out _, out _, out _) && (_blink.ElapsedMilliseconds / 530) % 2 == 0;
+		private bool CaretOn () => _driver.GetCaret(_form.Handle, out _, out _, out _, out _) && (_blink.ElapsedMilliseconds / 530) % 2 == 0;
 
 		private static float SrgbToLinear (float c) => c <= 0.04045f ? c / 12.92f : (float)Math.Pow ((c + 0.055) / 1.055, 2.4);
 
@@ -574,6 +638,7 @@ namespace System.Windows.Forms
 			Deactivate ();
 			_closed = true;
 			_form.VisibleChanged -= OnVisibleChanged;
+			_form.LocationChanged -= OnFormMoved;
 			_form.HandleDestroyed -= OnHandleDestroyed;
 			BrowserWindow.MouseInput -= OnMouse;
 			BrowserWindow.KeyInput -= OnKey;

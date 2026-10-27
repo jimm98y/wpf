@@ -39,14 +39,22 @@ namespace MS.Internal.Interop
         /// <param name="accept">
         ///  An HTML accept list ("*.txt,*.csv" style becomes ".txt,.csv"), or null for everything.
         /// </param>
-        public static async Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory)
+        public static Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory)
+            => ShowOpenPanelAsync(accept, multiple, directory, filter: null);
+
+        /// <summary>
+        ///  Shows the browser's open picker (its File System Access picker where the page has one, else
+        ///  an input element) offering <paramref name="filter"/>'s groups ("Displays|*.gdfx|All|*.*").
+        ///  A directory pick answers the directory's path.
+        /// </summary>
+        public static async Task<string[]> ShowOpenPanelAsync(string accept, bool multiple, bool directory, string filter)
         {
             if (!IsAvailable) return Array.Empty<string>();
 
             string json;
             try
             {
-                json = await Js.PickFiles(accept ?? string.Empty, multiple, directory).ConfigureAwait(true);
+                json = await Js.PickFiles(accept ?? FilterToAccept(filter) ?? string.Empty, multiple, directory, FilterToTypes(filter)).ConfigureAwait(true);
             }
             catch (JSException)
             {
@@ -72,6 +80,98 @@ namespace MS.Internal.Interop
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        ///  Shows the browser's save picker: the path, inside the wasm virtual file system, that the
+        ///  application writes; once written it goes to the file the user chose (or, where the page has
+        ///  no save picker, is offered as a download). Null when the user cancelled.
+        /// </summary>
+        public static async Task<string> ShowSavePanelAsync(string suggestedName, string filter)
+        {
+            if (!IsAvailable) return null;
+            try
+            {
+                string json = await Js.PickSave(suggestedName ?? string.Empty, FilterToTypes(filter)).ConfigureAwait(true);
+                using JsonDocument document = JsonDocument.Parse(json);
+                JsonElement root = document.RootElement;
+                return root.TryGetProperty("ok", out JsonElement ok) && ok.GetBoolean() && root.TryGetProperty("path", out JsonElement path)
+                    ? path.GetString() : null;
+            }
+            catch (Exception e) when (e is JSException or JsonException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        ///  The pickers for a caller that waits, as ShowDialog does: the thread blocks until the user has
+        ///  answered, running what is posted to it meanwhile (BrowserBlocking), as a modal loop does. The
+        ///  browser's pickers answer asynchronously; the app's thread may wait for them on the
+        ///  multithreaded runtime (BrowserBlocking.CanBlock).
+        /// </summary>
+        public static string[] ShowOpenPanel(bool multiple, bool directory, string filter)
+            => WaitForAnswer(() => ShowOpenPanelAsync(null, multiple, directory, filter));
+
+        public static string ShowSavePanel(string suggestedName, string filter)
+            => WaitForAnswer(() => ShowSavePanelAsync(suggestedName, filter));
+
+        /// <summary>The answer of a picker the caller waits for (see ShowOpenPanel). The picker is started
+        /// with no synchronization context, so what it awaits carries on where the page's answer arrives
+        /// (this thread's JS queue, drained while it waits) rather than on the caller's dispatcher, which
+        /// is not pumped while it waits.</summary>
+        public static T WaitForAnswer<T>(Func<Task<T>> start)
+        {
+            Task<T> task;
+            System.Threading.SynchronizationContext previous = System.Threading.SynchronizationContext.Current;
+            System.Threading.SynchronizationContext.SetSynchronizationContext(null);
+            try { task = start(); }
+            finally { System.Threading.SynchronizationContext.SetSynchronizationContext(previous); }
+            while (!task.IsCompleted)
+            {
+                BrowserBlocking.DrainJSQueue();
+                if (!task.IsCompleted) BrowserBlocking.Wait(10);
+            }
+            return task.GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        ///  WinForms' and WPF's filter ("Displays|*.gdfx;*.gdf|All files|*.*") as the pickers' groups, as
+        ///  JSON: [{ "description": "Displays", "extensions": [".gdfx", ".gdf"] }]. A group of every file is
+        ///  the picker's own choice and left out.
+        /// </summary>
+        public static string FilterToTypes(string filter)
+        {
+            var buffer = new System.IO.MemoryStream();
+            using (var json = new Utf8JsonWriter(buffer))
+            {
+                json.WriteStartArray();
+                if (!string.IsNullOrWhiteSpace(filter))
+                {
+                    string[] parts = filter.Split('|');
+                    for (int i = 0; i + 1 < parts.Length; i += 2)
+                    {
+                        var extensions = new System.Collections.Generic.List<string>();
+                        foreach (string pattern in parts[i + 1].Split(';', StringSplitOptions.RemoveEmptyEntries))
+                        {
+                            string trimmed = pattern.Trim();
+                            int dot = trimmed.LastIndexOf('.');
+                            if (trimmed is "*.*" or "*" || dot < 0) continue;
+                            string extension = trimmed.Substring(dot);
+                            if (extension.Length > 1 && extension.IndexOfAny(new[] { '*', '?' }) < 0 && !extensions.Contains(extension)) extensions.Add(extension);
+                        }
+                        if (extensions.Count == 0) continue;
+                        json.WriteStartObject();
+                        json.WriteString("description", parts[i].Trim());
+                        json.WriteStartArray("extensions");
+                        foreach (string e in extensions) json.WriteStringValue(e);
+                        json.WriteEndArray();
+                        json.WriteEndObject();
+                    }
+                }
+                json.WriteEndArray();
+            }
+            return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
         }
 
         /// <summary>Offers a file the application has written as a browser download.</summary>
@@ -198,7 +298,10 @@ namespace MS.Internal.Interop
             private const string Module = "wpfBrowserWindow";
 
             [JSImport("pickFilesAsync", Module)]
-            internal static partial Task<string> PickFiles(string accept, bool multiple, bool directory);
+            internal static partial Task<string> PickFiles(string accept, bool multiple, bool directory, string typesJson);
+
+            [JSImport("pickSaveAsync", Module)]
+            internal static partial Task<string> PickSave(string suggestedName, string typesJson);
 
             [JSImport("reserveSavePath", Module)]
             internal static partial string ReserveSavePath(string suggestedName);

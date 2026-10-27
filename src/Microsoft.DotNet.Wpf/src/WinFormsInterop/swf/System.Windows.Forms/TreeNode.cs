@@ -259,7 +259,7 @@ namespace System.Windows.Forms
 			// pixels, and the text follows the box directly.
 			int cb = (TreeView.CheckBoxes ? TreeView.CheckBoxCellWidth : 0);
 			if (!TreeView.CheckBoxes && StateImage != null)
-				cb = 19;
+				cb = TreeView.StateImageSize.Width + 3;
 			int imgs = (TreeView.ImageList != null ?  TreeView.ImageList.ImageSize.Width + 3 : 0);
 			// The three pixels are Windows': a stock node's rectangle starts that far past the
 			// indent, and a check box stands in them and after them.
@@ -277,7 +277,7 @@ namespace System.Windows.Forms
 
 		internal int GetImageX ()
 		{
-			return GetLinesX () + (TreeView.CheckBoxes || StateImage != null ? 19 : 0);
+			return GetLinesX () + (TreeView.CheckBoxes ? 19 : StateImage != null ? TreeView.StateImageSize.Width + 3 : 0);
 		}
 
 		// In theory we should be able to track this instead of computing

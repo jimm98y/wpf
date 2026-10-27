@@ -320,7 +320,8 @@ namespace System.Drawing
 
 		internal bool PrintStroke (Pen pen, GraphicsPath path)
 		{
-			if (!print_mode || GpuRecorder == null) return false;
+			if (GpuRecorder == null) return false;
+			if (!print_mode) return BrushPenStroke (pen, path);
 			if (pen == null) throw new ArgumentNullException ("pen");
 			PointF [] pts; byte [] types;
 			try { pts = path.PathPoints; types = path.PathTypes; } catch (Exception) { return true; }
@@ -333,6 +334,25 @@ namespace System.Drawing
 			float [] dash = DashOf (pen);
 			GpuRecorder.StrokePathData (ToXY (pts), types, PrintPenArgb (pen), PrintPenWidth (pen), dash,
 				dash != null ? pen.DashOffset : 0f, cap, join, pen.MiterLimit);
+			return true;
+		}
+
+		/// <summary>Whether <paramref name="pen"/> strokes with a brush that has no one colour: a gradient
+		/// or a texture (Pen(Brush)). GDI+ strokes such a pen by filling its widened outline with the
+		/// brush; the recorder's strokes take one colour, and asked the pen for it -- which, as on
+		/// Windows, a pen without one refuses ("Parameter is not valid": app's gradient dial).</summary>
+		static bool IsBrushPen (Pen pen)
+			=> pen != null && !pen.IsDisposed && !(pen.BrushRef is SolidBrush || pen.BrushRef is HatchBrush);
+
+		/// <summary>A brush pen's stroke of <paramref name="path"/>, as GDI+ draws it: the outline the pen
+		/// sweeps (GraphicsPath.Widen) filled with the pen's brush. False for any other pen.</summary>
+		bool BrushPenStroke (Pen pen, GraphicsPath path)
+		{
+			if (!IsBrushPen (pen) || path == null || path.PointCount < 2) return false;
+			using (var outline = (GraphicsPath) path.Clone ()) {
+				outline.Widen (pen);
+				FillPath (pen.BrushRef, outline);
+			}
 			return true;
 		}
 
@@ -350,7 +370,7 @@ namespace System.Drawing
 
 		bool PrintStroke (Pen pen, Action<GraphicsPath> build)
 		{
-			if (!print_mode || GpuRecorder == null) return false;
+			if (GpuRecorder == null || (!print_mode && !IsBrushPen (pen))) return false;
 			using (var gp = new GraphicsPath ()) {
 				build (gp);
 				return PrintStroke (pen, gp);

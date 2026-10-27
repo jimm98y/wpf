@@ -97,6 +97,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     if (s_unfittedDropout) dropout = font.DWriteUnfittedDropout(ppem, flags);
                 }
                 else if (!font.TryGetScaledOutline(glyphId, pixelsPerEm, out figures)) return s_empty;
+                else dropout = font.StandInDropout;   // an unhinted stand-in scans as its Windows face does (StandInVdmx)
             }
             GlyphBits bits = Scan(figures, nSub, dropout);
             return font.SynthesizesBold && !outlineBold ? Embolden(bits, ppem) : bits;

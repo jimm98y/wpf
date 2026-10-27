@@ -25,57 +25,11 @@ public static class WindowsPaths
     private static readonly bool s_windows = OperatingSystem.IsWindows();
 
     /// <summary>The path with Windows' separators made this system's.</summary>
-    public static string? Native(string? path)
-        => path == null || s_windows || path.IndexOf('\\') < 0 ? path : path.Replace('\\', '/');
-
-    // Windows' file names are not case-sensitive: an app asks for "keyPad.xml" and gets KeyPad.xml. A
-    // case-sensitive file system -- the browser's, Linux's as a rule -- found nothing, and app' keypad
-    // reported its layout missing. Where the file system is one, a path that does not exist as written is
-    // found as Windows would find it, a component at a time, the first entry that differs only in case
-    // taken; what does not exist at all (a file about to be made) keeps the rest of its name as written.
-    private static readonly bool s_caseSensitive = !s_windows && CaseSensitive();
-
-    private static bool CaseSensitive()
-    {
-        try
-        {
-            string probe = AppContext.BaseDirectory.TrimEnd('/');
-            string flipped = new string(probe.Select(c => char.IsUpper(c) ? char.ToLowerInvariant(c) : char.ToUpperInvariant(c)).ToArray());
-            if (flipped == probe) return true;
-            return !Directory.Exists(flipped);
-        }
-        catch (Exception) { return true; }
-    }
+    public static string? Native(string? path) => Paths.WindowsPathCore.Native(path!);
 
     /// <summary>The path an app hands a member that opens, lists or checks something: Windows' separators
-    /// made this system's, and found as Windows' case-insensitive names find it.</summary>
-    public static string? Disk(string? path)
-    {
-        string? native = Native(path);
-        if (!s_caseSensitive || string.IsNullOrEmpty(native) || File.Exists(native) || Directory.Exists(native)) return native;
-        try
-        {
-            string full = Path.GetFullPath(native);
-            string root = Path.GetPathRoot(full) ?? "/";
-            string[] parts = full.Substring(root.Length).Split('/', StringSplitOptions.RemoveEmptyEntries);
-            string at = root;
-            for (int i = 0; i < parts.Length; i++)
-            {
-                string exact = Path.Combine(at, parts[i]);
-                if (File.Exists(exact) || Directory.Exists(exact)) { at = exact; continue; }
-                string? match = Directory.Exists(at)
-                    ? Directory.EnumerateFileSystemEntries(at).FirstOrDefault(e => string.Equals(Path.GetFileName(e), parts[i], StringComparison.OrdinalIgnoreCase))
-                    : null;
-                if (match == null) return Path.Combine(new[] { at }.Concat(parts.Skip(i)).ToArray());
-                at = match;
-            }
-            return at;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            return native;
-        }
-    }
+    /// made this system's, and found as Windows' case-insensitive names find it (WindowsPathCore).</summary>
+    public static string? Disk(string? path) => Paths.WindowsPathCore.Disk(path!);
 
     private static string[] Native(string[] paths)
     {
@@ -188,22 +142,38 @@ public static class WindowsPaths
     public static StreamWriter StreamWriter_new(string path) => new StreamWriter(Disk(path)!);
     public static StreamWriter StreamWriter_new(string path, bool append) => new StreamWriter(Disk(path)!, append);
     public static StreamWriter StreamWriter_new(string path, bool append, Encoding encoding) => new StreamWriter(Disk(path)!, append, encoding);
-    public static XmlTextReader XmlTextReader_new(string url) => new XmlTextReader(Disk(url)!);
+    public static XmlTextReader XmlTextReader_new(string url) => new XmlTextReader(DiskOrUri(url)!);
     public static XmlTextWriter XmlTextWriter_new(string filename, Encoding? encoding) => new XmlTextWriter(Disk(filename)!, encoding);
 
     // ---- XML from a file ----
+    //
+    // The loaders take a URI as well as a path, and a URI is not a path: app reads
+    // AGConfigurationMode.xml by its file URI next to its assemblies, and made a path of it -- "/file:/..."
+    // -- found no file, and so never knew it could be in web (AnyGlass) mode: its title and status bars
+    // stayed the desktop's green in every mode.
 
-    public static void XmlDocument_Load(XmlDocument document, string filename) => document.Load(Disk(filename)!);
+    /// <summary>A loader's argument: a URI as it is -- a file URI's path read as Windows reads it -- and a
+    /// path as Disk reads it. "C:\..." is a path (a drive, not a scheme).</summary>
+    public static string? DiskOrUri(string? s)
+    {
+        if (s == null || s_windows) return s;
+        bool drive = s.Length >= 2 && char.IsAsciiLetter(s[0]) && s[1] == ':';
+        if (!drive && s.Contains(':') && Uri.TryCreate(s, UriKind.Absolute, out Uri? uri))
+            return uri.IsFile ? Disk(uri.LocalPath) : s;
+        return Disk(s);
+    }
+
+    public static void XmlDocument_Load(XmlDocument document, string filename) => document.Load(DiskOrUri(filename)!);
     public static void XmlDocument_Save(XmlDocument document, string filename) => document.Save(Disk(filename)!);
-    public static XmlReader XmlReader_Create(string inputUri) => XmlReader.Create(Disk(inputUri)!);
-    public static XmlReader XmlReader_Create(string inputUri, XmlReaderSettings? settings) => XmlReader.Create(Disk(inputUri)!, settings);
+    public static XmlReader XmlReader_Create(string inputUri) => XmlReader.Create(DiskOrUri(inputUri)!);
+    public static XmlReader XmlReader_Create(string inputUri, XmlReaderSettings? settings) => XmlReader.Create(DiskOrUri(inputUri)!, settings);
     public static XmlWriter XmlWriter_Create(string outputFileName) => XmlWriter.Create(Disk(outputFileName)!);
     public static XmlWriter XmlWriter_Create(string outputFileName, XmlWriterSettings? settings) => XmlWriter.Create(Disk(outputFileName)!, settings);
-    public static XDocument XDocument_Load(string uri) => XDocument.Load(Disk(uri)!);
-    public static XDocument XDocument_Load(string uri, LoadOptions options) => XDocument.Load(Disk(uri)!, options);
+    public static XDocument XDocument_Load(string uri) => XDocument.Load(DiskOrUri(uri)!);
+    public static XDocument XDocument_Load(string uri, LoadOptions options) => XDocument.Load(DiskOrUri(uri)!, options);
     public static void XDocument_Save(XDocument document, string fileName) => document.Save(Disk(fileName)!);
-    public static XElement XElement_Load(string uri) => XElement.Load(Disk(uri)!);
-    public static XElement XElement_Load(string uri, LoadOptions options) => XElement.Load(Disk(uri)!, options);
+    public static XElement XElement_Load(string uri) => XElement.Load(DiskOrUri(uri)!);
+    public static XElement XElement_Load(string uri, LoadOptions options) => XElement.Load(DiskOrUri(uri)!, options);
     public static void XElement_Save(XElement element, string fileName) => element.Save(Disk(fileName)!);
 
     // ---- a path as a URI ----

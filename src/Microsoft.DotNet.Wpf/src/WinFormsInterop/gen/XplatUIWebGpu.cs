@@ -132,6 +132,12 @@ namespace System.Windows.Forms {
 			return new SizeF(width, height);
 		}
 		internal override int SendInput(IntPtr hwnd, System.Collections.Queue keys) { return 0; }
-		internal override void ResetMouseHover(IntPtr hwnd) {  }
+		/// <summary>Another WM_MOUSEHOVER for the window the pointer rests on, after the hover time again.</summary>
+		internal override void ResetMouseHover(IntPtr hwnd)
+		{
+			if (hwnd != _hoverWindow || hwnd == IntPtr.Zero) return;
+			_hoverDone = false;
+			_hoverSince = Timer.StopWatchNowMilliseconds;
+		}
 	}
 }

@@ -101,6 +101,13 @@ namespace System.Windows.Forms.Integration
                     // ...and a press there closes an open WinForms menu, as a press the driver delivers
                     // does (XplatUI.MousePress, which this one never passes through).
                     if (press && m >= 0x0200) System.Windows.Forms.XplatUI.RaiseMousePress(msg.hwnd);
+                    // A left click on a hosted window gives it the keyboard: a child window does not get
+                    // the focus from DefWindowProc the way a top-level one does, and the hosting app
+                    // grants it, as the original ElementHost does. Here, where every head's press passes:
+                    // the window's own hook (SourceHook) sees its messages only on Windows, and on the Mac
+                    // the keyboard stayed with the ribbon button last clicked -- Delete went to it.
+                    if (m == WM_LBUTTONDOWN && Control.ForeignChildOwner(msg.hwnd) is ElementHost owner && !owner.IsDisposed)
+                        SetFocus(msg.hwnd);
                     var message = Message.Create(msg.hwnd, m, msg.wParam, msg.lParam);
                     if (Application.FilterMessage(ref message)) handled = true;
                     if (s_traceFilter && m != 0x0200) Console.Error.WriteLine($"elementhost filter: {DateTime.Now:HH:mm:ss.fff} msg=0x{m:x} hwnd=0x{msg.hwnd.ToInt64():x} taken={handled}");
@@ -118,6 +125,10 @@ namespace System.Windows.Forms.Integration
         public ElementHost()
         {
             HookMessageFilters();
+            // The system clipboard, which the driver reaches only through WPF's off Windows: an
+            // application that hosts WPF in WinForms (app's configurator) never makes a
+            // WindowsFormsHost, and its text boxes copied and pasted only among themselves.
+            XplatUIWebGpu.ClipboardBridge ??= new WindowsFormsHost.WpfClipboardBridge();
             // The WPF tree paints this area; the control's own background only shows for the frame or
             // two before WPF's first render. (Not Color.Transparent: a Control refuses that unless it
             // opts into SupportsTransparentBackColor, and the WPF root paints the whole rect anyway.)
@@ -225,8 +236,9 @@ namespace System.Windows.Forms.Integration
 
             // Drawn where it shows: cut to its ancestors' client areas, and not at all while hidden (a tab
             // not selected, a pane taken off the form) -- the same rule its real window follows.
-            // ...and not over a control above it in z-order: one piece per uncovered rectangle.
-            List<SD.Rectangle> pieces = VisiblePieces();
+            // ...and not over a control above it in z-order: one piece per uncovered rectangle. Windows over
+            // the form are drawn over it by the host, so they cut nothing out of the picture.
+            List<SD.Rectangle> pieces = VisiblePieces(windowsOver: false);
             if (pieces.Count == 0 || !_shown) return;
 
             SD.Point s = PointToScreen(SD.Point.Empty);
@@ -425,7 +437,12 @@ namespace System.Windows.Forms.Integration
             // A canvas of the page is placed in the page whatever its parent (EnsureSource adds the form's
             // origin), and the page has no user32 to ask: WPF's SetParent is the real import, which failed
             // there, and the hosted canvas stayed where the parking window had it, over the form's top.
-            if (OperatingSystem.IsBrowser()) return true;
+            // Its place in the page's z-order follows the new parent's, though (browser-window.js setParentWindow).
+            if (OperatingSystem.IsBrowser())
+            {
+                if (_source != null) MS.Internal.Interop.BrowserWindow.FromHandle(_source.Handle)?.SetParentWindow(parent);
+                return true;
+            }
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {
@@ -553,7 +570,6 @@ namespace System.Windows.Forms.Integration
                     return new IntPtr(-1);              // HTTRANSPARENT
                 }
             }
-            if (msg == WM_LBUTTONDOWN && OperatingSystem.IsWindows()) SetFocus(hwnd);
             // The hosted window has the keyboard, so this control is WinForms' focused control, as an
             // ElementHost is in .NET: the form's active chain points here and every container on the
             // way (a DotNetBar dock bar's caption) shows itself inactive. Without it the focus stayed
