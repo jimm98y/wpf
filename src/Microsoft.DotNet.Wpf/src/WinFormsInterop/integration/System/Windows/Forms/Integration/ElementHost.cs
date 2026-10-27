@@ -108,12 +108,38 @@ namespace System.Windows.Forms.Integration
                     // the keyboard stayed with the ribbon button last clicked -- Delete went to it.
                     if (m == WM_LBUTTONDOWN && Control.ForeignChildOwner(msg.hwnd) is ElementHost owner && !owner.IsDisposed)
                         SetFocus(msg.hwnd);
+                    // ...and a key is the thread's keyboard hooks' (WH_KEYBOARD) before any filter's, as
+                    // GetMessage calls them when it takes the key off the queue: DotNetBar gives an open
+                    // popup its arrow keys, Enter and Escape from its hook, and over a hosted canvas the
+                    // key went from the filters into WPF instead -- Down scrolled the canvas under
+                    // app's context menu. A hook that answers non-zero discards the key.
+                    if (m >= 0x0100 && m <= 0x0105 && KeyboardHooked(m, msg.wParam, msg.lParam))
+                    {
+                        handled = true;
+                        return;
+                    }
                     var message = Message.Create(msg.hwnd, m, msg.wParam, msg.lParam);
                     if (Application.FilterMessage(ref message)) handled = true;
                     if (s_traceFilter && m != 0x0200) Console.Error.WriteLine($"elementhost filter: {DateTime.Now:HH:mm:ss.fff} msg=0x{m:x} hwnd=0x{msg.hwnd.ToInt64():x} taken={handled}");
                 }
                 catch (Exception ex) { Console.Error.WriteLine("ElementHost: message filter failed: " + ex.Message); }
             };
+        }
+
+        /// <summary>The Win32 shim's WH_KEYBOARD hooks for a key message (WM_KEYDOWN .. WM_SYSKEYUP), with the
+        /// keystroke flags Windows passes them: repeat count, context code (Alt held, for a system key) and
+        /// the transition bits of a release. On Windows user32 calls the hooks itself and the shim
+        /// publishes nothing, so this is false there.</summary>
+        private static bool KeyboardHooked(int message, IntPtr wParam, IntPtr lParam)
+        {
+            if (AppContext.GetData("WpfWebGpu.Win32.KeyboardHook") is not Func<int, long, bool> hook) return false;
+            bool up = message == 0x0101 || message == 0x0105;
+            bool system = message == 0x0104 || message == 0x0105;
+            long flags = (long)lParam & 0xFFFFFFFFL;
+            if ((flags & 0xFFFF) == 0) flags |= 1;
+            if (system && (int)wParam != 0x12) flags |= 1L << 29;
+            if (up) flags |= 3L << 30;
+            return hook((int)wParam, flags);
         }
 
         private readonly System.Threading.Thread _ownerThread = System.Threading.Thread.CurrentThread;

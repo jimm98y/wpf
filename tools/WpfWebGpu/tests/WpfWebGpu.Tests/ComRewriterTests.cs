@@ -1051,6 +1051,81 @@ public sealed unsafe class ComRewriterTests
         return file;
     });
 
+    /// <summary>A NoPIA vtable gap (_VtblGap&lt;n&gt;_&lt;count&gt;) is &lt;count&gt; slots and no method: the methods after it
+    /// call the slots they have in the type library, and ComImpl does not override the placeholder (Mono's
+    /// AOT compiler asserted on the classes that did: Shell32's Folder, in Telerik's file dialogs).</summary>
+    [Fact]
+    public void AVtableGapTakesUpItsSlots()
+    {
+        string dir = TestEnvironment.NewDirectory("comimport-gap");
+        string copy = Path.Combine(dir, "ComImportFixture.dll");
+        using (var fixture = Mono.Cecil.ModuleDefinition.ReadModule(FixtureFile))
+        {
+            var gap = fixture.GetType("ComImportFixture.IGapped").Methods.Single(m => m.Name == "Gap");
+            gap.Name = "_VtblGap1_2";
+            gap.Attributes = Mono.Cecil.MethodAttributes.Public | Mono.Cecil.MethodAttributes.SpecialName | Mono.Cecil.MethodAttributes.RTSpecialName;
+            gap.ImplAttributes = Mono.Cecil.MethodImplAttributes.Runtime;
+            fixture.Write(copy);
+        }
+        var (image, symbols, _) = ComRewriter.RewriteToMemory(copy, new[] { Path.GetDirectoryName(FixtureFile)!, AppContext.BaseDirectory });
+        symbols?.Dispose();
+        using var module = Mono.Cecil.ModuleDefinition.ReadModule(image);
+        var impl = module.GetType("ComImportFixture.IGapped").NestedTypes.Single(n => n.Name == "ComImpl");
+        Assert.DoesNotContain(impl.Methods, m => m.Overrides.Any(o => o.Name.StartsWith("_VtblGap")));
+        int Slot(string name) => (int)impl.Methods.Single(m => m.Name.EndsWith("." + name)).Body.Instructions
+            .First(i => i.OpCode == Mono.Cecil.Cil.OpCodes.Ldc_I4).Operand;
+        Assert.Equal(3, Slot("A"));
+        Assert.Equal(6, Slot("B"));
+    }
+
+    /// <summary>A proxy (I.ComProxy) implements the ComImpl of every interface I derives from, the
+    /// indirect ones too: an interop assembly's metadata lists only the direct base, and a proxy built from
+    /// that list left the rest of the chain's methods without a body -- Mono cannot load such a class, and
+    /// its AOT compiler asserted on it (Shell32's Shell, in Telerik's file dialogs).</summary>
+    [Fact]
+    public void AProxyImplementsEveryBaseInterface()
+    {
+        string dir = TestEnvironment.NewDirectory("comimport-chain");
+        string copy = Path.Combine(dir, "ComImportFixture.dll");
+        using (var fixture = Mono.Cecil.ModuleDefinition.ReadModule(FixtureFile))
+        {
+            var three = fixture.GetType("ComImportFixture.IChain3");
+            var indirect = three.Interfaces.Single(i => i.InterfaceType.Name == "IChain1");
+            three.Interfaces.Remove(indirect);
+            fixture.Write(copy);
+        }
+        var (image, symbols, _) = ComRewriter.RewriteToMemory(copy, new[] { Path.GetDirectoryName(FixtureFile)!, AppContext.BaseDirectory });
+        symbols?.Dispose();
+        using var module = Mono.Cecil.ModuleDefinition.ReadModule(image);
+        var proxy = module.GetType("ComImportFixture.IChain3").NestedTypes.Single(n => n.Name == "ComProxy");
+        var implemented = proxy.Interfaces.Select(i => i.InterfaceType.FullName).ToList();
+        Assert.Contains("ComImportFixture.IChain3/ComImpl", implemented);
+        Assert.Contains("ComImportFixture.IChain2/ComImpl", implemented);
+        Assert.Contains("ComImportFixture.IChain1/ComImpl", implemented);
+    }
+
+    /// <summary>The rewriter puts code in front of a cast (Com.CastTo), and a short branch over it must
+    /// still reach its target. Written as compiled, its offset was truncated: invalid IL the interpreter
+    /// ran and Mono's AOT compiler refused ("brtrue.s IL_ffffffaf", Telerik's file dialogs).</summary>
+    [Fact]
+    public void ShortBranchesStayInReach()
+    {
+        var (image, symbols, _) = ComRewriter.RewriteToMemory(FixtureFile, new[] { Path.GetDirectoryName(FixtureFile)!, AppContext.BaseDirectory });
+        symbols?.Dispose();
+        using var module = Mono.Cecil.ModuleDefinition.ReadModule(image);
+        var body = module.GetType("ComImportFixture.Scenario").Methods.Single(m => m.Name == "FarCasts").Body;
+        Assert.Contains(body.Instructions, i => i.Operand is Mono.Cecil.MethodReference r && r.Name == "CastTo");
+        var branches = body.Instructions.Where(i => i.OpCode.OperandType is Mono.Cecil.Cil.OperandType.ShortInlineBrTarget
+                                                                         or Mono.Cecil.Cil.OperandType.InlineBrTarget).ToList();
+        Assert.NotEmpty(branches);
+        foreach (var b in branches)
+        {
+            var target = Assert.IsType<Mono.Cecil.Cil.Instruction>(b.Operand);
+            if (b.OpCode.OperandType == Mono.Cecil.Cil.OperandType.ShortInlineBrTarget)
+                Assert.InRange(target.Offset - (b.Offset + b.GetSize()), -128, 127);
+        }
+    }
+
     private static readonly Lazy<(Type Scenario, RewriteResult Result)> s_fixture = new(() =>
     {
         // the verdict, as the launcher judges it
@@ -1094,7 +1169,7 @@ public sealed unsafe class ComRewriterTests
     {
         var r = s_fixture.Value.Result;
         Assert.True(r.UsesComImport);
-        Assert.Equal(25 + 6, r.Interfaces);     // 25 of the fixture's, 6 generated BCL ones (IDataObject, IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker, IEnumMoniker)
+        Assert.Equal(29 + 6, r.Interfaces);     // 29 of the fixture's, 6 generated BCL ones (IDataObject, IEnumFORMATETC, IAdviseSink, IEnumSTATDATA, IMoniker, IEnumMoniker)
         Assert.True(r.BuiltInCannot.Any(x => x.Contains("IShapes.Paint") && x.Contains("Color")), r.ToString() + " | " + string.Join("; ", r.Unsupported) + " | " + string.Join("; ", r.BuiltInCannot));
         Assert.Equal(1, r.EventInterfaces);
         Assert.Equal(6, r.PInvokes);

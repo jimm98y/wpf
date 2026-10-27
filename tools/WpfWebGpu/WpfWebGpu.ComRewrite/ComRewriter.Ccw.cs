@@ -55,13 +55,16 @@ public static partial class ComRewriter
                 TypeAttributes.NestedPublic | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, _object);
             nestIn.NestedTypes.Add(ccw);
             var refused = new List<string>();
-            var stubs = new List<MethodDefinition>();
+            // each stub with its slot: a NoPIA gap placeholder takes up its slots and has no stub
+            var stubs = new List<(int Slot, MethodDefinition Stub)>();
+            int next = first;
             foreach (var (md, call) in methods)
             {
+                if (VtblGap(md) is int gap) { next += gap; continue; }
                 var stub = Stub(iface, md, out string? why, call);
                 if (why != null) refused.Add($"{md.Name}: {why}");
                 ccw.Methods.Add(stub);
-                stubs.Add(stub);
+                stubs.Add((next++, stub));
             }
             _ccwRefused[key] = refused;
 
@@ -75,7 +78,7 @@ public static partial class ComRewriter
             var done = il.Create(OpCodes.Ldsfld, field);
             il.Emit(OpCodes.Ldsfld, field);
             il.Emit(OpCodes.Brtrue, done);
-            il.Emit(OpCodes.Ldc_I4, first + stubs.Count);
+            il.Emit(OpCodes.Ldc_I4, next);
             il.Emit(OpCodes.Call, _newVtable!);
             il.Emit(OpCodes.Stloc, p);
             void Slot(int k, Action load)
@@ -89,7 +92,14 @@ public static partial class ComRewriter
             // a dual interface's or dispinterface's IDispatch (slots 3-6), answered by reflection
             if (first == 7) { il.Emit(OpCodes.Ldloc, p); il.Emit(OpCodes.Ldtoken, iface); il.Emit(OpCodes.Call, _fillDispatch!); }
             else for (int k = 3; k < first; k++) Slot(k, () => il.Emit(OpCodes.Call, _notImplSlot!));
-            for (int k = 0; k < stubs.Count; k++) { var s = stubs[k]; Slot(first + k, () => il.Emit(OpCodes.Ldftn, s)); }
+            int filled = first;
+            foreach (var (k, s) in stubs)
+            {
+                for (; filled < k; filled++) Slot(filled, () => il.Emit(OpCodes.Call, _notImplSlot!));
+                Slot(k, () => il.Emit(OpCodes.Ldftn, s));
+                filled = k + 1;
+            }
+            for (; filled < next; filled++) Slot(filled, () => il.Emit(OpCodes.Call, _notImplSlot!));
             il.Emit(OpCodes.Ldloc, p);
             il.Emit(OpCodes.Stsfld, field);
             il.Append(done);

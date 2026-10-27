@@ -567,7 +567,9 @@ namespace MS.Internal.Interop
                             s_cursorY = oy + e.GetProperty("y").GetInt32();
                             s_cursorKnown = true;
                         }
-                        if (kind == 1 && FromHandle((IntPtr)handle) is { TakesKeyboardOnPress: true })
+                        // The left button only, as browser-window.js and Windows have it (DefWindowProc
+                        // sets the focus on WM_LBUTTONDOWN alone).
+                        if (kind == 1 && e.GetProperty("b").GetInt32() == 0 && FromHandle((IntPtr)handle) is { TakesKeyboardOnPress: true })
                             PlatformFocus.FocusMovedByPlatform((IntPtr)handle);
                         int mx = e.GetProperty("x").GetInt32(), my = e.GetProperty("y").GetInt32();
                         // A window holding the mouse capture (SetCapture: WPF's Mouse.Capture, a WinForms

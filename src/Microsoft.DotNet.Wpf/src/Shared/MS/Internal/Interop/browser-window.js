@@ -609,7 +609,10 @@ function pushMouse(kind, e, wheel = 0) {
         if (!handle) return;
     }
     const r = windows.get(handle).canvas.getBoundingClientRect();
-    if (kind === 1) keyWindow = windows.get(handle).takesKeyboard ? handle : 0;
+    // Only the left button moves the keyboard, as on Windows, where DefWindowProc sets the focus on
+    // WM_LBUTTONDOWN alone: a right click on app's canvas gave its WPF tree the keys, and the
+    // arrows meant for the context menu it opened scrolled the canvas under it.
+    if (kind === 1 && (e.button ?? 0) === 0) keyWindow = windows.get(handle).takesKeyboard ? handle : 0;
     queue.push({
         t: "m", k: kind, h: handle, b: e.button ?? 0,
         x: Math.round((e.clientX - r.left) * dpr()),

@@ -395,10 +395,75 @@ public static unsafe partial class Exports
     [Win32Export("MapVirtualKeyW", "MapVirtualKey", "MapVirtualKeyA")]
     public static uint MapVirtualKey(uint code, uint type)
     {
-        // MAPVK_VK_TO_CHAR (2): letters and digits map to themselves, which is what apps use it for.
-        if (type == 2 && ((code >= 'A' && code <= 'Z') || (code >= '0' && code <= '9'))) return code;
-        return 0;
+        // MAPVK_VK_TO_CHAR (2): the key's unshifted character, letters in upper case, and 0 for a key
+        // that types none (the arrows, F-keys) -- DotNetBar takes a non-zero answer as the key itself.
+        if (type != 2 || code >= 256) return 0;
+        char c = KeyChar((int)code, shift: false);
+        return char.IsLetter(c) ? char.ToUpperInvariant(c) : c;
     }
+
+    // The US keyboard: a virtual key and Shift to the character it types ('\0' for none).
+    private static char KeyChar(int vk, bool shift)
+    {
+        if (vk >= 'A' && vk <= 'Z') return (char)(shift ? vk : vk + 32);
+        if (vk >= '0' && vk <= '9') return shift ? ")!@#$%^&*("[vk - '0'] : (char)vk;
+        if (vk >= 0x60 && vk <= 0x69) return (char)('0' + vk - 0x60);   // numeric keypad
+        return vk switch
+        {
+            0x08 => '\b', 0x09 => '\t', 0x0D => '\r', 0x1B => '\x1b', 0x20 => ' ',
+            0x6A => '*', 0x6B => '+', 0x6D => '-', 0x6E => '.', 0x6F => '/',
+            0xBA => shift ? ':' : ';', 0xBB => shift ? '+' : '=', 0xBC => shift ? '<' : ',',
+            0xBD => shift ? '_' : '-', 0xBE => shift ? '>' : '.', 0xBF => shift ? '?' : '/',
+            0xC0 => shift ? '~' : '`', 0xDB => shift ? '{' : '[', 0xDC => shift ? '|' : '\\',
+            0xDD => shift ? '}' : ']', 0xDE => shift ? '"' : '\'',
+            _ => '\0',
+        };
+    }
+
+    // ToAscii / ToUnicode: what the key types with the keyboard state given (256 bytes, the high bit a
+    // key held, VK_CAPITAL's low bit Caps Lock on): Shift and Caps Lock for the letters, Ctrl the control
+    // character (Ctrl+A is 1), Ctrl+Alt (AltGr) nothing on this layout. DotNetBar passes the character to
+    // its menus with each key, for the items' access keys.
+    private static char TypedChar(uint vk, byte* state)
+    {
+        if (vk >= 256) return '\0';
+        bool Down(int k) => state != null && (state[k] & 0x80) != 0;
+        bool shift = Down(0x10), ctrl = Down(0x11), alt = Down(0x12);
+        bool caps = state != null && (state[0x14] & 1) != 0;
+        if (ctrl && alt) return '\0';
+        bool letter = vk >= 'A' && vk <= 'Z';
+        if (ctrl)
+        {
+            if (letter) return (char)(vk - 'A' + 1);
+            return vk switch { 0xDB => '\x1b', 0xDC => '\x1c', 0xDD => '\x1d', 0x08 => '\x7f', 0x0D => '\n', 0x20 => ' ', _ => '\0' };
+        }
+        return KeyChar((int)vk, letter ? shift ^ caps : shift);
+    }
+
+    [Win32Export("ToAscii")]
+    public static int ToAscii(uint vk, uint scan, byte* state, ushort* chars, uint flags)
+    {
+        char c = TypedChar(vk, state);
+        if (c == '\0') return 0;
+        if (chars != null) *chars = c;
+        return 1;
+    }
+
+    [Win32Export("ToAsciiEx")]
+    public static int ToAsciiEx(uint vk, uint scan, byte* state, ushort* chars, uint flags, nint layout) => ToAscii(vk, scan, state, chars, flags);
+
+    [Win32Export("ToUnicode")]
+    public static int ToUnicode(uint vk, uint scan, byte* state, char* buffer, int size, uint flags)
+    {
+        char c = TypedChar(vk, state);
+        if (c == '\0' || buffer == null || size < 1) return 0;
+        buffer[0] = c;
+        if (size > 1) buffer[1] = '\0';
+        return 1;
+    }
+
+    [Win32Export("ToUnicodeEx")]
+    public static int ToUnicodeEx(uint vk, uint scan, byte* state, char* buffer, int size, uint flags, nint layout) => ToUnicode(vk, scan, state, buffer, size, flags);
 
     // The input locale: the current UI culture, in the low word and the device word alike.
     [Win32Export("GetKeyboardLayout")] public static nint GetKeyboardLayout(uint thread) { uint lcid = (uint)System.Globalization.CultureInfo.CurrentUICulture.KeyboardLayoutId & 0xFFFF; return (nint)(lcid | (lcid << 16)); }

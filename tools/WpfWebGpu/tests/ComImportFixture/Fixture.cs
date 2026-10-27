@@ -12,6 +12,23 @@ namespace ComImportFixture
     [StructLayout(LayoutKind.Sequential)]
     public struct Pair { public int A, B; }
 
+    // A chain of interfaces, as a type library's derive (Shell32's IShellDispatch6 : ... : IShellDispatch):
+    // ComRewriterTests.AProxyImplementsEveryBaseInterface takes the indirect base out of IChain3's list,
+    // as an interop assembly's metadata has it.
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A31"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IChain1 { void One(); }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A32"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IChain2 : IChain1 { void Two(); }
+
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A33"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IChain3 : IChain2 { void Three(); }
+
+    // Gap stands for two slots once ComRewriterTests.AVtableGapTakesUpItsSlots has made it what an interop
+    // assembly's embedded types have (_VtblGap1_2: a runtime-implemented placeholder): B is then slot 6.
+    [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A34"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IGapped { void A(); void Gap(); void B(); }
+
     [ComImport, Guid("6B0B1E2A-0C55-4B0E-9F2B-6C1D3E4F5A01"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface ICalc
     {
@@ -621,6 +638,26 @@ namespace ComImportFixture
 
         /// <summary>A library beside the assembly's original file (Windows: a copy of version.dll).</summary>
         public static uint NativeBeside(string file) => FileVersionInfoSize(file, out _);
+
+        /// <summary>A short branch over casts to a COM interface: in reach as compiled, out of it once
+        /// every cast has its conversion in front (ComRewriterTests.ShortBranchesStayInReach).</summary>
+        public static int FarCasts(object o, int n)
+        {
+            int r = 0;
+            if (n > 0)
+            {
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                GC.KeepAlive((ICalc)o);
+                r = n;
+            }
+            return r;
+        }
 
 #pragma warning disable SYSLIB0012, SYSLIB0044
         /// <summary>Where the assembly says it is, every way it can be asked.</summary>

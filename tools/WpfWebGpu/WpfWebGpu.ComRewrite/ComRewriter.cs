@@ -908,7 +908,7 @@ public static partial class ComRewriter
             {
                 _r.Interfaces++;
                 var refused = new List<string>();
-                foreach (var md in t.Methods.Where(x => !x.IsStatic))
+                foreach (var md in t.Methods.Where(x => !x.IsStatic && VtblGap(x) == null))
                 {
                     _r.Methods++;
                     if (ForwardWhy(md) is { } f) Reason($"{t.FullName}.{md.Name}", f);
@@ -932,6 +932,9 @@ public static partial class ComRewriter
             EmitCcw(t, first, methods);
             foreach (var md in methods)
             {
+                // a type embedded from an interop assembly (NoPIA) stands for the slots it left out with one
+                // runtime-implemented placeholder each: _VtblGap<n>_<count> is <count> slots, and no method
+                if (VtblGap(md) is int gap) { slot += gap; continue; }
                 var body = new MethodDefinition($"{t.FullName}.{md.Name}", MethodAttributes.Private | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual | MethodAttributes.Final, md.ReturnType);
                 foreach (var p in md.Parameters) body.Parameters.Add(new ParameterDefinition(p.Name, p.Attributes & ~ParameterAttributes.HasFieldMarshal, p.ParameterType));
                 body.Overrides.Add(md);
@@ -939,6 +942,17 @@ public static partial class ComRewriter
                 EmitVtableCall(t, md, body, slot++);
                 _r.Methods++;
             }
+        }
+
+        /// <summary>The slots a NoPIA vtable-gap placeholder (_VtblGap&lt;n&gt;_&lt;count&gt;, special name, no body)
+        /// stands for; null for a real method. Counted as one method each, the slots after a gap were off --
+        /// Shell32's Folder.ParseName, after a gap of four, called the third slot before its own -- and
+        /// overridden in ComImpl, the placeholder left a class Mono's AOT compiler asserts on.</summary>
+        internal static int? VtblGap(MethodDefinition md)
+        {
+            if (!md.IsRuntimeSpecialName || !md.Name.StartsWith("_VtblGap", StringComparison.Ordinal)) return null;
+            int us = md.Name.LastIndexOf('_');
+            return us > 8 && int.TryParse(md.Name.AsSpan(us + 1), out int n) && n > 0 ? n : 1;
         }
 
         /// <summary>I.ComProxy, for a runtime that does not cast a ComObject dynamically (Mono never asks an
@@ -951,10 +965,18 @@ public static partial class ComRewriter
             var impl = t.NestedTypes.FirstOrDefault(n => n.Name == "ComImpl");
             if (impl == null || t.NestedTypes.Any(n => n.Name == "ComProxy")) return;
             var impls = new List<TypeReference> { impl };
-            foreach (var i in t.Interfaces)
+            // Every interface I derives from, and theirs: an interop assembly's embedded types and tlbimp's
+            // list only the direct base (Shell32's IShellDispatch6 : IShellDispatch5), and a proxy that
+            // implemented that one alone left IShellDispatch5..1's methods without a body -- a class Mono
+            // cannot load, and its AOT compiler asserts on (Telerik's file dialogs: `method->is_inflated').
+            var seen = new HashSet<string>();
+            var pending = new Queue<TypeReference>(t.Interfaces.Select(i => i.InterfaceType));
+            while (pending.Count > 0)
             {
-                var d = Safe(i.InterfaceType);
+                var d = Safe(pending.Dequeue());
                 if (d == null) return;
+                if (!seen.Add(d.FullName)) continue;
+                foreach (var b in d.Interfaces) pending.Enqueue(b.InterfaceType);
                 var baseImpl = d.NestedTypes.FirstOrDefault(n => n.Name == "ComImpl");
                 if (baseImpl != null) { impls.Add(d.Module == _m ? baseImpl : _m.ImportReference(baseImpl)); continue; }
                 if (IsForeignCom(d))
@@ -2137,10 +2159,28 @@ public static partial class ComRewriter
             return _fnPtrForDelegate || _nativeDelegates.Contains(t);
         }
 
+        /// <summary>Makes room in a body about to grow: its short branches become long ones, so that an
+        /// instruction inserted between a branch and its target cannot push the target out of a short
+        /// branch's reach. Written as they were, such a branch's offset was truncated -- invalid IL that the
+        /// interpreter happened to run and Mono's AOT compiler refused (Telerik's file dialogs:
+        /// "brtrue.s IL_ffffffaf"). <see cref="Shrink"/> takes back the long forms that are not needed.</summary>
+        private static void Grow(MethodBody body, ref bool grown)
+        {
+            if (grown) return;
+            body.SimplifyMacros();
+            grown = true;
+        }
+
+        private static void Shrink(MethodBody body, bool grown)
+        {
+            if (grown) body.OptimizeMacros();
+        }
+
         private void RewriteCallSites(MethodDefinition md)
         {
             if (md.DeclaringType == _shims) return;
             var il = md.Body.GetILProcessor();
+            bool grown = false;
             foreach (var ins in md.Body.Instructions.ToList())
             {
                 if ((ins.OpCode == OpCodes.Call || ins.OpCode == OpCodes.Callvirt) && ins.Operand is MethodReference mr)
@@ -2195,6 +2235,7 @@ public static partial class ComRewriter
                         // in place, so that a branch to the newobj reaches the whole sequence
                         var call = il.Create(OpCodes.Call, _createInstance);
                         var guid = il.Create(OpCodes.Newobj, _guidCtor);
+                        Grow(md.Body, ref grown);
                         ins.OpCode = OpCodes.Ldstr; ins.Operand = (string)g.ConstructorArguments[0].Value;
                         il.InsertAfter(ins, guid);
                         il.InsertAfter(guid, call);
@@ -2211,6 +2252,7 @@ public static partial class ComRewriter
                     // (a cast to a rewritten interface: RewriteCasts)
                 }
             }
+            Shrink(md.Body, grown);
         }
 
         /// <summary>A cast to a rewritten interface goes through Com.CastTo / Com.AsTo: an object of unknown
@@ -2221,6 +2263,7 @@ public static partial class ComRewriter
         private void RewriteCasts(MethodDefinition md)
         {
             var il = md.Body.GetILProcessor();
+            bool grown = false;
             foreach (var ins in md.Body.Instructions.ToList())
             {
                 if ((ins.OpCode != OpCodes.Castclass && ins.OpCode != OpCodes.Isinst) || ins.Operand is not TypeReference tr) continue;
@@ -2228,6 +2271,7 @@ public static partial class ComRewriter
                 var t = Safe(tr);
                 if (t == null || !t.IsInterface || !(_comTypes.Contains(t) || IsForeignCom(t) || IsBclCom(t) || IsBclGen(t))) continue;
                 // in place (a branch to the cast reaches the conversion), then the cast again
+                Grow(md.Body, ref grown);
                 var cast = il.Create(ins.OpCode, tr);
                 var call = il.Create(OpCodes.Call, ins.OpCode == OpCodes.Castclass ? _castTo : _asTo);
                 ins.OpCode = OpCodes.Ldtoken; ins.Operand = tr;
@@ -2235,6 +2279,7 @@ public static partial class ComRewriter
                 il.InsertAfter(call, cast);
                 _r.CallSites++;
             }
+            Shrink(md.Body, grown);
         }
 
         /// <summary>The static type of what <paramref name="prev"/> pushed, where it says (a call's return, a

@@ -299,6 +299,13 @@ namespace System.Windows.Forms
 			bool selected = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
 			Color back = inField ? ComboBoxFieldBackColor (ctrl) : selected ? ComboListSelection : e.BackColor;
 			Color fore = inField ? ColorControlText : selected ? ColorHighlightText : e.ForeColor;
+			// ...except while the box has the focus with its list up: then the caption is in the
+			// highlight colours, as comctl32 draws a focused drop-down list -- the one sign there is of
+			// where Tab put the focus.
+			if (inField && ctrl.Enabled && ctrl.Focused && !ctrl.DroppedDown && e.Index != -1) {
+				back = ColorHighlight;
+				fore = ColorHighlightText;
+			}
 			// Disabled: GrayText, as comctl32 draws a disabled drop-down list's caption (measured on
 			// stock: #6D6D6D on the #FAFAFA face, whether the combo or its container is disabled).
 			if (!ctrl.Enabled)
@@ -2772,6 +2779,12 @@ namespace System.Windows.Forms
 						                      Math.Min (capBox, bounds.Width), strip.Height),
 						       fore, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
 						             | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+					// The tab on show carries the focus rectangle while the control has the focus and the
+					// keyboard has brought the cues out (comctl32's Tab_DrawItem): tabbing into a tab
+					// control otherwise showed nowhere where the focus had gone.
+					if (selected && tab.Focused && tab.ShowFocusCues)
+						ControlPaint.DrawFocusRectangle (dc, Rectangle.FromLTRB (face.X + 3, face.Y + 3,
+						                                                         face.Right - 3, bounds.Bottom - 2));
 				}
 			}
 
