@@ -7,7 +7,7 @@
 // none at all.
 //
 //   Windows  the desktop, through GDI: a BitBlt from the screen DC, as GetPixel reads it there
-//   browser  the screen is the page: its canvases, as stacked, read back (browser-window.js capturePage)
+//   browser  the screen is the page: its canvases, as stacked, read back (browser-window.js capturePageAsync)
 //   macOS    CGWindowListCreateImage, which an application may call for its own windows without the
 //            Screen Recording permission (other applications' windows come back as the desktop behind)
 //
@@ -47,9 +47,13 @@ namespace MS.Internal.Interop
             return bgra == null || bgra.Length < 4 ? 0xFFFFFFFF : (uint)(bgra[2] | bgra[1] << 8 | bgra[0] << 16);
         }
 
+        // The page's pixels come from the GPU (browser-window.js capturePageAsync), which answers when it
+        // is done: waited for as a modal loop waits, with the thread's JS queue drained meanwhile -- what
+        // only the multithreaded runtime can do; the single-threaded one has nothing to read.
         private static byte[] CaptureBrowser(int x, int y, int width, int height)
         {
-            string base64 = Js.CapturePage(x, y, width, height);
+            if (!BrowserBlocking.CanBlock) return null;
+            string base64 = BrowserDialogs.WaitForAnswer(() => Js.CapturePageAsync(x, y, width, height));
             if (string.IsNullOrEmpty(base64)) return null;
             byte[] bytes = Convert.FromBase64String(base64);
             return bytes.Length == width * height * 4 ? bytes : null;
@@ -57,8 +61,9 @@ namespace MS.Internal.Interop
 
         private static partial class Js
         {
-            [JSImport("capturePage", "wpfBrowserWindow")]
-            internal static partial string CapturePage(int x, int y, int width, int height);
+            [JSImport("capturePageAsync", "wpfBrowserWindow")]
+            [return: JSMarshalAs<JSType.Promise<JSType.String>>]
+            internal static partial System.Threading.Tasks.Task<string> CapturePageAsync(int x, int y, int width, int height);
         }
 
         // ---- Windows --------------------------------------------------------------------------------

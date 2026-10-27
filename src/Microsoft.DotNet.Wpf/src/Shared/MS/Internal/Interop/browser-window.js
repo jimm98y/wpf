@@ -1021,12 +1021,20 @@ export function pickColorAsync(initialHex) {
 // to top as they are stacked, over the page's own background, and the pixels read back -- an eye
 // dropper over app's display samples what the display shows. x, y, w, h are the screen's device
 // pixels; the answer is the area's pixels, BGRA, top row first, as base64 ("" when nothing can be read).
-export function capturePage(x, y, w, h) {
+//
+// A WebGPU canvas cannot be drawn from once its frame is presented -- drawImage sees it transparent, and
+// every pick was the page's background -- so its pixels come from the GPU, out of the frame the
+// renderer keeps (wgpu-interop.js readCanvasPixels); that is a buffer mapped when the GPU is done,
+// so the answer is a promise.
+export async function capturePageAsync(x, y, w, h) {
     try {
+        let gpu = null;
+        try { gpu = await import("./wgpu-interop.js"); } catch { }
         const r = dpr();
         const out = document.createElement("canvas");
         out.width = w; out.height = h;
         const g = out.getContext("2d", { willReadFrequently: true });
+        g.imageSmoothingEnabled = false;
         g.fillStyle = getComputedStyle(document.body).backgroundColor || "#ffffff";
         g.fillRect(0, 0, w, h);
         const canvases = [...windows.values()].map(v => v.canvas)
@@ -1039,7 +1047,18 @@ export function capturePage(x, y, w, h) {
             const sx = (x / r - b.left) * kx, sy = (y / r - b.top) * ky;
             const sw = (w / r) * kx, sh = (h / r) * ky;
             if (sx + sw <= 0 || sy + sh <= 0 || sx >= c.width || sy >= c.height) continue;
-            g.drawImage(c, sx, sy, sw, sh, 0, 0, w, h);
+            // the part of the area on the canvas, in its pixels, and where that is in the answer
+            const cx = Math.max(0, Math.floor(sx)), cy = Math.max(0, Math.floor(sy));
+            const cw = Math.min(c.width, Math.ceil(sx + sw)) - cx, ch = Math.min(c.height, Math.ceil(sy + sh)) - cy;
+            const pixels = gpu?.readCanvasPixels && cw > 0 && ch > 0 ? await gpu.readCanvasPixels(c, cx, cy, cw, ch) : null;
+            if (pixels) {
+                const part = document.createElement("canvas");
+                part.width = cw; part.height = ch;
+                part.getContext("2d").putImageData(new ImageData(pixels, cw, ch), 0, 0);
+                g.drawImage(part, 0, 0, cw, ch, (cx - sx) * w / sw, (cy - sy) * h / sh, cw * w / sw, ch * h / sh);
+            } else {
+                g.drawImage(c, sx, sy, sw, sh, 0, 0, w, h);
+            }
         }
         const rgba = g.getImageData(0, 0, w, h).data;
         let bin = "";

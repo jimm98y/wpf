@@ -2906,10 +2906,14 @@ namespace System.Windows.Forms
 			=> _cursorOverride = cursor == IntPtr.Zero && Cursor.CurrentSet is Cursor c ? ShapeOf(c) : CursorIdFromHandle(cursor);
 
 		/// <summary>The pointer has moved over a window, which shows its own cursor again: what
-		/// Cursor.Current set is over (Windows' DefWindowProc / Control.WmSetCursor on WM_SETCURSOR,
-		/// which is never sent while the mouse is captured -- so a drag keeps the shape it set).</summary>
+		/// Cursor.Current set is over (Windows' DefWindowProc / Control.WmSetCursor on WM_SETCURSOR).
+		/// Windows sends no WM_SETCURSOR while a window holds the mouse capture, so the cursor a captured
+		/// drag set stays -- with or without a button down. app's colour picker captures the mouse
+		/// in eyedropper mode and knows it is in it by Cursor.Current being its eyedropper cursor; reset
+		/// by the first move, the pick was dropped.</summary>
 		internal void EndCursorOverride()
 		{
+			if (_grabHandle != IntPtr.Zero) return;
 			_cursorOverride = -1;
 			Cursor.ForgetCurrent();
 		}

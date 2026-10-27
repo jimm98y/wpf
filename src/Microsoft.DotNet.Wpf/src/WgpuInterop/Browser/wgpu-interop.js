@@ -170,6 +170,9 @@ export function configureSurface(surfaceId, deviceId, format, viewFormat, alphaM
     if (viewFormat) cfg.viewFormats = [viewFormat];
     s.context.configure(cfg);
     s.device = device;
+    s.format = format;
+    s.alphaMode = alphaMode;
+    s.canvas.__wgpuSurface = s;
     if (s.back) { s.back.destroy(); s.back = null; }
     if (relayedRuntime()) {
         s.back = device.createTexture({
@@ -202,6 +205,46 @@ export function surfacePresent(surfaceId) {
     enc.copyTextureToTexture({ texture: s.back }, { texture: tex },
         { width: s.back.width, height: s.back.height, depthOrArrayLayers: 1 });
     s.device.queue.submit([enc.finish()]);
+}
+
+// What a canvas shows, read back -- the screen's pixels an eye dropper samples (ScreenPixels, through
+// browser-window.js capturePageAsync). A WebGPU canvas's own texture is gone once it is presented, and
+// drawImage and getImageData see the canvas as transparent; the surface's back buffer still holds the
+// frame it shows, and is read instead. The rectangle is in the canvas's pixels and inside it; the
+// answer is RGBA with straight alpha, top row first -- ImageData's -- or null for a canvas with no
+// back buffer to read.
+export async function readCanvasPixels(canvas, x, y, w, h) {
+    const s = canvas?.__wgpuSurface;
+    const src = s?.back;
+    if (!src || w <= 0 || h <= 0 || x < 0 || y < 0 || x + w > src.width || y + h > src.height) return null;
+    const stride = Math.ceil(w * 4 / 256) * 256;     // copyTextureToBuffer's row alignment
+    const buffer = s.device.createBuffer({ size: stride * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    try {
+        const enc = s.device.createCommandEncoder();
+        enc.copyTextureToBuffer({ texture: src, origin: { x, y, z: 0 } }, { buffer, bytesPerRow: stride },
+            { width: w, height: h, depthOrArrayLayers: 1 });
+        s.device.queue.submit([enc.finish()]);
+        await buffer.mapAsync(GPUMapMode.READ);
+        const bytes = new Uint8Array(buffer.getMappedRange());
+        const out = new Uint8ClampedArray(w * h * 4);
+        const bgra = s.format.startsWith("bgra");
+        const premultiplied = s.alphaMode === "premultiplied";
+        for (let row = 0; row < h; row++) {
+            for (let i = 0; i < w; i++) {
+                const from = row * stride + i * 4, to = (row * w + i) * 4;
+                let r = bytes[from + (bgra ? 2 : 0)], g = bytes[from + 1], b = bytes[from + (bgra ? 0 : 2)];
+                const a = premultiplied ? bytes[from + 3] : 255;
+                if (premultiplied && a > 0 && a < 255) {
+                    r = Math.round(r * 255 / a); g = Math.round(g * 255 / a); b = Math.round(b * 255 / a);
+                }
+                out[to] = r; out[to + 1] = g; out[to + 2] = b; out[to + 3] = a;
+            }
+        }
+        buffer.unmap();
+        return out;
+    } finally {
+        buffer.destroy();
+    }
 }
 
 export function surfaceGetCurrentTexture(surfaceId) {

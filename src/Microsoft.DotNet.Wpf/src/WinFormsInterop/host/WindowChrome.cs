@@ -104,11 +104,17 @@ namespace System.Windows.Forms
 			try {
 				Padding f = Frame;
 				Rectangle v = Visible (window);
-				// the shadow, in the resize margin under the visible edge
+				// the shadow, in the resize margin under the visible edge: a ring a pixel wide per step out,
+				// each pixel in one ring only. Outlined rectangles painted their corners twice (and their
+				// top rows over the inner rings' sides), and the alpha that doubled there drew a dark
+				// diagonal out of every bottom corner.
 				for (int i = Margin; i > 0; i--) {
 					int a = (int)(28.0 * (Margin - i + 1) / Math.Max (1, Margin) * (Margin - i + 1) / Math.Max (1, Margin));
-					using var shadow = new Pen (Color.FromArgb (a, 0, 0, 0));
-					g.DrawRectangle (shadow, v.Left - i, v.Top + Math.Min (i, 2), v.Width + 2 * i - 1, v.Height + i - 1 - Math.Min (i, 2));
+					using var shadow = new SolidBrush (Color.FromArgb (a, 0, 0, 0));
+					int top = v.Top + Math.Min (i, 2), bottom = v.Bottom + i - 1;
+					g.FillRectangle (shadow, v.Left - i, top, 1, bottom - top + 1);
+					g.FillRectangle (shadow, v.Right + i - 1, top, 1, bottom - top + 1);
+					g.FillRectangle (shadow, v.Left - i + 1, bottom, v.Width + 2 * i - 2, 1);
 				}
 				// the caption and the edge, as Windows 11 draws them with accent colour off
 				using (var caption = new SolidBrush (active ? Color.White : Color.FromArgb (243, 243, 243)))
