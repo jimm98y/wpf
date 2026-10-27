@@ -109,10 +109,15 @@ namespace System.Windows.Forms {
 			base.OnMouseWheel(e);
 		}
 
+		// The first change of an edit tells the grid its current cell is dirty, as .NET's editing
+		// control does (DataGridView.NotifyCurrentCellDirty).
 		protected override void OnTextChanged (EventArgs e)
 		{
 			base.OnTextChanged(e);
-			editingControlValueChanged = true;
+			if (!editingControlValueChanged) {
+				editingControlValueChanged = true;
+				editingControlDataGridView?.NotifyCurrentCellDirty (true);
+			}
 		}
 
 		protected override bool ProcessKeyEventArgs (ref Message m)

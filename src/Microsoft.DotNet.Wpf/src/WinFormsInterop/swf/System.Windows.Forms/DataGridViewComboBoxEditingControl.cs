@@ -87,8 +87,13 @@ namespace System.Windows.Forms {
 			
 		}
 
+		// An item chosen is the edit's change, which the grid is told of (as .NET's editing control does).
 		protected override void OnSelectedIndexChanged (EventArgs e) {
 			base.OnSelectedIndexChanged (e);
+			if (SelectedIndex != -1 && !editingControlValueChanged) {
+				editingControlValueChanged = true;
+				editingControlDataGridView?.NotifyCurrentCellDirty (true);
+			}
 		}
 
 		// This internal method is needed by DataGridViewComboBoxCell

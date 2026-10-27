@@ -121,6 +121,10 @@ namespace System.Windows.Forms {
 		private bool is_autogenerating_columns = false;
 		private bool is_binding = false;
 		private bool new_row_editing = false;
+		// Unbound: the row the user began in the new row, a real row from the first change in it until its
+		// edit ends (CancelEdit takes it out again); and whether the editing control is being filled in.
+		private DataGridViewRow added_row;
+		private bool ignoring_editing_changes;
 		
 		// These are used to implement selection behaviour with SHIFT pressed.
 		private int selected_row = -1;
@@ -2379,23 +2383,30 @@ namespace System.Windows.Forms {
 					EditingControlInternal = ctrl;
 				}
 				
-				// Call some functions that allows the editing control to get setup
-				var style = GetCellStyle (cell);
-				cell.InitializeEditingControl (cell.RowIndex, cell.FormattedValue, style);
-				OnEditingControlShowing (new DataGridViewEditingControlShowingEventArgs (EditingControlInternal, style));
-				PositionCellEditingControl (cell, style);
+				// Call some functions that allows the editing control to get setup. What it changes while
+				// it is filled in is not the user's change (NotifyCurrentCellDirty ignores it).
+				ignoring_editing_changes = true;
+				try {
+					var style = GetCellStyle (cell);
+					cell.InitializeEditingControl (cell.RowIndex, cell.FormattedValue, style);
+					OnEditingControlShowing (new DataGridViewEditingControlShowingEventArgs (EditingControlInternal, style));
+					PositionCellEditingControl (cell, style);
 
-				// Show the editing control
-				if (EditingControlInternal != null)
-					EditingControlInternal.Visible = true;
+					// Show the editing control
+					if (EditingControlInternal != null)
+						EditingControlInternal.Visible = true;
 
-				IDataGridViewEditingControl dgvEditingControl = (IDataGridViewEditingControl) EditingControlInternal;
-				if (dgvEditingControl != null) {
-					dgvEditingControl.EditingControlDataGridView = this;
-					dgvEditingControl.EditingControlRowIndex = currentCell.OwningRow.Index;
-					dgvEditingControl.ApplyCellStyleToEditingControl (style);
-					dgvEditingControl.PrepareEditingControlForEdit (selectAll);
-					dgvEditingControl.EditingControlFormattedValue = currentCell.EditedFormattedValue;
+					IDataGridViewEditingControl dgvEditingControl = (IDataGridViewEditingControl) EditingControlInternal;
+					if (dgvEditingControl != null) {
+						dgvEditingControl.EditingControlDataGridView = this;
+						dgvEditingControl.EditingControlRowIndex = currentCell.OwningRow.Index;
+						dgvEditingControl.ApplyCellStyleToEditingControl (style);
+						dgvEditingControl.PrepareEditingControlForEdit (selectAll);
+						dgvEditingControl.EditingControlFormattedValue = currentCell.EditedFormattedValue;
+						dgvEditingControl.EditingControlValueChanged = false;
+					}
+				} finally {
+					ignoring_editing_changes = false;
 				}
 				return true;
 			}
@@ -2414,8 +2425,21 @@ namespace System.Windows.Forms {
 					currentCell.SetIsInEditMode (false);
 					currentCell.DetachEditingControl ();
 				}
+				isCurrentCellDirty = false;
 
-				if (currentCell.RowIndex == NewRowIndex) {
+				// The row the user began and has now cancelled goes again, as in .NET; the new row below
+				// it is the current one.
+				if (DataManager == null && added_row != null && currentCell.OwningRow == added_row) {
+					DataGridViewRow row = added_row;
+					int column = currentCell.ColumnIndex;
+					added_row = null;
+					currentCell = null;
+					Rows.RemoveInternal (row);
+					MoveCurrentCell (column, NewRowIndex, true, false, false, true);
+					return true;
+				}
+
+				if (currentCell.RowIndex == NewRowIndex && (DataManager != null || new_row_editing)) {
 					if (DataManager != null)
 						DataManager.CancelCurrentEdit ();
 
@@ -2556,7 +2580,9 @@ namespace System.Windows.Forms {
 			OnCellEndEdit (new DataGridViewCellEventArgs (currentCell.ColumnIndex, currentCell.RowIndex));
 			if (context != DataGridViewDataErrorContexts.LeaveControl)
 				Focus ();
-			if (currentCell.RowIndex == NewRowIndex) {
+			isCurrentCellDirty = false;
+			added_row = null;
+			if (currentCell.RowIndex == NewRowIndex && new_row_editing) {
 				new_row_editing = false;
 				editing_row = null; // editing row becomes a real row
 				PrepareEditingRow (true, false); // add a new editing row
@@ -3032,9 +3058,38 @@ namespace System.Windows.Forms {
 				Invalidate (GetRowDisplayRectangle (rowIndex, true));
 		}
 
+		/// <summary>The editing control or cell reporting that the user changed the current cell (or
+		/// that the change is committed). Nothing called this, so IsCurrentCellDirty never changed and
+		/// CurrentCellDirtyStateChanged -- where applications commit a check box's edit -- never came. The
+		/// first change in the new row is also what adds a row (AddRowForNewRowEdit).</summary>
 		public virtual void NotifyCurrentCellDirty (bool dirty) {
+			if (ignoring_editing_changes)
+				return;
+			if (isCurrentCellDirty != dirty) {
+				isCurrentCellDirty = dirty;
+				OnCurrentCellDirtyStateChanged (EventArgs.Empty);
+			}
+			if (dirty && currentCell != null)
+				AddRowForNewRowEdit ();
 			if (currentCell != null)
 				InvalidateCell (currentCell);
+		}
+
+		/// <summary>The user's first change in an unbound grid's new row makes it a row of its own, as .NET
+		/// does: a new row for the next record is added below it and UserAddedRow raised with that one, the
+		/// row begun being the one above it. Ours made the new row current and called it an added row --
+		/// with nothing added -- so a handler that took the row above (app's criteria list,
+		/// Rows[e.Row.Index - 1]) read row -1 as soon as the grid's window was created.</summary>
+		private void AddRowForNewRowEdit ()
+		{
+			if (DataManager != null || is_binding || !AllowUserToAddRows || editing_row == null
+			    || currentCell == null || currentCell.RowIndex != NewRowIndex)
+				return;
+			DataGridViewRow row = editing_row;
+			editing_row = null;               // the row begun is a real row now
+			PrepareEditingRow (true, false);  // and the next new row goes below it
+			added_row = row;
+			OnUserAddedRow (new DataGridViewRowEventArgs (Rows[NewRowIndex]));
 		}
 
 		public bool RefreshEdit ()
@@ -5342,19 +5397,19 @@ namespace System.Windows.Forms {
 
 		protected virtual void OnUserAddedRow (DataGridViewRowEventArgs e)
 		{
-			PrepareEditingRow (false, false);
-
-			new_row_editing = true;
 			if (DataManager != null) {
+				PrepareEditingRow (false, false);
+
+				new_row_editing = true;
 				// Switch the current editing row with a real one
 				if (editing_row != null) {
 					Rows.RemoveInternal (editing_row);
 					editing_row = null;
 				}
 				DataManager.AddNew (); // will raise OnListPositionChanged
-			}
 
-			e = new DataGridViewRowEventArgs (Rows[NewRowIndex]);
+				e = new DataGridViewRowEventArgs (Rows[NewRowIndex]);
+			}
 			DataGridViewRowEventHandler eh = (DataGridViewRowEventHandler)(Events [UserAddedRowEvent]);
 			if (eh != null) eh (this, e);
 		}
@@ -5844,6 +5899,9 @@ namespace System.Windows.Forms {
 						if (new_row_editing && currentCell.RowIndex == NewRowIndex)
 							CancelEdit ();
 					}
+					// leaving the row the user began commits it: it stays
+					if (added_row != null && (cell == null || cell.OwningRow != added_row))
+						added_row = null;
 					OnCellLeave (new DataGridViewCellEventArgs(currentCell.ColumnIndex, currentCell.RowIndex));
 					OnRowLeave (new DataGridViewCellEventArgs (currentCell.ColumnIndex, currentCell.RowIndex));
 				}
@@ -5862,7 +5920,9 @@ namespace System.Windows.Forms {
 
 				if (cell != null) {
 					// If the user begins an edit in the NewRow, add a new real row
-					if (AllowUserToAddRows && cell.RowIndex == NewRowIndex && !is_binding && !new_row_editing) {
+					// (bound: the data source's new item; unbound grids add the row on the first change in it,
+					// AddRowForNewRowEdit)
+					if (DataManager != null && AllowUserToAddRows && cell.RowIndex == NewRowIndex && !is_binding && !new_row_editing) {
 						// OnUserAddedRow will add a real row and reset the current cell
 						OnUserAddedRow (new DataGridViewRowEventArgs (Rows[NewRowIndex]));
 					} else {

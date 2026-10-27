@@ -319,7 +319,7 @@ namespace System.Windows.Forms {
 			}
 
 			editingCellValueChanged = true;
-			DataGridView.InvalidateCell (this);
+			DataGridView.NotifyCurrentCellDirty (true);   // invalidates the cell
 		}
 
 		protected override void OnContentDoubleClick (DataGridViewCellEventArgs e)
