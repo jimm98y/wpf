@@ -777,6 +777,10 @@ namespace MS.Win32
                     window.GetRestoreBoundsPixels(out x, out y, out w, out h);
                     placement.showCmd = window.GetWindowState();
                 }
+                else if (ParkingWindowRectPixels(hWnd.Handle, out x, out y, out w, out h))
+                {
+                    placement.showCmd = 1;   // SW_SHOWNORMAL
+                }
                 else if (!ForeignWindowRectPixels(hWnd.Handle, out x, out y, out w, out h))
                 {
                     return;
@@ -809,6 +813,26 @@ namespace MS.Win32
             {
                 throw new Win32Exception();
             }
+        }
+
+        /// <summary>
+        /// A window that is never shown and has no platform window: HwndWrapper's synthetic handles
+        /// (0x7F00_0000 and up), such as the hidden window WPF owns a ShowInTaskbar=false dialog with.
+        /// On Windows that one is WS_OVERLAPPEDWINDOW at CW_USEDEFAULT, a rectangle on the screen, and a
+        /// CenterOwner dialog centres on it; here it had none, the centre was clamped to the work area's
+        /// corner, and Workbench's configuration dialogs opened at 0,0. It is given the work area, the
+        /// screen a window created with no place of its own is on.
+        /// </summary>
+        private static bool ParkingWindowRectPixels(IntPtr handle, out int x, out int y, out int w, out int h)
+        {
+            x = 0; y = 0; w = 0; h = 0;
+            long value = handle.ToInt64();
+            if (value < 0x7F00_0000L || value > 0x7FFF_FFFFL) return false;
+            if (!MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                    out _, out _, out _, out _, out int workLeft, out int workTop, out int workRight, out int workBottom))
+                return false;
+            x = workLeft; y = workTop; w = workRight - workLeft; h = workBottom - workTop;
+            return w > 0 && h > 0;
         }
 
         /// <summary>

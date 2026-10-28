@@ -104,6 +104,7 @@ namespace MS.Internal.Interop
         public System.IntPtr Handle { get { throw null; } }
         public bool IsBorderless { get { throw null; } }
         public bool IsSecondary { get { throw null; } }
+        public static bool PageHasMainWindow { get { throw null; } }
         public bool TakesKeyboardOnPress { get { throw null; } set { } }
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.BrowserWindow.BrowserKeyMessage> KeyInput { add { } remove { } }

@@ -267,12 +267,17 @@
 
     The WinForms control is separate: it links against the Mono System.Windows.Forms, so referencing
     it from a pure-WPF app would drag that whole stack in.
+
+    The browser head too (the control shows the page's own frame there, browser-webview.js). Left out
+    of it, the bundle took the app's WebView2 for the stack's and dropped it, nothing provided one, and
+    a placeholder of the same name stood in: Workbench's help sidebar threw FileNotFoundException from
+    `new WebView2()` and the workbench window never opened.
   -->
-  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
+  <ItemGroup Condition="'$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-webview2/*.dll" Private="true" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuUseWinForms)' == 'true'">
+  <ItemGroup Condition="'$(TargetFramework)' != '' and '$(_WpfWebGpuUseWinForms)' == 'true'">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-webview2-winforms/*.dll" Private="true" />
   </ItemGroup>
 
@@ -286,7 +291,7 @@
     same shape, and the same reasoning, as _WpfWebGpuStripFrameworkDrawing above.
   -->
   <Target Name="_WpfWebGpuStripWebView2Package" AfterTargets="ResolveAssemblyReferences"
-          Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
+          Condition="'$(TargetFramework)' != '' and ('$(_WpfWebGpuUseWpf)' == 'true' or '$(_WpfWebGpuUseWinForms)' == 'true')">
     <ItemGroup>
       <ReferencePath Remove="@(ReferencePath)"
                      Condition="('%(FileName)' == 'Microsoft.Web.WebView2.Core' or

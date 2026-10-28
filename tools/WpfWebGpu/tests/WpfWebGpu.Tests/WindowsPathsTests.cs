@@ -37,4 +37,23 @@ public sealed class WindowsPathsTests
         Assert.Equal("C:/data/a.xml", WindowsPaths.DiskOrUri(@"C:\data\a.xml"));       // a drive is a path's, read as Windows reads it
         Assert.Equal("/tmp/a b.xml", WindowsPaths.DiskOrUri("file:///tmp/a%20b.xml"));
     }
+
+    /// <summary>A '/' string that may be relative or absolute: a file URI where it is a path on this disk (a
+    /// display template's, from the stack's own file listing), and relative, as on Windows, where it is a
+    /// reference to a resource -- Telerik's RadRibbonWindow loads its template with one, and made absolute
+    /// it threw "Cannot use absolute URI" and Workbench did not start.</summary>
+    [Fact]
+    public void ASlashUri_IsAFileOnlyWhereThereIsOne()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        string dir = TestEnvironment.NewDirectory("uri-paths");
+        string file = Path.Combine(dir, "Template.gdfx");
+        File.WriteAllText(file, "");
+
+        Assert.True(WindowsPaths.Uri_new(file, UriKind.RelativeOrAbsolute).IsFile);
+        Assert.True(WindowsPaths.Uri_new(Path.Combine(dir, "NotYet.gdfx"), UriKind.RelativeOrAbsolute).IsAbsoluteUri);   // in a folder that is
+        Assert.False(WindowsPaths.Uri_new("/Telerik.Windows.Controls.RibbonView;component/themes/RibbonWindow.xaml", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
+        Assert.False(WindowsPaths.Uri_new("/Images/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
+        Assert.False(WindowsPaths.Uri_new("/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
+    }
 }

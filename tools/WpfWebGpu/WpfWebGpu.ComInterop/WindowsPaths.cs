@@ -182,12 +182,32 @@ public static class WindowsPaths
     // absolute; .NET off Windows takes a path that starts with '/' for a relative reference there, which
     // has no LocalPath. app' display host made a URI of each display template's path that way, and the
     // configurator died at start (InvalidOperationException) as soon as the templates were found at all.
+    //
+    // Only a path that is one, though: a leading '/' is also how a WPF application writes a reference to
+    // a resource -- "/Telerik.Windows.Controls.RibbonView;component/themes/RibbonWindow.xaml", "/Images/
+    // a.png" -- which Windows keeps relative too. Made absolute, Telerik's RadRibbonWindow could not load
+    // its template (Application.LoadComponent: "Cannot use absolute URI") and Workbench did not start. So a
+    // '/' string is a file URI where it names something on this disk: the file or folder itself, or a
+    // folder it would be in below the root.
 
     public static Uri Uri_new(string uriString) => new Uri(AsUri(uriString)!);
     public static Uri Uri_new(string uriString, UriKind uriKind)
     {
         string? s = AsUri(uriString);
-        return new Uri(s!, uriKind == UriKind.RelativeOrAbsolute && !s_windows && s != null && s.StartsWith('/') && !s.StartsWith("//") ? UriKind.Absolute : uriKind);
+        return new Uri(s!, uriKind == UriKind.RelativeOrAbsolute && IsLocalPath(s) ? UriKind.Absolute : uriKind);
+    }
+
+    private static bool IsLocalPath(string? s)
+    {
+        if (s_windows || s == null || !s.StartsWith('/') || s.StartsWith("//") || s.Contains(";component/", StringComparison.OrdinalIgnoreCase))
+            return false;
+        try
+        {
+            if (File.Exists(s) || Directory.Exists(s)) return true;
+            string? folder = Path.GetDirectoryName(s);
+            return !string.IsNullOrEmpty(folder) && folder != "/" && Directory.Exists(folder);
+        }
+        catch (Exception) { return false; }
     }
 
     // a path with Windows' separators made this system's, when it is one -- rooted once they are; a

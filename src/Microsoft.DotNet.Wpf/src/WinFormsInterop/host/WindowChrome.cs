@@ -13,9 +13,12 @@
 // the window's, and it answers WM_NCHITTEST's question for a point (HitTest); the host acts on the
 // answer as DefWindowProc would: HTCAPTION moves the window, HTCLOSE sends SC_CLOSE.
 
+extern alias WindowsBase;
+
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using BrowserWindow = WindowsBase::MS.Internal.Interop.BrowserWindow;
 
 namespace System.Windows.Forms
 {
@@ -29,7 +32,11 @@ namespace System.Windows.Forms
 		internal WindowChrome (Form form) => _form = form;
 
 		// The screen's own window: the first form a frame is asked for, which the head shows filling the
-		// screen with no frame, as the first window the page's window manager is given fills the page.
+		// screen with no frame, as the first window the page's window manager is given fills the page --
+		// unless the page has its window already: a WPF application's main window (Workbench's), and then
+		// every form is a dialog over it. The first form was taken for the screen's all the same, and
+		// Workbench's login dialog had no title bar, its file and SQL configuration dialogs stood at 0,0
+		// and could be neither dragged nor clicked.
 		private static Form s_screenWindow;
 
 		/// <summary>XplatUIWebGpu.FramedWindow on a head whose screen is the main window: a form other
@@ -38,8 +45,11 @@ namespace System.Windows.Forms
 		{
 			if (control is not Form form || form.Parent != null)
 				return false;
-			if (s_screenWindow == null || s_screenWindow.IsDisposed)
+			if (s_screenWindow == null || s_screenWindow.IsDisposed) {
+				if (BrowserWindow.PageHasMainWindow)
+					return true;
 				s_screenWindow = form;
+			}
 			return form != s_screenWindow;
 		}
 

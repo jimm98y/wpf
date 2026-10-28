@@ -85,7 +85,9 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>No-op: a browser page cannot move its own window from script.</summary>
-        public void BeginMoveDrag() { }
+        /// <summary>SC_MOVE's move loop: the window follows the pointer from the press being handled
+        /// until the button comes up (browser-window.js beginMoveDrag).</summary>
+        public void BeginMoveDrag() { if (Handle != IntPtr.Zero) Js.BeginMoveDrag((int)Handle); }
 
         public void Destroy()
         {
@@ -112,6 +114,10 @@ namespace MS.Internal.Interop
         /// <summary>Whether this is a window over the page's own (a dialog): the page's own fills the
         /// page and follows it; this one keeps the place and size it is given.</summary>
         public bool IsSecondary => Handle != IntPtr.Zero && Js.IsSecondaryWindow((int)Handle);
+
+        /// <summary>Whether the page already has its own window -- the first one with a frame, a WPF
+        /// window's or a WinForms form's -- so that a window made now goes over it.</summary>
+        public static bool PageHasMainWindow => OperatingSystem.IsBrowser() && Js.HasMainWindow();
 
         /// <summary>The window draws its own frame (a WinForms dialog's title bar and edges): the page
         /// adds no shadow of its own round it.</summary>
@@ -719,6 +725,12 @@ namespace MS.Internal.Interop
 
             [JSImport("isSecondaryWindow", Module)]
             internal static partial bool IsSecondaryWindow(int handle);
+
+            [JSImport("beginMoveDrag", Module)]
+            internal static partial void BeginMoveDrag(int handle);
+
+            [JSImport("hasMainWindow", Module)]
+            internal static partial bool HasMainWindow();
 
             [JSImport("setOwnFrame", Module)]
             internal static partial void SetOwnFrame(int handle);

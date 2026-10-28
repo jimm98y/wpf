@@ -39,7 +39,18 @@ public static unsafe partial class Com
 
     private static void WriteStruct(object o, IntPtr p, Type t, bool deleteOld)
     {
-        if (TwinOf(t) is not { } twin) { Marshal.StructureToPtr(o, p, deleteOld); return; }
+        if (TwinOf(t) is not { } twin)
+        {
+            var slots = DelegateSlots(t);
+            if (slots.Length == 0) { Marshal.StructureToPtr(o, p, deleteOld); return; }
+            // the struct without its delegates, then each delegate's pointer in its slot
+            var saved = new object?[slots.Length];
+            for (int i = 0; i < slots.Length; i++) { saved[i] = slots[i].Field.GetValue(o); slots[i].Field.SetValue(o, null); }
+            try { Marshal.StructureToPtr(o, p, deleteOld); }
+            finally { for (int i = 0; i < slots.Length; i++) slots[i].Field.SetValue(o, saved[i]); }
+            for (int i = 0; i < slots.Length; i++) Marshal.WriteIntPtr(p, slots[i].Offset, Callbacks.ToNative((Delegate?)saved[i]));
+            return;
+        }
         if (deleteOld) ReleaseInterfaces(p, twin);
         Marshal.StructureToPtr(ToTwin(o, twin), p, deleteOld);
     }
@@ -48,10 +59,53 @@ public static unsafe partial class Com
     {
         if (TwinOf(t) is not { } twin)
         {
+            var slots = DelegateSlots(t);
+            if (slots.Length > 0) return ReadWithDelegates(p, target, t, slots);
             if (target != null && !t.IsValueType) { Marshal.PtrToStructure(p, target); return target; }
             return Marshal.PtrToStructure(p, t);
         }
         return FromTwin(Marshal.PtrToStructure(p, twin.Type)!, target != null && !t.IsValueType ? target : null, t, twin);
+    }
+
+    // ---- delegate fields ----
+    //
+    // A delegate field is a function pointer in the native layout (a window class's lpfnWndProc). Marshal
+    // makes one with the runtime's thunk, which Mono on WebAssembly cannot make for an app's delegate type
+    // ("No native to managed transition": Telerik's WindowChrome registering its message window, and
+    // Workbench did not start). So such a struct goes over without its delegates and each slot gets the
+    // pointer Callbacks makes -- the delegate's token in the browser, the runtime's thunk elsewhere; read
+    // back, a slot's pointer is that delegate again. Every system goes this way.
+
+    private static readonly ConcurrentDictionary<Type, (FieldInfo Field, int Offset)[]> s_delegateSlots = new();
+
+    private static (FieldInfo Field, int Offset)[] DelegateSlots(Type t)
+        => s_delegateSlots.GetOrAdd(t, static t => t.IsPrimitive || t.IsEnum || t.IsArray || t == typeof(string)
+            ? Array.Empty<(FieldInfo, int)>()
+            : t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(f => typeof(Delegate).IsAssignableFrom(f.FieldType))
+                .Select(f => (f, (int)Marshal.OffsetOf(f.DeclaringType!, f.Name)))
+                .ToArray());
+
+    private static object ReadWithDelegates(IntPtr p, object? target, Type t, (FieldInfo Field, int Offset)[] slots)
+    {
+        // a copy with the slots cleared, so that Marshal has no function pointer to make a delegate of
+        int n = Marshal.SizeOf(t);
+        IntPtr copy = Marshal.AllocCoTaskMem(n);
+        try
+        {
+            Buffer.MemoryCopy((void*)p, (void*)copy, n, n);
+            foreach (var (_, offset) in slots) Marshal.WriteIntPtr(copy, offset, IntPtr.Zero);
+            object r;
+            if (target != null && !t.IsValueType) { Marshal.PtrToStructure(copy, target); r = target; }
+            else r = Marshal.PtrToStructure(copy, t)!;
+            foreach (var (field, offset) in slots)
+            {
+                IntPtr fn = Marshal.ReadIntPtr(p, offset);
+                field.SetValue(r, fn == IntPtr.Zero ? null : Callbacks.FromNative(fn, field.FieldType));
+            }
+            return r;
+        }
+        finally { Marshal.FreeCoTaskMem(copy); }
     }
 
     /// <summary>A zeroed buffer for an out-only struct of <paramref name="type"/>.</summary>

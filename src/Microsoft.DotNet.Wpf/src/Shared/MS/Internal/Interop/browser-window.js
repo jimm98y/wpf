@@ -162,6 +162,11 @@ function inRegion(w, r, clientX, clientY) {
     return w.region.some(p => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h);
 }
 
+// Whether the page has its own window yet (the first window with a frame, whichever stack made it).
+export function hasMainWindow() {
+    return mainHandle !== null && windows.has(mainHandle);
+}
+
 // A window over the page's own (a dialog), rather than the page's own or a popup.
 export function isSecondaryWindow(handle) {
     return !!windows.get(handle)?.secondary;
@@ -599,7 +604,40 @@ function topmostWindowAt(clientX, clientY) {
     return best;
 }
 
+// ---- moving a window (WM_SYSCOMMAND SC_MOVE: Window.DragMove, a WindowChrome caption) ----------------
+//
+// Windows answers SC_MOVE with a modal move loop in DefWindowProc: from the press that asked for it the
+// window follows the pointer until the button comes up, and the loop takes the mouse meanwhile -- the
+// application sees none of it. Here the loop is the page's: begun by BeginMoveDrag while the press is
+// being handled, it moves the window's canvas with each move and ends on the release. There was none,
+// and a WPF window with its own title bar (Workbench's file and SQL configuration dialogs) could not
+// be moved at all.
+let moveDrag = null;
+let press = null;       // the left button's last press, while it is down
+
+export function beginMoveDrag(handle) {
+    const w = windows.get(handle);
+    if (!w || !press) return;
+    const r = w.canvas.getBoundingClientRect();
+    moveDrag = { w, dx: press.x - r.left, dy: press.y - r.top };
+}
+
+function moveDragTo(e) {
+    const c = moveDrag.w.canvas;
+    c.style.position = "fixed";
+    c.style.left = `${e.clientX - moveDrag.dx}px`;
+    // the top edge stays on the page, so that the caption can be taken hold of again
+    c.style.top = `${Math.max(0, e.clientY - moveDrag.dy)}px`;
+}
+
 function pushMouse(kind, e, wheel = 0) {
+    if (kind === 1 && (e.button ?? 0) === 0) press = { x: e.clientX, y: e.clientY };
+    else if (kind === 2 && (e.button ?? 0) === 0) press = null;
+    if (moveDrag) {
+        if (kind === 0) moveDragTo(e);
+        else if (kind === 2) { moveDragTo(e); moveDrag = null; }
+        return;
+    }
     // Route to the window under the pointer (popups float above the main canvas);
     // WPF's capture logic handles routing during drags.
     let handle = topmostWindowAt(e.clientX, e.clientY);

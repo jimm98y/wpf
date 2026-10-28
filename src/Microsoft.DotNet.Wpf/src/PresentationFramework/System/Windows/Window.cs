@@ -3965,6 +3965,8 @@ namespace System.Windows
                         // Check the screen rect to make sure the window is shown on screen.
                         // It is the same as WinForms' behavior.
                         NativeMethods.RECT workAreaRectDeviceUnits = WorkAreaBoundsForHwnd(_ownerHandle);
+                        if (s_tracePlacement)
+                            Console.Error.WriteLine($"WPF placement: owner rect {ownerRectDeviceUnits}, work area {workAreaRectDeviceUnits.left},{workAreaRectDeviceUnits.top},{workAreaRectDeviceUnits.right},{workAreaRectDeviceUnits.bottom}");
                         leftDeviceUnits = Math.Min(leftDeviceUnits, workAreaRectDeviceUnits.right - currentSizeDeviceUnits.Width);
                         leftDeviceUnits = Math.Max(leftDeviceUnits, workAreaRectDeviceUnits.left);
                         topDeviceUnits = Math.Min(topDeviceUnits, workAreaRectDeviceUnits.bottom - currentSizeDeviceUnits.Height);
@@ -3975,8 +3977,14 @@ namespace System.Windows
                 default:
                     break;
             }
+            if (s_tracePlacement)
+                Console.Error.WriteLine($"WPF placement: {GetType().FullName} {_windowStartupLocation} owner={Owner?.GetType().Name} ownerHandle=0x{_ownerHandle.ToInt64():x} " +
+                    $"ownerLeftTop=({Owner?.Left},{Owner?.Top}) ownerState={Owner?.WindowState} size={currentSizeDeviceUnits} in=({inLeft},{inTop}) out=({leftDeviceUnits},{topDeviceUnits})");
             return (!DoubleUtil.AreClose(inLeft, leftDeviceUnits) || !DoubleUtil.AreClose(inTop, topDeviceUnits));
         }
+
+        // WPF_TRACE_PLACEMENT=1: where each window's startup location put it, and from what.
+        private static readonly bool s_tracePlacement = Environment.GetEnvironmentVariable("WPF_TRACE_PLACEMENT") == "1";
 
         private static NativeMethods.RECT WorkAreaBoundsForHwnd(IntPtr hwnd)
         {
