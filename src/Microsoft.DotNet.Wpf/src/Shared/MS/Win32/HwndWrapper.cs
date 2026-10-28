@@ -17,6 +17,66 @@ namespace MS.Win32
             s_msgGCMemory = UnsafeNativeMethods.RegisterWindowMessage("HwndWrapper.GetGCMemMessage");
             // WPF's windows in the process's focus model (FocusWindows)
             MS.Internal.Interop.PlatformFocus.Register(new FocusWindows());
+            // SWP_FRAMECHANGED from an app's own SetWindowPos (the Win32 shim's): see RecalculateFrame.
+            AppContext.SetData(RecalculateFrameKey, (Action<IntPtr>)RecalculateFrame);
+        }
+
+        private const string RecalculateFrameKey = "WpfWebGpu.HwndWrapper.RecalculateFrame";
+
+        // The windows a head made, by handle, for RecalculateFrame.
+        private static readonly System.Collections.Generic.Dictionary<IntPtr, WeakReference<HwndWrapper>> s_platformWrappers = new();
+
+        /// <summary>
+        /// What Windows does on SWP_FRAMECHANGED: it asks the window for its frame again (WM_NCCALCSIZE),
+        /// and a window that answers by keeping the whole rectangle as its client has no caption and no
+        /// border. That is how an app draws its own chrome without WPF's WindowChrome -- Telerik's
+        /// RadRibbonWindow carries a copy of Microsoft.Windows.Shell's worker that does exactly this from
+        /// an HwndSource hook -- and it never reached the window, so Workbench came up with the macOS title
+        /// bar over the one it draws itself. The message goes through the window procedure, hooks and
+        /// all; a window whose hooks take the caption away becomes chromeless on its head.
+        /// </summary>
+        private static void RecalculateFrame(IntPtr hwnd)
+        {
+            HwndWrapper wrapper = null;
+            lock (s_platformWrappers)
+            {
+                if (s_platformWrappers.TryGetValue(hwnd, out WeakReference<HwndWrapper> r) && !r.TryGetTarget(out wrapper))
+                    s_platformWrappers.Remove(hwnd);
+            }
+            wrapper?.RecalculateFrameCore();
+        }
+
+        private void RecalculateFrameCore()
+        {
+            MS.Internal.Interop.IPlatformWindow platform = _platformWindow;
+            if (platform == null || _handle == IntPtr.Zero) return;
+            const int WM_NCCALCSIZE = 0x0083;
+            platform.GetWindowScreenOriginPixels(out int x, out int y);
+            platform.GetWindowPixelSize(out int width, out int height);
+            // NCCALCSIZE_PARAMS: RECT rgrc[3] (the proposed window rect, the old window and client
+            // rects), then WINDOWPOS* lppos.
+            IntPtr p = Marshal.AllocHGlobal(3 * 16 + IntPtr.Size);
+            try
+            {
+                for (int i = 0; i < 3; i++)
+                {
+                    Marshal.WriteInt32(p, i * 16, x);
+                    Marshal.WriteInt32(p, i * 16 + 4, y);
+                    Marshal.WriteInt32(p, i * 16 + 8, x + width);
+                    Marshal.WriteInt32(p, i * 16 + 12, y + height);
+                }
+                Marshal.WriteIntPtr(p, 48, IntPtr.Zero);
+                bool handled = false;
+                try { WndProc(_handle, WM_NCCALCSIZE, (IntPtr)1, p, ref handled); }
+                catch { return; }
+                // No caption left: the client starts where the window does.
+                if (handled && Marshal.ReadInt32(p, 4) == y)
+                    platform.SetChromeless(true);
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(p);
+            }
         }
 
         public HwndWrapper(
@@ -211,6 +271,12 @@ namespace MS.Win32
                         };
                         // Route a title-bar close-button click to a WM_CLOSE (which fires Closing/Closed
                         // and tears the window down, exactly as the Win32 close path does).
+                        // ...and a move WM_MOVE, which is how Window.Left/Top follow the window.
+                        cocoa.Moved += OnCocoaMoved;
+                        // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
+                        cocoa.QueryMaximizedRect = QueryMaximizedRect;
+                        // ...and a press on a window drawing its own chrome asks it what is there.
+                        cocoa.NonClientHitTest = NonClientHitTest;
                         cocoa.Closed += OnCocoaClosed;
                         // Key-window changes become WM_ACTIVATE, without which WPF never learns the
                         // window is active: Window.IsActive stays false forever and every visual keyed
@@ -237,7 +303,8 @@ namespace MS.Win32
                         // ...and takes the keyboard when pressed, as SetFocus on a child window does there
                         // (WS_EX_NOACTIVATE says it must not, as for a popup).
                         cocoa.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
-                        _handle = cocoa.ContentView;
+                        _handle = cocoa.Handle;   // a 32-bit HWND, not the view (CocoaWindow.Handle)
+                        lock (s_platformWrappers) s_platformWrappers[_handle] = new WeakReference<HwndWrapper>(this);
                     }
                     // Register the handle so off-Windows SendMessage (e.g. Window.Close()'s WM_CLOSE)
                     // can be routed synchronously to this wrapper's managed WndProc (see DispatchMessage).
@@ -595,6 +662,75 @@ namespace MS.Win32
 
         // A Cocoa content-size change becomes a synthetic WM_SIZE dispatched through the same hook
         // chain the Win32 WndProc uses, so HwndTarget re-renders and HwndSource re-lays-out.
+        /// <summary>
+        /// WM_GETMINMAXINFO, which Windows sends before it maximizes a window: MINMAXINFO pre-filled with
+        /// the head's maximized rectangle (<paramref name="q"/>: monitor rect, then position relative to
+        /// it and size), handed through the window procedure and its hooks -- WPF's own Window, and an
+        /// app's (Telerik's RadRibbonWindow puts its monitor's work area there) -- and read back. The size
+        /// is held to ptMaxTrackSize, as Windows holds it.
+        /// </summary>
+        /// <summary>WM_NCHITTEST at a screen point (device pixels): the window procedure's answer,
+        /// hooks and all, or HTCLIENT when nothing answers.</summary>
+        private int NonClientHitTest(int x, int y)
+        {
+            const int WM_NCHITTEST = 0x0084, HTCLIENT = 1;
+            if (_handle == IntPtr.Zero) return HTCLIENT;
+            bool handled = false;
+            IntPtr lParam = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
+            IntPtr result;
+            try { result = WndProc(_handle, WM_NCHITTEST, IntPtr.Zero, lParam, ref handled); }
+            catch { return HTCLIENT; }
+            if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") is "1" or "2" && _platformWindow != null)
+            {
+                _platformWindow.GetWindowScreenOriginPixels(out int ox, out int oy);
+                _platformWindow.GetWindowPixelSize(out int ow, out int oh);
+                Console.Error.WriteLine($"[win] NCHITTEST ({x},{y}) -> {(handled ? (int)(long)result : -1)} window=({ox},{oy} {ow}x{oh})");
+            }
+            return handled ? (int)(long)result : HTCLIENT;
+        }
+
+        private int[] QueryMaximizedRect(int[] q)
+        {
+            if (_handle == IntPtr.Zero || q == null || q.Length < 8) return null;
+            const int WM_GETMINMAXINFO = 0x0024;
+            // MINMAXINFO: POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize.
+            IntPtr p = Marshal.AllocHGlobal(5 * 8);
+            try
+            {
+                // ptMaxTrackSize as Windows fills it (SM_CXMAXTRACK): at least the monitor and never less
+                // than the maximized size itself, which overhangs the monitor by the frame. The monitor alone
+                // capped Workbench's maximized width at the screen's, and its side padding showed black.
+                int monW = q[2] - q[0], monH = q[3] - q[1];
+                int[] init = { 0, 0, q[6], q[7], q[4], q[5], 0, 0, Math.Max(monW, q[6]), Math.Max(monH, q[7]) };
+                Marshal.Copy(init, 0, p, init.Length);
+                bool handled = false;
+                try { WndProc(_handle, WM_GETMINMAXINFO, IntPtr.Zero, p, ref handled); }
+                catch { return null; }
+                var mmi = new int[10];
+                Marshal.Copy(p, mmi, 0, mmi.Length);
+                int w = mmi[8] > 0 ? Math.Min(mmi[2], mmi[8]) : mmi[2];
+                int h = mmi[9] > 0 ? Math.Min(mmi[3], mmi[9]) : mmi[3];
+                return new[] { mmi[4], mmi[5], w, h };
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(p);
+            }
+        }
+
+        /// <summary>WM_MOVE for a window the head saw move. Its lParam is the client's screen position;
+        /// Window.WmMoveChanged reads the outer rect itself (GetWindowRect), as it does on Windows.</summary>
+        private void OnCocoaMoved(int x, int y)
+        {
+            if (_handle == IntPtr.Zero) return;
+            const int WM_MOVE = 0x0003;
+            IntPtr lParam = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
+            bool handled = false;
+            // A callback exception must not break the Cocoa event pump that raised the move.
+            try { WndProc(_handle, WM_MOVE, IntPtr.Zero, lParam, ref handled); }
+            catch { }
+        }
+
         private void OnCocoaResized(int width, int height)
         {
             if (_handle == IntPtr.Zero) return;

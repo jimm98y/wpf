@@ -41,6 +41,8 @@
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Net.WebClient/System.Net.WebClient.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
+    <!-- a framework member: at its higher version it replaces the shared framework's for this process -->
+    <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" Aliases="PrincipalShim" />
   </ItemGroup>
 
   <!-- compiled against the shims' System.Net.Requests and System.Net.WebClient, not the framework's -->

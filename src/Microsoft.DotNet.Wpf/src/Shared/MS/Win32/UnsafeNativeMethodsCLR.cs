@@ -562,8 +562,14 @@ namespace MS.Win32
         [DllImport(ExternDll.Ole32, ExactSpelling = true, CharSet = CharSet.Auto, PreserveSig = false)]
         public static extern void DoDragDrop(IComDataObject dataObject, IOleDropSource dropSource, int allowedEffects, int[] finalEffect);
 
-        [DllImport(ExternDll.User32, ExactSpelling = true, CharSet = CharSet.Auto)]
-        public static extern bool InvalidateRect(HandleRef hWnd, IntPtr rect, bool erase);
+        // A window's paint is the compositor's off Windows: it re-presents on every size change and
+        // frame, and there is no user32 to invalidate anything in. Called through, this threw from
+        // HwndTarget's restore timer once Workbench came back from minimized, and took the app down.
+        public static bool InvalidateRect(HandleRef hWnd, IntPtr rect, bool erase)
+            => !OperatingSystem.IsWindows() || InvalidateRectNative(hWnd, rect, erase);
+
+        [DllImport(ExternDll.User32, EntryPoint = "InvalidateRect", ExactSpelling = true, CharSet = CharSet.Auto)]
+        private static extern bool InvalidateRectNative(HandleRef hWnd, IntPtr rect, bool erase);
 #endif
 
 

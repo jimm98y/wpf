@@ -254,7 +254,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private readonly Dictionary<long, CachedMask> _maskCache = new();
         // Filtered subpixel coverage by shape alone, before the ink/paper weighting; CPU bytes, so it
         // outlives the GPU masks' eviction and is simply dropped whole when it grows past the limit.
-        private readonly Dictionary<long, PathRasterizer.SubpixelMask> _rawSubpixel = new();
+        // One for the PROCESS, not one per renderer: the key is the shape and the rasterizer's
+        // settings, nothing of this renderer's, and every WinForms window has a renderer of its own.
+        // Each new window rasterized all of its text again -- Workbench's About box took 10 s in the
+        // interpreter (4 s compiled) to come up, every time it was opened, nearly all of it here.
+        private static readonly Dictionary<long, PathRasterizer.SubpixelMask> s_rawSubpixel = new();
         private const int RawSubpixelLimit = 8192;
         /// <summary>WPF_RAW_SUBPIXEL=0 rasterizes every mask variant afresh.</summary>
         private static readonly bool s_rawSubpixelCache = Environment.GetEnvironmentVariable("WPF_RAW_SUBPIXEL") != "0";
@@ -4604,7 +4608,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         rawKey = rawKey * 31 + (PathRasterizer.SymmetricVerticalForRun ? 1 : 0)
                                  + (PathRasterizer.ContrastFilterForRun ? 2 : 0) + (_aliasedEdges ? 4 : 0);
                         rawKey = rawKey * 397 ^ clipKey;
-                        if (s_rawSubpixelCache && _rawSubpixel.TryGetValue(rawKey, out PathRasterizer.SubpixelMask raw))
+                        PathRasterizer.SubpixelMask raw = default;
+                        bool cachedRaw = false;
+                        if (s_rawSubpixelCache)
+                            lock (s_rawSubpixel) cachedRaw = s_rawSubpixel.TryGetValue(rawKey, out raw);
+                        if (cachedRaw)
                         {
                             PathRasterizer.SubpixelRowsForRun = 0; PathRasterizer.DropoutForRun = 0;
                             PathRasterizer.SimBoldPixelsForRun = 0;
@@ -4624,9 +4632,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                 PathRasterizer.GlyphRowClipForRun = deviceClip;
                                 PathRasterizer.GlyphColClipForRun = deviceColClip;
                             }
-                            if (_rawSubpixel.Count >= RawSubpixelLimit) _rawSubpixel.Clear();
-                            _rawSubpixel[rawKey] = sm.IsEmpty ? sm
+                            var kept = sm.IsEmpty ? sm
                                 : new PathRasterizer.SubpixelMask((byte[]) sm.Rgba.Clone(), sm.Width, sm.Height, sm.OriginX, sm.OriginY);
+                            lock (s_rawSubpixel)
+                            {
+                                if (s_rawSubpixel.Count >= RawSubpixelLimit) s_rawSubpixel.Clear();
+                                s_rawSubpixel[rawKey] = kept;
+                            }
                         }
                         if (sm.IsEmpty) return;
                         // Corrected AFTER the filter, and it was worth checking which way round:

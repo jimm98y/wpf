@@ -31,10 +31,44 @@ namespace MS.Internal.Interop
     public sealed class CocoaWindow : IPlatformWindow
     {
         private IntPtr _window;      // NSWindow*
-        private IntPtr _contentView; // NSView* (layer-backed) - used as the window handle
+        private IntPtr _contentView; // NSView* (layer-backed)
+        private IntPtr _handle;      // the HWND: see Handle
 
-        /// <summary>The NSView* that stands in for the HWND. IntPtr.Zero until <see cref="Create"/>.</summary>
+        /// <summary>The window's NSView* (layer-backed): what AppKit, Metal and WebKit are given.
+        /// IntPtr.Zero until <see cref="Create"/>.</summary>
         public IntPtr ContentView => _contentView;
+
+        /// <summary>
+        /// The window's HWND: a small value of its own, not the view's address. A Windows window handle
+        /// always fits in 32 bits and code relies on it -- app' WindowUtil.SetOwner takes
+        /// owner.ToInt32(), and with the 64-bit NSView* as the handle it overflowed and Workbench's login
+        /// dialog never opened. Everything that reaches AppKit with a handle resolves it through
+        /// <see cref="ViewOf"/>; everything AppKit hands back as a view is turned into this through
+        /// <see cref="HandleOf"/>.
+        /// </summary>
+        public IntPtr Handle => _handle;
+
+        // 0x0E00_0000 up: clear of WinForms' driver handles (from 1), the Win32 shim's (0x4000+, GDI's
+        // stock objects at 0x7F0000+), BrowserWindow's 0x0B00_0000+, the web overlays' 0x0C00_0000+ and
+        // HwndWrapper's hidden windows at 0x7F00_0000+, so a handle can always be told apart by its value.
+        private static int s_nextHandle = 0x0E00_0000;
+        private static readonly Dictionary<IntPtr, CocoaWindow> s_byHandle = new();
+
+        /// <summary>The NSView* of a window <paramref name="handle"/>; anything that is not one of these
+        /// windows' handles (a WinForms host's own view) is returned as it is.</summary>
+        public static IntPtr ViewOf(IntPtr handle)
+        {
+            lock (s_lock)
+                return s_byHandle.TryGetValue(handle, out CocoaWindow w) ? w._contentView : handle;
+        }
+
+        /// <summary>The handle of the window whose content view is <paramref name="view"/>, or
+        /// <paramref name="view"/> itself when it is no such view (it may be a handle already).</summary>
+        public static IntPtr HandleOf(IntPtr view)
+        {
+            lock (s_lock)
+                return s_byView.TryGetValue(view, out CocoaWindow w) ? w._handle : view;
+        }
 
         /// <summary>The NSWindow* backing this window.</summary>
         public IntPtr Window => _window;
@@ -44,11 +78,12 @@ namespace MS.Internal.Interop
         private static readonly Dictionary<IntPtr, CocoaWindow> s_byView = new();
         private static readonly object s_lock = new();
 
-        public static CocoaWindow FromHandle(IntPtr view)
+        /// <summary>The window of a handle -- or of its content view, which native callbacks have.</summary>
+        public static CocoaWindow FromHandle(IntPtr handle)
         {
             lock (s_lock)
             {
-                return s_byView.TryGetValue(view, out CocoaWindow w) ? w : null;
+                return s_byHandle.TryGetValue(handle, out CocoaWindow w) || s_byView.TryGetValue(handle, out w) ? w : null;
             }
         }
 
@@ -92,7 +127,7 @@ namespace MS.Internal.Interop
                     if (order < bestOrder)
                     {
                         bestOrder = order;
-                        best = w._contentView;
+                        best = w._handle;
                     }
                 }
                 return best;
@@ -296,6 +331,8 @@ namespace MS.Internal.Interop
             lock (s_lock)
             {
                 s_byView[_contentView] = this;
+                _handle = (IntPtr)(s_nextHandle += 4);
+                s_byHandle[_handle] = this;
             }
 
             // A freshly-ordered-front window's CAMetalLayer stays occluded until the Cocoa run loop has
@@ -551,7 +588,12 @@ namespace MS.Internal.Interop
                 // Height regardless of the title-bar height. Width shrinks by the faked side frame so the
                 // client width matches Windows and a Width-relative tab fills. AppKit places/moves top-level
                 // windows, so just size.
-                SetOuterFramePoints(width - Win32NonClientWidthPts, height - Win32ResizeFramePts);
+                // ...EXCEPT WHERE THE CLIENT IS THE WINDOW (WindowChrome, SetChromeless): it has no frame to
+                // fake, not the side frame and not the invisible resize border either, and its outer size is
+                // all client. Shrunk anyway, it came out 10pt narrower and shorter than the size WPF laid it
+                // out for, and ConfigureSystem's dialog lost its right edge and its buttons.
+                if (_clientIsWindow) SetOuterFramePoints(width, height);
+                else SetOuterFramePoints(width - Win32NonClientWidthPts, height - Win32ResizeFramePts);
                 return;
             }
 
@@ -608,7 +650,8 @@ namespace MS.Internal.Interop
         public void AttachToParentWindow(IntPtr parentView)
         {
             if (_window == IntPtr.Zero || parentView == IntPtr.Zero) return;
-            IntPtr parent = Send(parentView, Sel("window"));
+            // A WPF parent comes as its HWND (an ElementHost's parking window); a WinForms host as its view.
+            IntPtr parent = Send(ViewOf(parentView), Sel("window"));
             if (parent == IntPtr.Zero || parent == _window) return;
             _parentWindow = parent;
             if (SendBool(_window, Sel("isVisible"))) AddToParent();
@@ -836,6 +879,16 @@ namespace MS.Internal.Interop
                             Marshal.GetFunctionPointerForDelegate(s_canBecomeKeyImpl), "c@:");
             class_addMethod(cls, Sel("canBecomeMainWindow"),
                             Marshal.GetFunctionPointerForDelegate(s_canBecomeMainImpl), "c@:");
+            // The window answers the keys the content view is not asked for (it is first responder
+            // itself until a view takes over): quietly too -- see AddKeyResponders.
+            AddKeyResponders(cls);
+            s_zoomImpl = OnZoom;   // kept alive: the runtime stores the raw pointer
+            class_addMethod(cls, Sel("zoom:"), Marshal.GetFunctionPointerForDelegate(s_zoomImpl), "v@:@");
+            // ...and a maximized window may lie past the screen's edges, under the menu bar too, as a
+            // Windows one does past its monitor's (see Maximize): AppKit would pull it back below the bar.
+            s_superConstrain = class_getMethodImplementation(nsWindow, Sel("constrainFrameRect:toScreen:"));
+            s_constrainImpl = OnConstrainFrameRect;
+            class_addMethod(cls, Sel("constrainFrameRect:toScreen:"), Marshal.GetFunctionPointerForDelegate(s_constrainImpl), "{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}@");
 
             objc_registerClassPair(cls);
             return s_windowClass = cls;
@@ -862,6 +915,7 @@ namespace MS.Internal.Interop
             CocoaAccessibility.AddViewAccessibility(cls);
             AddGestureMethods(cls);
             AddMouseDownCanMoveWindow(cls);
+            AddKeyResponders(cls);
 
             // NSDraggingDestination is implemented BY THE VIEW on macOS, not by a delegate, so the
             // drop methods join the accessibility ones on this class.
@@ -912,6 +966,22 @@ namespace MS.Internal.Interop
                             Marshal.GetFunctionPointerForDelegate(s_cannotMoveWindowImpl), "c@:");
         }
 
+        private delegate void EventMethod(IntPtr self, IntPtr sel, IntPtr nsEvent);
+        private static EventMethod s_keyIgnoredImpl;
+
+        /// <summary>
+        /// -keyDown: and -keyUp: that do nothing, because WPF has had the key already (ReportKeyEvent,
+        /// before AppKit's sendEvent:). NSResponder's own pass it up the responder chain, which ends at
+        /// the window and NSApp: nobody takes it there, and AppKit beeps -- on every key typed.
+        /// </summary>
+        private static void AddKeyResponders(IntPtr cls)
+        {
+            s_keyIgnoredImpl ??= static (self, sel, nsEvent) => { };   // kept alive: the runtime stores the raw pointer
+            IntPtr imp = Marshal.GetFunctionPointerForDelegate(s_keyIgnoredImpl);
+            class_addMethod(cls, Sel("keyDown:"), imp, "v@:@");
+            class_addMethod(cls, Sel("keyUp:"), imp, "v@:@");
+        }
+
         private static void AddGestureMethods(IntPtr cls)
         {
             // Keep the delegates alive for the process: class_addMethod stores the raw pointer.
@@ -958,7 +1028,7 @@ namespace MS.Internal.Interop
             try
             {
                 if (!s_gestureActive) return;
-                PlatformGesture.Sink?.GestureEnd(self, false);
+                PlatformGesture.Sink?.GestureEnd(HandleOf(self), false);
                 s_gestureActive = false;
                 s_gestureMagnification = 1;
                 s_gestureRotation = 0;
@@ -971,7 +1041,7 @@ namespace MS.Internal.Interop
             IPlatformGestureSink sink = PlatformGesture.Sink;
             if (sink is null) return;
 
-            IntPtr handle = view;
+            IntPtr handle = HandleOf(view);   // the native callback has the view; the seam takes the HWND
             if (handle == IntPtr.Zero) return;
 
             GestureScreenPoint(nsEvent, out int screenX, out int screenY);
@@ -1260,15 +1330,283 @@ namespace MS.Internal.Interop
 
                 case 3:   // SW_SHOWMAXIMIZED / SW_MAXIMIZE
                     if (SendBool(_window, Sel("isMiniaturized"))) SendVoidPtr(_window, Sel("deminiaturize:"), IntPtr.Zero);
-                    if (!SendBool(_window, Sel("isZoomed"))) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
+                    if (!_maximized) Maximize(animate: true);
                     break;
 
                 case 1:   // SW_NORMAL
                 case 9:   // SW_RESTORE
                     if (SendBool(_window, Sel("isMiniaturized"))) SendVoidPtr(_window, Sel("deminiaturize:"), IntPtr.Zero);
-                    if (SendBool(_window, Sel("isZoomed"))) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
+                    if (_maximized) Unmaximize(animate: true);
                     break;
             }
+        }
+
+        /// <summary>
+        /// WM_NCHITTEST for a point in screen device pixels (top-left origin): the window's answer, HTCLIENT
+        /// when it has none. Set by HwndWrapper, which owns the procedure.
+        /// </summary>
+        public Func<int, int, int> NonClientHitTest { get; set; }
+
+        /// <summary>
+        /// A press on a window that draws its own chrome, where the WINDOW says what is under it, as
+        /// Windows asks it: WM_NCHITTEST. On its caption (HTCAPTION) the press is the system's, not the
+        /// app's -- WM_NCLBUTTONDOWN, which DefWindowProc turns into a move, and on a double-click into
+        /// maximize or restore -- so it is handled here and WPF never sees it. Telerik's RadRibbonWindow
+        /// draws Workbench's caption and leaves exactly that to Windows; nothing did it here, and its
+        /// title bar neither moved the window nor maximized it on a double-click.
+        /// </summary>
+        private bool NonClientPress(IntPtr evt)
+        {
+            if (!_clientIsWindow || NonClientHitTest == null || _window == IntPtr.Zero) return false;
+            NSPoint global = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
+            double scale = GetBackingScale();
+            int gx = (int)Math.Round(global.x * scale);
+            int gy = (int)Math.Round((PrimaryScreenHeightPoints() - global.y) * scale);
+            int hit;
+            try { hit = NonClientHitTest(gx, gy); }
+            catch { return false; }
+            const int HTCAPTION = 2;
+            if (hit != HTCAPTION) return false;
+            if (SendNInt(evt, Sel("clickCount")) >= 2)
+            {
+                if (_maximized) Unmaximize(animate: true); else Maximize(animate: true);
+                CheckResize();
+            }
+            else
+            {
+                // DefWindowProc's move loop, not AppKit's: performWindowDragWithEvent: hands the drag to
+                // the window server, whose tiling (a drop on the screen's top edge fills the screen) then
+                // held every later event back from an app that runs no NSApplication loop -- Workbench
+                // froze. The drag is followed here, from the events the pump already reads.
+                s_captionDrag = this;
+                s_captionDragMouse = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
+                NSRect f = SendRect(_window, Sel("frame"));
+                s_captionDragOrigin = new NSPoint { x = f.x, y = f.y };
+                s_captionDragMoved = false;
+            }
+            return true;
+        }
+
+        // The caption drag in progress (NonClientPress): the window, where the mouse and the window's
+        // origin were when it began (screen points, bottom-left).
+        private static CocoaWindow s_captionDrag;
+        private static NSPoint s_captionDragMouse, s_captionDragOrigin;
+        private static bool s_captionDragMoved;
+
+        /// <summary>
+        /// One event of a caption drag: a move takes the window with the mouse; the release ends it, and
+        /// at the screen's top edge maximizes the window, as Windows' Snap does. A maximized window
+        /// dragged by its caption is restored first, under the mouse, as on Windows. True when the event
+        /// was the drag's.
+        /// </summary>
+        private static bool CaptionDragEvent(ulong type)
+        {
+            CocoaWindow w = s_captionDrag;
+            if (w == null) return false;
+            if (w._window == IntPtr.Zero) { s_captionDrag = null; return false; }
+            NSPoint mouse = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
+            if (type == NSLeftMouseDragged || type == NSMouseMoved)
+            {
+                double dx = mouse.x - s_captionDragMouse.x, dy = mouse.y - s_captionDragMouse.y;
+                if (!s_captionDragMoved && Math.Abs(dx) < 3 && Math.Abs(dy) < 3) return true;   // SM_CXDRAG
+                if (!s_captionDragMoved && w._maximized)
+                {
+                    // Restored under the mouse: the same fraction of the caption, the same distance down.
+                    NSRect max = SendRect(w._window, Sel("frame"));
+                    double fx = max.width > 0 ? (s_captionDragMouse.x - max.x) / max.width : 0.5;
+                    double fromTop = max.y + max.height - s_captionDragMouse.y;
+                    w.Unmaximize();
+                    NSRect r = SendRect(w._window, Sel("frame"));
+                    s_captionDragOrigin = new NSPoint { x = s_captionDragMouse.x - fx * r.width, y = s_captionDragMouse.y + fromTop - r.height };
+                    w.CheckResize();
+                }
+                s_captionDragMoved = true;
+                SendVoidPoint(w._window, Sel("setFrameOrigin:"), new NSPoint { x = s_captionDragOrigin.x + dx, y = s_captionDragOrigin.y + dy });
+                w.CheckResize();   // WM_MOVE
+                return true;
+            }
+            if (type == NSLeftMouseUp)
+            {
+                s_captionDrag = null;
+                IntPtr screen = Send(w._window, Sel("screen"));
+                if (s_captionDragMoved && screen != IntPtr.Zero && !w._maximized)
+                {
+                    NSRect full = SendRect(screen, Sel("frame"));
+                    NSRect vis = SendRect(screen, Sel("visibleFrame"));
+                    if (mouse.y >= vis.y + vis.height - 1 && mouse.y <= full.y + full.height) w.Maximize(animate: true);
+                }
+                w.CheckResize();
+                return true;
+            }
+            return false;
+        }
+
+        private void Unmaximize(bool animate = false)
+        {
+            _maximized = false;
+            ClipToMonitor();
+            SetFrameAnimated(_unmaximizedFrame, animate);
+        }
+
+        // -zoom: on our window class: AppKit's own maximize -- a double-click on the title bar (a
+        // chromeless window still has an invisible one over its content), the green button. Left to
+        // AppKit it ANIMATED to AppKit's frame while the app maximized the window its own way at the same
+        // time: Workbench's caption, drawn by Telerik, takes the same double-click as SC_MAXIMIZE, and the
+        // two fought through the animation, flickering, and ended at a frame neither had laid out for.
+        // A window that draws its own chrome handles its caption as on Windows, so AppKit's zoom does
+        // nothing there; a titled window's is SW_MAXIMIZE / SW_RESTORE, reported as WM_SIZE.
+        private delegate NSRect ConstrainMethod(IntPtr self, IntPtr sel, NSRect frame, IntPtr screen);
+        private static ConstrainMethod s_constrainImpl;
+        private static IntPtr s_superConstrain;
+
+        private static NSRect OnConstrainFrameRect(IntPtr self, IntPtr sel, NSRect frame, IntPtr screen)
+        {
+            try
+            {
+                lock (s_lock)
+                    foreach (CocoaWindow c in s_byView.Values)
+                        if (c._window == self && c._maximized) return frame;
+                if (s_superConstrain != IntPtr.Zero)
+                    unsafe { return ((delegate* unmanaged<IntPtr, IntPtr, NSRect, IntPtr, NSRect>)s_superConstrain)(self, sel, frame, screen); }
+            }
+            catch { }
+            return frame;
+        }
+
+        private delegate void ZoomMethod(IntPtr self, IntPtr sel, IntPtr sender);
+        private static ZoomMethod s_zoomImpl;
+
+        private static void OnZoom(IntPtr self, IntPtr sel, IntPtr sender)
+        {
+            try
+            {
+                CocoaWindow w = null;
+                lock (s_lock)
+                    foreach (CocoaWindow c in s_byView.Values)
+                        if (c._window == self) { w = c; break; }
+                if (w == null || w._chromeless || w._borderless) return;
+                if (w._maximized) w.Unmaximize(animate: true); else w.Maximize(animate: true);
+                w.CheckResize();
+            }
+            catch { /* nothing may unwind into AppKit */ }
+        }
+
+        /// <summary>
+        /// The window's maximized rectangle, asked of the window as Windows asks it: WM_GETMINMAXINFO,
+        /// pre-filled with the work area of its monitor. In: monitor left, top, right, bottom (screen
+        /// device pixels, top-left origin), then the maximized position (relative to the monitor) and
+        /// size. Out: the position and size the window's procedure settled on, or null to keep them.
+        /// Set by HwndWrapper, which owns the procedure.
+        /// </summary>
+        public Func<int[], int[]> QueryMaximizedRect { get; set; }
+
+        private bool _maximized;
+        private NSRect _unmaximizedFrame, _maximizedFrame;
+
+        /// <summary>
+        /// SW_MAXIMIZE as Windows does it: the window takes the rectangle WM_GETMINMAXINFO gives it, in one
+        /// step. -zoom: did neither -- it ANIMATED, resizing the window a frame at a time while WPF laid it
+        /// out at every one (Workbench flickered through the whole animation), and it picked AppKit's
+        /// rectangle, not the one the window asks for: Telerik's RadRibbonWindow answers WM_GETMINMAXINFO
+        /// with its monitor's work area, and came out a different size from the one it laid out for.
+        /// </summary>
+        private void Maximize(bool animate = false)
+        {
+            IntPtr screen = Send(_window, Sel("screen"));
+            if (screen == IntPtr.Zero) screen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+            if (screen == IntPtr.Zero) return;
+            double scale = GetBackingScale();
+            if (scale <= 0) scale = 1.0;
+            NSRect full = SendRect(screen, Sel("frame")), vis = SendRect(screen, Sel("visibleFrame"));
+            double primaryH = PrimaryScreenHeightPoints();
+            int Px(double v) => (int)Math.Round(v * scale);
+            // Win32's screen space: device pixels, top-left of the primary screen.
+            int monL = Px(full.x), monT = Px(primaryH - (full.y + full.height));
+            int monR = Px(full.x + full.width), monB = Px(primaryH - full.y);
+            int posX = Px(vis.x - full.x), posY = Px((full.y + full.height) - (vis.y + vis.height));
+            int w = Px(vis.width), h = Px(vis.height);
+            if (_clientIsWindow)
+            {
+                // Windows' own default for a window with a sizing frame: the work area grown by the frame
+                // (SM_CXFRAME + SM_CXPADDEDBORDER) on every side, so the frame lies off-screen. A window
+                // that draws its own chrome keeps that frame inside its client, and pads its content by it
+                // when maximized -- Workbench's RadRibbonWindow by 5px each way, which, the window being
+                // exactly the work area, came out as a black border round the whole app.
+                const int MaximizedOverhang = 4 + 4;
+                posX -= MaximizedOverhang; posY -= MaximizedOverhang;
+                w += 2 * MaximizedOverhang; h += 2 * MaximizedOverhang;
+            }
+            if (QueryMaximizedRect?.Invoke(new[] { monL, monT, monR, monB, posX, posY, w, h }) is int[] r && r.Length >= 4 && r[2] > 0 && r[3] > 0)
+            {
+                posX = r[0]; posY = r[1]; w = r[2]; h = r[3];
+            }
+            double top = full.y + full.height - posY / scale;   // bottom-left points
+            var target = new NSRect { x = full.x + posX / scale, y = top - h / scale, width = w / scale, height = h / scale };
+            _unmaximizedFrame = SendRect(_window, Sel("frame"));
+            _maximizedFrame = target;
+            _maximized = true;
+            _maximizedScreen = full;
+            SetFrameAnimated(target, animate);
+            ClipToMonitor();
+        }
+
+        private NSRect _maximizedScreen;
+
+        // DWM shows a maximized window on its own monitor only, overhang and all: the part grown past the
+        // screen edge must not appear on the display beside it. Clipped by the content layer's mask (unless
+        // the app gave the window a region of its own, which ApplyRegion keeps).
+        private void ClipToMonitor()
+        {
+            if (_region != null || _contentView == IntPtr.Zero) return;
+            IntPtr layer = Send(_contentView, Sel("layer"));
+            if (layer == IntPtr.Zero) return;
+            if (!_maximized) { SendVoidPtr(layer, Sel("setMask:"), IntPtr.Zero); return; }
+            NSRect f = _maximizedFrame, m = _maximizedScreen;
+            double x0 = Math.Max(f.x, m.x), y0 = Math.Max(f.y, m.y);
+            double x1 = Math.Min(f.x + f.width, m.x + m.width), y1 = Math.Min(f.y + f.height, m.y + m.height);
+            IntPtr mask = Send(objc_getClass("CALayer"), Sel("layer"));
+            SendVoidRect(mask, Sel("setFrame:"), new NSRect { x = x0 - f.x, y = y0 - f.y, width = Math.Max(0, x1 - x0), height = Math.Max(0, y1 - y0) });
+            SendVoidPtr(mask, Sel("setBackgroundColor:"), Send(Send(objc_getClass("NSColor"), Sel("blackColor")), Sel("CGColor")));
+            SendVoidPtr(layer, Sel("setMask:"), mask);
+        }
+
+        /// <summary>
+        /// A maximize or restore as it looks on Windows: animated, the last frame stretched over the
+        /// animation and the window laid out once at the end -- not reported a step at a time, which had WPF
+        /// lay out and render every one of them (and Telerik fight each). Without <paramref name="animate"/>,
+        /// one step.
+        /// </summary>
+        private void SetFrameAnimated(NSRect target, bool animate)
+        {
+            if (!animate || !SendBool(_window, Sel("isVisible")))
+            {
+                SendVoidRectBool(_window, Sel("setFrame:display:"), target, true);
+                return;
+            }
+            IntPtr metal = MetalLayer();
+            IntPtr gravity = metal != IntPtr.Zero ? Send(metal, Sel("contentsGravity")) : IntPtr.Zero;
+            if (metal != IntPtr.Zero) SendVoidPtr(metal, Sel("setContentsGravity:"), MakeNSString("resize"));
+            _reshaping = true;
+            try { SendVoidRectBoolBool(_window, Sel("setFrame:display:animate:"), target, true, true); }
+            finally { _reshaping = false; }
+            CheckResize();   // the one WM_SIZE, which lays the window out and renders it at its new size
+            if (metal != IntPtr.Zero && gravity != IntPtr.Zero) SendVoidPtr(metal, Sel("setContentsGravity:"), gravity);
+        }
+
+        // The window's CAMetalLayer: the content layer's sublayer MacInterop added.
+        private IntPtr MetalLayer()
+        {
+            IntPtr layer = _contentView != IntPtr.Zero ? Send(_contentView, Sel("layer")) : IntPtr.Zero;
+            IntPtr subs = layer != IntPtr.Zero ? Send(layer, Sel("sublayers")) : IntPtr.Zero;
+            if (subs == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr metalClass = objc_getClass("CAMetalLayer");
+            nuint n = (nuint)SendNUInt(subs, Sel("count"));
+            for (nuint i = 0; i < n; i++)
+            {
+                IntPtr l = SendPtrNUInt(subs, Sel("objectAtIndex:"), i);
+                if (metalClass != IntPtr.Zero && SendBoolSel(l, Sel("isKindOfClass:"), metalClass)) return l;
+            }
+            return IntPtr.Zero;
         }
 
         /// <summary>
@@ -1280,7 +1618,22 @@ namespace MS.Internal.Interop
             const int SwNormal = 1, SwShowMinimized = 2, SwShowMaximized = 3;
             if (_window == IntPtr.Zero) return SwNormal;
             if (SendBool(_window, Sel("isMiniaturized"))) return SwShowMinimized;
-            return SendBool(_window, Sel("isZoomed")) ? SwShowMaximized : SwNormal;
+            if (_maximized)
+            {
+                // Maximized while it keeps its maximized rectangle (Maximize); moved or resized out of it,
+                // it is a normal window again, as a Windows window dragged out of maximized is.
+                NSRect now = SendRect(_window, Sel("frame"));
+                if (Math.Abs(now.x - _maximizedFrame.x) < 1 && Math.Abs(now.y - _maximizedFrame.y) < 1
+                    && Math.Abs(now.width - _maximizedFrame.width) < 1 && Math.Abs(now.height - _maximizedFrame.height) < 1)
+                    return SwShowMaximized;
+                _maximized = false;
+            }
+            // Nothing else is. -isZoomed is not "maximized": it is YES whenever the frame happens to be the
+            // standard one -- for a window that cannot change size, always, so every fixed-size dialog
+            // reported SIZE_MAXIMIZED and app' PersistentWindow drew its maximized 8px margin round
+            // the prompt in black; and for a normal window sized to the work area (Workbench's restore
+            // size) too. On Windows maximized is a state a window is put in, so it is here: Maximize's.
+            return SwNormal;
         }
 
         // The outer rect the window had when it was last NOT maximized, in top-left screen device
@@ -1345,19 +1698,45 @@ namespace MS.Internal.Interop
         /// <inheritdoc/>
         public void SetChromeless(bool chromeless)
         {
-            if (_window == IntPtr.Zero || _borderless || chromeless == _chromeless) return;
+            // A window created chromeless (WindowStyle=None) still has to be TOLD its client is the whole
+            // window when a WindowChrome takes it over: it would return here, keep the emulated frame and
+            // come out 10pt short each way.
+            if (_window == IntPtr.Zero || _borderless || (chromeless == _chromeless && chromeless == _clientIsWindow)) return;
             // The client area becomes the whole window (WindowChrome's WM_NCCALCSIZE): the outer size WPF
             // gave the window stays, and is now the client size too, with no non-client frame emulated
             // around it. Re-applied as the content size, the next poll reports it (WM_SIZE) and WPF lays
             // the content out for it; without that its bottom was cut off until the window was resized.
             GetWindowPixelSize(out int outerW, out int outerH);
-            nuint mask = GetStyleMask();
-            mask = chromeless ? mask | (nuint)NSWindowStyleMaskFullSizeContentView : mask & ~(nuint)NSWindowStyleMaskFullSizeContentView;
-            SendVoidNUInt(_window, Sel("setStyleMask:"), mask);
-            _clientIsWindow = chromeless;
-            ApplyChromeless(chromeless);
-            if (outerW > 0 && outerH > 0) SetContentSizePixels(outerW, outerH);
+            // ...AS ONE CHANGE. The style switch grows the content view over the old title bar, and
+            // AppKit reports that at once (NSViewFrameDidChangeNotification -> DetectResizes): WPF was
+            // told of the half-made window -- the old frame as all client -- took it for its new size and
+            // set it back over the resize below. An OptionalMessageBox stayed 633x162 for a 643x200
+            // layout, drawn inside a black border. So the size is reported once, when it is final.
+            _reshaping = true;
+            try
+            {
+                nuint mask = GetStyleMask();
+                mask = chromeless ? mask | (nuint)NSWindowStyleMaskFullSizeContentView : mask & ~(nuint)NSWindowStyleMaskFullSizeContentView;
+                SendVoidNUInt(_window, Sel("setStyleMask:"), mask);
+                _clientIsWindow = chromeless;
+                ApplyChromeless(chromeless);
+                TraceWindow($"chromeless={chromeless} outer={outerW}x{outerH}");
+                // A maximized window stays maximized: its rectangle is the one WM_GETMINMAXINFO gives it,
+                // not the outer size WPF believed in, which counts the frame this head fakes and made
+                // Workbench, maximized when its chrome came on, 10px wider than the screen and no longer
+                // maximized at all.
+                if (_maximized) { _maximized = false; Maximize(); }
+                else if (outerW > 0 && outerH > 0) SetContentSizePixels(outerW, outerH);
+            }
+            finally
+            {
+                _reshaping = false;
+            }
+            CheckResize();
         }
+
+        /// <summary>Set while SetChromeless reshapes the window: its intermediate sizes are not reported.</summary>
+        private bool _reshaping;
 
         /// <summary>The client area is the whole window: no emulated Win32 non-client frame (SetChromeless).</summary>
         private bool _clientIsWindow;
@@ -1387,6 +1766,14 @@ namespace MS.Internal.Interop
                 IntPtr button = SendPtrNUInt(_window, Sel("standardWindowButton:"), b);
                 if (button != IntPtr.Zero) SendVoidBool(button, Sel("setHidden:"), chromeless);
             }
+            // ...and the title bar itself: transparent, it still lay over the app's own caption and took
+            // its clicks -- a double-click there was AppKit's zoom (or Fill), not the app's maximize. Hidden,
+            // the strip's input goes to the content view, the app's caption, as the whole window's does on
+            // Windows. (The buttons' superview is the title bar view; its superview, the container.)
+            IntPtr close = SendPtrNUInt(_window, Sel("standardWindowButton:"), NSWindowCloseButton);
+            IntPtr titlebar = close != IntPtr.Zero ? Send(close, Sel("superview")) : IntPtr.Zero;
+            IntPtr container = titlebar != IntPtr.Zero ? Send(titlebar, Sel("superview")) : IntPtr.Zero;
+            if (container != IntPtr.Zero && container != _contentView) SendVoidBool(container, Sel("setHidden:"), chromeless);
         }
 
         /// <inheritdoc/>
@@ -1745,14 +2132,17 @@ namespace MS.Internal.Interop
         // reach for when a window is the wrong size, in the wrong place, or on screen when it should
         // not be -- an invisible window left over the app swallows every click, which presents as the
         // app having frozen rather than as anything to do with windows.
-        private static readonly bool s_traceWindows = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1";
+        private static readonly bool s_traceWindows = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") is "1" or "2";
+        // WF_TRACE_WINDOWS=2: and who showed or hid it, with the stack.
+        private static readonly bool s_traceWindowStacks = Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "2";
 
         private void TraceWindow(string what)
         {
             if (!s_traceWindows || _window == IntPtr.Zero) return;
             NSRect f = SendRect(_window, Sel("frame"));
             Console.Error.WriteLine(
-                $"[win] {what} view=0x{_contentView:x} borderless={_borderless} " +
+                $"[win] {what} view=0x{_contentView:x} borderless={_borderless} chromeless={_chromeless} " +
+                $"clientIsWindow={_clientIsWindow} resizable={(GetStyleMask() & (nuint)NSWindowStyleMaskResizable) != 0} " +
                 $"frame=({f.x},{f.y} {f.width}x{f.height}) scale={GetBackingScale()} " +
                 $"visible={SendBool(_window, Sel("isVisible"))}");
         }
@@ -1782,6 +2172,7 @@ namespace MS.Internal.Interop
             if (_window == IntPtr.Zero) return;
             activate &= !_borderless || _activatable;
             TraceWindow(visible ? "show" : "hide");
+            if (s_traceWindowStacks && !_borderless) Console.Error.WriteLine(Environment.StackTrace);
 
             if (!visible)
             {
@@ -1855,7 +2246,7 @@ namespace MS.Internal.Interop
             int gx = (int)Math.Round(global.x * scale);
             int gy = (int)Math.Round((PrimaryScreenHeightPoints() - global.y) * scale);
             GetClientScreenOriginPixels(out int ox, out int oy);
-            handler(new CocoaMouseMessage(_contentView, (int)NSLeftMouseUp, 0,
+            handler(new CocoaMouseMessage(_handle, (int)NSLeftMouseUp, 0,
                                           gx - ox, gy - oy, 0, Environment.TickCount));
         }
 
@@ -1868,6 +2259,7 @@ namespace MS.Internal.Interop
                 lock (s_lock)
                 {
                     s_byView.Remove(_contentView);
+                    s_byHandle.Remove(_handle);
                 }
             }
 
@@ -1980,7 +2372,8 @@ namespace MS.Internal.Interop
             if (_wasVisible)
             {
                 _wasVisible = false;
-                Closed?.Invoke(_contentView);
+                TraceWindow("CLOSED (no longer visible, not hidden by us)");
+                Closed?.Invoke(_handle);
             }
         }
 
@@ -2222,8 +2615,13 @@ namespace MS.Internal.Interop
 
         private const string DispatchKeyToKey = "WpfWebGpu.CocoaWindow.DispatchKeyTo";
 
+        /// <summary>Published for code that cannot see this type (the compositor's surface, the web view
+        /// backends linked into other assemblies): a window handle's NSView, anything else unchanged.</summary>
+        public const string ViewOfKey = "WpfWebGpu.CocoaWindow.ViewOf";
+
         static CocoaWindow()
         {
+            AppContext.SetData(ViewOfKey, (Func<IntPtr, IntPtr>)ViewOf);
             AppContext.SetData(DispatchEventKey, (Action<IntPtr>)DispatchEvent);
             AppContext.SetData(DispatchKeyToKey, (Action<IntPtr, IntPtr>)ReportKeyEventTo);
         }
@@ -2246,11 +2644,21 @@ namespace MS.Internal.Interop
             if (evt == IntPtr.Zero) return;
             // Translate mouse/scroll events into the managed input event before letting AppKit
             // dispatch the event normally (so window dragging, etc. still work).
+            s_consumedByNonClient = false;
             try { ReportMouseEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
-            try { ReportKeyEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
+            try { ReportKeyEvent(evt); }
+            catch (Exception e) when (s_traceKeys) { Console.Error.WriteLine("[keys] key event threw: " + e); }
+            catch { /* a stray event shouldn't break the pump */ }
+            // A press the window's own non-client handling took (NonClientPress: a caption move, which
+            // has already run to its mouse-up, or a maximize) goes nowhere else, as DefWindowProc's does:
+            // handed to AppKit afterwards it was a mouse-down whose up had already gone, and the window
+            // stopped taking input.
+            if (s_consumedByNonClient) { s_consumedByNonClient = false; return; }
             IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
             SendVoidPtr(app, Sel("sendEvent:"), evt);
         }
+
+        [ThreadStatic] private static bool s_consumedByNonClient;
 
         /// <summary>
         /// The reconciliation half of <see cref="PumpEvents"/>, without touching the event queue.
@@ -2339,7 +2747,7 @@ namespace MS.Internal.Interop
 
         private void CheckResize()
         {
-            if (_contentView == IntPtr.Zero) return;
+            if (_contentView == IntPtr.Zero || _reshaping) return;
 
             // Detect a backing-scale change first: when the window is dragged onto a different-DPI
             // display its point size is unchanged, so the Resized path below won't fire. Raise
@@ -2366,6 +2774,7 @@ namespace MS.Internal.Interop
             // sends when a window is miniaturized, which does not change its content size either.
             int state = GetWindowState();
             bool stateChanged = state != _lastReportedState;
+            if (stateChanged) TraceWindow($"state {_lastReportedState} -> {state}");
             _lastReportedState = state;
 
             // While the window is normal AND SITTING STILL, its rect IS its restore rect -- so keep a
@@ -2391,7 +2800,28 @@ namespace MS.Internal.Interop
                 if (_region != null) ApplyRegion();
                 Resized?.Invoke(w, h);
             }
+
+            // ...AND WHERE IT IS: Windows sends WM_MOVE whenever a window's position changes, whoever
+            // moved it, and that is how Window.Left/Top keep up. Nothing reported it here, so a window
+            // AppKit placed or the user dragged kept the Left/Top it was created with -- and a
+            // CenterOwner dialog was centred on where its owner had been: ConfigureSystem's prompts
+            // opened above the window, over the spot the main form was created at before it centred.
+            GetWindowScreenOriginPixels(out int x, out int y);
+            // The first poll reports too: it can come after WPF's own placement moved the window, and
+            // WPF takes no notice of a WM_MOVE to where it already is.
+            if (x != _lastReportedX || y != _lastReportedY)
+            {
+                _lastReportedX = x;
+                _lastReportedY = y;
+                Moved?.Invoke(x, y);
+            }
         }
+
+        private int _lastReportedX = int.MinValue, _lastReportedY = int.MinValue;
+
+        /// <summary>Raised (on the UI/pump thread) when the window's outer top-left moves: screen DEVICE
+        /// pixels, top-left origin, as GetWindowRect has it.</summary>
+        public event Action<int, int> Moved;
 
         // Seeded with SW_NORMAL, which is what a freshly created window is: a window that opens
         // maximized then reports a change on its first poll, which is the notification WPF wants.
@@ -2462,7 +2892,7 @@ namespace MS.Internal.Interop
         /// </summary>
         internal static void InjectMouse(IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel)
         {
-            MouseInput?.Invoke(new CocoaMouseMessage(view, nsType, buttonNumber, x, y, wheel, Environment.TickCount));
+            MouseInput?.Invoke(new CocoaMouseMessage(HandleOf(view), nsType, buttonNumber, x, y, wheel, Environment.TickCount));
         }
 
         /// <summary>Deliver a key event as if AppKit had reported it. See InjectMouse.</summary>
@@ -2491,6 +2921,9 @@ namespace MS.Internal.Interop
             IntPtr window = Send(evt, Sel("window"));
             IntPtr view = window != IntPtr.Zero ? Send(window, Sel("contentView")) : IntPtr.Zero;
             CocoaWindow w = view != IntPtr.Zero ? FromHandle(view) : null;
+
+            if (s_captionDrag != null && CaptionDragEvent(type)) { s_consumedByNonClient = true; return; }
+            if (type == NSLeftMouseDown && w != null && w.NonClientPress(evt)) { s_consumedByNonClient = true; return; }
 
             // An event we cannot attribute to a live window is DROPPED, and dropping a mouse-UP is not
             // survivable: whatever was mid-drag never learns the button was released, so its capture is
@@ -2569,7 +3002,7 @@ namespace MS.Internal.Interop
             // that element, and a menu (which needs to take capture itself, and gives up if capture is
             // already held) could no longer open anywhere.
             IntPtr captured = MouseCaptureHandle;
-            if (captured != IntPtr.Zero && captured != view)
+            if (captured != IntPtr.Zero && captured != HandleOf(view))
             {
                 CocoaWindow cap = FromHandle(captured);
                 if (cap != null)
@@ -2625,10 +3058,14 @@ namespace MS.Internal.Interop
             // as SetFocus from WM_LBUTTONDOWN does on Windows
             if (type == NSLeftMouseDown && w.TakesKeyboardOnPress) w.TakeKeyboard();
 
-            handler(new CocoaMouseMessage(view, (int)type, button, x, y, wheel, Environment.TickCount));
+            // The message carries the HWND (Handle), which is what the providers compare with their
+            // source's -- AppKit gave a view.
+            handler(new CocoaMouseMessage(HandleOf(view), (int)type, button, x, y, wheel, Environment.TickCount));
         }
 
         private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
+        // WF_TRACE_KEYS=1: each key event as it reaches WPF's side, and the window it is for.
+        private static readonly bool s_traceKeys = Environment.GetEnvironmentVariable("WF_TRACE_KEYS") == "1";
 
         // ---- keyboard input ---------------------------------------------------------
 
@@ -2702,6 +3139,10 @@ namespace MS.Internal.Interop
                 view = Send(window, Sel("contentView"));
             }
             CocoaWindow w = FromHandle(view);
+            if (w != null) view = w._handle;   // the message carries the HWND, whichever we were given
+            if (s_traceKeys)
+                Console.Error.WriteLine($"[keys] cocoa type={type} code={SendNUInt(evt, Sel("keyCode")) & 0xFFFF} view=0x{view:x} known={w != null} " +
+                                        $"key=0x{Send(Send(objc_getClass("NSApplication"), Sel("sharedApplication")), Sel("keyWindow")):x} ime={CocoaTextInput.IsEnabled}");
             if (w == null) return;
 
             int keyCode = (int)(SendNUInt(evt, Sel("keyCode")) & 0xFFFF);
@@ -2949,6 +3390,11 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidRectBool(IntPtr receiver, IntPtr selector, NSRect arg, [MarshalAs(UnmanagedType.I1)] bool b);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidRectBoolBool(IntPtr receiver, IntPtr selector, NSRect arg, [MarshalAs(UnmanagedType.I1)] bool b, [MarshalAs(UnmanagedType.I1)] bool c);
+
+        [DllImport(ObjC)] private static extern IntPtr class_getMethodImplementation(IntPtr cls, IntPtr sel);
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern void SendVoidNUInt(IntPtr receiver, IntPtr selector, nuint arg);

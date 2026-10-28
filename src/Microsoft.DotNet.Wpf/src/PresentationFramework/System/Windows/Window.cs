@@ -215,6 +215,9 @@ namespace System.Windows
             // is not allowed
             VerifyApiSupported();
             VerifyContextAndObjectState();
+            // WF_TRACE_WINDOWS=1: who closed it, for a window that closes when nobody asked it to.
+            if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") is "1" or "2")
+                Console.Error.WriteLine($"[win] Window.Close {GetType().FullName}\n{Environment.StackTrace}");
             InternalClose(false, false);
         }
 

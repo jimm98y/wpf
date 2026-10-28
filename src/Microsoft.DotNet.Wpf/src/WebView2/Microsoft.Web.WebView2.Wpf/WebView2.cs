@@ -146,7 +146,8 @@ namespace Microsoft.Web.WebView2.Wpf
 
             _hostWindow = WebViewHostWindow.Create(hwndParent.Handle,
                                                    (int)Math.Max(1, ActualWidth),
-                                                   (int)Math.Max(1, ActualHeight));
+                                                   (int)Math.Max(1, ActualHeight),
+                                                   parentIsContentView: true);
 
             if (_hostWindow == IntPtr.Zero)
             {
@@ -155,12 +156,12 @@ namespace Microsoft.Web.WebView2.Wpf
                 throw Unavailable();
             }
 
-            _ready = _backend.AttachAsync(_hostWindow);
+            _ready = _backend.AttachAsync(WebViewHostWindow.AttachTarget(_hostWindow));
             _coreWebView2 = new CoreWebView2(_backend);
 
-            if (OperatingSystem.IsBrowser())
+            if (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS())
             {
-                // HwndHost hides its window to follow IsVisible; the iframe is not that window.
+                // HwndHost hides its window to follow IsVisible; the iframe (the WKWebView) is not that window.
                 _backend.SetVisible(IsVisible);
                 IsVisibleChanged += (s, e) => _backend?.SetVisible((bool)e.NewValue);
             }
@@ -212,12 +213,13 @@ namespace Microsoft.Web.WebView2.Wpf
 
         protected override void OnWindowPositionChanged(Rect rcBoundingBox)
         {
-            // HwndHost moves the host window; the engine then fills it. Except in the browser, where
-            // the overlay is an <iframe> in the page with no host window around it, so it is told
-            // where the control is within the WPF window (as WebBrowser's ActiveXHost does).
+            // HwndHost moves the host window; the engine then fills it. Except in the browser and on
+            // macOS, where the overlay (an <iframe> in the page, a WKWebView in the window's content
+            // view) has no host window around it, so it is told where the control is within the WPF
+            // window (as WebBrowser's ActiveXHost does).
             base.OnWindowPositionChanged(rcBoundingBox);
 
-            bool placedInWindow = OperatingSystem.IsBrowser();
+            bool placedInWindow = OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS();
             _backend?.SetBounds(
                 placedInWindow ? (int)Math.Round(rcBoundingBox.X) : 0,
                 placedInWindow ? (int)Math.Round(rcBoundingBox.Y) : 0,

@@ -718,6 +718,14 @@ namespace System.Windows.Interop
         ///</summary>
         internal static ModifierKeys GetSystemModifierKeys()
         {
+            // Off Windows there is no user32 to ask: the keyboard device answers from the head's own
+            // modifier state (Win32KeyboardDevice.GetKeyStatesFromSystem). This runs for EVERY key a
+            // window with thread-message preprocessing sees (HwndSource.OnPreprocessMessage), and its
+            // DllNotFoundException threw each one away before WPF saw it: ConfigureSystem's dialog took
+            // no Backspace, Delete, arrows or Tab, and its password box no characters.
+            if (!System.OperatingSystem.IsWindows())
+                return Keyboard.PrimaryDevice.Modifiers & (ModifierKeys.Shift | ModifierKeys.Control | ModifierKeys.Alt);
+
             ModifierKeys modifierKeys = ModifierKeys.None;
 
             short keyState = UnsafeNativeMethods.GetKeyState(NativeMethods.VK_SHIFT);
@@ -914,8 +922,9 @@ namespace System.Windows.Interop
                 case "ShiftLeft": case "ShiftRight": return 0x10;
                 case "ControlLeft": case "ControlRight": return 0x11;
                 case "AltLeft": case "AltRight": return 0x12;
-                case "MetaLeft": return 0x5B;
-                case "MetaRight": return 0x5C;
+                // Meta is Control, as BrowserFormHost has it (and Command on the Cocoa path, above).
+                case "MetaLeft": return 0x11;
+                case "MetaRight": return 0x11;
                 case "CapsLock": return 0x14;
                 case "ContextMenu": return 0x5D;
                 // OEM punctuation (US layout positions)
@@ -939,10 +948,28 @@ namespace System.Windows.Interop
             }
         }
 
+        private static readonly bool s_traceKeys = TraceKeysRoute(Environment.GetEnvironmentVariable("WF_TRACE_KEYS") == "1");
+
+        // WF_TRACE_KEYS=1 also follows each key down its route: every element PreviewKeyDown and
+        // KeyDown pass, and whether it was handled there -- which tells WHO took a key that did nothing.
+        private static bool TraceKeysRoute(bool on)
+        {
+            if (!on) return false;
+            void Log(object sender, System.Windows.Input.KeyEventArgs e, string what)
+                => Console.Error.WriteLine($"[keys] {what} {e.Key} at {sender.GetType().FullName} handled={e.Handled} src={e.OriginalSource?.GetType().Name}");
+            EventManager.RegisterClassHandler(typeof(UIElement), System.Windows.Input.Keyboard.PreviewKeyDownEvent,
+                new System.Windows.Input.KeyEventHandler((o, e) => Log(o, e, "preview")), handledEventsToo: true);
+            EventManager.RegisterClassHandler(typeof(UIElement), System.Windows.Input.Keyboard.KeyDownEvent,
+                new System.Windows.Input.KeyEventHandler((o, e) => Log(o, e, "down")), handledEventsToo: true);
+            return true;
+        }
+
         private void OnCocoaKeyInput(MS.Internal.Interop.CocoaWindow.CocoaKeyMessage msg)
         {
             if (_source == null || _site == null || _source.IsDisposed) return;
             if (msg.View != _source.Handle) return;
+            if (s_traceKeys)
+                Console.Error.WriteLine($"[keys] provider 0x{msg.View:x} down={msg.IsDown} code={msg.KeyCode} chars='{msg.Characters}' focus={System.Windows.Input.Keyboard.FocusedElement?.GetType().Name ?? "null"}");
 
             int virtualKey = MapMacKeyCodeToVirtualKey(msg.KeyCode);
             if (virtualKey != 0)
@@ -1096,17 +1123,26 @@ namespace System.Windows.Interop
             // calls them itself): one that discards the key leaves nothing for anyone else.
             if (AppContext.GetData("WpfWebGpu.Win32.KeyboardHook") is Func<int, long, bool> hook && hook(virtualKey, lParam))
             {
+                if (s_traceKeys) Console.Error.WriteLine($"[keys] vk 0x{virtualKey:x} taken by a keyboard hook");
                 System.Windows.Input.Win32KeyboardDevice.TrackMacKey(virtualKey, down);
                 return false;
             }
-            if (ComponentDispatcher.RaiseThreadMessage(ref thread)) return false;
+            if (ComponentDispatcher.RaiseThreadMessage(ref thread))
+            {
+                if (s_traceKeys) Console.Error.WriteLine($"[keys] vk 0x{virtualKey:x} taken by the thread's message loop");
+                return false;
+            }
 
             // WPF had it already, from the loop (an ElementHost's ProcessCmdKey -> TranslateAccelerator):
             // the window procedure skips a message it has seen, as on Windows.
             if (_source.IsRepeatedKeyboardMessage(thread.hwnd, thread.message, thread.wParam, thread.lParam))
+            {
+                if (s_traceKeys) Console.Error.WriteLine($"[keys] vk 0x{virtualKey:x} already seen by WPF (repeated message)");
                 return true;
+            }
 
-            ReportMacKeyRaw(action, virtualKey, timestamp);
+            bool handled = ReportMacKeyRaw(action, virtualKey, timestamp);
+            if (s_traceKeys) Console.Error.WriteLine($"[keys] vk 0x{virtualKey:x} {action} reported, handled={handled} active={_active}");
             return true;
         }
 
@@ -1178,8 +1214,10 @@ namespace System.Windows.Interop
                 case 0x38: case 0x3C: return 0x10; // Shift        -> VK_SHIFT
                 case 0x3B: case 0x3E: return 0x11; // Control      -> VK_CONTROL
                 case 0x3A: case 0x3D: return 0x12; // Option       -> VK_MENU (Alt)
-                case 0x37: return 0x5B;            // Command      -> VK_LWIN
-                case 0x36: return 0x5C;            // RightCommand -> VK_RWIN
+                // COMMAND IS CONTROL, as the WinForms head has it (CocoaHost.HandleKey): the Mac's
+                // shortcuts are on it, and a Windows application's are on Control. As the Windows key
+                // it gave WPF Win+V for Cmd+V, and nothing pasted.
+                case 0x37: case 0x36: return 0x11; // Command      -> VK_CONTROL
                 case 0x39: return 0x14;            // CapsLock     -> VK_CAPITAL
                 // Punctuation (OEM keys)
                 case 0x2B: return 0xBC; // ,  VK_OEM_COMMA

@@ -70,7 +70,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             switch (Current)
             {
                 case PlatformKind.Windows: return Win32Interop.CreateSurface(instance, nativeWindow);
-                case PlatformKind.MacOS: return MacInterop.CreateSurface(instance, nativeWindow);
+                case PlatformKind.MacOS: return MacInterop.CreateSurface(instance, MacView(nativeWindow));
                 case PlatformKind.IOS: return IosInterop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.Android: return AndroidInterop.CreateSurface(instance, nativeWindow);
                 case PlatformKind.Linux: return LinuxInterop.CreateSurface(instance, nativeWindow);
@@ -91,7 +91,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         {
             if (Current == PlatformKind.MacOS && nativeWindow != IntPtr.Zero)
             {
-                MacInterop.SetContentsScale(nativeWindow, MacInterop.BackingScale(nativeWindow));
+                MacInterop.SetContentsScale(MacView(nativeWindow), MacInterop.BackingScale(MacView(nativeWindow)));
             }
             else if (Current == PlatformKind.IOS && nativeWindow != IntPtr.Zero)
             {
@@ -105,6 +105,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// destroyed and recreated across every activity stop/start), so everywhere else this is the
         /// handle itself and the comparison never fires.
         /// </summary>
+        // A WPF window's HWND on macOS is not its NSView (CocoaWindow.Handle): AppKit, Metal and the
+        // layer cache want the view, so the handle is resolved through the resolver CocoaWindow publishes.
+        // A WinForms host's own view, which is what CocoaHost passes, comes back unchanged.
+        private static Func<IntPtr, IntPtr> s_macViewOf;
+
+        private static IntPtr MacView(IntPtr handle)
+        {
+            s_macViewOf ??= AppContext.GetData("WpfWebGpu.CocoaWindow.ViewOf") as Func<IntPtr, IntPtr>;
+            return s_macViewOf != null ? s_macViewOf(handle) : handle;
+        }
+
         public static IntPtr GetNativeWindow(IntPtr windowHandle)
             => Current == PlatformKind.Android ? AndroidInterop.GetNativeWindow(windowHandle) : windowHandle;
 
@@ -211,7 +222,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             x = y = 0;
             if (Current == PlatformKind.Android) AndroidInterop.GetWindowOrigin(windowHandle, out x, out y);
             else if (Current == PlatformKind.IOS) IosInterop.GetWindowOrigin(windowHandle, out x, out y);
-            else if (Current == PlatformKind.MacOS) MacInterop.GetWindowOrigin(windowHandle, out x, out y);
+            else if (Current == PlatformKind.MacOS) MacInterop.GetWindowOrigin(MacView(windowHandle), out x, out y);
             else if (Current == PlatformKind.Linux) LinuxInterop.OriginQuery?.Invoke(windowHandle, out x, out y);
         }
 
@@ -294,7 +305,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </summary>
         public static bool IsWindowOpaque(IntPtr nativeWindow)
         {
-            if (Current == PlatformKind.MacOS) return MacInterop.IsWindowOpaque(nativeWindow);
+            if (Current == PlatformKind.MacOS) return MacInterop.IsWindowOpaque(MacView(nativeWindow));
             // Windows: a window with a DWM system backdrop (Mica/Acrylic/Tabbed) is composited by DWM
             // OVER the desktop material and its native caption buttons — so it must present through a
             // transparent surface (premultiplied alpha) with the WPF-cleared transparent background, or

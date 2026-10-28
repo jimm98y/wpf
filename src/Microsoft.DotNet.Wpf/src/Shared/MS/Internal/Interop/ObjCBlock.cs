@@ -71,7 +71,7 @@ namespace MS.Internal.Interop
         /// <param name="context">Handed back by <see cref="ContextOf"/> from inside the invoke.</param>
         /// <remarks>
         ///  The caller owns the result and must <see cref="Release"/> it once the block can no longer
-        ///  be called. There is no reference counting to lean on here: a global block is never copied
+        ///  be called (from inside its invoke is fine: the memory outlives the call). There is no reference counting to lean on here: a global block is never copied
         ///  and never released by the runtime, which is the whole reason it is safe to hand out.
         /// </remarks>
         public static IntPtr Create(IntPtr invoke, IntPtr context)
@@ -84,6 +84,7 @@ namespace MS.Internal.Interop
             IntPtr descriptor = SharedDescriptor();
             if (descriptor == IntPtr.Zero) return IntPtr.Zero;
 
+            lock (s_released) FreeExpired(Environment.TickCount64);
             var block = (Literal*)NativeMemory.Alloc((nuint)sizeof(Literal));
             block->Isa = isa;
             block->Flags = BlockIsGlobal;
@@ -98,10 +99,32 @@ namespace MS.Internal.Interop
         public static IntPtr ContextOf(IntPtr block)
             => block == IntPtr.Zero ? IntPtr.Zero : ((Literal*)block)->Context;
 
-        /// <summary>Frees a block from <see cref="Create"/>. Calling it afterwards is a use-after-free.</summary>
+        /// <summary>
+        /// Frees a block from <see cref="Create"/> -- LATER, not now. The callee that ran it may still
+        /// hold it: WebKit keeps a completion handler as an Objective-C object and objc_release's it once
+        /// the call returns, so a block freed inside its own invoke (where every caller here frees it)
+        /// was released after the fact from freed memory, and the first script a WKWebView ran took the
+        /// process down. Releasing a global block is a no-op, so the block only has to still be there;
+        /// it is kept for <see cref="ReleaseDelay"/> and freed by a later Create or Release.
+        /// </summary>
         public static void Release(IntPtr block)
         {
-            if (block != IntPtr.Zero) NativeMemory.Free((void*)block);
+            if (block == IntPtr.Zero) return;
+            long now = Environment.TickCount64;
+            lock (s_released)
+            {
+                s_released.Enqueue((block, now));
+                FreeExpired(now);
+            }
+        }
+
+        private static readonly System.Collections.Generic.Queue<(IntPtr Block, long At)> s_released = new();
+        private const long ReleaseDelay = 30_000;   // ms
+
+        private static void FreeExpired(long now)
+        {
+            while (s_released.Count > 0 && now - s_released.Peek().At >= ReleaseDelay)
+                NativeMemory.Free((void*)s_released.Dequeue().Block);
         }
 
         // The descriptor is immutable and identical for every block this makes (same size, no

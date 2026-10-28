@@ -113,7 +113,9 @@ namespace MS.Internal.Interop.WebView
 
             // The handle is the owner's content NSView, in the same sense
             // NativePlatform.CreateWindowSurface uses it on this head.
-            _hostView = ownerWindow;
+            // ...given as the window's HWND, which is not the view itself (CocoaWindow.Handle).
+            _hostView = AppContext.GetData("WpfWebGpu.CocoaWindow.ViewOf") is Func<IntPtr, IntPtr> viewOf
+                ? viewOf(ownerWindow) : ownerWindow;
             _self = GCHandle.Alloc(this);
 
             dlopen(WebKit, RTLD_NOW);
@@ -475,12 +477,15 @@ namespace MS.Internal.Interop.WebView
             IntPtr configuration = Send(_webView, Sel("configuration"));
             IntPtr preferences = Send(configuration, Sel("preferences"));
 
-            SendVoidBoolPtr(preferences, Sel("setValue:forKey:"),
-                            _settings.ScriptEnabled, NSString("javaScriptEnabled"));
+            // -setValue:forKey: takes an OBJECT: KVC unboxes it for a BOOL property itself. Handed the
+            // bool raw, YES arrived as the pointer 0x1 and the first message to it took the process down
+            // (Workbench's Knowledge Base, the first web view anything on this head ever opened).
+            SendVoidPtrPtr(preferences, Sel("setValue:forKey:"),
+                           NSNumber(_settings.ScriptEnabled), NSString("javaScriptEnabled"));
 
             // The context menu and the developer tools are the two the platform actually exposes.
-            SendVoidBoolPtr(preferences, Sel("setValue:forKey:"),
-                            _settings.AreDevToolsEnabled, NSString("developerExtrasEnabled"));
+            SendVoidPtrPtr(preferences, Sel("setValue:forKey:"),
+                           NSNumber(_settings.AreDevToolsEnabled), NSString("developerExtrasEnabled"));
 
             if (!string.IsNullOrEmpty(_settings.UserAgent))
             {
@@ -693,8 +698,10 @@ namespace MS.Internal.Interop.WebView
 
         private static void InvokeDecisionHandler(IntPtr block, nint policy)
         {
-            // A decision handler is an ordinary block: its code pointer is the fourth word.
-            var invoke = (delegate* unmanaged[Cdecl]<IntPtr, nint, void>)(*(IntPtr*)((byte*)block + 3 * IntPtr.Size));
+            // A decision handler is an ordinary block: { void* isa; int flags; int reserved; invoke;
+            // descriptor; ... } -- the code pointer is at 16 on 64-bit, after the isa and the two ints. It
+            // was read one word on, from the descriptor, and the first navigation jumped into data.
+            var invoke = (delegate* unmanaged[Cdecl]<IntPtr, nint, void>)(*(IntPtr*)((byte*)block + IntPtr.Size + 2 * sizeof(int)));
             invoke(block, policy);
         }
 
@@ -1039,7 +1046,10 @@ namespace MS.Internal.Interop.WebView
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtrPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b, IntPtr c);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrNIntPtr(IntPtr r, IntPtr s, IntPtr a, nint b, IntPtr c);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBoolPtr(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a, IntPtr b);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
+
+        /// <summary>+[NSNumber numberWithBool:], autoreleased.</summary>
+        private static IntPtr NSNumber(bool value) => SendPtrBool(Cls("NSNumber"), Sel("numberWithBool:"), value);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr r, IntPtr s, double a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr r, IntPtr s, CGRect a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr r, IntPtr s, IntPtr a);

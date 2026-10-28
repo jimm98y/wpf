@@ -165,6 +165,12 @@ namespace System.Windows.Forms
                 if (form != null) s_forms[host] = form;
                 s_reaper ??= new System.Threading.Timer(static _ => ReapDeadThreads(), null, ReapPeriodMs, ReapPeriodMs);
             }
+            // The window goes when the form does, on the thread that disposes it, as DestroyWindow takes
+            // a window down on Windows. The frame loop (Tick) closes a disposed form's host too -- but
+            // only on a thread that runs one, and a WPF app's main thread does not: Workbench's splash,
+            // shown and disposed on a thread of its own, left that thread with nothing to close it, and
+            // its window stayed on screen for the life of the process.
+            if (form != null) form.Disposed += (_, _) => { host.Close(); Detach(host); };
         }
 
         // A thread that showed a form and ended without closing it (a worker-thread splash, a dialog

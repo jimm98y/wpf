@@ -218,7 +218,7 @@ namespace MS.Internal.Interop
                 IAutomationTreeSource tree = Tree;
                 if (tree == null) return EmptyArray();
 
-                int root = tree.GetRootId(self);
+                int root = tree.GetRootId(CocoaWindow.HandleOf(self));   // the tree knows its window by HWND
                 if (root < 0) return EmptyArray();
 
                 IntPtr element = ElementFor(root);

@@ -189,6 +189,10 @@ namespace MS.Internal.Interop
         public static void DispatchEvent(System.IntPtr evt) { }
         public CocoaWindow() { }
         public System.IntPtr ContentView { get { throw null; } }
+        public System.IntPtr Handle { get { throw null; } }
+        public const string ViewOfKey = "WpfWebGpu.CocoaWindow.ViewOf";
+        public static System.IntPtr HandleOf(System.IntPtr view) { throw null; }
+        public static System.IntPtr ViewOf(System.IntPtr handle) { throw null; }
         public bool IsBorderless { get { throw null; } }
         public bool MicaEnabled { get { throw null; } }
         public System.IntPtr Window { get { throw null; } }
@@ -196,6 +200,9 @@ namespace MS.Internal.Interop
         public static event System.Action<MS.Internal.Interop.CocoaWindow.CocoaKeyMessage> KeyInput { add { } remove { } }
         public static event System.Action<MS.Internal.Interop.CocoaWindow.CocoaMouseMessage> MouseInput { add { } remove { } }
         public event System.Action<int, int> Resized { add { } remove { } }
+        public event System.Action<int, int> Moved { add { } remove { } }
+        public System.Func<int[], int[]> QueryMaximizedRect { get { throw null; } set { } }
+        public System.Func<int, int, int> NonClientHitTest { get { throw null; } set { } }
         public event System.Action<bool> ActiveChanged { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public static event System.Action SystemAppearanceChanged { add { } remove { } }

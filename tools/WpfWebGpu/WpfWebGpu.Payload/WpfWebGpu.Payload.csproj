@@ -72,6 +72,8 @@
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Management/System.Management.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <!-- A framework member, not a package: at its higher version it wins over the shared framework's copy. -->
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
   </ItemGroup>
 

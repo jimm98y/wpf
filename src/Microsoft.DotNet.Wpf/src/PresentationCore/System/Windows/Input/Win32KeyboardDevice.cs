@@ -70,14 +70,18 @@ namespace System.Windows.Input
                 case 0x10: want = Shift; side = 0; break;            // VK_SHIFT
                 case 0xA0: want = Shift; side = LShift; break;       // VK_LSHIFT
                 case 0xA1: want = Shift; side = RShift; break;       // VK_RSHIFT
-                case 0x11: want = Control; side = 0; break;          // VK_CONTROL
-                case 0xA2: want = Control; side = LCtl; break;       // VK_LCONTROL
-                case 0xA3: want = Control; side = RCtl; break;       // VK_RCONTROL
+                // COMMAND IS CONTROL, as the keyboard provider reports its key (MapMacKeyCodeToVirtualKey)
+                // and the WinForms head has it: the modifier a Ctrl+V gesture matches has to be down
+                // while Command is, or Cmd+V reaches a PasswordBox as a plain V and nothing pastes.
+                case 0x11: want = Control | Command; side = 0; break;    // VK_CONTROL
+                case 0xA2: want = Control | Command; side = LCtl | LCmd; break;   // VK_LCONTROL
+                case 0xA3: want = Control | Command; side = RCtl | RCmd; break;   // VK_RCONTROL
                 case 0x12: want = Option; side = 0; break;           // VK_MENU (Alt: Option)
                 case 0xA4: want = Option; side = LAlt; break;        // VK_LMENU
                 case 0xA5: want = Option; side = RAlt; break;        // VK_RMENU
-                case 0x5B: want = Command; side = LCmd; break;       // VK_LWIN (Command)
-                case 0x5C: want = Command; side = RCmd; break;       // VK_RWIN
+                // ...and so no key is the Windows key: held with Control it would make every Ctrl
+                // gesture Ctrl+Win, which matches none.
+                case 0x5B: case 0x5C: return KeyStates.None;         // VK_LWIN, VK_RWIN
                 case 0x14:                                           // VK_CAPITAL: the lock's state
                 {
                     ulong f = MS.Internal.Interop.CocoaWindow.CurrentModifierFlags();

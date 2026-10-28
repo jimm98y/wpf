@@ -433,13 +433,14 @@ namespace MS.Internal.Interop.WebView
 
             IntPtr preferences = Send(Send(_webView, Sel("configuration")), Sel("preferences"));
 
-            SendVoidBoolPtr(preferences, Sel("setValue:forKey:"),
-                            _settings.ScriptEnabled, NSString("javaScriptEnabled"));
+            // KVC takes an object (NSNumber), not a raw BOOL -- see MacWebViewBackend.ApplySettings.
+            SendVoidPtrPtr(preferences, Sel("setValue:forKey:"),
+                           NSNumber(_settings.ScriptEnabled), NSString("javaScriptEnabled"));
 
             // `inspectable` is iOS 16.4 and later. Set through KVC so an older system ignores an
             // unknown key rather than failing the whole settings push.
-            SendVoidBoolPtr(_webView, Sel("setValue:forKey:"),
-                            _settings.AreDevToolsEnabled, NSString("inspectable"));
+            SendVoidPtrPtr(_webView, Sel("setValue:forKey:"),
+                           NSNumber(_settings.AreDevToolsEnabled), NSString("inspectable"));
 
             if (!string.IsNullOrEmpty(_settings.UserAgent))
             {
@@ -640,7 +641,7 @@ namespace MS.Internal.Interop.WebView
 
             // WKNavigationActionPolicyCancel = 0, Allow = 1.
             var invoke = (delegate* unmanaged[Cdecl]<IntPtr, nint, void>)
-                (*(IntPtr*)((byte*)decisionHandler + 3 * IntPtr.Size));
+                (*(IntPtr*)((byte*)decisionHandler + IntPtr.Size + 2 * sizeof(int)));   // invoke: after the isa and two ints (see MacWebViewBackend)
             invoke(decisionHandler, cancel ? 0 : 1);
         }
 
@@ -968,7 +969,10 @@ namespace MS.Internal.Interop.WebView
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtrPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b, IntPtr c);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBoolPtr(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a, IntPtr b);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
+
+        /// <summary>+[NSNumber numberWithBool:], autoreleased.</summary>
+        private static IntPtr NSNumber(bool value) => SendPtrBool(Cls("NSNumber"), Sel("numberWithBool:"), value);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr r, IntPtr s, double a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr r, IntPtr s, CGRect a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRet(IntPtr r, IntPtr s, IntPtr a);

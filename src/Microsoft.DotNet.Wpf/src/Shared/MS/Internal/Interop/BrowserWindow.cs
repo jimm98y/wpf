@@ -465,12 +465,18 @@ namespace MS.Internal.Interop
         internal static bool? ModifierDown(int virtualKey)
         {
             if (!s_modifiersKnown) return null;
+            // META IS CONTROL, as the keyboard provider reports its key and BrowserFormHost has it: a
+            // Ctrl+V gesture has to see Control down while Cmd is, and no Windows key with it (Ctrl+Win
+            // matches no gesture). A held Meta answers for Control on its own side.
+            if (virtualKey is 0x5B or 0x5C) return false;            // VK_LWIN, VK_RWIN
+            if (virtualKey is 0x11 or 0xA2 or 0xA3 && (s_modifiers & 1) == 0 && (s_modifiers & 8) != 0)
+                virtualKey = virtualKey == 0xA2 ? 0x5B : virtualKey == 0xA3 ? 0x5C : 0x5D;
             (int held, int side) = virtualKey switch
             {
                 0x11 => (1, -1), 0xA2 => (1, 0), 0xA3 => (1, 1),     // VK_CONTROL, VK_LCONTROL, VK_RCONTROL
                 0x10 => (2, -1), 0xA0 => (2, 2), 0xA1 => (2, 3),     // VK_SHIFT, VK_LSHIFT, VK_RSHIFT
                 0x12 => (4, -1), 0xA4 => (4, 4), 0xA5 => (4, 5),     // VK_MENU, VK_LMENU, VK_RMENU
-                0x5B => (8, 6), 0x5C => (8, 7),                      // VK_LWIN, VK_RWIN
+                0x5B => (8, 6), 0x5C => (8, 7), 0x5D => (8, -1),     // Meta: left, right, either (as Control)
                 _ => (0, 0),
             };
             if (held == 0) return null;

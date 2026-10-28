@@ -55,14 +55,45 @@ namespace System.Windows.Forms
 			ShowHelp(parent, url, navigator, null);
 		}
 
-		[MonoTODO ("Stub, does nothing")]
 		public static void ShowHelp (Control parent, string url, HelpNavigator command, object parameter)
 		{
+			if (OpensInBrowser (url))
+				return;
+			ShowHelpTopic (url, command == HelpNavigator.Topic ? parameter as string : null);
 		}
 
 		public static void ShowHelp (Control parent, string url, string keyword)
 		{
+			if (OpensInBrowser (url))
+				return;
 			ShowHelpTopic (url, keyword);
+		}
+
+		// What .NET does with a help "file" that is a web page: an http(s) address, or an .htm/.html file,
+		// is not HTML Help at all and is opened by the shell -- the default browser (Help.ShowHTMLFile,
+		// ShellExecute "open"). Only a .chm (or .col) goes to the HTML Help viewer. Everything went to
+		// chmsee here, and Workbench's License button, which shows app' licensing page that way, put
+		// up "The help viewer could not load" instead of the page.
+		private static bool OpensInBrowser (string url)
+		{
+			if (String.IsNullOrEmpty (url))
+				return false;
+			string target = url;
+			if (Uri.TryCreate (url, UriKind.Absolute, out Uri uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)) {
+				target = uri.AbsoluteUri;
+			} else {
+				string path = uri != null && uri.IsFile ? uri.LocalPath : url.Replace (@"\", Path.DirectorySeparatorChar.ToString ());
+				string ext = Path.GetExtension (path).ToLowerInvariant ();
+				if (ext != ".htm" && ext != ".html")
+					return false;
+				target = Path.GetFullPath (path);
+			}
+			try {
+				using (Process.Start (new ProcessStartInfo (target) { UseShellExecute = true })) { }
+			} catch (Exception e) {
+				MessageBox.Show (String.Format ("The page {0} could not be opened: {1}", target, e.Message));
+			}
+			return true;
 		}
 
 		public static void ShowHelpIndex (Control parent, string url)

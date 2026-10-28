@@ -111,6 +111,16 @@ public static unsafe partial class Exports
     {
         object? o = Resolve(hwnd);
         found = o != null;
+        // A WPF window's rectangle is where its platform window IS, in device pixels -- not Left/Top,
+        // which a maximized (or minimized) Window reports as its RESTORE position: Telerik hit-tests its
+        // caption buttons against GetWindowRect, and with the restore origin a maximized Workbench's
+        // restore, minimize and close buttons were hit 8px beside themselves and never clicked.
+        if (o is HwndSource ps && MS.Internal.Interop.PlatformWindow.FromHandle(hwnd) is { } pw)
+        {
+            pw.GetWindowScreenOriginPixels(out int px, out int py);
+            pw.GetWindowPixelSize(out int pwid, out int phei);
+            if (pwid > 0 && phei > 0) return new RECT { Left = px, Top = py, Right = px + pwid, Bottom = py + phei };
+        }
         return Ui(o, () => o switch
         {
             HwndSource s when WindowOf(s) is Window w => RectOf(double.IsNaN(w.Left) ? 0 : w.Left, double.IsNaN(w.Top) ? 0 : w.Top, w.ActualWidth, w.ActualHeight),
@@ -254,6 +264,10 @@ public static unsafe partial class Exports
         if ((flags & 0x40) != 0) Show(o, 5);     // SWP_SHOWWINDOW
         if ((flags & 0x80) != 0) Show(o, 0);     // SWP_HIDEWINDOW
         if ((flags & 0x20) != 0 && o is Forms.Control) RecalculateFrame(hwnd);   // SWP_FRAMECHANGED
+        // ...and on a WPF window, through its own procedure and hooks (HwndWrapper.RecalculateFrame).
+        if ((flags & 0x20) != 0 && o is HwndSource src
+            && AppContext.GetData("WpfWebGpu.HwndWrapper.RecalculateFrame") is Action<nint> recalc)
+            Ui(src, () => { recalc(hwnd); return 0; });
         return TRUE;
     }
 
@@ -327,9 +341,10 @@ public static unsafe partial class Exports
         {
             nint h = HandleOf(o);
             if (h == 0) continue;
-            // the native window behind it: a WPF window's handle is its content view; a form's is the
-            // driver's, whose host view WinForms publishes
-            IntPtr view = o is Forms.Control ? (hostWindowOf?.Invoke(h) ?? IntPtr.Zero) : h;
+            // the native window behind it: a WPF window's handle stands for its content view
+            // (CocoaWindow.ViewOf); a form's is the driver's, whose host view WinForms publishes
+            IntPtr view = o is Forms.Control ? (hostWindowOf?.Invoke(h) ?? IntPtr.Zero)
+                        : AppContext.GetData("WpfWebGpu.CocoaWindow.ViewOf") is Func<IntPtr, IntPtr> viewOf ? viewOf(h) : h;
             IntPtr win = view == IntPtr.Zero ? IntPtr.Zero : MacNative.Send(view, MacNative.Sel("window"));
             if (win != IntPtr.Zero && (win == keyWin || win == parent)) return h;
         }
@@ -741,7 +756,11 @@ public static unsafe partial class Exports
             {
                 uint old = StyleOf(o), now = (uint)value;
                 if (o is AppWindow a) { a.Style = now; return (nint)(int)old; }
-                if (((old ^ now) & WS_VISIBLE) != 0) Show(o, (now & WS_VISIBLE) != 0 ? 5 : 0);
+                // WS_VISIBLE changed through the STYLE is not ShowWindow: Windows flips the flag and the
+                // window stays where it is on screen, only not redrawn while the flag is off -- which is
+                // why Telerik's chrome worker clears it round every change it makes to the system menu,
+                // on every WM_SIZE. Taken as hide-then-show, Workbench vanished and came back each time
+                // it was maximized or restored. The flag is remembered with the rest of the word below.
                 if (((old ^ now) & WS_DISABLED) != 0)
                 {
                     Ui(o, () => { if (o is HwndSource s && s.RootVisual is UIElement e) e.IsEnabled = (now & WS_DISABLED) == 0; else if (o is Forms.Control c) c.Enabled = (now & WS_DISABLED) == 0; return 0; });
@@ -1032,9 +1051,11 @@ public static unsafe partial class Exports
         switch (msg)
         {
             case WM_CLOSE:
+                TraceClose("WM_CLOSE", win);
                 win?.Close();
                 return 0;
             case WM_SYSCOMMAND:
+                if (((uint)w & 0xFFF0) == 0xF060) TraceClose("SC_CLOSE", win);
                 switch ((uint)w & 0xFFF0)
                 {
                     case 0xF060: win?.Close(); break;                                         // SC_CLOSE
@@ -1053,6 +1074,13 @@ public static unsafe partial class Exports
             default:
                 return 0;
         }
+    }
+
+    // WF_TRACE_WINDOWS=1: who closed a WPF window through the shim, with the stack.
+    private static void TraceClose(string what, Window? win)
+    {
+        if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") is "1" or "2")
+            Console.Error.WriteLine($"[win] {what} -> {win?.GetType().Name ?? "no window"}\n{Environment.StackTrace}");
     }
 
     private static bool Post(nint hwnd, uint msg, nint w, nint l)

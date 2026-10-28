@@ -34,14 +34,21 @@ namespace MS.Internal.Interop.WebView
         /// Create the empty child window the engine will fill, or IntPtr.Zero where this head has no
         /// overlay host yet.
         /// </summary>
-        internal static IntPtr Create(IntPtr parent, int width, int height)
+        /// <param name="parentIsContentView">macOS: <paramref name="parent"/> is a WPF window's content
+        /// NSView (an HwndHost's parent there), which the engine can overlay. A WinForms control's handle
+        /// is not one, and such a host still gets no engine on macOS.</param>
+        internal static IntPtr Create(IntPtr parent, int width, int height, bool parentIsContentView = false)
         {
             if (OperatingSystem.IsWindows())
             {
                 return Win32.Create(parent, width, height);
             }
 
-            if (OperatingSystem.IsBrowser())
+            // macOS too: its engine is a WKWebView laid OVER the owner's content view (MacWebViewBackend),
+            // not a child window of its own, so there is nothing to create either -- and handing HwndHost
+            // the owner's own view would have it move and size the whole window as its "child". Without a
+            // handle Workbench's Knowledge Base found no engine and took the app down with it.
+            if (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS() && parentIsContentView)
             {
                 // No window to make: the browser head's overlay is an <iframe> the backend creates
                 // in the DOM, keyed by this handle. All that is needed here is a value that is
@@ -80,7 +87,12 @@ namespace MS.Internal.Interop.WebView
         }
         private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_browserParents = new();
 
-        /// <summary>The WPF window a browser overlay key was created in, or zero.</summary>
+        /// <summary>What a backend attaches to for the host window <paramref name="window"/>: the owner's
+        /// content view on macOS, where the engine is an overlay inside it; the window itself elsewhere.</summary>
+        internal static IntPtr AttachTarget(IntPtr window)
+            => OperatingSystem.IsMacOS() ? BrowserParentOf(window) : window;
+
+        /// <summary>The WPF window a browser (or macOS) overlay key was created in, or zero.</summary>
         internal static IntPtr BrowserParentOf(IntPtr window)
         {
             lock (s_browserParents)
@@ -131,7 +143,7 @@ namespace MS.Internal.Interop.WebView
         /// </summary>
         internal static void Destroy(IntPtr window)
         {
-            if (window != IntPtr.Zero && OperatingSystem.IsBrowser())
+            if (window != IntPtr.Zero && (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS()))
             {
                 lock (s_browserParents)
                 {

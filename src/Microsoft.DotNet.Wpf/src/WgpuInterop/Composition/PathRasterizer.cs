@@ -881,11 +881,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     c[i] = new Vector2(c[i].X * scale, c[i].Y);
 
             int subWidth = width * SubpixelsPerPixel;
-            int rows = SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows;
-            byte[] samples = RowsThenThreshold(contours, path.FillRule, originX * scale, originY,
-                                               subWidth, height, rows);
-            if (DropoutForRun > 0)
-                ApplyVerticalDropout(contours, path.FillRule, originX * scale, originY, subWidth, height, samples);
             // ulClearTypeFilter_6x5 @ fontdrvhost+0x217d8 is NOT a 2D kernel: it multiplies
             // the bitmap height by 5, runs the ORDINARY 6x1 horizontal filter over that
             // 5x-tall bitmap, and only THEN combines each group of five filtered rows into
@@ -963,115 +958,79 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (composite || DropoutForRun > 0)
                         while (last < polysG.Count && GlyphOf(owners, contourFigures, last) == gid) last++;
                     if (!composite) last = polysG.Count;
-                    GdiScanRows? walk = null;
-                    List<(float X, int Dir)>[]? exactRows = null;
-                    if (s_scanExact && (nSub > 1 || s_scanOneRow)
-                        && (s_rowEdgeGdiPair || s_rowEdgeTopology))
-                        exactRows = GdiExactRows(path, contourFigures, composite ? first : 0,
-                                                 composite ? last : polysG.Count,
-                                                 originX, originY, width, height, nSub, out walk);
-                    List<(int Col, int SubRow)>? fills = null;
-                    if (DropoutForRun > 0)
+                    // THE GLYPH IN A BOX OF ITS OWN, padded as the run's is, which is GDI's bitmap
+                    // for it (and the run's box for the glyph at either end of it): what it comes
+                    // to is then the glyph's alone, wherever on the screen and in whichever run it
+                    // stands, and a glyph that has been rasterized once is not rasterized again.
+                    // Workbench's About box took ten seconds to open, every time, nearly all of
+                    // them in here drawing the same few dozen letters. WPF_CT_GLYPH_CACHE=0.
+                    int bx = originX, by = originY, bw = width, bh = height;
+                    bool own = composite && s_glyphCache;
+                    if (own)
                     {
-                        fills = new List<(int Col, int SubRow)>();
-                        if (composite)
-                            fills.AddRange(GdiDropoutFills(polysG.GetRange(first, last - first), path.FillRule,
-                                                           originX, originY, width, height, nSub, walk));
-                        else
-                        {
-                            int f0 = 0;
-                            while (f0 < polysG.Count)
+                        float gx0 = float.MaxValue, gy0 = float.MaxValue, gx1 = float.MinValue, gy1 = float.MinValue;
+                        for (int c = first; c < last; c++)
+                            foreach (Vector2 p in polysG[c])
                             {
-                                int g0 = GlyphOf(owners, contourFigures, f0);
-                                int l0 = f0 + 1;
-                                while (l0 < polysG.Count && GlyphOf(owners, contourFigures, l0) == g0) l0++;
-                                List<List<Vector2>> group = f0 == 0 && l0 == polysG.Count
-                                    ? polysG : polysG.GetRange(f0, l0 - f0);
-                                // ...AND THE DROPOUT GETS THIS GLYPH'S OWN WALK. The composite
-                                // arm has always handed one over; this arm never did, so every
-                                // glyph in an ordinary run had its dropout reading the flattened
-                                // polygon's crossings while its FILL read the walk's. The walk
-                                // computed above spans the whole run, which is the wrong set for
-                                // a per-glyph dropout, so build one for the group.
-                                // WPF_CT_DROPOUT_GLYPHWALK=0 goes back to the flattened lists.
-                                GdiScanRows? gw = null;
-                                if (s_dropoutGlyphWalk && s_scanExact && (nSub > 1 || s_scanOneRow)
-                                    && (s_rowEdgeGdiPair || s_rowEdgeTopology))
-                                    GdiExactRows(path, contourFigures, f0, l0, originX, originY,
-                                                 width, height, nSub, out gw);
-                                fills.AddRange(GdiDropoutFills(group, path.FillRule, originX, originY,
-                                                               width, height, nSub, gw));
-                                f0 = l0;
+                                gx0 = MathF.Min(gx0, p.X); gy0 = MathF.Min(gy0, p.Y);
+                                gx1 = MathF.Max(gx1, p.X); gy1 = MathF.Max(gy1, p.Y);
                             }
-                        }
-                        totalFills += fills.Count;
+                        bx = Math.Max(originX, (int)MathF.Floor(gx0) - 2);
+                        by = Math.Max(originY, (int)MathF.Floor(gy0) - 1);
+                        bw = Math.Min(originX + width, (int)MathF.Ceiling(gx1) + 2 + (s_simBoldPad ? SimBoldPixelsForRun : 0)) - bx;
+                        bh = Math.Min(originY + height, (int)MathF.Ceiling(gy1) + 1) - by;
+                        if (bw <= 0 || bh <= 0) { first = last; continue; }
                     }
-                    List<List<Vector2>> polysOne = composite ? polysG.GetRange(first, last - first) : polysG;
-                    if (s_lampTrace)
-                        Console.Error.WriteLine($"RASTER group first={first} last={last} contours={polysG.Count}"
-                            + $" composite={composite} exact={(exactRows is not null ? 1 : 0)} origin=({originX},{originY})"
-                            + $" size={width}x{height} nSub={nSub} fills={(fills is null ? -1 : fills.Count)}");
-                    var lev = new byte[nSub][];
-                    s_colClipL = s_colClipR = 0;
-                    if (composite && GlyphColClipForRun is { } colTable && colTable.TryGetValue(gid, out var cc))
-                    { s_colClipL = cc.Left - originX; s_colClipR = cc.Right - originX; }
-                    var lampsBySub = new byte[]?[nSub];
-                    for (int sI = 0; sI < nSub; sI++)
-                    {
-                        lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, originX, originY,
-                                                       width, height, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
-                                                       originalVertex, exactRows);
-                        lampsBySub[sI] = s_lastLamp;
-                    }
-                    if (composite && s_blankOneByOne
-                        && GdiDropsOneByOne(polysOne, originX, originY, nSub, width, height, lampsBySub))
-                    { first = last; continue; }
+                    (int Left, int Right)? colClip = composite && GlyphColClipForRun is { } colTable
+                        && colTable.TryGetValue(gid, out var cc) ? cc : null;
                     (int Top, int Bottom) rowClip = (int.MinValue, int.MaxValue);
                     if (composite && GlyphRowClipForRun is { } clipTable
                         && clipTable.TryGetValue(gid, out var clipRows))
                         rowClip = clipRows;
-                    for (int px = 0; px < width * height; px++)
+
+                    GlyphKey? key = own ? GlyphKey.Of(path, contourFigures, polysG, first, last, bx, by, bw, bh,
+                                                      nSub, tolerance, colClip, rowClip) : null;
+                    GlyphLevels? got = null;
+                    if (key is not null)
+                        lock (s_glyphLevels) s_glyphLevels.TryGetValue(key, out got);
+                    if (got is null)
                     {
-                        int devRow = originY + px / width;
-                        if (devRow < rowClip.Top || devRow >= rowClip.Bottom) continue;
-                        int g0 = 0, g1 = 0, g2 = 0;
-                        for (int ch = 0; ch < 3; ch++)
-                        {
-                            int sum = 0;
-                            if (gdiKernel)
-                                for (int sI = 0; sI < nSub; sI++) sum += GdiVerticalKernel[sI] * lev[sI][px * 4 + ch];
-                            else
-                                for (int sI = 0; sI < nSub; sI++) sum += lev[sI][px * 4 + ch];
-                            int div = gdiKernel ? weightSum : nSub;
-                            int outLvl = (sum + div / 2) / div;
-                            if (outLvl > 6) outLvl = 6;
-                            if (ch == 0) g0 = outLvl; else if (ch == 1) g1 = outLvl; else g2 = outLvl;
-                        }
-                        // the 6x5 filter packs its result: quantise the glyph's pixel (lamp order)
-                        if (s_ctPack && nSub > 1)
-                        {
-                            if (LampsRunBlueFirst) { QuantizeLevels(ref g2, ref g1, ref g0); }
-                            else QuantizeLevels(ref g0, ref g1, ref g2);
-                        }
-                        for (int ch = 0; ch < 3; ch++)
-                        {
-                            int outLvl = ch == 0 ? g0 : ch == 1 ? g1 : g2;
-                            if (outLvl == 0) continue;
-                            if (s_runCompositeLevels)
+                        got = RasterizeGlyphGroup(path, contourFigures, originalVertex, polysG, owners, first, last,
+                                                  composite, nSub, gdiKernel, weightSum, originX, originY, width, height,
+                                                  bx, by, bw, bh, colClip, rowClip);
+                        if (key is not null)
+                            lock (s_glyphLevels)
                             {
-                                int haveL = accLvl[px * 3 + ch];
-                                accLvl[px * 3 + ch] = (byte) Math.Min(6, haveL + outLvl);
-                                continue;
+                                if (s_glyphLevels.Count >= GlyphLevelsLimit) s_glyphLevels.Clear();
+                                s_glyphLevels[key] = got;
                             }
-                            int cov = GdiLevelRamp[outLvl];
-                            int have = outG[px * 4 + ch];
-                            // the second glyph blended over the first: 1 - (1-a)(1-b); or, with
-                            // WPF_CT_RUN_COMPOSITE=max, the larger of the two
-                            outG[px * 4 + ch] = s_runCompositeMax ? (byte) Math.Max(have, cov)
-                                              : s_runCompositeAdd ? (byte) Math.Min(255, have + cov)
-                                              : (byte) (have + cov - (have * cov + 127) / 255);
-                        }
                     }
+                    if (DropoutForRun > 0) totalFills += got.Fills;
+                    if (got.Levels is byte[] gl)
+                        for (int gy = 0; gy < bh; gy++)
+                        {
+                            int row = (gy + by - originY) * width + bx - originX;
+                            for (int gx = 0; gx < bw; gx++)
+                                for (int ch = 0; ch < 3; ch++)
+                                {
+                                    int outLvl = gl[(gy * bw + gx) * 3 + ch];
+                                    if (outLvl == 0) continue;
+                                    int px = row + gx;
+                                    if (s_runCompositeLevels)
+                                    {
+                                        int haveL = accLvl[px * 3 + ch];
+                                        accLvl[px * 3 + ch] = (byte) Math.Min(6, haveL + outLvl);
+                                        continue;
+                                    }
+                                    int cov = GdiLevelRamp[outLvl];
+                                    int have = outG[px * 4 + ch];
+                                    // the second glyph blended over the first: 1 - (1-a)(1-b); or, with
+                                    // WPF_CT_RUN_COMPOSITE=max, the larger of the two
+                                    outG[px * 4 + ch] = s_runCompositeMax ? (byte) Math.Max(have, cov)
+                                                      : s_runCompositeAdd ? (byte) Math.Min(255, have + cov)
+                                                      : (byte) (have + cov - (have * cov + 127) / 255);
+                                }
+                        }
                     first = last;
                 }
                 } finally { DropoutForRun = runDropout; }
@@ -1118,6 +1077,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // What the gasp bit actually turns on is softening across ROWS, and its absence is
             // visible: Segoe UI's horizontal-edge disagreement is about 3,200 at 18 and 19ppem
             // and 33,287 at 20, which is exactly where its gasp gains the bit.
+            // The run sampled as one outline, which only this arm reads: the GDI filter above samples
+            // each glyph itself, and this pass over the whole run -- thrown away there -- was most
+            // of what Workbench's About box spent its ten seconds on.
+            int rows = SubpixelRowsForRun > 0 ? SubpixelRowsForRun : SubpixelRows;
+            byte[] samples = RowsThenThreshold(contours, path.FillRule, originX * scale, originY,
+                                               subWidth, height, rows);
+            if (DropoutForRun > 0)
+                ApplyVerticalDropout(contours, path.FillRule, originX * scale, originY, subWidth, height, samples);
             if (SymmetricVerticalForRun && height > 2)
                 samples = SmoothRows(samples, subWidth, height);
             // The contrast curve, if it is to be applied to the RAW LAMPS rather than to the filtered
@@ -1127,6 +1094,193 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 for (int i = 0; i < samples.Length; i++) samples[i] = pre[samples[i]];
 
             return new SubpixelMask(FilterSubpixels(samples, width, height), width, height, originX, originY);
+        }
+
+        /// <summary>Whether a glyph of a run is rasterized in a box of its own and kept
+        /// (s_glyphLevels). WPF_CT_GLYPH_CACHE=0 rasterizes every glyph in the run's box, every time.</summary>
+        private static readonly bool s_glyphCache =
+            Environment.GetEnvironmentVariable("WPF_CT_GLYPH_CACHE") != "0";
+
+        /// <summary>One glyph of a run as RasterizeSubpixel's GDI filter makes it: its levels (0..6 a
+        /// channel, three to a pixel of its box) or null where GdiDropsOneByOne drops it, and how
+        /// many dropout fills it took.</summary>
+        private sealed class GlyphLevels
+        {
+            internal byte[]? Levels;
+            internal int Fills;
+        }
+
+        // For the process: the same letters come up in every window, and a font's are hinted to whole
+        // pixels, so they recur in every run. Cleared, rather than evicted, when it is full.
+        private static readonly Dictionary<GlyphKey, GlyphLevels> s_glyphLevels = new();
+        private const int GlyphLevelsLimit = 16384;
+
+        /// <summary>Everything a glyph's levels are made from, its outline relative to its box: the
+        /// figures (which the scan walk reads) and their flattening (which the filter reads), the box,
+        /// the run's settings and the glyph's clips.</summary>
+        private sealed class GlyphKey : IEquatable<GlyphKey>
+        {
+            private readonly int[] _data;
+            private readonly byte[]? _lut;
+            private readonly int _hash;
+
+            private GlyphKey(int[] data, byte[]? lut)
+            {
+                _data = data;
+                _lut = lut;
+                var h = new HashCode();
+                foreach (int v in data) h.Add(v);
+                _hash = h.ToHashCode();
+            }
+
+            internal static GlyphKey Of(PathGeometry path, List<int> contourFigures, List<List<Vector2>> polysG,
+                                        int first, int last, int bx, int by, int bw, int bh, int nSub, float tolerance,
+                                        (int Left, int Right)? colClip, (int Top, int Bottom) rowClip)
+            {
+                var d = new List<int>(256)
+                {
+                    bw, bh, nSub, (int) path.FillRule, BitConverter.SingleToInt32Bits(tolerance),
+                    SubpixelRowsForRun, DropoutForRun, SimBoldPixelsForRun, PpemForRun, DropoutColumnsPerPixel,
+                    (ContrastFilterForRun ? 1 : 0) | (SymmetricVerticalForRun ? 2 : 0),
+                    colClip is { } cc ? 1 : 0, colClip is { } c1 ? c1.Left - bx : 0, colClip is { } c2 ? c2.Right - bx : 0,
+                    // a clip outside the box is no clip at all
+                    (int) Math.Clamp((long) rowClip.Top - by, -1, bh + 1),
+                    (int) Math.Clamp((long) rowClip.Bottom - by, -1, bh + 1),
+                };
+                int lastFigure = -1;
+                for (int c = first; c < last; c++)
+                {
+                    List<Vector2> poly = polysG[c];
+                    d.Add(poly.Count);
+                    foreach (Vector2 p in poly) { Add(d, p.X - bx); Add(d, p.Y - by); }
+                    int f = c < contourFigures.Count ? contourFigures[c] : -1;
+                    if (f == lastFigure || (uint) f >= (uint) path.Figures.Count) continue;
+                    lastFigure = f;
+                    PathFigure fig = path.Figures[f];
+                    d.Add(-1 - fig.Segments.Count);
+                    d.Add(fig.ImpliedStart ? 1 : 0);
+                    Add(d, fig.Start, bx, by);
+                    foreach (PathSegment seg in fig.Segments)
+                        switch (seg)
+                        {
+                            case LineSegment l: d.Add(1); Add(d, l.Point, bx, by); break;
+                            case QuadraticBezierSegment q:
+                                d.Add(q.ImpliedEnd ? 3 : 2); Add(d, q.Control, bx, by); Add(d, q.Point, bx, by); break;
+                            case CubicBezierSegment b:
+                                d.Add(4); Add(d, b.Control1, bx, by); Add(d, b.Control2, bx, by); Add(d, b.Point, bx, by); break;
+                            default: d.Add(5); break;
+                        }
+                }
+                return new GlyphKey(d.ToArray(), PreFilterLut);
+            }
+
+            private static void Add(List<int> d, float v) => d.Add(BitConverter.SingleToInt32Bits(v));
+            private static void Add(List<int> d, Vector2 p, int bx, int by) { Add(d, p.X - bx); Add(d, p.Y - by); }
+
+            public bool Equals(GlyphKey? other)
+                => other is not null && _hash == other._hash && ReferenceEquals(_lut, other._lut)
+                   && _data.AsSpan().SequenceEqual(other._data);
+            public override bool Equals(object? obj) => Equals(obj as GlyphKey);
+            public override int GetHashCode() => _hash;
+        }
+
+        /// <summary>One glyph group of RasterizeSubpixel's GDI filter (contours first..last), in the
+        /// box bx,by,bw,bh: dropout, the table filter per vertical subrow, the kernel, the pack.</summary>
+        private static GlyphLevels RasterizeGlyphGroup(PathGeometry path, List<int> contourFigures,
+            List<bool[]> originalVertex, List<List<Vector2>> polysG, int[]? owners, int first, int last,
+            bool composite, int nSub, bool gdiKernel, int weightSum, int originX, int originY, int width, int height,
+            int bx, int by, int bw, int bh, (int Left, int Right)? colClip, (int Top, int Bottom) rowClip)
+        {
+            var result = new GlyphLevels();
+            GdiScanRows? walk = null;
+            List<(float X, int Dir)>[]? exactRows = null;
+            if (s_scanExact && (nSub > 1 || s_scanOneRow)
+                && (s_rowEdgeGdiPair || s_rowEdgeTopology))
+                exactRows = GdiExactRows(path, contourFigures, composite ? first : 0,
+                                         composite ? last : polysG.Count,
+                                         bx, by, bw, bh, nSub, out walk);
+            List<(int Col, int SubRow)>? fills = null;
+            if (DropoutForRun > 0)
+            {
+                fills = new List<(int Col, int SubRow)>();
+                if (composite)
+                    fills.AddRange(GdiDropoutFills(polysG.GetRange(first, last - first), path.FillRule,
+                                                   bx, by, bw, bh, nSub, walk));
+                else
+                {
+                    int f0 = 0;
+                    while (f0 < polysG.Count)
+                    {
+                        int g0 = GlyphOf(owners, contourFigures, f0);
+                        int l0 = f0 + 1;
+                        while (l0 < polysG.Count && GlyphOf(owners, contourFigures, l0) == g0) l0++;
+                        List<List<Vector2>> group = f0 == 0 && l0 == polysG.Count
+                            ? polysG : polysG.GetRange(f0, l0 - f0);
+                        // ...AND THE DROPOUT GETS THIS GLYPH'S OWN WALK. The composite
+                        // arm has always handed one over; this arm never did, so every
+                        // glyph in an ordinary run had its dropout reading the flattened
+                        // polygon's crossings while its FILL read the walk's. The walk
+                        // computed above spans the whole run, which is the wrong set for
+                        // a per-glyph dropout, so build one for the group.
+                        // WPF_CT_DROPOUT_GLYPHWALK=0 goes back to the flattened lists.
+                        GdiScanRows? gw = null;
+                        if (s_dropoutGlyphWalk && s_scanExact && (nSub > 1 || s_scanOneRow)
+                            && (s_rowEdgeGdiPair || s_rowEdgeTopology))
+                            GdiExactRows(path, contourFigures, f0, l0, bx, by, bw, bh, nSub, out gw);
+                        fills.AddRange(GdiDropoutFills(group, path.FillRule, bx, by, bw, bh, nSub, gw));
+                        f0 = l0;
+                    }
+                }
+                result.Fills = fills.Count;
+            }
+            List<List<Vector2>> polysOne = composite ? polysG.GetRange(first, last - first) : polysG;
+            if (s_lampTrace)
+                Console.Error.WriteLine($"RASTER group first={first} last={last} contours={polysG.Count}"
+                    + $" composite={composite} exact={(exactRows is not null ? 1 : 0)} origin=({bx},{by})"
+                    + $" size={bw}x{bh} nSub={nSub} fills={(fills is null ? -1 : fills.Count)}");
+            var lev = new byte[nSub][];
+            s_colClipL = s_colClipR = 0;
+            if (colClip is { } cc)
+            { s_colClipL = cc.Left - bx; s_colClipR = cc.Right - bx; }
+            var lampsBySub = new byte[]?[nSub];
+            for (int sI = 0; sI < nSub; sI++)
+            {
+                lev[sI] = GdiTableFilterRowset(polysOne, path.FillRule, bx, by,
+                                               bw, bh, (sI + GdiSubrowPhase) / nSub, nSub, sI, fills,
+                                               originalVertex, exactRows);
+                lampsBySub[sI] = s_lastLamp;
+            }
+            if (composite && s_blankOneByOne
+                && GdiDropsOneByOne(polysOne, bx, by, nSub, bw, bh, lampsBySub))
+                return result;
+            var levels = new byte[bw * bh * 3];
+            for (int px = 0; px < bw * bh; px++)
+            {
+                int devRow = by + px / bw;
+                if (devRow < rowClip.Top || devRow >= rowClip.Bottom) continue;
+                int g0 = 0, g1 = 0, g2 = 0;
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    int sum = 0;
+                    if (gdiKernel)
+                        for (int sI = 0; sI < nSub; sI++) sum += GdiVerticalKernel[sI] * lev[sI][px * 4 + ch];
+                    else
+                        for (int sI = 0; sI < nSub; sI++) sum += lev[sI][px * 4 + ch];
+                    int div = gdiKernel ? weightSum : nSub;
+                    int outLvl = (sum + div / 2) / div;
+                    if (outLvl > 6) outLvl = 6;
+                    if (ch == 0) g0 = outLvl; else if (ch == 1) g1 = outLvl; else g2 = outLvl;
+                }
+                // the 6x5 filter packs its result: quantise the glyph's pixel (lamp order)
+                if (s_ctPack && nSub > 1)
+                {
+                    if (LampsRunBlueFirst) { QuantizeLevels(ref g2, ref g1, ref g0); }
+                    else QuantizeLevels(ref g0, ref g1, ref g2);
+                }
+                levels[px * 3] = (byte) g0; levels[px * 3 + 1] = (byte) g1; levels[px * 3 + 2] = (byte) g2;
+            }
+            result.Levels = levels;
+            return result;
         }
 
         /// <summary>How many BILEVEL samples a lamp is averaged from, or 1 to keep the exact area.

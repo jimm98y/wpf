@@ -257,7 +257,7 @@ namespace MS.Internal.Interop
                 LocationOf(self, sender, out int x, out int y);
                 int allowed = ToEffects(SendNUInt(sender, Sel("draggingSourceOperationMask")));
 
-                int effect = target.DragEnter(self, x, y, TypesOf(pasteboard),
+                int effect = target.DragEnter(CocoaWindow.HandleOf(self), x, y, TypesOf(pasteboard),
                                               mime => Read(pasteboard, mime), allowed);
                 return ToOperation(effect);
             }
@@ -278,7 +278,7 @@ namespace MS.Internal.Interop
 
                 LocationOf(self, sender, out int x, out int y);
                 int allowed = ToEffects(SendNUInt(sender, Sel("draggingSourceOperationMask")));
-                return ToOperation(target.DragOver(self, x, y, allowed));
+                return ToOperation(target.DragOver(CocoaWindow.HandleOf(self), x, y, allowed));
             }
             catch (Exception e)
             {
@@ -289,7 +289,7 @@ namespace MS.Internal.Interop
 
         private static void ExitedImp(IntPtr self, IntPtr sel, IntPtr sender)
         {
-            try { PlatformDragDrop.Target?.DragLeave(self); }
+            try { PlatformDragDrop.Target?.DragLeave(CocoaWindow.HandleOf(self)); }
             catch (Exception e) { Log("dragging exited", e); }
         }
 
@@ -304,7 +304,7 @@ namespace MS.Internal.Interop
 
                 LocationOf(self, sender, out int x, out int y);
                 int allowed = ToEffects(SendNUInt(sender, Sel("draggingSourceOperationMask")));
-                return target.Drop(self, x, y, allowed) != EffectNone;
+                return target.Drop(CocoaWindow.HandleOf(self), x, y, allowed) != EffectNone;
             }
             catch (Exception e)
             {
@@ -418,6 +418,7 @@ namespace MS.Internal.Interop
                                       Action<int>? giveFeedback = null)
         {
             started = false;
+            view = CocoaWindow.ViewOf(view);   // the drag source's HWND: AppKit wants its view
 
             if (view == IntPtr.Zero || mimeTypes is null || mimeTypes.Length == 0) return EffectNone;
 
