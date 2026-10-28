@@ -158,6 +158,10 @@ namespace System.Windows.Threading
         /// elapses (<see cref="Timeout.Infinite"/> waits indefinitely). Returns false once the loop
         /// has been shut down, which the caller treats as "exit the frame".
         /// </summary>
+        /// <summary>Takes a pending <see cref="Signal"/> without waiting: true when work had been posted.
+        /// (<see cref="Wait"/>'s result says only whether the loop is still alive.)</summary>
+        internal bool TakeSignal() => !_disposed && _wake.WaitOne(0);
+
         internal bool Wait(int timeoutMilliseconds)
         {
             if (_disposed)

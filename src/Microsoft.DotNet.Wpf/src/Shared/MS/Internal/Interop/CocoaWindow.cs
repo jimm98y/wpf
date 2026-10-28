@@ -2623,9 +2623,19 @@ namespace MS.Internal.Interop
             // Dispatcher.Invoke pumps) took the drags the loop was waiting for and sent them on, so
             // the window started a second resize loop inside the first, and the first resumed on what
             // the second had torn down: a crash in -[NSWindow _runResizeTrackingLoop] (app). The
-            // dispatcher's own work still runs; only the queue is left alone.
-            if (AnyWindowInLiveResize(app))
+            // dispatcher's own work still runs; only the queue is left alone. As a GetMessage inside
+            // Windows' sizing loop still gets its sent and posted messages and timers, the pump runs the
+            // run loop for the time it was given -- in the mode AppKit's loop runs it in, so the
+            // dispatcher's source, timers and AppKit's animation all fire -- rather than returning at
+            // once and leaving a caller that waits in a loop to spin. Only from inside a dispatched
+            // event, though: a window AppKit is still resizing when no loop of its own is on the stack
+            // (one dropped on the screen's top edge, tiling into place) finishes only through the
+            // queue, and a pump that left it alone spun forever (Workbench froze).
+            if (s_dispatchDepth > 0 && AnyWindowInLiveResize(app))
             {
+                IntPtr current = CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent());
+                try { CFRunLoopRunInMode(current != IntPtr.Zero ? current : mode, maxMilliseconds / 1000.0, true); }
+                finally { if (current != IntPtr.Zero) CFRelease(current); }
                 DetectResizes();
                 return;
             }
@@ -2723,6 +2733,17 @@ namespace MS.Internal.Interop
         {
             if (evt == IntPtr.Zero) return;
             if (IsWakeEvent(evt)) { s_wakePosted = false; return; }   // ours, taken by another loop
+            s_dispatchDepth++;
+            try { DispatchEventCore(evt); }
+            finally { s_dispatchDepth--; }
+        }
+
+        // How deep the main thread is in DispatchEvent: above 0, any loop AppKit runs for the event
+        // (a live resize, a window drag) is on the stack below the current pump.
+        [ThreadStatic] private static int s_dispatchDepth;
+
+        private static void DispatchEventCore(IntPtr evt)
+        {
             // Translate mouse/scroll events into the managed input event before letting AppKit
             // dispatch the event normally (so window dragging, etc. still work).
             s_consumedByNonClient = false;
@@ -3370,6 +3391,8 @@ namespace MS.Internal.Interop
         [DllImport(CoreFoundation)]
         private static extern int CFRunLoopRunInMode(IntPtr mode, double seconds,
                                                      [MarshalAs(UnmanagedType.I1)] bool returnAfterSourceHandled);
+        [DllImport(CoreFoundation)] private static extern IntPtr CFRunLoopGetCurrent();
+        [DllImport(CoreFoundation)] private static extern IntPtr CFRunLoopCopyCurrentMode(IntPtr runLoop);
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlsym(IntPtr handle, string symbol);
 
         // ---- cursor -----------------------------------------------------------------

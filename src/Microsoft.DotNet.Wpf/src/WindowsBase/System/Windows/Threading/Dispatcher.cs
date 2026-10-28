@@ -2633,9 +2633,20 @@ namespace System.Windows.Threading
             // its own managed event like every other platform.
             if (OperatingSystem.IsMacOS() && MS.Internal.Interop.CocoaWindow.IsMainThread)
             {
-                // Work already posted: take it, drain the events, go round again.
-                if (runLoop.Wait(0))
+                // WPF_MAC_POLL_PUMP=1: the managed wait and a non-blocking drain, as before.
+                if (s_macPollPump)
                 {
+                    int pollCap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+                    runLoop.Wait(pollCap <= 0 ? 0 : pollCap);
+                    MS.Internal.Interop.CocoaWindow.PumpEvents(0);
+                    return _runLoop != null;
+                }
+
+                // Work already posted: take it, drain the events, go round again.
+                if (s_traceMacPump) TraceMacPump(timeout);
+                if (runLoop.TakeSignal())
+                {
+                    if (s_traceMacPump) s_macPumpBusy++;
                     MS.Internal.Interop.CocoaWindow.PumpEvents(0);
                     return _runLoop != null;
                 }
@@ -2649,7 +2660,7 @@ namespace System.Windows.Threading
                 // polls that have no notification of their own (CocoaWindow.DetectResizes) going.
                 int cap = (timeout < 0 || timeout > IdleEventWaitCapMs) ? IdleEventWaitCapMs : timeout;
                 MS.Internal.Interop.CocoaWindow.WaitForEvents(cap);
-                runLoop.Wait(0);   // the signal that ended it is spent
+                runLoop.TakeSignal();   // the signal that ended it is spent
                 return _runLoop != null;
             }
 
@@ -3191,6 +3202,22 @@ namespace System.Windows.Threading
 
         // macOS: the longest the main thread sleeps in AppKit's event wait with nothing to wake it.
         private const int IdleEventWaitCapMs = 100;
+        private static readonly bool s_macPollPump = Environment.GetEnvironmentVariable("WPF_MAC_POLL_PUMP") == "1";
+        private static readonly bool s_traceMacPump = Environment.GetEnvironmentVariable("WPF_TRACE_MAC_PUMP") == "1";
+        private static long s_macPumpRounds, s_macPumpBusy, s_macPumpStart;
+
+        private static void TraceMacPump(int timeout)
+        {
+            s_macPumpRounds++;
+            long now = Environment.TickCount64;
+            if (s_macPumpStart == 0) s_macPumpStart = now;
+            if (now - s_macPumpStart >= 2000)
+            {
+                Console.Error.WriteLine($"[pump] {s_macPumpRounds} rounds in {now - s_macPumpStart} ms, {s_macPumpBusy} with work already posted, timer timeout {timeout}");
+                s_macPumpRounds = s_macPumpBusy = 0;
+                s_macPumpStart = now;
+            }
+        }
 
         /// <summary>WPF_LINUX_POLL_PUMP=1: drive Wayland with the macOS-shaped periodic slice
         /// instead of blocking on its file descriptor (see WaitForWork).</summary>
