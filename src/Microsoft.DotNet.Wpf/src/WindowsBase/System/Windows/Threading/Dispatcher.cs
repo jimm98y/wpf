@@ -2633,14 +2633,23 @@ namespace System.Windows.Threading
             // its own managed event like every other platform.
             if (OperatingSystem.IsMacOS() && MS.Internal.Interop.CocoaWindow.IsMainThread)
             {
-                int cap = (timeout < 0 || timeout > NativeEventPumpIntervalMs) ? NativeEventPumpIntervalMs : timeout;
+                // Work already posted: take it, drain the events, go round again.
+                if (runLoop.Wait(0))
+                {
+                    MS.Internal.Interop.CocoaWindow.PumpEvents(0);
+                    return _runLoop != null;
+                }
 
-                // Wait for managed work (or the timer deadline / the ~120Hz cap), then drain the
-                // Cocoa event queue non-blocking. The wait uses the managed event so DispatcherTimers
-                // and cross-thread posts wake the loop promptly (keeping animation + shutdown live);
-                // draining events keeps the window responsive.
-                runLoop.Wait(cap <= 0 ? 0 : cap);
-                MS.Internal.Interop.CocoaWindow.PumpEvents(0);
+                // Otherwise wait as a Cocoa application waits: in AppKit's event wait, the run loop
+                // running, until an event comes, the next DispatcherTimer is due, or work is posted --
+                // Signal() signals the run-loop source, which ends the wait (CocoaWindow.WakeFromWait).
+                // Waiting on the managed event instead, and polling AppKit every few milliseconds, left
+                // the run loop idle between polls; the window server's tiling of a window dropped on the
+                // screen's top edge never completed, and the app got no input again. The cap keeps the
+                // polls that have no notification of their own (CocoaWindow.DetectResizes) going.
+                int cap = (timeout < 0 || timeout > IdleEventWaitCapMs) ? IdleEventWaitCapMs : timeout;
+                MS.Internal.Interop.CocoaWindow.WaitForEvents(cap);
+                runLoop.Wait(0);   // the signal that ended it is spent
                 return _runLoop != null;
             }
 
@@ -3179,6 +3188,9 @@ namespace System.Windows.Threading
 
         // ~120 Hz cap for draining the macOS Cocoa event queue from the dispatcher loop.
         private const int NativeEventPumpIntervalMs = 8;
+
+        // macOS: the longest the main thread sleeps in AppKit's event wait with nothing to wake it.
+        private const int IdleEventWaitCapMs = 100;
 
         /// <summary>WPF_LINUX_POLL_PUMP=1: drive Wayland with the macOS-shaped periodic slice
         /// instead of blocking on its file descriptor (see WaitForWork).</summary>

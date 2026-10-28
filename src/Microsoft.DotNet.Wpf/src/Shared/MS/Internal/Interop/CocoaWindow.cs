@@ -1378,6 +1378,14 @@ namespace MS.Internal.Interop
                 // the window server, whose tiling (a drop on the screen's top edge fills the screen) then
                 // held every later event back from an app that runs no NSApplication loop -- Workbench
                 // froze. The drag is followed here, from the events the pump already reads.
+                if (!s_captionMoveLoop)
+                {
+                    // AppKit's drag, now that the main thread waits in AppKit's event wait and the window
+                    // server's tiling can complete. WPF_CAPTION_DRAG=loop follows the drag here instead.
+                    SendVoidPtr(_window, Sel("performWindowDragWithEvent:"), evt);
+                    CheckResize();
+                    return true;
+                }
                 s_captionDrag = this;
                 s_captionDragMouse = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));
                 NSRect f = SendRect(_window, Sel("frame"));
@@ -1389,6 +1397,7 @@ namespace MS.Internal.Interop
 
         // The caption drag in progress (NonClientPress): the window, where the mouse and the window's
         // origin were when it began (screen points, bottom-left).
+        private static readonly bool s_captionMoveLoop = Environment.GetEnvironmentVariable("WPF_CAPTION_DRAG") == "loop";
         private static CocoaWindow s_captionDrag;
         private static NSPoint s_captionDragMouse, s_captionDragOrigin;
         private static bool s_captionDragMoved;
@@ -2530,6 +2539,67 @@ namespace MS.Internal.Interop
         /// managed event instead of pumping here.</summary>
         internal static bool IsMainThread => pthread_main_np() != 0;
 
+        /// <summary>
+        /// The dispatcher's idle wait, as a Cocoa application waits: blocked in AppKit's own event wait
+        /// (nextEventMatchingMask until an event, <paramref name="timeoutMilliseconds"/>, or
+        /// <see cref="WakeFromWait"/>), with the run loop running the whole time. A wait elsewhere -- the
+        /// managed event the dispatcher used to sleep on, polling AppKit a few milliseconds at a time --
+        /// left the run loop idle between polls, and work the window server finishes through it never
+        /// finished: dropped on the screen's top edge, a window AppKit was dragging went into its tiling
+        /// and the app got no event again (Workbench froze).
+        /// </summary>
+        internal static void WaitForEvents(int timeoutMilliseconds)
+        {
+            if (!s_appInitialized || !IsMainThread) return;
+            if (!s_blockingWait) s_wakePosted = false;   // a wake another loop dequeued is not still pending
+            s_waitRequested = true;
+            try { PumpEvents(timeoutMilliseconds); }
+            finally { s_waitRequested = false; }
+        }
+
+        // s_waitRequested: the pump was called as the dispatcher's wait. s_blockingWait: it is blocked in
+        // the event wait itself -- and ONLY then must posted work end the wait (WakeFromWait) rather than
+        // run. Once an event is being dispatched, AppKit may run its own loop inside sendEvent: (a drag, a
+        // live resize) for as long as the gesture lasts, and the dispatcher's work runs from the run loop
+        // there as it always has.
+        [ThreadStatic] private static bool s_waitRequested, s_blockingWait;
+
+        /// <summary>Whether the main thread's dispatcher is blocked in its event wait (<see cref="WaitForEvents"/>).</summary>
+        internal static bool IsWaitingForWork => IsMainThread && s_blockingWait;
+
+        // NSEventTypeApplicationDefined, and the subtype that marks ours.
+        private const nuint NSApplicationDefined = 15;
+        private const short WakeSubtype = 0x5750;   // 'WP'
+
+        /// <summary>
+        /// Ends <see cref="WaitForEvents"/> from inside the run loop (the dispatcher's run-loop source,
+        /// which posted work signals): an application-defined event, so nextEventMatchingMask returns
+        /// and the work runs in the dispatcher's own frame, not nested in AppKit's wait. Main thread.
+        /// </summary>
+        internal static void WakeFromWait()
+        {
+            if (!IsWaitingForWork || s_wakePosted) return;
+            IntPtr evt = SendOtherEvent(objc_getClass("NSEvent"),
+                Sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+                NSApplicationDefined, default, 0, 0, 0, IntPtr.Zero, WakeSubtype, 0, 0);
+            if (evt == IntPtr.Zero) return;
+            s_wakePosted = true;
+            IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
+            SendVoidPtrBool(app, Sel("postEvent:atStart:"), evt, false);
+        }
+
+        [ThreadStatic] private static bool s_wakePosted;
+
+        private static bool IsWakeEvent(IntPtr evt)
+            => SendNUInt(evt, Sel("type")) == NSApplicationDefined && SendNInt(evt, Sel("subtype")) == WakeSubtype;
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern IntPtr SendOtherEvent(IntPtr receiver, IntPtr selector, nuint type, NSPoint location, nuint flags,
+                                                    double timestamp, nint windowNumber, IntPtr context, short subtype, nint data1, nint data2);
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidPtrBool(IntPtr receiver, IntPtr selector, IntPtr a, [MarshalAs(UnmanagedType.I1)] bool b);
+
         internal static void PumpEvents(int maxMilliseconds)
         {
             if (!s_appInitialized) return;
@@ -2563,15 +2633,25 @@ namespace MS.Internal.Interop
             // Block up to maxMilliseconds for the first event (runs the run loop meanwhile)...
             IntPtr until = SendPtrDouble(objc_getClass("NSDate"), Sel("dateWithTimeIntervalSinceNow:"),
                                          maxMilliseconds / 1000.0);
-            IntPtr evt = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
-                                       ulong.MaxValue, until, mode, true);
+            bool waiting = s_waitRequested && !s_blockingWait;
+            if (waiting) s_blockingWait = true;
+            IntPtr evt;
+            try
+            {
+                evt = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+                                    ulong.MaxValue, until, mode, true);
+            }
+            finally { if (waiting) s_blockingWait = false; }
+            s_waitRequested = false;   // nested pumps from what is dispatched below are ordinary ones
 
             // ...then dispatch it and drain the rest without blocking. NSEventMaskAny = ulong.MaxValue.
             IntPtr distantPast = Send(objc_getClass("NSDate"), Sel("distantPast"));
             while (evt != IntPtr.Zero)
             {
+                // Our own wake (WakeFromWait) has done its job by being dequeued.
+                if (IsWakeEvent(evt)) s_wakePosted = false;
                 // An event for a window another host owns (the WinForms host's) is that host's.
-                if (!DispatchToForeignHost(evt)) DispatchEvent(evt);
+                else if (!DispatchToForeignHost(evt)) DispatchEvent(evt);
                 evt = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
                                     ulong.MaxValue, distantPast, mode, true);
             }
@@ -2642,6 +2722,7 @@ namespace MS.Internal.Interop
         public static void DispatchEvent(IntPtr evt)
         {
             if (evt == IntPtr.Zero) return;
+            if (IsWakeEvent(evt)) { s_wakePosted = false; return; }   // ours, taken by another loop
             // Translate mouse/scroll events into the managed input event before letting AppKit
             // dispatch the event normally (so window dragging, etc. still work).
             s_consumedByNonClient = false;

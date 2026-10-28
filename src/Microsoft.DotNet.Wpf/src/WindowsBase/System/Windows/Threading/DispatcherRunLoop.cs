@@ -508,8 +508,8 @@ namespace System.Windows.Threading
             }
         }
 
-        private static void PerformCallback(IntPtr info) => PumpFromRunLoop(info);
-        private static void TimerCallback(IntPtr timer, IntPtr info) => PumpFromRunLoop(info);
+        private static void PerformCallback(IntPtr info) => PumpFromRunLoop(info, isPerform: true);
+        private static void TimerCallback(IntPtr timer, IntPtr info) => PumpFromRunLoop(info, isPerform: true);
 
         /// <summary>
         /// Read an exported CFStringRef constant (e.g. kCFRunLoopCommonModes) out of CoreFoundation.
@@ -540,11 +540,11 @@ namespace System.Windows.Threading
             }
 
             t_inRunLoopCallback = true;
-            try { PumpFromRunLoop(info); }
+            try { PumpFromRunLoop(info, isPerform: false); }
             finally { t_inRunLoopCallback = false; }
         }
 
-        private static void PumpFromRunLoop(IntPtr info)
+        private static void PumpFromRunLoop(IntPtr info, bool isPerform)
         {
             if (info == IntPtr.Zero)
             {
@@ -554,6 +554,16 @@ namespace System.Windows.Threading
             DispatcherRunLoop loop = GCHandle.FromIntPtr(info).Target as DispatcherRunLoop;
             if (loop is null || loop._disposed)
             {
+                return;
+            }
+
+            // The dispatcher's own idle wait (Dispatcher.WaitForWork, blocked in AppKit's event wait):
+            // the work is the dispatcher's to run in its frame, so the wait is ended rather than the
+            // queue run from inside it. Only inside AppKit's own loops -- a drag, a live resize, a menu,
+            // which never return to the dispatcher until the gesture ends -- does it run here.
+            if (MS.Internal.Interop.CocoaWindow.IsWaitingForWork)
+            {
+                if (isPerform) MS.Internal.Interop.CocoaWindow.WakeFromWait();
                 return;
             }
 
