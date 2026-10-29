@@ -281,14 +281,99 @@ namespace Microsoft.Windows.Shell
         {
             if (hook == _captionHooked || _window == null) return;
             _captionHooked = hook;
-            if (hook) _window.AddHandler(UIElement.PreviewMouseLeftButtonDownEvent, (System.Windows.Input.MouseButtonEventHandler)_OnCaptionMouseDown, true);
-            else _window.RemoveHandler(UIElement.PreviewMouseLeftButtonDownEvent, (System.Windows.Input.MouseButtonEventHandler)_OnCaptionMouseDown);
+            if (hook)
+            {
+                _window.AddHandler(UIElement.PreviewMouseLeftButtonDownEvent, (System.Windows.Input.MouseButtonEventHandler)_OnCaptionMouseDown, true);
+                _window.QueryCursor += _OnResizeBorderQueryCursor;
+            }
+            else
+            {
+                _window.RemoveHandler(UIElement.PreviewMouseLeftButtonDownEvent, (System.Windows.Input.MouseButtonEventHandler)_OnCaptionMouseDown);
+                _window.QueryCursor -= _OnResizeBorderQueryCursor;
+            }
+        }
+
+        // The platform window, when it is the one resized from its edges here (the browser's canvases;
+        // a macOS window is resized by AppKit from its own frame).
+        private MS.Internal.Interop.IPlatformWindow _EdgeResizedWindow()
+            => MS.Internal.Interop.PlatformWindow.FromHandle(_hwnd) is { ResizesFromEdges: true } w ? w : null;
+
+        /// <summary>
+        /// The resize border's part under <paramref name="p"/> as WM_NCHITTEST answers it with WindowChrome
+        /// on Windows (HTLEFT..HTBOTTOMRIGHT), or 0: within ResizeBorderThickness of an edge, two edges at a
+        /// corner, for a window that can be resized and is not maximized, unless what is there opts out
+        /// (IsHitTestVisibleInChrome).
+        /// </summary>
+        private int _ResizeBorderHit(Point p)
+        {
+            if (_chromeInfo == null || _window.WindowState != WindowState.Normal
+                || _window.ResizeMode is not (ResizeMode.CanResize or ResizeMode.CanResizeWithGrip)) return 0;
+            Thickness border = _chromeInfo.ResizeBorderThickness;
+            double w = _window.ActualWidth, h = _window.ActualHeight;
+            bool left = p.X >= 0 && p.X < border.Left, right = p.X < w && p.X >= w - border.Right;
+            bool top = p.Y >= 0 && p.Y < border.Top, bottom = p.Y < h && p.Y >= h - border.Bottom;
+            int ht = (top, bottom, left, right) switch
+            {
+                (true, _, true, _) => 13,    // HTTOPLEFT
+                (true, _, _, true) => 14,    // HTTOPRIGHT
+                (_, true, true, _) => 16,    // HTBOTTOMLEFT
+                (_, true, _, true) => 17,    // HTBOTTOMRIGHT
+                (_, _, true, _) => 10,       // HTLEFT
+                (_, _, _, true) => 11,       // HTRIGHT
+                (true, _, _, _) => 12,       // HTTOP
+                (_, true, _, _) => 15,       // HTBOTTOM
+                _ => 0,
+            };
+            if (ht == 0) return 0;
+            for (DependencyObject d = _window.InputHitTest(p) as DependencyObject; d != null; d = VisualTreeHelper.GetParent(d) ?? LogicalTreeHelper.GetParent(d))
+            {
+                if (d is System.Windows.IInputElement element && WindowChrome.GetIsHitTestVisibleInChrome(element)) return 0;
+                if (d == _window) break;
+            }
+            return ht;
+        }
+
+        // DefWindowProc's WM_SETCURSOR over the resize border: the sizing cursor for the edge or corner.
+        private void _OnResizeBorderQueryCursor(object sender, System.Windows.Input.QueryCursorEventArgs e)
+        {
+            if (_EdgeResizedWindow() == null) return;
+            int ht = _ResizeBorderHit(e.GetPosition(_window));
+            if (ht == 0) return;
+            e.Cursor = ht switch
+            {
+                10 or 11 => System.Windows.Input.Cursors.SizeWE,
+                12 or 15 => System.Windows.Input.Cursors.SizeNS,
+                13 or 17 => System.Windows.Input.Cursors.SizeNWSE,
+                _ => System.Windows.Input.Cursors.SizeNESW,
+            };
+            e.Handled = true;
+        }
+
+        // DefWindowProc's SC_SIZE loop for a press on the resize border, within the window's minimum and
+        // maximum size, as WM_GETMINMAXINFO keeps it.
+        private bool _BeginResizeFromBorder(Point p)
+        {
+            MS.Internal.Interop.IPlatformWindow platform = _EdgeResizedWindow();
+            int ht = platform == null ? 0 : _ResizeBorderHit(p);
+            if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") is "1" or "2")
+                Console.Error.WriteLine($"[win] chrome press ({p.X:0.#},{p.Y:0.#}) in {_window.ActualWidth:0.#}x{_window.ActualHeight:0.#} border={_chromeInfo?.ResizeBorderThickness} resize={_window.ResizeMode} state={_window.WindowState} platform={MS.Internal.Interop.PlatformWindow.FromHandle(_hwnd)?.GetType().Name} edges={platform != null} -> ht {ht}");
+            if (ht == 0) return false;
+            Matrix toDevice = PresentationSource.FromVisual(_window)?.CompositionTarget?.TransformToDevice ?? Matrix.Identity;
+            static int Px(double dips, double scale) => double.IsInfinity(dips) || double.IsNaN(dips) || dips <= 0 ? 0 : (int)Math.Round(dips * scale);
+            return platform.BeginResizeDrag(ht,
+                Px(_window.MinWidth, toDevice.M11), Px(_window.MinHeight, toDevice.M22),
+                Px(_window.MaxWidth, toDevice.M11), Px(_window.MaxHeight, toDevice.M22));
         }
 
         private void _OnCaptionMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             if (_chromeInfo == null || e.Handled) return;
             Point p = e.GetPosition(_window);
+            if (_BeginResizeFromBorder(p))
+            {
+                e.Handled = true;
+                return;
+            }
             Thickness border = _chromeInfo.ResizeBorderThickness;
             // the top band: resize border and caption (the platform window resizes from its own edges)
             if (p.Y < 0 || p.Y >= border.Top + _chromeInfo.CaptionHeight) return;

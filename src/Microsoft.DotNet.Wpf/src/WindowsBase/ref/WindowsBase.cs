@@ -114,6 +114,8 @@ namespace MS.Internal.Interop
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void SetVisible(bool visible) { }
         public void BeginMoveDrag() { }
+        public bool ResizesFromEdges { get { throw null; } }
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight) { throw null; }
         public void Destroy() { }
         public static MS.Internal.Interop.BrowserWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -426,6 +428,8 @@ namespace MS.Internal.Interop
         void SetChromeless(bool chromeless) { }
         void GetResizeMode(out bool canResize, out bool canMinimize) { throw null; }
         void BeginMoveDrag();
+        bool ResizesFromEdges { get { throw null; } }
+        bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight) { throw null; }
         void Destroy();
         double GetBackingScale();
         void GetClientScreenOriginPixels(out int sx, out int sy);
@@ -472,6 +476,13 @@ namespace MS.Internal.Interop
     }
     public static partial class PlatformWindow
     {
+        public static System.Action<System.IntPtr> DisabledWindowPressed { get { throw null; } set { } }
+        public static void RegisterThreadWindows(string toolkit, System.Func<System.IntPtr[]> list, System.Action<System.IntPtr, bool> enable) { }
+        public static object DisableOtherThreadWindows(string toolkit) { throw null; }
+        public static void EnableThreadWindows(object disabled) { }
+        public static bool IsWindowDisabled(System.IntPtr handle) { throw null; }
+        public static System.IntPtr[] DisabledWindows() { throw null; }
+        public static bool SetWindowEnabled(System.IntPtr handle, bool enabled) { throw null; }
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static MS.Internal.Interop.IPlatformWindow FromHandle(System.IntPtr handle) { throw null; }
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }

@@ -309,6 +309,7 @@ namespace MS.Win32
                     // Register the handle so off-Windows SendMessage (e.g. Window.Close()'s WM_CLOSE)
                     // can be routed synchronously to this wrapper's managed WndProc (see DispatchMessage).
                     lock (s_byHandleLock) { s_byHandle[_handle] = this; }
+                    SendCreationMinMaxInfo();
                 }
                 else
                 {
@@ -687,6 +688,79 @@ namespace MS.Win32
                 Console.Error.WriteLine($"[win] NCHITTEST ({x},{y}) -> {(handled ? (int)(long)result : -1)} window=({ox},{oy} {ow}x{oh})");
             }
             return handled ? (int)(long)result : HTCLIENT;
+        }
+
+        /// <summary>
+        /// The right button over a window that draws its own frame, where WM_NCHITTEST answers something
+        /// other than the client (Telerik's RadRibbonWindow's caption): the system's, as Windows has it --
+        /// WM_NCRBUTTONDOWN and WM_NCRBUTTONUP to the window, and the app never sees a client right-click.
+        /// What DefWindowProc does with a press on the caption it does here when the window does not:
+        /// WM_CONTEXTMENU, and if nobody takes that either, the window menu. A window whose procedure
+        /// showed a menu of its own on the release (WindowChrome shows the window menu from
+        /// WM_NCRBUTTONUP, and leaves the message unhandled) does not get a second one.
+        /// <paramref name="x"/>, <paramref name="y"/>: screen device pixels. True when consumed.
+        /// </summary>
+        internal bool NonClientRightButton(bool down, int x, int y)
+        {
+            const int HTCLIENT = 1, HTCAPTION = 2, HTSYSMENU = 3;
+            const int WM_NCRBUTTONDOWN = 0x00A4, WM_NCRBUTTONUP = 0x00A5, WM_CONTEXTMENU = 0x007B;
+            if (_handle == IntPtr.Zero) return false;
+            int hit = NonClientHitTest(x, y);
+            if (hit == HTCLIENT || hit <= 0) return false;   // the client, HTNOWHERE, HTTRANSPARENT, HTERROR
+            IntPtr lParam = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
+            bool handled = false;
+            var tracked = AppContext.GetData("WpfWebGpu.Win32.MenusTracked") as Func<int>;
+            int before = tracked?.Invoke() ?? 0;
+            try { WndProc(_handle, down ? WM_NCRBUTTONDOWN : WM_NCRBUTTONUP, (IntPtr)hit, lParam, ref handled); }
+            catch { return true; }
+            if (down || handled || hit is not (HTCAPTION or HTSYSMENU)) return true;
+            if (tracked != null && tracked() != before) return true;
+            handled = false;
+            try { WndProc(_handle, WM_CONTEXTMENU, _handle, lParam, ref handled); }
+            catch { return true; }
+            if (!handled && AppContext.GetData("WpfWebGpu.Win32.ShowSystemMenu") is Func<IntPtr, int, int, bool> show)
+                show(_handle, x, y);
+            return true;
+        }
+
+        /// <summary>
+        /// WM_GETMINMAXINFO, which CreateWindowEx sends a window before it returns, filled with what
+        /// DefWindowProc puts there: maximized, the primary monitor overhung by the frame; tracked, no
+        /// bigger than the virtual screen with its frame (SM_CXMAXTRACK/SM_CYMAXTRACK). Window keeps the
+        /// tracking limit and measures its content within it -- a SizeToContent window too, whose content
+        /// then lays out under a finite height. Without it the limit was infinite, and a template whose
+        /// content spans a fixed-height caption row and a star row (the app's PersistentWindow: an
+        /// Export Options dialog) had the caption row grown to half the content, as Grid shares a
+        /// spanning cell between rows it treats as Auto when the height is unbounded.
+        /// </summary>
+        private void SendCreationMinMaxInfo()
+        {
+            const int WM_GETMINMAXINFO = 0x0024;
+            const int Frame = 8;   // SM_CXFRAME + SM_CXPADDEDBORDER at 96 DPI, scaled below
+            if (_handle == IntPtr.Zero) return;
+            if (!MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(out int ml, out int mt, out int mr, out int mb, out _, out _, out _, out _))
+                return;
+            if (!MS.Internal.Interop.PlatformWindow.GetVirtualScreenPixels(out _, out _, out int vw, out int vh) || vw <= 0 || vh <= 0)
+            {
+                vw = mr - ml;
+                vh = mb - mt;
+            }
+            double scale = _platformWindow?.GetBackingScale() ?? 1.0;
+            int f = (int)Math.Round(Frame * (scale > 0 ? scale : 1.0));
+            // MINMAXINFO: POINT ptReserved, ptMaxSize, ptMaxPosition, ptMinTrackSize, ptMaxTrackSize.
+            int[] init = { 0, 0, mr - ml + 2 * f, mb - mt + 2 * f, ml - f, mt - f, 0, 0, vw + 2 * f, vh + 2 * f };
+            IntPtr p = Marshal.AllocHGlobal(init.Length * sizeof(int));
+            try
+            {
+                Marshal.Copy(init, 0, p, init.Length);
+                bool handled = false;
+                try { WndProc(_handle, WM_GETMINMAXINFO, IntPtr.Zero, p, ref handled); }
+                catch { }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(p);
+            }
         }
 
         private int[] QueryMaximizedRect(int[] q)

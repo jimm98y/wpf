@@ -414,7 +414,9 @@ public static unsafe partial class Exports
 
     private static bool IsEnabled(object? o) => Ui(o, () => o switch
     {
-        HwndSource s when s.RootVisual is UIElement e => e.IsEnabled,
+        // A WPF window's WS_DISABLED is the platform layer's flag (PlatformWindow.SetWindowEnabled), not
+        // its content's IsEnabled: a disabled window keeps its look and takes no input.
+        HwndSource s => !MS.Internal.Interop.PlatformWindow.IsWindowDisabled(s.Handle),
         Forms.Control c => c.Enabled,
         AppWindow a => (a.Style & WS_DISABLED) == 0,
         _ => false,
@@ -511,7 +513,14 @@ public static unsafe partial class Exports
         bool wasDisabled = !IsEnabled(o);
         Ui(o, () =>
         {
-            if (o is HwndSource s && s.RootVisual is UIElement e) e.IsEnabled = enable != 0;
+            if (o is HwndSource s)
+            {
+                MS.Internal.Interop.PlatformWindow.SetWindowEnabled(s.Handle, enable != 0);
+                // EnableWindow(FALSE) sends WM_CANCELMODE: the window gives up the mouse capture.
+                if (enable == 0 && System.Windows.Input.Mouse.Captured is DependencyObject held
+                    && PresentationSource.FromDependencyObject(held) == s)
+                    System.Windows.Input.Mouse.Capture(null);
+            }
             else if (o is Forms.Control c) c.Enabled = enable != 0;
             else if (o is AppWindow a) a.Style = enable != 0 ? a.Style & ~WS_DISABLED : a.Style | WS_DISABLED;
             return 0;
@@ -1137,6 +1146,16 @@ public static unsafe partial class Exports
 
     // WNDCLASSEXW: cbSize, style, lpfnWndProc, cbClsExtra, cbWndExtra, hInstance, hIcon, hCursor,
     // hbrBackground, lpszMenuName, lpszClassName, hIconSm. WNDCLASSW is the same without cbSize/hIconSm.
+    // The offsets follow the pointer size: 80 bytes with the class name at +64 on 64-bit, 48 and +40 on
+    // 32-bit (WebAssembly), where reading the 64-bit layout failed every registration and the window
+    // the class was for (WPF's message window under WindowChrome) was never created.
+    private static readonly int PtrSize = sizeof(nint);
+    private static readonly uint SizeOfWndClassEx = (uint)(PtrSize == 8 ? 80 : 48);
+    private static nint ExProc(byte* wc) => *(nint*)(wc + 8);
+    private static char* ExClassName(byte* wc) => *(char**)(wc + 8 + PtrSize + 8 + 4 * PtrSize + PtrSize);
+    private static nint Proc(byte* wc) => *(nint*)(wc + PtrSize);
+    private static char* ClassName(byte* wc) => *(char**)(wc + 2 * PtrSize + 8 + 4 * PtrSize + PtrSize);
+
     private static ushort RegisterClassCore(nint wndProc, char* className, bool either = false)
     {
         string? name = either && (nuint)className >= 0x10000 ? ReadEither((byte*)className) : ClassArg(className);
@@ -1153,20 +1172,19 @@ public static unsafe partial class Exports
     [Win32Export("RegisterClassExW")]
     public static ushort RegisterClassExW(byte* wc)
     {
-        if (*(uint*)wc != 80) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
-        return RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64));
+        if (*(uint*)wc != SizeOfWndClassEx) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
+        return RegisterClassCore(ExProc(wc), ExClassName(wc));
     }
 
-    [Win32Export("RegisterClassW")] public static ushort RegisterClassW(byte* wc) => RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64));
+    [Win32Export("RegisterClassW")] public static ushort RegisterClassW(byte* wc) => RegisterClassCore(Proc(wc), ClassName(wc));
     // The class name of the undecorated imports is UTF-8 or UTF-16 by the import's CharSet; see ReadEither.
-    // (WNDCLASSW and WNDCLASSEXW put lpszClassName at the same offset on 64-bit.)
-    [Win32Export("RegisterClass", "RegisterClassA")] public static ushort RegisterClassBare(byte* wc) => RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64), either: true);
+    [Win32Export("RegisterClass", "RegisterClassA")] public static ushort RegisterClassBare(byte* wc) => RegisterClassCore(Proc(wc), ClassName(wc), either: true);
 
     [Win32Export("RegisterClassEx", "RegisterClassExA")]
     public static ushort RegisterClassExBare(byte* wc)
     {
-        if (*(uint*)wc != 80) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
-        return RegisterClassCore(*(nint*)(wc + 8), *(char**)(wc + 64), either: true);
+        if (*(uint*)wc != SizeOfWndClassEx) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
+        return RegisterClassCore(ExProc(wc), ExClassName(wc), either: true);
     }
 
     [Win32Export("UnregisterClassW", "UnregisterClass", "UnregisterClassA")]
@@ -1181,8 +1199,10 @@ public static unsafe partial class Exports
         if (className == null || !s_classes.TryGetValue(className, out var cls))
         {
             // A system class (BUTTON, EDIT, STATIC, a common control): there is no Win32 control
-            // library behind it here.
-            LogOnce("class:" + className, $"win32: CreateWindowEx of class '{className}' is not supported");
+            // library behind it here. Or a class that was never registered -- as Windows fails a
+            // registration whose WNDCLASSEX is laid out wrongly (Telerik's message window puts its
+            // strings first, so cbSize is a pointer), and the window then fails there too.
+            LogOnce("class:" + className, $"win32: CreateWindowEx of class '{className}': no such class (ERROR_CANNOT_FIND_WND_CLASS)");
             SetLastError(1407);   // ERROR_CANNOT_FIND_WND_CLASS
             return 0;
         }
@@ -1317,18 +1337,22 @@ internal sealed unsafe class AppWindow
     /// <summary>WM_NCCREATE then WM_CREATE, with a CREATESTRUCT as Windows passes it.</summary>
     public bool Create(void* param)
     {
-        // CREATESTRUCTW: lpCreateParams, hInstance, hMenu, hwndParent, cy, cx, y, x, style, lpszName, lpszClass, dwExStyle.
+        // CREATESTRUCTW: lpCreateParams, hInstance, hMenu, hwndParent, cy, cx, y, x, style, lpszName,
+        // lpszClass, dwExStyle -- four pointers, five ints, two pointers (aligned), an int: 80 bytes on
+        // 64-bit, 48 on 32-bit (WebAssembly).
+        int p = sizeof(nint);
+        int names = (4 * p + 20 + p - 1) & ~(p - 1);
         byte* cs = stackalloc byte[80];
         new Span<byte>(cs, 80).Clear();
         *(void**)cs = param;
-        *(nint*)(cs + 8) = Exports.ExeModule;
-        *(nint*)(cs + 24) = Parent;
-        *(int*)(cs + 32) = Rect.Bottom - Rect.Top;
-        *(int*)(cs + 36) = Rect.Right - Rect.Left;
-        *(int*)(cs + 40) = Rect.Top;
-        *(int*)(cs + 44) = Rect.Left;
-        *(int*)(cs + 48) = (int)Style;
-        *(uint*)(cs + 72) = ExStyle;
+        *(nint*)(cs + p) = Exports.ExeModule;
+        *(nint*)(cs + 3 * p) = Parent;
+        *(int*)(cs + 4 * p) = Rect.Bottom - Rect.Top;
+        *(int*)(cs + 4 * p + 4) = Rect.Right - Rect.Left;
+        *(int*)(cs + 4 * p + 8) = Rect.Top;
+        *(int*)(cs + 4 * p + 12) = Rect.Left;
+        *(int*)(cs + 4 * p + 16) = (int)Style;
+        *(uint*)(cs + names + 2 * p) = ExStyle;
         if (Dispatch(0x81, 0, (nint)cs) == 0) return false;        // WM_NCCREATE
         return Dispatch(0x1, 0, (nint)cs) != -1;                    // WM_CREATE
     }

@@ -24,6 +24,7 @@ public static unsafe partial class Exports
         AppContext.SetData("WpfWebGpu.SetEvent", (Action<IntPtr>)(h => SetEvent(h)));
         RegisterGdi();
         RegisterHooks();
+        RegisterMenus();
     }
 
     /// <summary>

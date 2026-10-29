@@ -233,6 +233,21 @@ namespace MS.Internal.Interop
         /// </remarks>
         void BeginMoveDrag();
 
+        /// <summary>
+        /// Whether the window is resized from its edges by this layer -- <see cref="BeginResizeDrag"/>
+        /// and the resize cursors -- rather than by the platform's own window frame. True for a head
+        /// whose windows have no frame of their own to be resized by (the browser's canvases).
+        /// </summary>
+        bool ResizesFromEdges => false;
+
+        /// <summary>
+        /// Begin an interactive resize from the edge or corner <paramref name="hitTest"/> names (WM_NCHITTEST's
+        /// HTLEFT..HTBOTTOMRIGHT, 10..17), for a press there: DefWindowProc's SC_SIZE loop on Windows. The
+        /// size stays within the minimum and maximum (device pixels; 0 for none), as WM_GETMINMAXINFO
+        /// keeps it there. False when the head does not resize this way.
+        /// </summary>
+        bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight) => false;
+
         void Destroy();
 
         /// <summary>Raised (on the UI/pump thread) when the window's backing scale factor changes,
@@ -244,6 +259,101 @@ namespace MS.Internal.Interop
     /// <summary>Dispatches the handle-based windowing queries to the platform backend.</summary>
     public static class PlatformWindow
     {
+        // ---- enabled state (WS_DISABLED) -------------------------------------------------------
+        //
+        // EnableWindow's flag, kept per window: a disabled window takes no mouse or keyboard input and
+        // cannot be closed from its title bar, while its content keeps its look -- WPF's IsEnabled is
+        // the content's own state and stays as it was. ShowDialog disables the thread's other windows
+        // this way, as it does with EnableWindow on Windows; the input providers and the heads ask.
+
+        private static readonly System.Collections.Generic.HashSet<IntPtr> s_disabled = new();
+
+        /// <summary>Whether EnableWindow(false) is in force on the window (WS_DISABLED).</summary>
+        public static bool IsWindowDisabled(IntPtr handle)
+        {
+            if (handle == IntPtr.Zero) return false;
+            lock (s_disabled) return s_disabled.Contains(handle);
+        }
+
+        /// <summary>The windows EnableWindow(false) is in force on, for a modal dialog of another toolkit to be
+        /// kept above (an ownerless dialog's owner is the window that was active, on Windows).</summary>
+        public static IntPtr[] DisabledWindows()
+        {
+            lock (s_disabled)
+            {
+                var all = new IntPtr[s_disabled.Count];
+                s_disabled.CopyTo(all);
+                return all;
+            }
+        }
+
+        /// <summary>EnableWindow: sets or clears the window's disabled flag; answers whether it was disabled.</summary>
+        public static bool SetWindowEnabled(IntPtr handle, bool enabled)
+        {
+            if (handle == IntPtr.Zero) return false;
+            lock (s_disabled) return enabled ? s_disabled.Remove(handle) : !s_disabled.Add(handle);
+        }
+
+        /// <summary>
+        /// A press on a disabled window, which Windows answers by activating the window's enabled
+        /// owned popup -- the modal dialog over it -- instead of delivering it. Set by the dialog
+        /// while it is up (Window.ShowDialog); null otherwise.
+        /// </summary>
+        public static Action<IntPtr> DisabledWindowPressed { get; set; }
+
+        // ---- the thread's windows, whichever toolkit made them ----------------------------------
+        //
+        // A modal dialog disables every visible, enabled window on its thread (EnumThreadWindows and
+        // EnableWindow), WPF's and WinForms' alike. Each toolkit here knows only its own, so each
+        // registers how to list them and how to enable one; a dialog of either disables the others'
+        // through this and gives them back when it closes.
+
+        private static readonly System.Collections.Generic.Dictionary<string, (Func<IntPtr[]> List, Action<IntPtr, bool> Enable)> s_threadWindows = new();
+
+        /// <summary>Registers a toolkit's windows: <paramref name="list"/> answers its visible, enabled
+        /// top-level windows on the calling thread; <paramref name="enable"/> is its EnableWindow.</summary>
+        public static void RegisterThreadWindows(string toolkit, Func<IntPtr[]> list, Action<IntPtr, bool> enable)
+        {
+            lock (s_threadWindows) s_threadWindows[toolkit] = (list, enable);
+        }
+
+        /// <summary>
+        /// Disables, for a modal dialog of <paramref name="toolkit"/>, the visible enabled windows of every
+        /// other toolkit on this thread. The answer is what to give to <see cref="EnableThreadWindows"/>
+        /// when the dialog closes.
+        /// </summary>
+        public static object DisableOtherThreadWindows(string toolkit)
+        {
+            (Func<IntPtr[]> List, Action<IntPtr, bool> Enable)[] others;
+            lock (s_threadWindows)
+            {
+                var list = new System.Collections.Generic.List<(Func<IntPtr[]>, Action<IntPtr, bool>)>();
+                foreach (var e in s_threadWindows) if (e.Key != toolkit) list.Add(e.Value);
+                others = list.ToArray();
+            }
+            var disabled = new System.Collections.Generic.List<(IntPtr, Action<IntPtr, bool>)>();
+            foreach (var (listWindows, enable) in others)
+            {
+                IntPtr[] handles;
+                try { handles = listWindows(); } catch { continue; }
+                foreach (IntPtr h in handles ?? Array.Empty<IntPtr>())
+                {
+                    try { enable(h, false); disabled.Add((h, enable)); } catch { }
+                }
+            }
+            return disabled;
+        }
+
+        /// <summary>Enables again what <see cref="DisableOtherThreadWindows"/> disabled.</summary>
+        public static void EnableThreadWindows(object disabled)
+        {
+            if (disabled is not System.Collections.Generic.List<(IntPtr, Action<IntPtr, bool>)> list) return;
+            foreach (var (h, enable) in list)
+            {
+                try { enable(h, true); } catch { }
+            }
+        }
+
         public static IPlatformWindow FromHandle(IntPtr handle)
         {
             if (OperatingSystem.IsBrowser())

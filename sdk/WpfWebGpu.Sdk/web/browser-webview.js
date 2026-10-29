@@ -116,12 +116,56 @@ export function setVisible(handle, visible) {
     if (f) { f.el.style.display = visible ? 'block' : 'none'; }
 }
 
+// The app page is cross-origin isolated (COEP require-corp: the runtime's threads need it), and under
+// that a frame may show a cross-origin document only if the document opts in -- which an ordinary web
+// site does not, so Chrome showed its "blocked" page for every external one (Workbench's KB articles).
+// A credentialless frame may show any document: it gets cookies and storage of its own, kept for the
+// page's lifetime, instead of the browser's. Our own origin's documents keep the page's storage.
+function crossOrigin(uri) {
+    try { return new URL(uri, location.href).origin !== location.origin; } catch (e) { return false; }
+}
+
+// Most sites forbid being framed by another origin at all (X-Frame-Options, CSP frame-ancestors), which
+// no frame attribute gets past. Served by wpfrun serve, the page has a proxy that fetches such a site for
+// the frame without those headers (Serve.cs), at http://<site host>.localhost:<our port>/<its own path>
+// (.insecure.localhost for an http site). Asked once, at load; a page on a plain static host has none and
+// frames the site directly.
+let proxied = false;
+try {
+    fetch('/__proxy/', { method: 'HEAD', cache: 'no-store' }).then(r => { proxied = r.status === 204; }, () => { });
+} catch (e) { /* no fetch: no proxy */ }
+
+function viaProxy(uri) {
+    try {
+        const u = new URL(uri, location.href);
+        if (u.port !== '' || (u.protocol !== 'https:' && u.protocol !== 'http:')) { return uri; }
+        return 'http://' + u.hostname + (u.protocol === 'http:' ? '.insecure' : '') + '.localhost:' + location.port +
+            u.pathname + u.search + u.hash;
+    } catch (e) { return uri; }
+}
+
+// The site's own URL for one of the proxy's, which is what the app asked for and is told it is showing.
+function unproxy(href) {
+    try {
+        const u = new URL(href, location.href);
+        if (u.port !== location.port || !u.hostname.endsWith('.localhost')) { return href; }
+        const insecure = u.hostname.endsWith('.insecure.localhost');
+        const host = u.hostname.slice(0, -(insecure ? '.insecure.localhost' : '.localhost').length);
+        if (!host) { return href; }
+        return (insecure ? 'http://' : 'https://') + host + u.pathname + u.search + u.hash;
+    } catch (e) { return href; }
+}
+
 export function navigate(handle, uri) {
     const f = frames.get(handle);
     if (!f) { return; }
     f.ready = false;
     f.el.removeAttribute('srcdoc');
-    f.el.src = uri;
+    const away = crossOrigin(uri);
+    // Set before the navigation it applies to. Through the proxy the document comes with the headers
+    // that let the isolated page embed it.
+    f.el.credentialless = away && !proxied;
+    f.el.src = away && proxied ? viaProxy(uri) : uri;
 }
 
 export function navigateToString(handle, html) {
@@ -186,10 +230,10 @@ export function getSource(handle) {
     if (!f) { return null; }
 
     try {
-        return f.el.contentWindow.location.href;
+        return unproxy(f.el.contentWindow.location.href);
     } catch (e) {
         // Cross-origin: only what we asked for, which is still the honest answer to "where is it".
-        return f.el.src || null;
+        return f.el.src ? unproxy(f.el.src) : null;
     }
 }
 

@@ -28,6 +28,8 @@
 
 #undef DebugRunLoop
 
+extern alias WindowsBase;
+
 using Microsoft.Win32;
 using System;
 using System.Drawing;
@@ -675,6 +677,29 @@ namespace System.Windows.Forms
 				WindowsFormsSynchronizationContext.Uninstall ();
 		}
 
+		private const string WinFormsToolkit = "winforms";
+
+		/// <summary>
+		/// The thread's forms, for a modal dialog of another toolkit (a WPF Window's ShowDialog), which on
+		/// Windows disables every visible, enabled window of its thread: the forms' windows are disabled
+		/// as this toolkit's own modal loop disables them (EnableWindow, with no change to Enabled).
+		/// </summary>
+		internal static void RegisterThreadWindows ()
+		{
+			WindowsBase::MS.Internal.Interop.PlatformWindow.RegisterThreadWindows (WinFormsToolkit, () => {
+				var handles = new System.Collections.Generic.List<IntPtr> ();
+				lock (forms) {
+					foreach (Form f in forms) {
+						if (f.InvokeRequired || !f.IsHandleCreated || !f.Visible || f.Parent != null)
+							continue;
+						if (XplatUI.IsEnabled (f.Handle))
+							handles.Add (f.Handle);
+					}
+				}
+				return handles.ToArray ();
+			}, (handle, enable) => XplatUI.EnableWindow (handle, enable));
+		}
+
 		private static void DisableFormsForModalLoop (Queue toplevels, ApplicationContext context)
 		{
 			Form f;
@@ -802,6 +827,9 @@ namespace System.Windows.Forms
 			public bool Modal;
 			public ApplicationContext Context;
 			public Queue TopLevels;
+			// the other toolkits' windows (WPF's) this modal loop disabled, as EnumThreadWindows has all of
+			// the thread's windows disabled on Windows
+			public object OtherToolkitWindows;
 			public MWFThread Thread;
 			public ApplicationContext PreviousContext;
 			public object QueueId;
@@ -862,6 +890,7 @@ namespace System.Windows.Forms
 			if (Modal) {
 				s.TopLevels = new Queue ();
 				DisableFormsForModalLoop (s.TopLevels, context);
+				s.OtherToolkitWindows = WindowsBase::MS.Internal.Interop.PlatformWindow.DisableOtherThreadWindows (WinFormsToolkit);
 				
 				// FIXME - need activate?
 				/* make sure the MainForm is enabled */
@@ -1019,6 +1048,8 @@ namespace System.Windows.Forms
 				context.MainForm = null;
 
 				EnableFormsForModalLoop (s.TopLevels, context);
+				WindowsBase::MS.Internal.Interop.PlatformWindow.EnableThreadWindows (s.OtherToolkitWindows);
+				s.OtherToolkitWindows = null;
 				
 				if (old != null && old.IsHandleCreated) {
 					XplatUI.SetModal (old.Handle, false);

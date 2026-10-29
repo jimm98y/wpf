@@ -384,6 +384,13 @@ namespace MS.Internal.Interop
                 // Flushing the Dispatcher to Render priority paints it now. This is NOT the recursion
                 // that made the pump dangerous: no AppKit event is dequeued and no input is dispatched,
                 // so nothing can re-enter the application the way PumpEvents did.
+                // Invoke at a priority below Send queues the work and waits for it in a nested frame,
+                // whose wait is AppKit's event wait -- which dequeued and DISPATCHED input: the release of
+                // the very press being handled, delivered inside it (Workbench's File button, its menu
+                // opened by the press, saw the click end before it had begun, and the menu took no
+                // clicks). Input stays queued while the frame runs (s_inputHeld), as it stays in the
+                // queue on Windows while a handler creates a window.
+                s_inputHeld++;
                 try
                 {
                     // Background, NOT Render: invoking AT a priority runs everything at that priority
@@ -397,6 +404,7 @@ namespace MS.Internal.Interop
                         () => { }, System.Windows.Threading.DispatcherPriority.Background);
                 }
                 catch { /* no dispatcher on this thread, or it is shutting down */ }
+                finally { s_inputHeld--; }
 
                 // A WPF render is not enough on its own: a freshly ordered-in window's CAMetalLayer
                 // stays OCCLUDED until the window-server handshake completes, and while it is occluded
@@ -2631,7 +2639,7 @@ namespace MS.Internal.Interop
             // event, though: a window AppKit is still resizing when no loop of its own is on the stack
             // (one dropped on the screen's top edge, tiling into place) finishes only through the
             // queue, and a pump that left it alone spun forever (Workbench froze).
-            if (s_dispatchDepth > 0 && AnyWindowInLiveResize(app))
+            if ((s_dispatchDepth > 0 && AnyWindowInLiveResize(app)) || s_inputHeld > 0)
             {
                 IntPtr current = CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent());
                 try { CFRunLoopRunInMode(current != IntPtr.Zero ? current : mode, maxMilliseconds / 1000.0, true); }
@@ -2737,6 +2745,10 @@ namespace MS.Internal.Interop
             try { DispatchEventCore(evt); }
             finally { s_dispatchDepth--; }
         }
+
+        // Above 0 while a window created inside input handling is painted (PumpUntilVisible): pumps run
+        // the run loop and leave the event queue alone, so no input is dispatched inside the handler.
+        [ThreadStatic] private static int s_inputHeld;
 
         // How deep the main thread is in DispatchEvent: above 0, any loop AppKit runs for the event
         // (a live resize, a window drag) is on the stack below the current pump.
@@ -3007,6 +3019,8 @@ namespace MS.Internal.Interop
                             NSMouseMoved = 5, NSLeftMouseDragged = 6, NSRightMouseDragged = 7,
                             NSScrollWheel = 22, NSOtherMouseDown = 25, NSOtherMouseUp = 26, NSOtherMouseDragged = 27;
 
+        [DllImport("/System/Library/Frameworks/AppKit.framework/AppKit")] private static extern void NSBeep();
+
         private static bool IsMouseType(ulong t) =>
             t == NSLeftMouseDown || t == NSLeftMouseUp || t == NSRightMouseDown || t == NSRightMouseUp ||
             t == NSMouseMoved || t == NSLeftMouseDragged || t == NSRightMouseDragged ||
@@ -3025,6 +3039,17 @@ namespace MS.Internal.Interop
             CocoaWindow w = view != IntPtr.Zero ? FromHandle(view) : null;
 
             if (s_captionDrag != null && CaptionDragEvent(type)) { s_consumedByNonClient = true; return; }
+            // A press on a disabled window (EnableWindow(false): the owner of a modal dialog) goes to
+            // nobody, AppKit's title bar and its buttons included -- the window can be neither moved nor
+            // closed -- and, with the system's beep, activates the dialog instead, as on Windows.
+            if (w != null && (type == NSLeftMouseDown || type == NSRightMouseDown || type == NSOtherMouseDown)
+                && PlatformWindow.IsWindowDisabled(w.Handle))
+            {
+                NSBeep();
+                PlatformWindow.DisabledWindowPressed?.Invoke(w.Handle);
+                s_consumedByNonClient = true;
+                return;
+            }
             if (type == NSLeftMouseDown && w != null && w.NonClientPress(evt)) { s_consumedByNonClient = true; return; }
 
             // An event we cannot attribute to a live window is DROPPED, and dropping a mouse-UP is not
@@ -3032,6 +3057,41 @@ namespace MS.Internal.Interop
             // never given up and the app stops responding from then on. This happens for real -- a drag
             // that creates or destroys windows (undocking makes a floating window, docking closes it)
             // leaves AppKit holding events whose window is gone or not ours.
+            // A move AppKit hands over with no window (the pointer over one of ours while another window
+            // is key -- a menu's or a drop-down's popup, a panel the press just opened) is still a move
+            // over a window: WM_MOUSEMOVE goes to the window under the cursor, or to the one holding the
+            // capture. Dropped, hover stopped while it lasted, and WPF kept the last element it had seen
+            // under the mouse -- Workbench's File button, which holds the capture while its menu is open:
+            // the next press in the menu was a press outside it, and closed it.
+            if (window == IntPtr.Zero && (type == NSMouseMoved || type == NSLeftMouseDragged || type == NSRightMouseDragged || type == NSOtherMouseDragged))
+            {
+                NSPoint gp = SendPoint(objc_getClass("NSEvent"), Sel("mouseLocation"));   // screen points, bottom-left
+                IntPtr target = MouseCaptureHandle;
+                CocoaWindow tw = target != IntPtr.Zero ? FromHandle(target) : null;
+                double ts = tw?.GetBackingScale() ?? 1.0;
+                if (tw == null)
+                {
+                    // the window under the cursor: hit-tested in device pixels at the main display's scale
+                    IntPtr mainScreen = Send(objc_getClass("NSScreen"), Sel("mainScreen"));
+                    double probe = mainScreen != IntPtr.Zero ? SendDouble(mainScreen, Sel("backingScaleFactor")) : 1.0;
+                    if (!(probe > 0)) probe = 1.0;
+                    IntPtr under = HitTest((int)Math.Round(gp.x * probe), (int)Math.Round((PrimaryScreenHeightPoints() - gp.y) * probe));
+                    tw = under != IntPtr.Zero ? FromHandle(under) : null;
+                    target = under;
+                    ts = tw?.GetBackingScale() ?? 1.0;
+                }
+                if (s_traceMoves)
+                    Console.Error.WriteLine($"[input] windowless move at ({gp.x:0},{gp.y:0})pt capture=0x{MouseCaptureHandle:x} -> {(tw != null ? $"0x{target:x}" : "no window there")}");
+                if (tw != null)
+                {
+                    int gx = (int)Math.Round(gp.x * ts);
+                    int gy = (int)Math.Round((PrimaryScreenHeightPoints() - gp.y) * ts);
+                    tw.GetClientScreenOriginPixels(out int tox, out int toy);
+                    handler(new CocoaMouseMessage(target, (int)type, 0, gx - tox, gy - toy, 0, Environment.TickCount));
+                    return;
+                }
+            }
+
             if (window == IntPtr.Zero || w == null)
             {
                 bool isUp = type == NSLeftMouseUp || type == NSRightMouseUp || type == NSOtherMouseUp;
@@ -3148,8 +3208,8 @@ namespace MS.Internal.Interop
             // window AppKit delivered it to, who holds capture, and where it was finally routed. This
             // is what tells apart "the event never arrived", "it went to the wrong window" and "capture
             // is stuck", which look identical from the outside -- the app simply stops responding.
-            if (s_traceInput && type != NSMouseMoved && type != NSLeftMouseDragged &&
-                type != NSRightMouseDragged && type != NSOtherMouseDragged)
+            if (s_traceMoves || (s_traceInput && type != NSMouseMoved && type != NSLeftMouseDragged &&
+                type != NSRightMouseDragged && type != NSOtherMouseDragged))
             {
                 Console.Error.WriteLine(
                     $"[input] type={type} evtWin=0x{Send(window, Sel("contentView")):x} " +
@@ -3165,7 +3225,9 @@ namespace MS.Internal.Interop
             handler(new CocoaMouseMessage(HandleOf(view), (int)type, button, x, y, wheel, Environment.TickCount));
         }
 
-        private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1";
+        private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") is "1" or "2";
+        // WF_TRACE_INPUT=2: the moves too.
+        private static readonly bool s_traceMoves = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "2";
         // WF_TRACE_KEYS=1: each key event as it reaches WPF's side, and the window it is for.
         private static readonly bool s_traceKeys = Environment.GetEnvironmentVariable("WF_TRACE_KEYS") == "1";
 

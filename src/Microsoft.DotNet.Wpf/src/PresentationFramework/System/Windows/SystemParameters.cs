@@ -5761,6 +5761,16 @@ namespace System.Windows
                 {
                     lock (_cacheValid)
                     {
+                        if (_setDpiX && !OperatingSystem.IsWindows())
+                        {
+                            // The screen DC's LOGPIXELSX is the system DPI, which off Windows is what Dpi
+                            // answers (FontCache.Util.Dpi); GetDC has no desktop to answer for and threw
+                            // here -- leaving WindowResizeBorderThickness, which had already marked itself
+                            // cached, at zero for good, and no WindowChrome window could be resized.
+                            _setDpiX = false;
+                            _dpiX = Dpi;
+                            _cacheValid[(int)CacheSlot.DpiX] = true;
+                        }
                         if (_setDpiX)
                         {
                             _setDpiX = false;

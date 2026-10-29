@@ -1109,6 +1109,14 @@ namespace System.Windows.Interop
         {
             if (_source == null || _site == null || _source.IsDisposed) return true;
 
+            // A disabled window (EnableWindow(false): the owner of a modal dialog) gets no keyboard
+            // input, as on Windows. The key's state is still the keyboard's.
+            if (MS.Internal.Interop.PlatformWindow.IsWindowDisabled(_source.Handle))
+            {
+                System.Windows.Input.Win32KeyboardDevice.TrackMacKey(virtualKey, (action & RawKeyboardActions.KeyDown) != 0);
+                return true;
+            }
+
             // Offered to the thread's message loop first, as the WM_KEYDOWN it stands for: on Windows a
             // window's messages come off the thread's queue through ComponentDispatcher, which is how a
             // WinForms loop hosting this tree sees them -- its message filters, DotNetBar's command
@@ -1169,6 +1177,7 @@ namespace System.Windows.Interop
         private void ReportMacText(char c, int timestamp)
         {
             if (_source == null || _site == null || _source.IsDisposed) return;
+            if (MS.Internal.Interop.PlatformWindow.IsWindowDisabled(_source.Handle)) return;
 
             RawTextInputReport report = new RawTextInputReport(
                 _source, InputMode.Foreground, timestamp,

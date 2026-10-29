@@ -1528,6 +1528,17 @@ internal sealed class CocoaHost : IWinFormsHost
     private static Action<IntPtr, IntPtr> s_wpfKeyTo;
     private static volatile bool s_wpfLoaded;
 
+    private static void OnWpfLoaded()
+    {
+        if (s_wpfLoaded) return;
+        s_wpfLoaded = true;
+        RegisterDisabledPress();
+    }
+
+    // In a method of its own: the JIT resolves WindowsBase only when it is called, after it has loaded.
+    private static void RegisterDisabledPress()
+        => WindowsBase::MS.Internal.Interop.PlatformWindow.DisabledWindowPressed ??= RaiseModalOnDisabledPress;
+
     static CocoaHost()
     {
         // Form.WindowState set by the application (DotNetBar's own caption buttons post SC_MINIMIZE,
@@ -1538,9 +1549,9 @@ internal sealed class CocoaHost : IWinFormsHost
         if (AppContext.GetData("WinFormsWebGpu.DrainMainWork") == null) AppContext.SetData("WinFormsWebGpu.DrainMainWork", (Action)DrainMainWork);
         // WPF's pump hands this host the events of its windows (CocoaWindow.ForeignEventHandler)
         AppContext.SetData("WinFormsWebGpu.CocoaEvents", (Func<IntPtr, bool>)RouteFromWpf);
-        AppDomain.CurrentDomain.AssemblyLoad += (_, e) => { if (e.LoadedAssembly.GetName().Name == "WindowsBase") s_wpfLoaded = true; };
+        AppDomain.CurrentDomain.AssemblyLoad += (_, e) => { if (e.LoadedAssembly.GetName().Name == "WindowsBase") OnWpfLoaded(); };
         foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
-            if (a.GetName().Name == "WindowsBase") s_wpfLoaded = true;
+            if (a.GetName().Name == "WindowsBase") OnWpfLoaded();
     }
 
     // Once WPF is in the process, give it its own events from our pump: its window class publishes
@@ -1663,10 +1674,41 @@ internal sealed class CocoaHost : IWinFormsHost
         CocoaHost parent = null;
         foreach (CocoaHost h in s_live) if (h != this && h._form == _form.Owner) parent = h;
         if (parent == null && s_lastActive != this && s_lastActive != null && s_live.Contains(s_lastActive) && !s_lastActive._form.Enabled) parent = s_lastActive;
-        if (parent?._window is not { } pw || pw == IntPtr.Zero) return;
+        IntPtr pw = parent?._window ?? IntPtr.Zero;
+        // ...or, with no form to be owned by, the WPF window it disabled: Workbench's About box over its WPF
+        // main window, which a click raised over the dialog -- the dialog went behind it, and the app sat
+        // blocked by a dialog nobody could see.
+        if (pw == IntPtr.Zero) pw = DisabledWpfWindow();
+        if (pw == IntPtr.Zero) return;
         SendPtrNInt(pw, Sel("addChildWindow:ordered:"), _window, 1);   // NSWindowAbove
         _modalParent = pw;
-        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' modal over '{parent._form.Text}'");
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' modal over '{parent?._form.Text ?? "a WPF window"}'");
+    }
+
+    /// <summary>The frontmost visible WPF window a modal loop has disabled (the platform layer's EnableWindow
+    /// flag), as NSWindow; zero when WPF is not in the process or has none.</summary>
+    private static IntPtr DisabledWpfWindow()
+    {
+        if (!s_wpfLoaded) return IntPtr.Zero;
+        IntPtr best = IntPtr.Zero;
+        nint bestIndex = nint.MaxValue;
+        foreach (IntPtr h in WindowsBase::MS.Internal.Interop.PlatformWindow.DisabledWindows())
+        {
+            if (WindowsBase::MS.Internal.Interop.PlatformWindow.FromHandle(h) is not WindowsBase::MS.Internal.Interop.CocoaWindow cw || cw.IsBorderless) continue;
+            IntPtr w = cw.Window;
+            if (w == IntPtr.Zero || (nint)Send(w, Sel("isVisible")) == 0) continue;
+            nint index = (nint)Send(w, Sel("orderedIndex"));   // 0 is frontmost
+            if (index < bestIndex) { bestIndex = index; best = w; }
+        }
+        return best;
+    }
+
+    /// <summary>A press on a disabled WPF window while a dialog of this host is modal: Windows activates the
+    /// dialog. (A WPF dialog puts its own answer in place while it is up.)</summary>
+    private static void RaiseModalOnDisabledPress(IntPtr handle)
+    {
+        if (ModalHost() is { } modal && modal._window != IntPtr.Zero)
+            SendVoidPtr(modal._window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
     }
 
     // Above the parent's other child windows too: an ElementHost's WPF windows are its children as

@@ -227,6 +227,7 @@ namespace System.Windows.Interop
             if (!OperatingSystem.IsWindows())
             {
                 _haveCapture = true;
+                s_captureGeneration++;
                 if (_source != null) MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = _source.Handle;
                 if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
                     Console.Error.WriteLine($"[input] ACQUIRE capture -> 0x{(_source?.Handle ?? IntPtr.Zero):x}");
@@ -324,23 +325,43 @@ namespace System.Windows.Interop
                 // reported with _source would be silently dropped, leaving capture stuck. Report it with
                 // the currently active source instead.
                 PresentationSource source = _source;
+                RawMouseActions cancel = RawMouseActions.CancelCapture;
                 MouseDevice md = _site?.CriticalInputManager?.PrimaryMouseDevice;
-                if (md?.CriticalActiveSource != null) source = md.CriticalActiveSource;
+                if (md?.CriticalActiveSource is { } active)
+                {
+                    if (!active.IsDisposed && active.CompositionTarget != null) source = active;
+                    // ...unless that source is gone -- a popup the release closed, whose window took the
+                    // mouse's last event: reported there, the cancel was skipped, WPF kept the capture
+                    // the platform had let go, and every later press went to the capturing element
+                    // (Workbench's File button, whose menu closed on the click meant for its About).
+                    // WM_CAPTURECHANGED reaches the window that had the capture on Windows: this one,
+                    // made the active source again.
+                    else cancel |= RawMouseActions.Activate;
+                }
 
+                int generation = s_captureGeneration;
                 if (source != null && _site != null && !source.IsDisposed && source.CompositionTarget != null)
                 {
+                    // (made active, the mouse is where this window last saw it)
+                    bool activating = (cancel & RawMouseActions.Activate) != 0;
                     RawMouseInputReport report = new RawMouseInputReport(
                         InputMode.Foreground, Environment.TickCount, source,
-                        RawMouseActions.CancelCapture, 0, 0, 0, IntPtr.Zero);
+                        cancel, activating ? _lastX : 0, activating ? _lastY : 0, 0, IntPtr.Zero);
                     // Process CancelCapture (clears Mouse.Captured, raises LostMouseCapture) while
                     // GetCapture() still reports this window -- so a ComboBox/Popup lost-capture handler
                     // does NOT reclaim capture (its reestablish is gated on GetCapture()==0). Then clear
                     // the tracked handle so subsequent GetCapture() correctly reports "no capture".
                     try { _site.ReportInput(report); } catch { }
                 }
-                MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = IntPtr.Zero;
+                // ...unless the capture was taken again while the cancel was processed: a lost-capture
+                // handler that re-captures at once (Telerik's drop-down button, its menu still open) has
+                // the capture now, as SetCapture from WM_CAPTURECHANGED would have it on Windows. Cleared
+                // anyway, WPF held a capture the platform did not, and each press in the menu went to the
+                // button and closed it.
+                if (s_captureGeneration == generation)
+                    MS.Internal.Interop.PlatformWindow.MouseCaptureHandle = IntPtr.Zero;
                 if (Environment.GetEnvironmentVariable("WF_TRACE_INPUT") == "1")
-                    Console.Error.WriteLine("[input] RELEASE capture");
+                    Console.Error.WriteLine(s_captureGeneration == generation ? "[input] RELEASE capture" : "[input] RELEASE capture (taken again meanwhile)");
                 return;
             }
 
@@ -1635,6 +1656,17 @@ namespace System.Windows.Interop
                 return;
             }
 
+            // A disabled window (EnableWindow(false): the owner of a modal dialog) gets no mouse input,
+            // as on Windows, where a press on it activates the dialog instead.
+            if (MS.Internal.Interop.PlatformWindow.IsWindowDisabled(_source.Handle))
+            {
+                const RawMouseActions presses = RawMouseActions.Button1Press | RawMouseActions.Button2Press | RawMouseActions.Button3Press
+                                              | RawMouseActions.Button4Press | RawMouseActions.Button5Press;
+                if ((actions & presses) != 0) MS.Internal.Interop.PlatformWindow.DisabledWindowPressed?.Invoke(_source.Handle);
+                Win32MouseDevice.TrackMacButtons(actions);
+                return;
+            }
+
             // Offered to the thread's message loop first, as the message it stands for (see the keyboard
             // provider's ReportMacKey): a WinForms loop hosting this tree closes its menus from its
             // message filters when the mouse is pressed elsewhere.
@@ -1643,17 +1675,22 @@ namespace System.Windows.Interop
                 (actions & RawMouseActions.Button2Press) != 0 ? 0x0204 : (actions & RawMouseActions.Button2Release) != 0 ? 0x0205 :
                 (actions & RawMouseActions.Button3Press) != 0 ? 0x0207 : (actions & RawMouseActions.Button3Release) != 0 ? 0x0208 :
                 (actions & RawMouseActions.AbsoluteMove) != 0 ? 0x0200 : 0;
+            int sx = x, sy = y;
+            if (message != 0 && MS.Internal.Interop.PlatformWindow.FromHandle(_source.Handle) is MS.Internal.Interop.IPlatformWindow window)
+            {
+                window.GetClientScreenOriginPixels(out int ox, out int oy);
+                sx += ox;
+                sy += oy;
+            }
+            // The right button on a self-drawn caption is the window's non-client input, not the
+            // client's (HwndWrapper.NonClientRightButton): the window menu, as on Windows.
+            if (message is 0x0204 or 0x0205 && _source is HwndSource hs && hs.HwndWrapper is { } wrapper
+                && wrapper.NonClientRightButton(message == 0x0204, sx, sy))
+                return;
             // The thread's WH_MOUSE hooks first (see the keyboard provider's ReportMacKey): DotNetBar
             // closes its open menu from one on a press anywhere outside it.
             if (message != 0 && AppContext.GetData("WpfWebGpu.Win32.MouseHook") is Func<int, int, int, IntPtr, int, bool> hook)
             {
-                int sx = x, sy = y;
-                if (MS.Internal.Interop.PlatformWindow.FromHandle(_source.Handle) is MS.Internal.Interop.IPlatformWindow window)
-                {
-                    window.GetClientScreenOriginPixels(out int ox, out int oy);
-                    sx += ox;
-                    sy += oy;
-                }
                 if (hook(message, sx, sy, _source.Handle, 1 /* HTCLIENT */)) return;
             }
             if (message != 0)
@@ -1693,6 +1730,11 @@ namespace System.Windows.Interop
                 InputMode.Foreground, timestamp, source, actions, x, y, wheel, IntPtr.Zero);
 
             _site.ReportInput(report);
+            if (message is 0x0201 or 0x0202 or 0x0204 or 0x0205 && Environment.GetEnvironmentVariable("WF_TRACE_INPUT") is "1" or "2")
+            {
+                MouseDevice md = _site?.CriticalInputManager?.PrimaryMouseDevice;
+                Console.Error.WriteLine($"[wpf] after msg=0x{message:x} at ({x},{y}): over={md?.DirectlyOver?.GetType().Name ?? "<null>"} captured={md?.Captured?.GetType().Name ?? "<null>"} mode={Mouse.CapturedMode}");
+            }
         }
 
         private bool ReportInput(
@@ -1935,6 +1977,9 @@ namespace System.Windows.Interop
         private int _msgTime;
         private NativeMethods.MOUSEMOVEPOINT _latestMovePoint;      // screen coordinates
         private NativeMethods.MOUSEMOVEPOINT _previousMovePoint;    // screen coordinates
+        // Off Windows: counts the captures taken (CaptureMouse), to tell whether one was taken again
+        // while a release was being processed.
+        private static int s_captureGeneration;
         private int _lastX;     // client coordinates
         private int _lastY;
 

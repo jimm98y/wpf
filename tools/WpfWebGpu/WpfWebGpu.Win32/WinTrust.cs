@@ -174,25 +174,29 @@ public static unsafe partial class Exports
     }
 
     // WINTRUST_DATA (x64): cbStruct, pPolicyCallbackData @8, pSIPClientData @16, dwUIChoice @24,
-    // fdwRevocationChecks @28, dwUnionChoice @32, the union @40, dwStateAction @48, hWVTStateData @56.
-    // WINTRUST_FILE_INFO: cbStruct, pcwszFilePath @8, hFile @16.
+    // fdwRevocationChecks @28, dwUnionChoice @32, the union @40, dwStateAction @48, hWVTStateData @56;
+    // on 32-bit (WebAssembly) @4, @8, @12, @16, @20, @24, @28, @32.
+    // WINTRUST_FILE_INFO: cbStruct, pcwszFilePath @8, hFile @16 (@4, @8 on 32-bit).
+    private static readonly bool Is64 = sizeof(nint) == 8;
+    private static readonly int UnionChoiceAt = Is64 ? 32 : 20, UnionAt = Is64 ? 40 : 24,
+                                StateActionAt = Is64 ? 48 : 28, StateDataAt = Is64 ? 56 : 32;
     [Win32Export("WinVerifyTrust", "WinVerifyTrustEx")]
     public static int WinVerifyTrust(nint hwnd, Guid* action, byte* data)
     {
         if (action == null || data == null) return E_INVALIDARG;
         if (*action != WINTRUST_ACTION_GENERIC_VERIFY_V2 && *action != WINTRUST_ACTION_GENERIC_CHAIN_VERIFY && *action != HTTPSPROV_ACTION)
             return TRUST_E_ACTION_UNKNOWN;
-        uint stateAction = *(uint*)(data + 48);
-        if (stateAction == 2) { *(nint*)(data + 56) = 0; return 0; }   // WTD_STATEACTION_CLOSE: nothing kept
-        uint choice = *(uint*)(data + 32);
+        uint stateAction = *(uint*)(data + StateActionAt);
+        if (stateAction == 2) { *(nint*)(data + StateDataAt) = 0; return 0; }   // WTD_STATEACTION_CLOSE: nothing kept
+        uint choice = *(uint*)(data + UnionChoiceAt);
         if (choice != 1) return TRUST_E_NOSIGNATURE;                    // WTD_CHOICE_FILE only: no catalogs here
-        byte* fileInfo = *(byte**)(data + 40);
+        byte* fileInfo = *(byte**)(data + UnionAt);
         if (fileInfo == null) return E_INVALIDARG;
-        string? path = ReadEither(*(byte**)(fileInfo + 8));
+        string? path = ReadEither(*(byte**)(fileInfo + sizeof(nint)));
         if (string.IsNullOrEmpty(path)) return TRUST_E_SUBJECT_FORM_UNKNOWN;
         // Revocation (fdwRevocationChecks) is not checked: there is no CRL cache here to answer from.
         int result = VerifyAuthenticode(path);
-        if (stateAction == 1) *(nint*)(data + 56) = 0;                  // WTD_STATEACTION_VERIFY: no state to keep
+        if (stateAction == 1) *(nint*)(data + StateDataAt) = 0;                  // WTD_STATEACTION_VERIFY: no state to keep
         LogOnce("wintrust:" + path, $"win32 shim: WinVerifyTrust {Path.GetFileName(path)}: 0x{result:x8}");
         return result;
     }

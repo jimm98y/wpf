@@ -1615,7 +1615,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             v.ClipGeometry = null;
             if (hClip != 0 && _geometries.TryGetValue(hClip, out Geometry? clip))
             {
-                if (clip is RectangleGeometry rg) v.Clip = rg.Rect;          // fast axis-aligned scissor
+                if (TryAxisRect(clip, out Rect rect)) v.Clip = rect;         // fast axis-aligned scissor
                 else v.ClipGeometry = ToPathGeometry(clip);                  // arbitrary mask
             }
         }
@@ -3456,12 +3456,46 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             EllipseGeometry e => new Rect(e.Center.X - e.RadiusX, e.Center.Y - e.RadiusY, 2 * e.RadiusX, 2 * e.RadiusY),
             PolygonGeometry p => PointsBounds(p.Points),
             PathGeometry path => PathBounds(path),
-            // Composites: the union of the children's bounds. Without these the fallback below
-            // reported an EMPTY rect, which silently clipped away everything it touched.
-            CombinedGeometry c => UnionRect(GeometryBounds(c.Geometry1), GeometryBounds(c.Geometry2)),
+            // Composites, by how they combine: an intersection lies within both, a difference within
+            // the first, a union or xor within either. Without these the fallback below reported an
+            // EMPTY rect, which silently clipped away everything it touched; taking the union for an
+            // intersection made a clip of (layout slot AND the element's own Clip) the larger of the
+            // two -- a grid's header row, wider than its scroll viewer, drew past the grid's edge.
+            CombinedGeometry c => c.Mode switch
+            {
+                GeometryCombineMode.Intersect => IntersectRect(GeometryBounds(c.Geometry1), GeometryBounds(c.Geometry2)),
+                GeometryCombineMode.Exclude => GeometryBounds(c.Geometry1),
+                _ => UnionRect(GeometryBounds(c.Geometry1), GeometryBounds(c.Geometry2)),
+            },
             GeometryGroup gg => GroupBounds(gg),
             _ => new Rect(0, 0, 0, 0),
         };
+
+        private static Rect IntersectRect(Rect a, Rect b)
+        {
+            float x0 = Math.Max(a.X, b.X), y0 = Math.Max(a.Y, b.Y);
+            float x1 = Math.Min(a.X + a.Width, b.X + b.Width), y1 = Math.Min(a.Y + a.Height, b.Y + b.Height);
+            return x1 > x0 && y1 > y0 ? new Rect(x0, y0, x1 - x0, y1 - y0) : new Rect(x0, y0, 0, 0);
+        }
+
+        /// <summary>A geometry that is exactly an axis-aligned rectangle: a RectangleGeometry, or an
+        /// intersection of such -- what a UIElement's clip is when its layout clip meets its own Clip.</summary>
+        private static bool TryAxisRect(Geometry g, out Rect rect)
+        {
+            switch (g)
+            {
+                case RectangleGeometry r:
+                    rect = r.Rect;
+                    return true;
+                case CombinedGeometry { Mode: GeometryCombineMode.Intersect } c
+                    when TryAxisRect(c.Geometry1, out Rect a) && TryAxisRect(c.Geometry2, out Rect b):
+                    rect = IntersectRect(a, b);
+                    return true;
+                default:
+                    rect = default;
+                    return false;
+            }
+        }
 
         private static Rect UnionRect(Rect a, Rect b)
         {

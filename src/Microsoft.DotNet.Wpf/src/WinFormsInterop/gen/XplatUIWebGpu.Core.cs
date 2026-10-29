@@ -39,6 +39,8 @@ namespace System.Windows.Forms
 		{
 			// the driver's windows in the process's focus model (XplatUIWebGpu.Focus.cs)
 			EnsureFocusRegistered();
+			// the forms among the thread's windows a modal dialog of WPF's disables (Application.RegisterThreadWindows)
+			Application.RegisterThreadWindows();
 			// a head whose screen is the application's main window: every other window is framed (WindowChrome)
 			if (OperatingSystem.IsBrowser()) { FramedWindow = WindowChrome.IsFramed; InstallBrowserScreens(); }
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so

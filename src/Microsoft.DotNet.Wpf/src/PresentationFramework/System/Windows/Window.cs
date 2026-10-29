@@ -43,6 +43,7 @@ namespace System.Windows
         /// </summary>
         static Window()
         {
+            RegisterWpfThreadWindows();
             HeightProperty.OverrideMetadata(typeof(Window), new FrameworkPropertyMetadata(new PropertyChangedCallback(_OnHeightChanged)));
             MinHeightProperty.OverrideMetadata(typeof(Window), new FrameworkPropertyMetadata(new PropertyChangedCallback(_OnMinHeightChanged)));
             MaxHeightProperty.OverrideMetadata(typeof(Window), new FrameworkPropertyMetadata(new PropertyChangedCallback(_OnMaxHeightChanged)));
@@ -1894,6 +1895,8 @@ namespace System.Windows
 
             //  call to specific layout to measure
             Size desiredSize = MeasureOverrideHelper(frameworkAvailableSize);
+            if (Environment.GetEnvironmentVariable("WPF_TRACE_TREE") is { Length: > 0 } traced && GetType().FullName!.Contains(traced, StringComparison.Ordinal))
+                Console.Error.WriteLine(System.FormattableString.Invariant($"[tree] measure {availableSize.Width}x{availableSize.Height} -> {frameworkAvailableSize.Width}x{frameworkAvailableSize.Height} desired {desiredSize.Width:0.#}x{desiredSize.Height:0.#} stc={SizeToContent} min={mm.minWidth}x{mm.minHeight} max={mm.maxWidth}x{mm.maxHeight}"));
 
             //  maximize desiredSize with user provided min size
             desiredSize = new Size(
@@ -2148,9 +2151,58 @@ namespace System.Windows
         ///     This override fires the ContentRendered event.
         /// </summary>
         /// <param name="e"></param>
+        // WPF_TRACE_TREE=<part of a window type's name>: that window's visual tree once it has rendered --
+        // each element's place in the window, size, margin and, for text, what it says.
+        private static void TraceTree(Visual v, int depth)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(' ', depth * 2).Append(v.GetType().Name);
+            if (v is FrameworkElement fe)
+            {
+                if (!string.IsNullOrEmpty(fe.Name)) sb.Append(" #").Append(fe.Name);
+                Point at = default;
+                Visual root = FindRoot(fe);
+                if (root != fe)
+                {
+                    try { at = fe.TransformToAncestor(root).Transform(default); } catch (InvalidOperationException) { }
+                }
+                sb.Append(System.FormattableString.Invariant($" at=({at.X:0.#},{at.Y:0.#}) size={fe.ActualWidth:0.#}x{fe.ActualHeight:0.#} margin={fe.Margin} vis={fe.Visibility}"));
+                if (fe is System.Windows.Controls.TextBlock tb) sb.Append(" text=\"").Append(tb.Text).Append('"');
+                if (fe.ClipToBounds) sb.Append(" clipToBounds");
+                if (System.Windows.Media.VisualTreeHelper.GetClip(fe) is System.Windows.Media.Geometry clip)
+                    sb.Append(System.FormattableString.Invariant($" clip={clip.Bounds.X:0.#},{clip.Bounds.Y:0.#},{clip.Bounds.Width:0.#}x{clip.Bounds.Height:0.#}"));
+                if (System.Windows.Media.VisualTreeHelper.GetParent(fe) is System.Windows.Controls.Grid)
+                    sb.Append(System.FormattableString.Invariant($" row={System.Windows.Controls.Grid.GetRow(fe)}+{System.Windows.Controls.Grid.GetRowSpan(fe)} col={System.Windows.Controls.Grid.GetColumn(fe)}+{System.Windows.Controls.Grid.GetColumnSpan(fe)} desired={fe.DesiredSize.Width:0.#}x{fe.DesiredSize.Height:0.#}"));
+                if (fe is System.Windows.Controls.Grid g && g.RowDefinitions.Count > 0)
+                    sb.Append(" rows=[").Append(string.Join(", ", System.Linq.Enumerable.Select(g.RowDefinitions, r => System.FormattableString.Invariant($"{r.Height}[{r.MinHeight}..{r.MaxHeight}]->{r.ActualHeight:0.#}")))).Append(']');
+            }
+            Console.Error.WriteLine("[tree] " + sb);
+            int n = System.Windows.Media.VisualTreeHelper.GetChildrenCount(v);
+            for (int i = 0; i < n; i++)
+                if (System.Windows.Media.VisualTreeHelper.GetChild(v, i) is Visual c) TraceTree(c, depth + 1);
+        }
+
+        private static Visual FindRoot(Visual v)
+        {
+            while (System.Windows.Media.VisualTreeHelper.GetParent(v) is Visual p) v = p;
+            return v;
+        }
+
         protected virtual void OnContentRendered(EventArgs e)
         {
             VerifyContextAndObjectState();
+            if (Environment.GetEnvironmentVariable("WPF_TRACE_TREE") is { Length: > 0 } traced && GetType().FullName!.Contains(traced, StringComparison.Ordinal))
+            {
+                TraceTree(this, 0);
+                // WPF_TRACE_TREE_EVERY=<seconds>: again every so often, for a layout that changes later
+                if (int.TryParse(Environment.GetEnvironmentVariable("WPF_TRACE_TREE_EVERY"), out int every) && every > 0)
+                {
+                    var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(every) };
+                    timer.Tick += (_, _) => { Console.Error.WriteLine("[tree] ----"); TraceTree(this, 0); };
+                    Closed += (_, _) => timer.Stop();
+                    timer.Start();
+                }
+            }
 
             // After the content is rendered we want to check if there is an element that needs to be focused
             // If there is - set focus to it
@@ -3705,6 +3757,48 @@ namespace System.Windows
             return true;
         }
 
+        private const string WpfToolkit = "wpf";
+
+        /// <summary>
+        /// Off Windows, the thread's visible, enabled WPF windows -- what EnumThreadWindows lists of them
+        /// there, popups among them -- registered so that a WinForms dialog disables them too.
+        /// </summary>
+        private static IntPtr[] ThreadWpfWindows()
+        {
+            var handles = new List<IntPtr>();
+            Dispatcher current = Dispatcher.FromThread(System.Threading.Thread.CurrentThread);
+            foreach (PresentationSource source in PresentationSource.CurrentSources)
+            {
+                // Top-level windows only, as EnumThreadWindows lists: a Window, or a popup. A WPF tree in
+                // a WinForms form is a child window, which its form being disabled covers.
+                if (source is HwndSource hs && !hs.IsDisposed && hs.Dispatcher == current
+                    && hs.RootVisual is UIElement { IsVisible: true } root && (root is Window || root is System.Windows.Controls.Primitives.PopupRoot)
+                    && hs.Handle != IntPtr.Zero
+                    && !MS.Internal.Interop.PlatformWindow.IsWindowDisabled(hs.Handle))
+                {
+                    handles.Add(hs.Handle);
+                }
+            }
+            return handles.ToArray();
+        }
+
+        // EnableWindow on a WPF window off Windows, for another toolkit's dialog: the platform flag, and
+        // WM_CANCELMODE's release of the mouse capture.
+        private static void EnableWpfWindow(IntPtr hWnd, bool enable)
+        {
+            MS.Internal.Interop.PlatformWindow.SetWindowEnabled(hWnd, enable);
+            if (!enable && Mouse.Captured is DependencyObject held && PresentationSource.FromDependencyObject(held) is HwndSource hs && hs.Handle == hWnd)
+            {
+                Mouse.Capture(null);
+            }
+        }
+
+        private static void RegisterWpfThreadWindows()
+        {
+            if (!OperatingSystem.IsWindows())
+                MS.Internal.Interop.PlatformWindow.RegisterThreadWindows(WpfToolkit, ThreadWpfWindows, EnableWpfWindow);
+        }
+
         /// <summary>
         /// Enables/disables all Windows on this thread
         /// </summary>
@@ -3714,22 +3808,46 @@ namespace System.Windows
             Debug.Assert(_threadWindowHandles != null, "_threadWindowHandles must not be null at this point");
 
             // Modality is enforced at the HWND level: EnumThreadWindows collects the thread's windows
-            // and EnableWindow disables them. Neither exists off Windows, so _threadWindowHandles comes
-            // back EMPTY and a dialog was modal in name only -- its owner stayed fully interactive
-            // underneath it. Disable the Window objects instead, which is the same effect by the route
-            // the framework itself offers, and skip the dialog so it can still be used.
+            // and EnableWindow disables them. Off Windows the same is done to the thread's visible,
+            // enabled WPF windows -- popups among them, as there -- with the platform layer's
+            // EnableWindow flag: their input stops (a press activates this dialog instead) and their
+            // content keeps its look. Disabling the Window objects' content instead (IsEnabled) greyed
+            // the whole app out behind every dialog, which Windows never does.
             if (!OperatingSystem.IsWindows())
             {
-                Application app = Application.Current;
-                if (app != null)
+                if (!state)
                 {
-                    foreach (Window w in app.Windows)
+                    foreach (IntPtr hWnd in ThreadWpfWindows())
                     {
-                        if (w != this && w.IsLoaded)
-                        {
-                            w.IsEnabled = state;
-                        }
+                        _threadWindowHandles.Add(hWnd);
+                        MS.Internal.Interop.PlatformWindow.SetWindowEnabled(hWnd, false);
                     }
+                    // ...and the thread's other windows, WinForms' (a form hosting this tree, or one
+                    // beside it), as EnumThreadWindows lists them all on Windows.
+                    _otherToolkitWindows = MS.Internal.Interop.PlatformWindow.DisableOtherThreadWindows(WpfToolkit);
+                    _previousDisabledWindowPressed = MS.Internal.Interop.PlatformWindow.DisabledWindowPressed;
+                    MS.Internal.Interop.PlatformWindow.DisabledWindowPressed = _ => Activate();
+                }
+                else
+                {
+                    foreach (IntPtr hWnd in _threadWindowHandles)
+                    {
+                        MS.Internal.Interop.PlatformWindow.SetWindowEnabled(hWnd, true);
+                    }
+                    MS.Internal.Interop.PlatformWindow.EnableThreadWindows(_otherToolkitWindows);
+                    _otherToolkitWindows = null;
+                    MS.Internal.Interop.PlatformWindow.DisabledWindowPressed = _previousDisabledWindowPressed;
+                    _previousDisabledWindowPressed = null;
+                }
+
+                // EnableWindow(false) sends the window WM_CANCELMODE, and the one holding the mouse
+                // capture gives it up: an open menu or drop-down loses its capture and closes, as a
+                // popup that does not stay open does. Telerik's context menu runs its item's command
+                // before closing itself, so a command that opened a dialog left the menu open over the
+                // app for as long as the dialog was up. The dialog's own window does not exist yet.
+                if (!state && Mouse.Captured != null)
+                {
+                    Mouse.Capture(null);
                 }
 
                 if (state)
@@ -7427,6 +7545,11 @@ namespace System.Windows
 
         private double              _trackMinWidthDeviceUnits = 0;
         private double              _trackMinHeightDeviceUnits = 0;
+        // Off Windows: what a press on a disabled window did before this dialog disabled the thread's
+        // windows (a dialog under this one), restored when this one closes; and the other toolkits'
+        // windows it disabled.
+        private Action<IntPtr>       _previousDisabledWindowPressed;
+        private object               _otherToolkitWindows;
         private double              _trackMaxWidthDeviceUnits = Double.PositiveInfinity;
         private double              _trackMaxHeightDeviceUnits = Double.PositiveInfinity;
         private double              _windowMaxWidthDeviceUnits = Double.PositiveInfinity;

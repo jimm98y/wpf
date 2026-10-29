@@ -89,6 +89,18 @@ namespace MS.Internal.Interop
         /// until the button comes up (browser-window.js beginMoveDrag).</summary>
         public void BeginMoveDrag() { if (Handle != IntPtr.Zero) Js.BeginMoveDrag((int)Handle); }
 
+        // A secondary window floats on the page and is resized from its edges here; the main window
+        // fills the page, which is its only size.
+        public bool ResizesFromEdges => !IsBorderless && IsSecondary;
+
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight)
+        {
+            if (!ResizesFromEdges || hitTest < 10 || hitTest > 17) return false;
+            double dpr = Js.GetDevicePixelRatio();
+            if (!(dpr > 0)) dpr = 1;
+            return Js.BeginResizeDrag((int)Handle, hitTest, minWidth / dpr, minHeight / dpr, maxWidth / dpr, maxHeight / dpr);
+        }
+
         public void Destroy()
         {
             if (Handle == IntPtr.Zero)
@@ -728,6 +740,9 @@ namespace MS.Internal.Interop
 
             [JSImport("setFrameOrigin", Module)]
             internal static partial void SetFrameOrigin(int handle, int xPixels, int yPixels);
+
+            [JSImport("beginResizeDrag", Module)]
+            internal static partial bool BeginResizeDrag(int handle, int hitTest, double minWidth, double minHeight, double maxWidth, double maxHeight);
 
             [JSImport("isSecondaryWindow", Module)]
             internal static partial bool IsSecondaryWindow(int handle);

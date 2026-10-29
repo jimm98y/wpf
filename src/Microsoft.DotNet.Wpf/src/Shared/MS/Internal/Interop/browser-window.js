@@ -630,12 +630,60 @@ function moveDragTo(e) {
     c.style.top = `${Math.max(0, e.clientY - moveDrag.dy)}px`;
 }
 
+// ---- sizing a window (WM_SYSCOMMAND SC_SIZE: a press on a WindowChrome window's resize border) ------
+//
+// DefWindowProc's sizing loop, as the move loop above is its move loop: from the press on an edge or a
+// corner (WM_NCHITTEST's HTLEFT..HTBOTTOMRIGHT) the window's edge follows the pointer until the button
+// comes up, within the window's minimum and maximum size (WM_GETMINMAXINFO), with a WM_SIZE for each
+// step. A secondary window's canvas has no frame to be resized by, and a dialog Windows lets the user
+// resize (Workbench's package wizard) could not be resized at all.
+let resizeDrag = null;
+
+export function beginResizeDrag(handle, ht, minW, minH, maxW, maxH) {
+    const w = windows.get(handle);
+    if (!w || !press || ht < 10 || ht > 17) return false;
+    const r = w.canvas.getBoundingClientRect();
+    resizeDrag = {
+        handle, w, ht, x0: press.x, y0: press.y, l: r.left, t: r.top, cw: r.width, ch: r.height,
+        minW: Math.max(minW, 1), minH: Math.max(minH, 1),
+        maxW: maxW > 0 ? maxW : Infinity, maxH: maxH > 0 ? maxH : Infinity,
+    };
+    return true;
+}
+
+function resizeDragTo(e) {
+    const d = resizeDrag;
+    const ht = d.ht;
+    const left = ht === 10 || ht === 13 || ht === 16, right = ht === 11 || ht === 14 || ht === 17;
+    const top = ht === 12 || ht === 13 || ht === 14, bottom = ht === 15 || ht === 16 || ht === 17;
+    const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+    let w = d.cw, h = d.ch;
+    if (right) w = d.cw + dx; else if (left) w = d.cw - dx;
+    if (bottom) h = d.ch + dy; else if (top) h = d.ch - dy;
+    w = Math.min(Math.max(w, d.minW), d.maxW);
+    h = Math.min(Math.max(h, d.minH), d.maxH);
+    let x = left ? d.l + d.cw - w : d.l;
+    let y = top ? d.t + d.ch - h : d.t;
+    // the top edge stays on the page, as for a move, so that the caption can be taken hold of again
+    if (y < 0) { if (top) h += y; y = 0; }
+    const c = d.w.canvas;
+    c.style.position = "fixed";
+    c.style.left = `${x}px`;
+    c.style.top = `${y}px`;
+    setContentSize(d.handle, w, h);
+}
+
 function pushMouse(kind, e, wheel = 0) {
     if (kind === 1 && (e.button ?? 0) === 0) press = { x: e.clientX, y: e.clientY };
     else if (kind === 2 && (e.button ?? 0) === 0) press = null;
     if (moveDrag) {
         if (kind === 0) moveDragTo(e);
         else if (kind === 2) { moveDragTo(e); moveDrag = null; }
+        return;
+    }
+    if (resizeDrag) {
+        if (kind === 0) resizeDragTo(e);
+        else if (kind === 2) { resizeDragTo(e); resizeDrag = null; }
         return;
     }
     // Route to the window under the pointer (popups float above the main canvas);

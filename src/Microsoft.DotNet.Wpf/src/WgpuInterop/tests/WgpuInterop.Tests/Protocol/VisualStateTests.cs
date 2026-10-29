@@ -85,6 +85,28 @@ namespace WgpuInterop.Tests.Protocol
             new Image(px, W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
         }
 
+        /// <summary>A UIElement's clip when its layout clip meets its own Clip is their INTERSECTION
+        /// (a CombinedGeometry): clipped to the bounds of the pair instead -- their union -- a grid's
+        /// header row, wider than its scroll viewer and clipped to both, drew past the grid's edge.</summary>
+        [Theory]
+        [InlineData(14, 10, 255, 0, 0, "inside both rectangles is painted")]
+        [InlineData(14, 18, 255, 255, 255, "inside the first only is masked")]
+        [InlineData(30, 10, 255, 255, 255, "inside the second only is masked")]
+        public void AnIntersectionOfRectangles_ClipsToWhatTheyShare(int x, int y, int r, int g, int b, string what)
+        {
+            var engine = new MilcoreEngine();
+            engine.CreateOrAddRef(2, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(3, 1, 0, 0, 1));
+            engine.SubmitCommand(MilCmd.RectangleGeometry(4, 8, 8, 12, 12));
+            engine.SubmitCommand(MilCmd.RectangleGeometry(6, 0, 0, 40, 14));
+            engine.SubmitCommand(MilCmd.CombinedGeometry(7, 1 /* Intersect */, 4, 6));
+            Realize(engine, MilCmd.DrawRectangleRecord(3, 0, 0, 0, 40, 40), hVisual: 2, hContent: 5);
+            engine.SubmitCommand(MilCmd.VisualSetClip(2, 7));
+            engine.Realize();
+            byte[] px = NewRenderer().RenderToRgba(engine.VisualByHandle(2)!, W, H, White);
+            new Image(px, W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
+        }
+
         [Fact]
         public void AnEllipseClipUpdatedInPlace_ReclipsTheVisual()
         {

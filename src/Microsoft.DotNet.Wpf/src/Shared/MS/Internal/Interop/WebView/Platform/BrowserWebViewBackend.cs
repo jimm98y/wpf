@@ -52,6 +52,8 @@ namespace MS.Internal.Interop.WebView
         private bool _showingString;
         private ulong _navigationId;
         private Timer _pump;
+        private SynchronizationContext _owner;
+        private int _tickQueued;
         private TaskCompletionSource<object> _attach;
 
         public WebViewPresentation Presentation => WebViewPresentation.Overlay;
@@ -80,10 +82,13 @@ namespace MS.Internal.Interop.WebView
             //
             // System.Threading.Timer, not DispatcherTimer, and deliberately: this file is compiled
             // into Microsoft.Web.WebView2.Core as well, which references no WPF at all, so the seam
-            // must not name a WPF type. It is still correct here -- on WebAssembly the runtime
-            // implements this timer over setTimeout on the single main thread, which is the same
-            // thread the control and the DOM live on.
-            _pump = new Timer(OnPump, null, dueTime: 16, period: 16);
+            // must not name a WPF type. Its ticks fire on a thread-pool thread (this runtime has
+            // threads), so each is posted to the thread that attached the frame -- the control's,
+            // which the DOM lives on too. Run where it fired, the pump raised the control's events off
+            // its thread: the help panel set IsEnabled from HistoryChanged, WPF threw, and the
+            // unhandled exception brought the runtime down.
+            _owner = SynchronizationContext.Current;
+            _pump = new Timer(OnTimer, null, dueTime: 16, period: 16);
 
             // An iframe exists the moment it is created; there is no asynchronous start-up to wait
             // for, unlike WebView2's environment and controller.
@@ -108,6 +113,24 @@ namespace MS.Internal.Interop.WebView
         public void Dispose() => Detach();
 
         // ---- the pump ------------------------------------------------------------------------------
+
+        private void OnTimer(object state)
+        {
+            SynchronizationContext owner = _owner;
+            if (owner is null || owner == SynchronizationContext.Current)
+            {
+                OnPump(state);
+                return;
+            }
+            // One tick in flight at a time: a busy UI thread gets the next one when it is done,
+            // not a backlog of them.
+            if (Interlocked.Exchange(ref _tickQueued, 1) == 1) return;
+            owner.Post(s =>
+            {
+                Volatile.Write(ref _tickQueued, 0);
+                OnPump(s);
+            }, state);
+        }
 
         private void OnPump(object state)
         {
