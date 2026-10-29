@@ -77,7 +77,7 @@ internal static class StartupHook
             catch (Exception e) { CompatLog.Info($"app startup hook {extra}: {e.GetBaseException().Message}"); }
         }
 
-        CompatLog.Info($"wpfrun bootstrap: {Assembly.GetEntryAssembly()?.GetName().Name} on {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}, base {AppContext.BaseDirectory}");
+        CompatLog.Info($"wpfrun bootstrap: {AppContext.GetData("WpfWebGpu.EntryAssembly") as string ?? Assembly.GetEntryAssembly()?.GetName().Name} on {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}, base {AppContext.BaseDirectory}");
     }
 
     // In WpfWebGpu.Win32, which renders through WPF and WinForms; reached by name like the others.

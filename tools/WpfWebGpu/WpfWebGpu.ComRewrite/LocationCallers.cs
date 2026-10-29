@@ -7,14 +7,15 @@
 // This finds them, from the IL: a read of Location, CodeBase, EscapedCodeBase, GetName().CodeBase or
 // Module.FullyQualifiedName whose Assembly (or Module) is not provably the reader's own. Own:
 // GetExecutingAssembly(), typeof(OwnType).Assembly, this.GetType().Assembly, and a local assigned once from
-// one of those; GetEntryAssembly() is not asked about (the entry assembly is never rewritten).
+// one of those. GetEntryAssembly() is another's: the entry assembly is rewritten like any other (wpfrun starts
+// apps through its host, which loads it through the startup hook), and has no file then either.
 
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
 namespace WpfWebGpu.ComRewrite;
 
-public sealed record LocationAsks(bool AsksOthers, bool EnumeratesAll, string? Example);
+public sealed record LocationAsks(bool AsksOthers, bool EnumeratesAll, string? Example, bool AsksEntry = false);
 
 public static class LocationCallers
 {
@@ -35,7 +36,7 @@ public static class LocationCallers
     public static LocationAsks Analyze(string path)
     {
         using var m = ModuleDefinition.ReadModule(path, new ReaderParameters { ReadingMode = ReadingMode.Deferred, InMemory = true });
-        bool all = false;
+        bool all = false, asksEntry = false;
         string? example = null;
         foreach (var t in m.Types.SelectMany(ComRewriter.AllTypes))
             foreach (var md in t.Methods)
@@ -47,12 +48,13 @@ public static class LocationCallers
                     if (mr.Name == "GetAssemblies" && mr.DeclaringType.FullName == "System.AppDomain") all = true;
                     bool getNameCodeBase = mr.Name == "get_CodeBase" && mr.DeclaringType.FullName == "System.Reflection.AssemblyName";
                     bool read = getNameCodeBase || (s_members.Contains(mr.Name) && mr.DeclaringType.FullName is "System.Reflection.Assembly" or "System.Reflection.Module");
-                    if (!read || example != null) continue;
+                    if (!read || (example != null && asksEntry)) continue;
                     string src = Source(m, md, ins.Previous, getNameCodeBase, 0);
-                    if (src is not ("own" or "GetEntryAssembly")) example = $"{t.FullName}.{md.Name} reads {mr.Name} of {src}";
+                    if (src == "GetEntryAssembly") asksEntry = true;
+                    if (src is not "own" && example == null) example = $"{t.FullName}.{md.Name} reads {mr.Name} of {src}";
                 }
             }
-        return new LocationAsks(example != null, all, example);
+        return new LocationAsks(example != null, all, example, asksEntry);
     }
 
     private static string Source(ModuleDefinition m, MethodDefinition md, Instruction? p, bool throughGetName, int depth)

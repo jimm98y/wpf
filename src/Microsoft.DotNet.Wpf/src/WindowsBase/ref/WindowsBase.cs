@@ -188,6 +188,8 @@ namespace MS.Internal.Interop
         public void TakeKeyboard() { }
         public static System.IntPtr MouseCaptureHandle;
         public static System.Func<System.IntPtr, bool> ForeignEventHandler;
+        public static void EnterAppKitCallback() { }
+        public static void ExitAppKitCallback() { }
         public static void DispatchEvent(System.IntPtr evt) { }
         public CocoaWindow() { }
         public System.IntPtr ContentView { get { throw null; } }

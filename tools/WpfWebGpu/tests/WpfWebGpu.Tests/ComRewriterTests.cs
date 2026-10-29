@@ -1660,15 +1660,15 @@ public sealed class ComImportStepTests
     }
 
     [Fact]
-    public void TheEntryAssembly_IsNeverRewritten()
+    public void TheEntryAssembly_IsRewritten_LikeAnyOther()
     {
-        // the host loads it (dotnet exec) before the startup hook installs the loader: listing it would claim a
-        // rewrite that never happens
+        // wpfrun starts apps through its host (WpfWebGpu.AppHost), which loads the entry assembly by name
+        // through the startup hook's loader: it is chosen, and leaves the deps, as any other app assembly
         var (deps, notes) = Apply(windows: false, entry: "ComReleaserFixture");
-        Assert.Contains(notes, n => n.Contains("ComReleaserFixture: left on built-in COM") && n.Contains("the entry assembly"));
-        Assert.DoesNotContain(s_lastList!, e => e.StartsWith("ComReleaserFixture|"));
-        Assert.NotNull(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComReleaserFixture.dll"]);
+        Assert.Contains(s_lastList!, e => e.StartsWith("ComReleaserFixture|"));
+        Assert.Null(deps["targets"]!["T"]!["App/1.0.0"]!["runtime"]!["ComReleaserFixture.dll"]);
         Assert.Contains(s_lastList!, e => e.StartsWith("ComImportFixture|"));
+        Assert.DoesNotContain(notes, n => n.Contains("ComReleaserFixture") && n.Contains("the entry assembly"));
     }
 
     [Fact]

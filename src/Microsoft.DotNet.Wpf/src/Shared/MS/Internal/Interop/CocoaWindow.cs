@@ -2631,19 +2631,33 @@ namespace MS.Internal.Interop
             // Dispatcher.Invoke pumps) took the drags the loop was waiting for and sent them on, so
             // the window started a second resize loop inside the first, and the first resumed on what
             // the second had torn down: a crash in -[NSWindow _runResizeTrackingLoop] (app). The
-            // dispatcher's own work still runs; only the queue is left alone. As a GetMessage inside
-            // Windows' sizing loop still gets its sent and posted messages and timers, the pump runs the
-            // run loop for the time it was given -- in the mode AppKit's loop runs it in, so the
-            // dispatcher's source, timers and AppKit's animation all fire -- rather than returning at
-            // once and leaving a caller that waits in a loop to spin. Only from inside a dispatched
-            // event, though: a window AppKit is still resizing when no loop of its own is on the stack
-            // (one dropped on the screen's top edge, tiling into place) finishes only through the
-            // queue, and a pump that left it alone spun forever (Workbench froze).
-            if ((s_dispatchDepth > 0 && AnyWindowInLiveResize(app)) || s_inputHeld > 0)
+            // dispatcher's own work still runs; only the queue is left alone. Only from inside a
+            // dispatched event, though: a window AppKit is still resizing when no loop of its own is on
+            // the stack (one dropped on the screen's top edge, tiling into place) finishes only through
+            // the queue, and a pump that left it alone spun forever (Workbench froze).
+            if (InAppKitLoop() && AnyWindowInLiveResize(app))
             {
-                IntPtr current = CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent());
-                try { CFRunLoopRunInMode(current != IntPtr.Zero ? current : mode, maxMilliseconds / 1000.0, true); }
-                finally { if (current != IntPtr.Zero) CFRelease(current); }
+                // ...and the run loop too: run nested in AppKit's own tracking mode, the resize loop's
+                // sources and observers ran inside themselves and the loop crashed (SIGSEGV in
+                // -[NSWindow _resizeChangedForDirectTouch:...]), and a wait there held each repaint back
+                // -- a WinForms form's ribbon and panels lagged behind its frame. AppKit's loop turns the
+                // run loop itself; returning at once leaves the window drawn from its stretched last frame
+                // between repaints, as it was. But the DEFAULT mode is turned, briefly: AppKit's resize loop
+                // is not registered in it, and the dispatcher's timer and source are (common modes) -- WPF's
+                // render is driven by that timer, and an embedded tree's per-frame pump (ElementHost,
+                // waiting for its render) waited each step until something else woke it, hundreds of
+                // milliseconds, and the window's edge lagged the pointer.
+                CFRunLoopRunInMode(mode, Math.Min(Math.Max(0, maxMilliseconds), 4) / 1000.0, true);
+                DetectResizes();
+                return;
+            }
+
+            // A window created inside input handling is being painted (PumpUntilVisible): the run loop
+            // turns -- timers, the dispatcher's source, the window server's handshake -- in the default
+            // mode, and no event is taken off the queue, so no input is dispatched inside the handler.
+            if (s_inputHeld > 0)
+            {
+                CFRunLoopRunInMode(mode, Math.Max(0, maxMilliseconds) / 1000.0, true);
                 DetectResizes();
                 return;
             }
@@ -2678,6 +2692,37 @@ namespace MS.Internal.Interop
             // size after draining and raise Resized so the hosting HwndTarget re-lays-out and the
             // WebGPU surface is reconfigured (rather than the CAMetalLayer stretching the old frame).
             DetectResizes();
+        }
+
+        // Callbacks AppKit makes from inside its own loops (a live resize's window-did-resize and
+        // frame-changed notifications), this one's and the WinForms host's: the run loop is not running a
+        // mode of its own while AppKit posts them, but the resize loop is on the stack all the same.
+        [ThreadStatic] private static int s_appKitCallbackDepth;
+
+        /// <summary>For a host's callback that AppKit makes from inside its own loop (the WinForms host's
+        /// window-did-resize handler): pumps nested in it leave AppKit's event queue alone. Pair with
+        /// <see cref="ExitAppKitCallback"/>.</summary>
+        public static void EnterAppKitCallback() => s_appKitCallbackDepth++;
+
+        public static void ExitAppKitCallback() => s_appKitCallbackDepth--;
+
+        /// <summary>
+        /// Whether this pump runs inside a loop of AppKit's own (a live resize's tracking loop): the run
+        /// loop is running in a mode other than the default one. Whoever dispatched the event that began
+        /// the loop -- this pump, or the WinForms host's -- the loop is on the stack below. A pump at the
+        /// top level runs in no mode at all.
+        /// </summary>
+        private static bool InAppKitLoop()
+        {
+            if (s_dispatchDepth > 0 || s_appKitCallbackDepth > 0) return true;
+            IntPtr current = CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent());
+            if (current == IntPtr.Zero) return false;
+            try
+            {
+                IntPtr defaultMode = s_defaultRunLoopMode ??= MakeNSString("kCFRunLoopDefaultMode");
+                return !SendBoolSel(current, Sel("isEqualToString:"), defaultMode);
+            }
+            finally { CFRelease(current); }
         }
 
         private static bool AnyWindowInLiveResize(IntPtr app)
@@ -2810,6 +2855,7 @@ namespace MS.Internal.Interop
         {
             // Runs on the main thread inside AppKit's layout. Anything thrown here would unwind
             // through Objective-C frames, so nothing may escape.
+            s_appKitCallbackDepth++;
             try
             {
                 DetectResizes();
@@ -2817,6 +2863,7 @@ namespace MS.Internal.Interop
             catch
             {
             }
+            finally { s_appKitCallbackDepth--; }
         }
 
         private IntPtr _frameObserver;

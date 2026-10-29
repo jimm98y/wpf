@@ -22,6 +22,7 @@ public sealed class PathSubstitutions
         "System.IO.FileStream", "System.IO.StreamReader", "System.IO.StreamWriter",
         "System.Xml.XmlDocument", "System.Xml.XmlReader", "System.Xml.XmlWriter", "System.Xml.XmlTextReader", "System.Xml.XmlTextWriter",
         "System.Xml.Linq.XDocument", "System.Xml.Linq.XElement", "System.Reflection.Assembly", "System.Uri",
+        "System.Diagnostics.Process", "System.Environment",
     };
 
     private readonly Dictionary<string, MethodDefinition> _bySignature = new(StringComparer.Ordinal);

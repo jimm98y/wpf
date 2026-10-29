@@ -31,6 +31,12 @@ internal sealed class Runner
         public required IReadOnlyList<string> ProbeRoots { get; init; }
     }
 
+    private string EntryAssemblyName()
+    {
+        try { return System.Reflection.AssemblyName.GetAssemblyName(App.Dll).Name ?? App.Name; }
+        catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException) { return App.Name; }
+    }
+
     /// <summary>Writes the generated files into the cache and builds the command that runs the app.</summary>
     public Prepared Prepare(IEnumerable<string> appArgs)
     {
@@ -65,6 +71,14 @@ internal sealed class Runner
             // The WebGPU compositor; the SDK sets the same switch on the heads where it is not already
             // the default.
             ["Switch.System.Windows.Media.UseWebGpuComposition"] = "true",
+            // the app the host starts, and the file it is started as -- first on its command line, as on Windows
+            // (by the name in its metadata: a file renamed -- FwxLocationUtility_ARM64.dll -- is still the
+            // assembly it was built as)
+            ["WpfWebGpu.EntryAssembly"] = EntryAssemblyName(),
+            ["WPFWEBGPU_APP_PATH"] = File.Exists(App.Exe) ? App.Exe : App.Dll,
+            // the app's configuration, which ConfigurationManager finds beside the entry assembly's file --
+            // and a rewritten entry assembly has none
+            ["APP_CONFIG_FILE"] = App.Dll + ".config",
         };
         // the app assemblies the startup hook rewrites in memory as they load (ComImportStep)
         if (comList.Count > 0) props["WpfWebGpu.ComImport"] = string.Join('\n', comList);
@@ -111,7 +125,10 @@ internal sealed class Runner
             psi.ArgumentList.Add("--additionalprobingpath");
             psi.ArgumentList.Add(root);
         }
-        psi.ArgumentList.Add(App.Dll);
+        // Through the host, which loads the app's entry assembly by name -- through the startup hook's loader,
+        // which can rewrite it like any other app assembly (WpfWebGpu.AppHost).
+        string host = Path.Combine(OverlayDir, "WpfWebGpu.AppHost.dll");
+        psi.ArgumentList.Add(File.Exists(host) ? host : App.Dll);
         foreach (string a in appArgs) psi.ArgumentList.Add(a);
 
         if (!HostInfo.IsWindows)
@@ -119,6 +136,9 @@ internal sealed class Runner
             // The registry shim's store. Shared by every app run through wpfrun, like the real registry,
             // and kept with the rest of wpfrun's state so that removing wpfrun removes it.
             psi.Environment["WPFWEBGPU_REGISTRY_DIR"] = Path.Combine(Locations.StateRoot, "registry");
+            // This launcher, for the app's own Process.Start of another Windows .NET program, which is run
+            // through it as this one is (WindowsPaths.Process_Start).
+            if (Environment.ProcessPath is { Length: > 0 } self) psi.Environment["WPFWEBGPU_LAUNCHER"] = self;
             // The ProtectedData shim's keys are not set here: on macOS they are in the login keychain,
             // where the shim moves the ones it used to keep in this state folder (dpapi/).
         }

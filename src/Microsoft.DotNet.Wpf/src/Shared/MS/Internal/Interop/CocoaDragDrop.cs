@@ -443,9 +443,15 @@ namespace MS.Internal.Interop
                     byte[]? bytes = writer(mime);
                     if (bytes is null) continue;
 
-                    SendBoolPtrPtr(item, Sel("setData:forType:"), NSData(bytes), NSStr(UtiForMime(mime)));
-                    anyData = true;
+                    // Only what the pasteboard took: setData:forType: refuses a type it cannot hold (an
+                    // app's private format whose name makes no valid type identifier), and an item with
+                    // none of its data is no item -- AppKit then throws an Objective-C exception from
+                    // beginDraggingSession ("0 items on the pasteboard, but 1 drag images") that nothing
+                    // managed can catch, and the process ended: a grid's column drag in a trace viewer.
+                    if (SendBoolPtrPtr(item, Sel("setData:forType:"), NSData(bytes), NSStr(UtiForMime(mime))))
+                        anyData = true;
                 }
+                // Nothing the system could carry: the drag stays inside the application (started=false).
                 if (!anyData) return EffectNone;
 
                 IntPtr dragItem = SendPtrPtr(

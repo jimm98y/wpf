@@ -927,6 +927,10 @@ internal sealed class CocoaHost : IWinFormsHost
             if (host._window == IntPtr.Zero || host._form.IsDisposed) return;
             if (s_traceResize) TraceResize($"enter native={host.NativeBounds()} form={host._form.Bounds} depth={s_inResize}", stack: s_inResize == 1);
             s_inResize++;
+            // inside AppKit's resize loop: a pump WPF runs from here (the embedded tree's frame) must
+            // leave AppKit's event queue alone, as this host's does
+            bool wpf = s_wpfLoaded;
+            if (wpf) EnterWpfAppKitCallback();
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp(), t1 = t0, t2 = t0;
             try
             {
@@ -942,7 +946,11 @@ internal sealed class CocoaHost : IWinFormsHost
                 if (s_traceResize) Microsoft.Wpf.Interop.WebGpu.Composition.WgpuSceneRenderer.PerfReset();
                 host.Present();
             }
-            finally { s_inResize--; }
+            finally
+            {
+                s_inResize--;
+                if (wpf) ExitWpfAppKitCallback();
+            }
             if (s_traceResize)
             {
                 long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1527,6 +1535,10 @@ internal sealed class CocoaHost : IWinFormsHost
     private static Action<IntPtr> s_wpfDispatch;
     private static Action<IntPtr, IntPtr> s_wpfKeyTo;
     private static volatile bool s_wpfLoaded;
+
+    // In methods of their own, so WindowsBase is resolved only once it has loaded.
+    private static void EnterWpfAppKitCallback() => WindowsBase::MS.Internal.Interop.CocoaWindow.EnterAppKitCallback();
+    private static void ExitWpfAppKitCallback() => WindowsBase::MS.Internal.Interop.CocoaWindow.ExitAppKitCallback();
 
     private static void OnWpfLoaded()
     {

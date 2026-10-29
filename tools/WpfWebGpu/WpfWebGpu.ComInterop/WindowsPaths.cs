@@ -39,6 +39,108 @@ public static class WindowsPaths
         return copy;
     }
 
+    // ---- System.Environment ----
+    //
+    // What the app was started as. wpfrun starts every app through its host (WpfWebGpu.AppHost), and a page
+    // through the bundle's; the runtime's first argument is the host then. The app's own file
+    // (WPFWEBGPU_APP_PATH, the .exe it is started as on Windows) is what Windows puts there.
+
+    public static string[] Environment_GetCommandLineArgs()
+    {
+        string[] args = Environment.GetCommandLineArgs();
+        if (AppContext.GetData("WPFWEBGPU_APP_PATH") is not string app || app.Length == 0) return args;
+        if (args.Length == 0) return new[] { app };
+        var copy = (string[])args.Clone();
+        copy[0] = app;
+        return copy;
+    }
+
+    public static string Environment_get_CommandLine()
+    {
+        if (AppContext.GetData("WPFWEBGPU_APP_PATH") is not string app || app.Length == 0) return Environment.CommandLine;
+        // as Windows' command line reads: each argument quoted where it needs to be
+        return string.Join(" ", Environment_GetCommandLineArgs().Select(a =>
+            a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 ? a : "\"" + a.Replace("\"", "\\\"") + "\""));
+    }
+
+    // ---- System.Diagnostics.Process ----
+    //
+    // A Windows .NET program an app starts (Workbench's tools menu: the server location utility, the trace
+    // configurator) is a PE file this system cannot execute: Process.Start failed, the app took that as
+    // the tool not being there, and nothing opened. It is run as the app itself was, through the launcher
+    // (WPFWEBGPU_LAUNCHER, set by it): `wpfrun run <exe> <arguments>`. Anything else -- a native program, a
+    // document, a URL -- is started as it was.
+
+    public static System.Diagnostics.Process? Process_Start(string fileName)
+        => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName)));
+
+    public static System.Diagnostics.Process? Process_Start(string fileName, string arguments)
+        => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName, arguments)));
+
+    public static System.Diagnostics.Process? Process_Start(string fileName, IEnumerable<string> arguments)
+        => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName, arguments)));
+
+    public static System.Diagnostics.Process? Process_Start(System.Diagnostics.ProcessStartInfo startInfo)
+        => System.Diagnostics.Process.Start(Launchable(startInfo));
+
+    public static bool Process_Start(System.Diagnostics.Process process)
+    {
+        Launchable(process.StartInfo);
+        return process.Start();
+    }
+
+    /// <summary>The start info made to run a Windows .NET executable through the launcher; any other
+    /// unchanged.</summary>
+    // WF_TRACE_PROCESS=1: each start an app makes, and whether it goes through the launcher.
+    private static readonly bool s_traceProcess = Environment.GetEnvironmentVariable("WF_TRACE_PROCESS") == "1";
+
+    private static System.Diagnostics.ProcessStartInfo Launchable(System.Diagnostics.ProcessStartInfo psi)
+    {
+        if (s_windows || psi == null || string.IsNullOrEmpty(psi.FileName)) return psi!;
+        string? launcher = Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER");
+        string exe = Disk(psi.FileName)!;
+        bool managed = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(exe) && IsManagedExecutable(exe);
+        if (s_traceProcess)
+            Console.Error.WriteLine($"[process] start '{psi.FileName}' args='{psi.Arguments}' shell={psi.UseShellExecute} verb='{psi.Verb}' -> " +
+                (string.IsNullOrEmpty(launcher) ? "as is (no launcher)" : managed ? "through the launcher" : File.Exists(exe) ? "as is (not a .NET program)" : "as is (no such file)"));
+        if (string.IsNullOrEmpty(launcher) || !managed) return psi;
+        psi.FileName = launcher;
+        if (psi.ArgumentList.Count > 0)
+        {
+            psi.ArgumentList.Insert(0, exe);
+            psi.ArgumentList.Insert(0, "run");
+        }
+        else
+        {
+            psi.Arguments = "run \"" + exe + "\"" + (string.IsNullOrEmpty(psi.Arguments) ? "" : " " + psi.Arguments);
+        }
+        // Explorer starts an .exe in its own folder unless told otherwise; the launcher runs it there too.
+        if (string.IsNullOrEmpty(psi.WorkingDirectory)) psi.WorkingDirectory = Path.GetDirectoryName(exe)!;
+        else psi.WorkingDirectory = Disk(psi.WorkingDirectory)!;
+        psi.UseShellExecute = false;
+        return psi;
+    }
+
+    // A .NET program: a PE image with a CLR header (a .NET Framework .exe), or the native host .NET builds
+    // as the .exe of an app whose code is the managed .dll beside it.
+    private static bool IsManagedExecutable(string path)
+        => HasClrHeader(path) || (HasClrHeader(Path.ChangeExtension(path, ".dll")) && File.Exists(Path.ChangeExtension(path, ".runtimeconfig.json")));
+
+    private static bool HasClrHeader(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return false;
+            using var fs = File.OpenRead(path);
+            using var pe = new System.Reflection.PortableExecutable.PEReader(fs);
+            return pe.PEHeaders.CorHeader != null;
+        }
+        catch (Exception e) when (e is IOException or BadImageFormatException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     // ---- System.IO.Path ----
 
     public static string? Path_GetFileName(string? path) => Path.GetFileName(Native(path));

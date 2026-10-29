@@ -37,7 +37,7 @@ internal static class ComImportStep
     public const string VerdictFile = "comimport-verdicts.json";
     /// <summary>The verdicts' version: the step's own, and the rewriter build that judged them (its module's
     /// MVID, new with every build), so a changed rewriter never reuses an old verdict.</summary>
-    private static readonly string Version = "7/" + typeof(WpfWebGpu.ComRewrite.ComRewriter).Assembly.ManifestModule.ModuleVersionId.ToString("N");
+    private static readonly string Version = "8/" + typeof(WpfWebGpu.ComRewrite.ComRewriter).Assembly.ManifestModule.ModuleVersionId.ToString("N");
 
     /// <summary>Assemblies the judge finds rewritable whose first rewrite on Windows waits for its own gate
     /// (an app run that exercises them; the smoke runs do not): left on built-in COM, with the gate named.
@@ -95,6 +95,7 @@ internal static class ComImportStep
         public bool AsksOthers { get; set; }
         public bool EnumeratesAll { get; set; }
         public string? Example { get; set; }
+        public bool ReadsEntry { get; set; }
     }
 
     private sealed class Cache
@@ -153,7 +154,6 @@ internal static class ComImportStep
             {
                 if (!ComRewriter.ImportsWindows(f.File, catalog, windows)) continue;
                 if (!pinvokeScope(f.Name)) { notes.Add($"pinvoke {f.Name}: left (WPF_PINVOKE_REWRITE)"); continue; }
-                if (IsEntryFile(f)) { notes.Add($"pinvoke {f.Name}: the entry assembly, which the host loads before the startup hook: its Windows P/Invokes are not rewritten"); continue; }
                 if (!f.ILOnly) { notes.Add($"pinvoke {f.Name}: mixed-mode (not IL-only): its Windows P/Invokes are not rewritten"); continue; }
                 pinvokes.Add(f.Name);
             }
@@ -166,7 +166,7 @@ internal static class ComImportStep
         else
             foreach (var f in files)
             {
-                if (IsEntryFile(f) || !f.ILOnly || !pathSubs.MayUse(f.File)) continue;
+                if (!f.ILOnly || !pathSubs.MayUse(f.File)) continue;
                 if (!pathScope(f.Name)) { notes.Add($"paths {f.Name}: left (WPF_PATHS_REWRITE)"); continue; }
                 paths.Add(f.Name);
             }
@@ -244,10 +244,12 @@ internal static class ComImportStep
 
         // Windows: rewritten together or not at all -- an assembly whose COM types another uses goes with it
         bool Held(AppFile c) => !partial && !force(c.Name) && AwaitingGate.ContainsKey(c.Name);
-        // the entry assembly is the host's to load (dotnet exec), before the startup hook: never rewritten
+        // The entry assembly is judged like any other: wpfrun starts apps through its host (WpfWebGpu.AppHost),
+        // which loads it by name through the startup hook's loader. Left on built-in COM, the assemblies
+        // whose COM types it uses stay with it (below).
         bool IsEntry(AppFile c) => IsEntryFile(c);
         var entryFile = candidates.FirstOrDefault(IsEntry);
-        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c) && !IsEntry(c) && !(c.Forced && c.Verdict!.UsesComTypesOf.Count == 0)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+        var chosen = candidates.Where(c => (partial || c.Verdict!.Unsupported == 0 || force(c.Name)) && !Held(c) && !(c.Forced && c.Verdict!.UsesComTypesOf.Count == 0)).ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
         if (!partial)
         {
             for (bool changed = true; changed;)
@@ -256,8 +258,8 @@ internal static class ComImportStep
                 foreach (var c in chosen.Values.ToList())
                     if (!force(c.Name) && (c.Verdict!.UsesComTypesOf.Any(u => !chosen.ContainsKey(u)) || c.Trusts.Any(u => !chosen.ContainsKey(u))
                         || (c.Forced && c.Verdict.UsesComTypesOf.Count == 0)
-                        // the entry uses its COM types with built-in interop (its RCWs, ReleaseComObject): left with it
-                        || (entryFile != null && entryFile.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase))))
+                        // the entry, left on built-in COM, uses its COM types (its RCWs, ReleaseComObject): left with it
+                        || (entryFile != null && !chosen.ContainsKey(entryFile.Name) && entryFile.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase))))
                     { chosen.Remove(c.Name); changed = true; }
             }
         }
@@ -272,10 +274,10 @@ internal static class ComImportStep
         {
             foreach (var f in files.Where(f => f.MayReadLocations))
             {
-                if (cache.Asks.TryGetValue(f.Hash, out var a)) { f.Asks = new LocationAsks(a.AsksOthers, a.EnumeratesAll, a.Example); continue; }
+                if (cache.Asks.TryGetValue(f.Hash, out var a)) { f.Asks = new LocationAsks(a.AsksOthers, a.EnumeratesAll, a.Example, a.ReadsEntry); continue; }
                 try { f.Asks = LocationCallers.Analyze(f.File); }
                 catch (Exception) { f.Asks = new LocationAsks(true, false, "its IL could not be read"); }
-                cache.Asks[f.Hash] = new AsksEntry { AsksOthers = f.Asks.AsksOthers, EnumeratesAll = f.Asks.EnumeratesAll, Example = f.Asks.Example };
+                cache.Asks[f.Hash] = new AsksEntry { AsksOthers = f.Asks.AsksOthers, EnumeratesAll = f.Asks.EnumeratesAll, Example = f.Asks.Example, ReadsEntry = f.Asks.AsksEntry };
                 dirty = true;
             }
             var askers = files.Where(f => f.Asks is { AsksOthers: true }).ToList();
@@ -285,10 +287,12 @@ internal static class ComImportStep
                 grew = false;
                 foreach (var x in askers)
                 {
-                    if (rewritten.Contains(x.Name) || (entry != null && string.Equals(x.Name, entry, StringComparison.OrdinalIgnoreCase))) continue;
+                    if (rewritten.Contains(x.Name)) continue;
                     // x can be asked to tell where a rewritten R is when R calls it, or when x enumerates all
                     var reachedBy = files.Where(rf => rewritten.Contains(rf.Name) && rf.References.Contains(x.Name, StringComparer.OrdinalIgnoreCase)).Select(rf => rf.Name).ToList();
-                    if (reachedBy.Count == 0 && !x.Asks!.EnumeratesAll) continue;
+                    // ...or, asking the entry assembly where it is, when the entry is rewritten (it can always be asked)
+                    bool asksRewrittenEntry = x.Asks!.AsksEntry && entry != null && rewritten.Contains(entry);
+                    if (reachedBy.Count == 0 && !x.Asks.EnumeratesAll && !asksRewrittenEntry) continue;
                     rewritten.Add(x.Name);
                     callers[x.Name] = x;
                     grew = true;
@@ -303,8 +307,7 @@ internal static class ComImportStep
         foreach (var c in candidates)
         {
             bool rewrite = chosen.ContainsKey(c.Name);
-            string why = (IsEntry(c) ? "the entry assembly, which the host loads before the startup hook (never rewritten); " : "")
-                + (!rewrite && !IsEntry(c) && !partial && !force(c.Name) && entryFile != null && entryFile.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase)
+            string why = (!rewrite && !IsEntry(c) && !partial && !force(c.Name) && entryFile != null && !chosen.ContainsKey(entryFile.Name) && entryFile.Verdict!.UsesComTypesOf.Contains(c.Name, StringComparer.OrdinalIgnoreCase)
                     ? $"its COM types are used by the entry assembly {entryFile.Name} (left with it); " : "")
                 + c.Verdict!.Summary + (c.Trusts.Count > 0 ? $" (its interfaces' users {string.Join(", ", c.Trusts)} go with it)" : "") + (!rewrite && c.Verdict.Unsupported == 0 && Held(c) ? $" (rewritable, awaiting its gate: {AwaitingGate[c.Name]})"
                 : !rewrite && c.Verdict.Unsupported == 0 && c.Verdict.UsesComTypesOf.Count > 0 ? " (left with them)" : "");

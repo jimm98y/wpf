@@ -16,7 +16,7 @@
       - the members of Microsoft.WindowsDesktop.App that are not WPF or WinForms. wpfrun drops that
         framework from an app's runtimeconfig (it is where stock WPF comes from), and these are the
         assemblies an app then no longer gets from it. All of them have cross-platform builds.
-      - WpfWebGpu.Bootstrap, the startup hook.
+      - WpfWebGpu.Bootstrap, the startup hook, and WpfWebGpu.AppHost, the entry point apps start through.
 
     Published by tools/WpfWebGpu/build.sh (or .cmd) into artifacts/wpfrun/<rid>/overlay/wpfrun.payload/.
   -->
@@ -33,6 +33,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../WpfWebGpu.Bootstrap/WpfWebGpu.Bootstrap.csproj" />
+    <!-- The entry point wpfrun starts apps through, so their entry assemblies load through the startup hook. -->
+    <ProjectReference Include="../WpfWebGpu.AppHost/WpfWebGpu.AppHost.csproj" />
     <!-- The implementations of Windows exports the rewritten P/Invokes call; initialized by the bootstrap by name. -->
     <ProjectReference Include="../WpfWebGpu.Win32/WpfWebGpu.Win32.csproj" />
     <!-- Runtime detours for what CoreLib refuses off Windows; loaded by the bootstrap by name. -->

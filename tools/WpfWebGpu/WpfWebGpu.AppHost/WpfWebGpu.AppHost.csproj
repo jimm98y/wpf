@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The entry point wpfrun starts every app through (dotnet exec WpfWebGpu.AppHost.dll): it loads the
+       app's own entry assembly by name (through the startup hook's loader, which rewrites it in memory
+       when the launcher chose it, as every other app assembly is), makes it the process's entry
+       assembly and calls its Main. Started directly, the app's entry assembly was the host's to load
+       before the startup hook ran, and could never be rewritten. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>WpfWebGpu.AppHost</AssemblyName>
+    <RootNamespace>WpfWebGpu.AppHost</RootNamespace>
+    <UseAppHost>false</UseAppHost>
+  </PropertyGroup>
+
+</Project>
