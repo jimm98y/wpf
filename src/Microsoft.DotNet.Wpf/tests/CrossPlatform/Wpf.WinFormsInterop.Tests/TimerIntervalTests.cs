@@ -9,7 +9,8 @@
 // animation does not look as it does there.
 //
 // Measuring the cadence itself is at the mercy of the machine's scheduling (a virtual machine's
-// above all), so this pins down the two things it is made of: the floor, and the clock.
+// above all), so this pins down the two things it is made of: the floor, and the clock -- the
+// tick counted on every platform, where Environment.TickCount64 keeps it on Windows only.
 //
 
 using System;
@@ -32,7 +33,6 @@ namespace Wpf.WinFormsInterop.Tests
         [Fact]
         public void TimersKeepTime_ByTheSystemTick()
         {
-            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows' 15.6-ms system tick");
             PropertyInfo now = typeof(SWF.Timer).GetProperty("StopWatchNowMilliseconds", BindingFlags.NonPublic | BindingFlags.Static)!;
             var steps = new List<long>();
             long last = (long)now.GetValue(null)!;
@@ -44,7 +44,7 @@ namespace Wpf.WinFormsInterop.Tests
             }
             Assert.True(steps.Count >= 10, $"the clock moved {steps.Count} times in 3 s");
             steps.Sort();
-            // The tick: 15 or 16 ms a step (whatever timeBeginPeriod says). A millisecond clock steps by 1.
+            // The tick: 15 or 16 ms a step, on every platform. A millisecond clock (macOS's) steps by 1.
             Assert.True(steps[steps.Count / 2] >= 10, $"the timers' clock steps by {steps[steps.Count / 2]} ms; Windows' timers move by the 15.6-ms tick");
         }
     }

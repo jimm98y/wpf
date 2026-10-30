@@ -78,12 +78,37 @@ namespace System.Windows.Forms {
 		}
 
 		// The clock timers keep time by: the system tick, as Windows' own timers do. WM_TIMER is
-		// generated at a tick, so a 10-ms timer runs every 15.6 ms on Windows (64 a second), and
-		// faster than that is not what the application would get on stock. A sub-millisecond clock
-		// with Mono's 15-ms floor ran it every 19-21 ms instead (about 50 a second).
+		// generated at a tick, so a 10-ms timer runs every 15.6 ms on Windows (64 a second) and a
+		// 20-ms one every 31.25, and faster than that is not what the application would get on stock.
+		// A sub-millisecond clock with Mono's 15-ms floor ran it every 19-21 ms instead (about 50 a
+		// second); Environment.TickCount64 keeps the tick on Windows only -- on macOS and in the
+		// browser it counts single milliseconds, and every timer ran early. The tick is counted here,
+		// 64 a second, on every platform alike.
+		const long SystemTicksPerSecond = 64;
+
+		static long SystemTick {
+			get {
+				long ts = Stopwatch.GetTimestamp (), f = Stopwatch.Frequency;
+				return ts / f * SystemTicksPerSecond + ts % f * SystemTicksPerSecond / f;
+			}
+		}
+
 		internal static long StopWatchNowMilliseconds
 		{
-			get { return Environment.TickCount64; }
+			get { return SystemTick * 1000 / SystemTicksPerSecond; }
+		}
+
+		/// <summary>Real milliseconds from now until the first system tick at or after
+		/// <paramref name="expires"/> (a <see cref="StopWatchNowMilliseconds"/> time): how long to wait
+		/// for a timer due then.</summary>
+		internal static int MillisecondsUntil (long expires)
+		{
+			long tick = (expires * SystemTicksPerSecond + 999) / 1000;
+			while (tick * 1000 / SystemTicksPerSecond < expires) tick++;
+			long ts = Stopwatch.GetTimestamp (), f = Stopwatch.Frequency;
+			double nowMs = (double) ts / f * 1000;
+			double atMs = (double) tick * 1000 / SystemTicksPerSecond;
+			return (int) Math.Max (0, Math.Ceiling (atMs - nowMs));
 		}
 
 		[DefaultValue (100)]

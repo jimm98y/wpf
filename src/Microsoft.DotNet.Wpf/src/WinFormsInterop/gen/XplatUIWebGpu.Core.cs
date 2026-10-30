@@ -1859,14 +1859,14 @@ namespace System.Windows.Forms
 				foreach (Timer t in timers)
 				{
 					if (callingThreadOnly && timerThreads.TryGetValue(t, out int owner) && owner != me) continue;
-					long remaining = t.Expires - now;
-					if (remaining <= 0)
+					if (t.Expires - now <= 0)
 					{
 						(due ??= new Timer[timers.Count])[count++] = t;
 						t.Update(now);
-						remaining = t.Expires - now;
 					}
-					if (next < 0 || remaining < next) next = (int)Math.Max(0, remaining);
+					// Until the tick the timer is due at: WM_TIMER comes at a system tick.
+					int remaining = Timer.MillisecondsUntil(t.Expires);
+					if (next < 0 || remaining < next) next = remaining;
 				}
 			}
 			for (int i = 0; i < count; i++)

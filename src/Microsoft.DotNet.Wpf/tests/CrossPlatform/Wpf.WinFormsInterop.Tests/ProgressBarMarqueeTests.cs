@@ -48,11 +48,11 @@ namespace Wpf.WinFormsInterop.Tests
                     form.Controls.Add(narrow); form.Controls.Add(wide);
                     form.CreateControl();
                     for (int i = 0; i < 30; i++) { s_tick.Invoke(narrow, new object?[] { null, EventArgs.Empty }); s_tick.Invoke(wide, new object?[] { null, EventArgs.Empty }); }
-                    // Each tick is at least one 6-pixel step from -1; a slow test machine may add more.
+                    // One 6-pixel step a tick from -1: 30 ticks put the right edge at 179.
                     var (n0, n1) = Chunk(narrow);
                     var (w0, w1) = Chunk(wide);
                     Assert.Equal((w1 + 1) % 6, 0);                 // right edges at 5, 11, 17, ...
-                    Assert.True(w1 >= 179, $"chunk right edge {w1}");
+                    Assert.Equal(179, w1);
                     if (w1 < 600) Assert.Equal(126, w1 - w0);      // 127 wide while wholly inside
                     if (n1 < 199 && w1 < 199) Assert.Equal((w0, w1), (n0, n1));   // the same pixels in both widths
                 }

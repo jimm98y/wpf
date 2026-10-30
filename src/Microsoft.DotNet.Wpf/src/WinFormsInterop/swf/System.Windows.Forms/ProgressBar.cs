@@ -362,7 +362,6 @@ namespace System.Windows.Forms
 							marquee_timer.Tick += new EventHandler (marquee_timer_Tick);
 						}
 						marquee_pos = -1;
-						marquee_clock.Reset ();
 						marquee_timer.Start ();
 					} else {
 						if (marquee_timer != null) {
@@ -376,27 +375,23 @@ namespace System.Windows.Forms
 
 		// Windows 11's themed marquee, measured off comctl32 (300/600/200/100-pixel bars at
 		// MarqueeAnimationSpeed 30 and 100 alike): a 127-pixel chunk whose right edge steps on 6 pixels
-		// every 20 ms -- the same pixels a second whatever the bar's width or the speed asked for --
-		// entering from the left; one step after its left edge has passed the far end by more than
-		// 5 pixels it starts again with its right edge at 5. (Ours was a third of the bar's width,
+		// at each tick of a 20-ms timer -- the same pixels whatever the bar's width or the speed asked
+		// for -- entering from the left; one step after its left edge has passed the far end by more
+		// than 5 pixels it starts again with its right edge at 5. (Ours was a third of the bar's width,
 		// crossing in a fixed time: a narrow bar crawled and a wide one raced.)
 		internal const int MarqueeChunk = 127, MarqueeStep = 6, MarqueeInterval = 20;
 		/// <summary>The chunk's right edge, in client pixels.</summary>
 		internal int marquee_pos = -1;
-		// Steps are counted on the clock, not per tick: a timer that runs late (a busy thread, the
-		// 15.6 ms system tick) must not slow the chunk down.
-		readonly System.Diagnostics.Stopwatch marquee_clock = new System.Diagnostics.Stopwatch ();
-		long marquee_steps;
 
+		// One step a WM_TIMER, as comctl32 steps it: the 20-ms timer comes at the system tick, every
+		// 31.25 ms in a stock process, and later still while the thread is busy -- a timer that runs
+		// late slows the chunk down on Windows too. (Steps counted on a clock instead moved it 6 pixels
+		// every 20 ms whatever the timer did: a splash screen's bar crossed about twice as fast.)
 		void marquee_timer_Tick (object sender, EventArgs e)
 		{
-			if (!marquee_clock.IsRunning) { marquee_clock.Start (); marquee_steps = 0; }
-			long due = Math.Max (marquee_steps + 1, marquee_clock.ElapsedMilliseconds / MarqueeInterval);
-			for (; marquee_steps < due; marquee_steps++) {
-				marquee_pos += MarqueeStep;
-				if (marquee_pos - (MarqueeChunk - 1) > Width + 5)
-					marquee_pos = 5;
-			}
+			marquee_pos += MarqueeStep;
+			if (marquee_pos - (MarqueeChunk - 1) > Width + 5)
+				marquee_pos = 5;
 			Invalidate ();
 		}
 		
