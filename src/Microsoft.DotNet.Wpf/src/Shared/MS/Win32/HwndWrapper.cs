@@ -227,6 +227,8 @@ namespace MS.Win32
                         // activity stop/start while the WPF handle must stay put (see AndroidWindow).
                         var android = new MS.Internal.Interop.AndroidWindow();
                         android.Create(name, cx, cy, cw, ch, borderless);
+                        // A child window takes the keyboard when pressed, as SetFocus on one does there.
+                        android.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Same synthetic WM_SIZE routing as the other backends.
                         android.Resized += OnCocoaResized;
                         _platformWindow = android;

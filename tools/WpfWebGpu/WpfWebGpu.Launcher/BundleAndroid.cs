@@ -179,6 +179,10 @@ internal static partial class Bundle
                     base.OnActivityResult(requestCode, resultCode, data);
                 }
 
+                // the hardware keyboard's keys go to the app before any view (AndroidHost.DispatchKey)
+                public override bool DispatchKeyEvent(Android.Views.KeyEvent e)
+                    => _host?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
+
                 protected override void OnDestroy()
                 {
                     _host?.CancelPendingDialogs();

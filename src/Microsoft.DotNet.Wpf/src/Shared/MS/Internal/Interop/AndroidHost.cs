@@ -825,6 +825,20 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         _handler = new Android.OS.Handler(Android.OS.Looper.MainLooper!);
     }
 
+    // ---- the hardware keyboard -------------------------------------------------
+
+    /// <summary>
+    /// A hardware key for the app, from the activity's dispatchKeyEvent -- before any view, so the keys
+    /// reach the app whichever view Android has focused, as Windows gives them to the active window.
+    /// False for what the system keeps (Back, Home, the volume) and for a repeat Android synthesises
+    /// while a key is held, which arrives as another down, as Windows' auto-repeat does.
+    /// </summary>
+    public bool DispatchKey(KeyEvent? e)
+    {
+        if (e is null || e.Action is not (KeyEventActions.Down or KeyEventActions.Up)) return false;
+        return AndroidWindow.NotifyKey(e.Action == KeyEventActions.Down, (int)e.KeyCode, e.GetUnicodeChar((int)e.MetaState), (int)e.MetaState);
+    }
+
     // ---- the app's thread ------------------------------------------------------
 
     /// <summary>

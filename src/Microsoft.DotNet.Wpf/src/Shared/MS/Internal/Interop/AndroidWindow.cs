@@ -147,6 +147,7 @@ namespace MS.Internal.Interop
         {
             if (_handle == IntPtr.Zero || (IsBorderless && !_ownSurface)) return;
             lock (s_zOrder) { s_zOrder.Remove(this); s_zOrder.Add(this); }
+            s_keyWindow = _handle;
             Host?.BringToFront(_handle);
         }
 
@@ -247,6 +248,7 @@ namespace MS.Internal.Interop
             lock (this) ReleaseNativeWindow();
             lock (s_byHandle) s_byHandle.Remove(_handle);
             lock (s_zOrder) s_zOrder.Remove(this);
+            if (s_keyWindow == _handle) s_keyWindow = IntPtr.Zero;
             _handle = IntPtr.Zero;
         }
 
@@ -597,6 +599,68 @@ namespace MS.Internal.Interop
             s_uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
         }
 
+        // ---- The hardware keyboard -------------------------------------------------
+        //
+        // A keyboard's keys (a tablet's, a phone's over Bluetooth, the emulator's) come to the activity,
+        // which hands them here before any view sees them (AndroidHost.DispatchKey): for the window that
+        // has the keyboard -- the one last pressed or activated, as Windows gives the keys to the active
+        // window and SetFocus to a child window that was clicked -- as Windows' virtual keys.
+
+        /// <summary>A key of the hardware keyboard, down or up, for <see cref="Window"/>.</summary>
+        public readonly record struct KeyMessage(IntPtr Window, bool IsDown, int VirtualKey, string Characters,
+                                                 bool Shift, bool Ctrl, bool Alt, bool Meta, int TimestampMs);
+
+        /// <summary>Raised on the app's UI thread for each hardware key; consumed by the keyboard input providers.</summary>
+        public static event Action<KeyMessage> KeyInput;
+
+        private static IntPtr s_keyWindow;   // the window the keys go to
+
+        /// <summary>A child window that takes the keyboard when pressed, as SetFocus on one does on Windows.</summary>
+        public bool TakesKeyboardOnPress { get; set; }
+
+        // KeyEvent's meta state
+        private const int MetaShiftOn = 0x1, MetaAltOn = 0x2, MetaCtrlOn = 0x1000, MetaMetaOn = 0x10000;
+
+        /// <summary>
+        /// A hardware key from the activity (main thread): <paramref name="keyCode"/> is Android's
+        /// (KeyEvent.getKeyCode), <paramref name="unicodeChar"/> what it types with the modifiers held
+        /// (getUnicodeChar), 0 for none. False for a key Windows has no virtual key for, which the system
+        /// keeps (Back, Home, the volume).
+        /// </summary>
+        public static bool NotifyKey(bool down, int keyCode, int unicodeChar, int metaState)
+        {
+            int vk = VirtualKeyOfKeyCode(keyCode);
+            if (vk == 0) return false;
+            string chars = unicodeChar > 0 ? char.ConvertFromUtf32(unicodeChar) : null;
+            var message = new KeyMessage(IntPtr.Zero, down, vk, chars,
+                (metaState & MetaShiftOn) != 0, (metaState & MetaCtrlOn) != 0, (metaState & MetaAltOn) != 0, (metaState & MetaMetaOn) != 0,
+                Environment.TickCount);
+            OnUi(() => KeyInput?.Invoke(message with { Window = s_keyWindow != IntPtr.Zero ? s_keyWindow : s_mainHandle }));
+            return true;
+        }
+
+        /// <summary>An Android key code (android.view.KeyEvent.KEYCODE_*) as the Windows virtual key it is.</summary>
+        internal static int VirtualKeyOfKeyCode(int code)
+        {
+            if (code >= 29 && code <= 54) return 'A' + (code - 29);           // A..Z
+            if (code >= 7 && code <= 16) return '0' + (code - 7);             // 0..9
+            if (code >= 131 && code <= 142) return 0x70 + (code - 131);       // F1..F12
+            if (code >= 144 && code <= 153) return 0x60 + (code - 144);       // keypad 0..9
+            return code switch
+            {
+                66 or 160 => 0x0D, 67 => 0x08, 112 => 0x2E, 61 => 0x09, 62 => 0x20, 111 => 0x1B,   // Enter, Backspace, Delete, Tab, Space, Escape
+                19 => 0x26, 20 => 0x28, 21 => 0x25, 22 => 0x27,                  // arrows: up, down, left, right
+                122 => 0x24, 123 => 0x23, 92 => 0x21, 93 => 0x22, 124 => 0x2D,   // Home, End, PgUp, PgDn, Insert
+                59 or 60 => 0x10, 113 or 114 => 0x11, 57 or 58 => 0x12,          // Shift, Control, Alt
+                117 => 0x5B, 118 => 0x5C, 115 => 0x14, 116 => 0x91, 143 => 0x90, 120 => 0x2C, 121 => 0x13,   // Win, Caps, Scroll, Num Lock, Print Screen, Pause
+                69 => 0xBD, 70 => 0xBB, 71 => 0xDB, 72 => 0xDD, 73 => 0xDC,      // - = [ ] \
+                74 => 0xBA, 75 => 0xDE, 76 => 0xBF, 55 => 0xBC, 56 => 0xBE, 68 => 0xC0,   // ; ' / , . `
+                154 => 0x6F, 155 => 0x6A, 156 => 0x6D, 157 => 0x6B, 158 => 0x6E,  // keypad / * - + .
+                82 => 0x5D,                                                       // Menu
+                _ => 0,
+            };
+        }
+
         // ---- Touch input -----------------------------------------------------------
         //
         // A single touch drives WPF's mouse, exactly as on iOS (see UIKitWindow's notes, which apply
@@ -713,6 +777,10 @@ namespace MS.Internal.Interop
 
         private static void Touch(IntPtr handle, int kind, int xPixels, int yPixels)
         {
+            // a press gives a window the keys, and a child window that takes them (an ElementHost's WPF
+            // tree) -- never a popup (a menu, a tooltip), as on Windows
+            if (kind == 1 && FromHandle(handle) is { } pressed && (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress))
+                s_keyWindow = handle;
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
             {

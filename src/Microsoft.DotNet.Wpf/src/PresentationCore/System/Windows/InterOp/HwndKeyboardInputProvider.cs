@@ -28,6 +28,10 @@ namespace System.Windows.Interop
             {
                 MS.Internal.Interop.UIKitWindow.KeyInput += OnIosKeyInput;
             }
+            else if (OperatingSystem.IsAndroid())
+            {
+                MS.Internal.Interop.AndroidWindow.KeyInput += OnAndroidKeyInput;
+            }
             else if (OperatingSystem.IsLinux())
             {
                 MS.Internal.Interop.Wayland.WaylandInput.KeyInput += OnLinuxKeyInput;
@@ -47,6 +51,10 @@ namespace System.Windows.Interop
             else if (OperatingSystem.IsIOS())
             {
                 MS.Internal.Interop.UIKitWindow.KeyInput -= OnIosKeyInput;
+            }
+            else if (OperatingSystem.IsAndroid())
+            {
+                MS.Internal.Interop.AndroidWindow.KeyInput -= OnAndroidKeyInput;
             }
             else if (OperatingSystem.IsLinux())
             {
@@ -916,6 +924,27 @@ namespace System.Windows.Interop
                 foreach (char c in text)
                 {
                     if (c >= ' ' && c != '\x7f' && (c < '\uF700' || c > '\uF8FF'))
+                        ReportMacText(c, msg.TimestampMs);
+                }
+            }
+        }
+
+        // Android: a hardware keyboard's keys, for the window that has them (AndroidWindow.KeyInput), the
+        // key already a Win32 virtual key and its text what the key types with the modifiers held.
+        private void OnAndroidKeyInput(MS.Internal.Interop.AndroidWindow.KeyMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.Window != _source.Handle) return;
+
+            if (!ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, msg.VirtualKey, msg.TimestampMs,
+                              alt: msg.Alt, repeat: false))
+                return;
+
+            if (msg.IsDown && !msg.Ctrl && msg.Characters is { Length: > 0 } text)
+            {
+                foreach (char c in text)
+                {
+                    if (c >= ' ' && c != '\x7f')
                         ReportMacText(c, msg.TimestampMs);
                 }
             }

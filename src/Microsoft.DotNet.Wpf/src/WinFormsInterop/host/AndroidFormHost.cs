@@ -134,6 +134,7 @@ namespace System.Windows.Forms
 			_form.HandleDestroyed += OnHandleDestroyed;
 			_form.LocationChanged += OnFormMoved;
 			AndroidWindow.MouseInput += OnTouch;
+			AndroidWindow.KeyInput += OnKey;
 			SyncFromWindow ();
 			Activate ();
 			Present ();
@@ -445,6 +446,42 @@ namespace System.Windows.Forms
 			return true;
 		}
 
+		/// <summary>A hardware key, for the window that has the keys (AndroidWindow.KeyInput), as BrowserFormHost
+		/// takes the page's: the key down or up (WM_KEYDOWN/UP), and the typed character (WM_CHAR).</summary>
+		private void OnKey (AndroidWindow.KeyMessage k)
+		{
+			if (_closed || _window == null || !_form.IsHandleCreated || _form.IsDisposed)
+				return;
+			// a child window that took the keyboard (an ElementHost's WPF tree) has its own keys
+			if (AndroidWindow.FromHandle (k.Window) is { TakesKeyboardOnPress: true })
+				return;
+			Form active = Form.ActiveForm;
+			if (active != null ? active != _form : k.Window != _window.Handle)
+				return;
+			if (_form.InvokeRequired) {
+				_form.BeginInvoke ((Action)(() => OnKey (k)));
+				return;
+			}
+			Keys modifiers = (k.Ctrl ? Keys.Control : 0) | (k.Shift ? Keys.Shift : 0) | (k.Alt ? Keys.Alt : 0);
+			_driver.SetModifierKeys (modifiers);
+			int vk = k.VirtualKey;
+			if (!k.IsDown) {
+				_driver.InjectKeyUp (vk);
+				return;
+			}
+			bool consumed = _driver.InjectKeyDown (vk);
+			// WM_CHAR, as TranslateMessage makes it: the typed character, and the control characters
+			// Windows translates keys into (Backspace, Tab, Enter, Escape)
+			if (!consumed) {
+				string chars = k.Characters;
+				if (chars is { Length: 1 } && chars [0] >= ' ' && chars [0] != '\x7f' && !k.Ctrl)
+					_driver.InjectChar (chars [0]);
+				else if (vk is 0x08 or 0x09 or 0x0D or 0x1B)
+					_driver.InjectChar ((char)vk);
+			}
+			Present ();
+		}
+
 		private void Repaint ()
 		{
 			_lastVer = -1;
@@ -470,6 +507,7 @@ namespace System.Windows.Forms
 			_form.LocationChanged -= OnFormMoved;
 			_form.HandleDestroyed -= OnHandleDestroyed;
 			AndroidWindow.MouseInput -= OnTouch;
+			AndroidWindow.KeyInput -= OnKey;
 			if (_window != null) {
 				_window.Resized -= OnResized;
 				_window.Destroy ();

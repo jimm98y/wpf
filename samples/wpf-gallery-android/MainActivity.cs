@@ -45,6 +45,10 @@ public class MainActivity : Activity
         base.OnActivityResult(requestCode, resultCode, data);
     }
 
+    // The hardware keyboard's keys go to WPF before any view (AndroidHost.DispatchKey).
+    public override bool DispatchKeyEvent(Android.Views.KeyEvent? e)
+        => _host?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
+
     protected override void OnDestroy()
     {
         // Anything still pending would otherwise never complete.

@@ -48,6 +48,9 @@ namespace MS.Internal.Interop
         public void SetVisible(bool visible, bool activate) { }
         public void Activate() { }
         public static void RunLoop(int timeoutMilliseconds, System.Threading.WaitHandle posted) { }
+        public bool TakesKeyboardOnPress { get { throw null; } set { } }
+        public static event System.Action<MS.Internal.Interop.AndroidWindow.KeyMessage> KeyInput { add { } remove { } }
+        public static bool NotifyKey(bool down, int keyCode, int unicodeChar, int metaState) { throw null; }
         public static T InvokeOnUi<T>(System.Func<T> work) { throw null; }
         public static void WaitServingMain(System.Threading.WaitHandle done) { }
         public static void NotifySurfaceChanged(System.IntPtr handle, System.IntPtr nativeWindow, int widthPixels, int heightPixels) { }
@@ -57,6 +60,28 @@ namespace MS.Internal.Interop
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
+        public readonly partial struct KeyMessage : System.IEquatable<MS.Internal.Interop.AndroidWindow.KeyMessage>
+        {
+            private readonly object _dummy;
+            private readonly int _dummyPrimitive;
+            public KeyMessage(System.IntPtr Window, bool IsDown, int VirtualKey, string Characters, bool Shift, bool Ctrl, bool Alt, bool Meta, int TimestampMs) { throw null; }
+            public bool Alt { get { throw null; } set { } }
+            public string Characters { get { throw null; } set { } }
+            public bool Ctrl { get { throw null; } set { } }
+            public bool IsDown { get { throw null; } set { } }
+            public bool Meta { get { throw null; } set { } }
+            public bool Shift { get { throw null; } set { } }
+            public int TimestampMs { get { throw null; } set { } }
+            public int VirtualKey { get { throw null; } set { } }
+            public System.IntPtr Window { get { throw null; } set { } }
+            public void Deconstruct(out System.IntPtr Window, out bool IsDown, out int VirtualKey, out string Characters, out bool Shift, out bool Ctrl, out bool Alt, out bool Meta, out int TimestampMs) { throw null; }
+            public bool Equals(MS.Internal.Interop.AndroidWindow.KeyMessage other) { throw null; }
+            public override bool Equals(object obj) { throw null; }
+            public override int GetHashCode() { throw null; }
+            public static bool operator ==(MS.Internal.Interop.AndroidWindow.KeyMessage left, MS.Internal.Interop.AndroidWindow.KeyMessage right) { throw null; }
+            public static bool operator !=(MS.Internal.Interop.AndroidWindow.KeyMessage left, MS.Internal.Interop.AndroidWindow.KeyMessage right) { throw null; }
+            public override string ToString() { throw null; }
+        }
         public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.AndroidWindow.TouchMessage>
         {
             private readonly int _dummyPrimitive;
