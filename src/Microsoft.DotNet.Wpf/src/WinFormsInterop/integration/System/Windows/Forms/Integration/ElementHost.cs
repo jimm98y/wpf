@@ -311,8 +311,10 @@ namespace System.Windows.Forms.Integration
         // host claims the child HWND -- its picture drawn in the form's frame, its canvas left transparent
         // over the control to take the page's input, as the child window takes the OS's. iOS and Android
         // are the browser's case again: the hosted window is a view of the screen (UIKitWindow,
-        // AndroidWindow), with no surface of its own, over the form's.
-        private static bool CompositeIntoHostFrame => OperatingSystem.IsWindows() || OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid();
+        // AndroidWindow), with no surface of its own, over the form's. Linux too: a form is a Wayland
+        // window whose surface the form's host presents, so the hosted window's picture goes into the
+        // form's frame and its input comes from the host (WaylandFormHost), as the OS's does on Windows.
+        private static bool CompositeIntoHostFrame => OperatingSystem.IsWindows() || OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid() || OperatingSystem.IsLinux();
 
         private void EnsureSource()
         {
@@ -398,6 +400,13 @@ namespace System.Windows.Forms.Integration
             else if (OperatingSystem.IsAndroid() && MS.Internal.Interop.AndroidWindow.FromHandle(hostWindow) is { } androidView)
             {
                 androidView.GetClientScreenOriginPixels(out int hx, out int hy);
+                px += hx;
+                py += hy;
+            }
+            else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid() && MS.Internal.Interop.Wayland.WaylandWindow.FromHandle(hostWindow) is { } surface)
+            {
+                // the virtual screen's, as every Wayland window is placed
+                surface.GetClientScreenOriginPixels(out int hx, out int hy);
                 px += hx;
                 py += hy;
             }

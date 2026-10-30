@@ -41,6 +41,17 @@ namespace System.Windows.Forms
 		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
 		[System.Runtime.Versioning.SupportedOSPlatform("android")]
 		private static void InstallAndroidScreens() => AndroidFormHost.InstallScreens();
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("linux")]
+		private static void InstallWaylandScreens() => WaylandFormHost.InstallScreens();
+		// The thread that starts the driver is the app's UI thread: it reads the compositor connection,
+		// and a form of another thread (a splash screen) has its window made through it (WaylandFormHost).
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("linux")]
+		private static void ClaimWaylandThread() => WaylandFormHost.ClaimThread();
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("linux")]
+		private static void DrainWaylandWork() => WaylandFormHost.DrainPumpWork();
 		private XplatUIWebGpu()
 		{
 			// the driver's windows in the process's focus model (XplatUIWebGpu.Focus.cs)
@@ -51,6 +62,8 @@ namespace System.Windows.Forms
 			if (OperatingSystem.IsBrowser()) { FramedWindow = WindowChrome.IsFramed; InstallBrowserScreens(); }
 			else if (OperatingSystem.IsIOS()) { FramedWindow = WindowChrome.IsFramed; InstallIosScreens(); }
 			else if (OperatingSystem.IsAndroid()) { FramedWindow = WindowChrome.IsFramed; InstallAndroidScreens(); }
+			// Linux: every form is a toplevel of its own, its frame the headerbar (as macOS's title bar)
+			else if (OperatingSystem.IsLinux()) { InstallWaylandScreens(); ClaimWaylandThread(); }
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
 			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
 			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",
@@ -1000,6 +1013,7 @@ namespace System.Windows.Forms
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
+			else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 			var hwnd = new Hwnd();
 			// WinForms passes the WINDOW rectangle; keep the client one (see _frames).
 			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, CreateDpi(cp), cp.control);
@@ -1136,6 +1150,7 @@ namespace System.Windows.Forms
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
+			else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return false;
 			if (Trace && hwnd.visible != visible)
@@ -1253,6 +1268,7 @@ namespace System.Windows.Forms
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
+			else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
 			Padding frame = FrameOf(handle);
@@ -1334,6 +1350,7 @@ namespace System.Windows.Forms
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
 			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
+			else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 			// A rubber band is scribbled ON TOP of a window, and the caller's way of taking it back is
 			// to repaint underneath -- Splitter ends a drag with Parent.Refresh and a comment saying so.
 			// With an XOR pen on a real screen that works; a band the compositor draws over the finished

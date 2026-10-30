@@ -451,6 +451,7 @@ namespace System.Windows.Forms
                 else if (OperatingSystem.IsBrowser()) host = CreateBrowserHost(form);
                 else if (OperatingSystem.IsIOS()) host = CreateIosHost(form);
                 else if (OperatingSystem.IsAndroid()) host = CreateAndroidHost(form);
+                else if (OperatingSystem.IsLinux()) host = CreateWaylandHost(form);
                 else return;                             // no windowing shell for this OS yet
                 host.Show();                             // Attach happens in the ctor
             }
@@ -469,6 +470,10 @@ namespace System.Windows.Forms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [System.Runtime.Versioning.SupportedOSPlatform("android")]
         private static IWinFormsHost CreateAndroidHost(Form form) => new AndroidFormHost(form);
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+        private static IWinFormsHost CreateWaylandHost(Form form) => new WaylandFormHost(form);
 
         private static void InvalidateTree(Control c)
         {
@@ -506,6 +511,8 @@ namespace System.Windows.Forms
             if (OperatingSystem.IsIOS()) { IdleInRunLoop(ms); return; }
             // Android: the wait serves the WPF dispatcher of this thread too, which nothing else runs here
             if (OperatingSystem.IsAndroid()) { IdleServingWpf(ms, posted); return; }
+            // Linux: the wait is the compositor connection's -- its input, and the WPF work of the thread
+            if (OperatingSystem.IsLinux()) { IdleOnWayland(ms); return; }
             if (ms <= 0) return;
             if (posted == null) { Thread.Sleep(ms); return; }
             if (OperatingSystem.IsWindows())
@@ -530,6 +537,14 @@ namespace System.Windows.Forms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [System.Runtime.Versioning.SupportedOSPlatform("android")]
         private static void IdleServingWpf(int ms, WaitHandle posted) => WindowsBase::MS.Internal.Interop.AndroidWindow.RunLoop(ms, posted);
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+        private static void IdleOnWayland(int ms)
+        {
+            WaylandFormHost.DrainPumpWork();   // the windows other threads' forms asked for
+            WindowsBase::MS.Internal.Interop.Wayland.WaylandWindow.RunLoop(ms);
+        }
 
         [System.Runtime.InteropServices.DllImport("user32")]
         private static extern uint MsgWaitForMultipleObjectsEx(uint count, ref IntPtr handles, uint ms, uint wakeMask, uint flags);

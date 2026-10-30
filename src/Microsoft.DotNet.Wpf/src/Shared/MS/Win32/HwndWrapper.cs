@@ -246,10 +246,16 @@ namespace MS.Win32
                         // means P/Invoking libobjc, which is an immediate DllNotFoundException.
                         var wayland = new MS.Internal.Interop.Wayland.WaylandWindow();
                         wayland.Create(name, cx, cy, cw, ch, borderless, parent);
+                        // WindowStyle=None: the window draws its own frame, and libdecor's is hidden
+                        if (chromeless) wayland.SetChromeless(true);
                         // Same synthetic WM_SIZE / WM_CLOSE routing as the other backends (the
                         // handlers are named for Cocoa but are entirely generic).
                         wayland.Resized += OnCocoaResized;
                         wayland.Closed += OnCocoaClosed;
+                        // ...and a press on a window drawing its own chrome asks it what is there.
+                        wayland.NonClientHitTest = NonClientHitTest;
+                        // ...and the compositor's activation WM_ACTIVATE, as AppKit's key window is.
+                        wayland.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = wayland;
                         _handle = wayland.Handle;
                     }
@@ -312,8 +318,11 @@ namespace MS.Win32
                         // (WS_EX_NOACTIVATE says it must not, as for a popup).
                         cocoa.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         _handle = cocoa.Handle;   // a 32-bit HWND, not the view (CocoaWindow.Handle)
-                        lock (s_platformWrappers) s_platformWrappers[_handle] = new WeakReference<HwndWrapper>(this);
                     }
+                    // Every head's window, for SWP_FRAMECHANGED (RecalculateFrame): Telerik's ribbon window
+                    // takes the frame over on Linux as it does on macOS.
+                    if (_platformWindow != null && _handle != IntPtr.Zero)
+                        lock (s_platformWrappers) s_platformWrappers[_handle] = new WeakReference<HwndWrapper>(this);
                     // Register the handle so off-Windows SendMessage (e.g. Window.Close()'s WM_CLOSE)
                     // can be routed synchronously to this wrapper's managed WndProc (see DispatchMessage).
                     lock (s_byHandleLock) { s_byHandle[_handle] = this; }

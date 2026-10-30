@@ -18,6 +18,10 @@ namespace System.Windows.Forms
 		/// <summary>Whether <paramref name="handle"/> is a window of this WinForms.</summary>
 		public static bool IsWindow (IntPtr handle) => handle != IntPtr.Zero && Hwnd.ObjectFromHandle (handle) != null;
 
+		/// <summary>The thread a control belongs to (the one that made its handle), or null: whose
+		/// window procedure a call for it has to run on, as SendMessage runs it.</summary>
+		public static System.Threading.Thread OwnerThread (Control control) => control.creator_thread as System.Threading.Thread;
+
 		/// <summary>Every window handle of this WinForms, a snapshot.</summary>
 		public static IntPtr[] Windows () => Hwnd.Handles ();
 

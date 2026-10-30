@@ -662,6 +662,63 @@ namespace MS.Internal.Interop.Wayland
         public static void SetTitle(System.IntPtr handle, string title) { }
         public static void SetWindowState(System.IntPtr handle, int state) { }
         public static bool TryGetPointerPosition(out int x, out int y) { throw null; }
+        public void SetChromeless(bool chromeless) { }
+        public bool ResizesFromEdges { get { throw null; } }
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight) { throw null; }
+        public System.Func<int, int, int> NonClientHitTest { get { throw null; } set { } }
+        public event System.Action<bool> ActiveChanged { add { } remove { } }
+        public bool IsActive { get { throw null; } }
+        public static event System.Action<MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage> MouseInput { add { } remove { } }
+        public static event System.Action<MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage> KeyInput { add { } remove { } }
+        public static void RunLoop(int timeoutMilliseconds) { }
+        public static double PrimaryScale() { throw null; }
+        public static bool IsUiThread { get { throw null; } }
+        public static bool ClaimUiThread() { throw null; }
+        public static void DeliverMouse(System.IntPtr window, int kind, int button, int x, int y, int wheel) { }
+        public static void DeliverKey(System.IntPtr window, MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage key) { }
+        public readonly partial struct MouseMessage : System.IEquatable<MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage>
+        {
+            private readonly int _dummyPrimitive;
+            public MouseMessage(System.IntPtr Window, int Kind, int Button, int X, int Y, int Wheel, int WheelHorizontal, int TimestampMs) { throw null; }
+            public System.IntPtr Window { get { throw null; } set { } }
+            public int Kind { get { throw null; } set { } }
+            public int Button { get { throw null; } set { } }
+            public int X { get { throw null; } set { } }
+            public int Y { get { throw null; } set { } }
+            public int Wheel { get { throw null; } set { } }
+            public int WheelHorizontal { get { throw null; } set { } }
+            public int TimestampMs { get { throw null; } set { } }
+            public void Deconstruct(out System.IntPtr Window, out int Kind, out int Button, out int X, out int Y, out int Wheel, out int WheelHorizontal, out int TimestampMs) { throw null; }
+            public bool Equals(MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage other) { throw null; }
+            public override bool Equals(object obj) { throw null; }
+            public override int GetHashCode() { throw null; }
+            public static bool operator ==(MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage left, MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage right) { throw null; }
+            public static bool operator !=(MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage left, MS.Internal.Interop.Wayland.WaylandWindow.MouseMessage right) { throw null; }
+            public override string ToString() { throw null; }
+        }
+        public readonly partial struct KeyMessage : System.IEquatable<MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage>
+        {
+            private readonly object _dummy;
+            private readonly int _dummyPrimitive;
+            public KeyMessage(System.IntPtr Window, bool IsDown, int VirtualKey, string Characters, bool IsRepeat, bool Shift, bool Ctrl, bool Alt, int TimestampMs, uint Keysym) { throw null; }
+            public uint Keysym { get { throw null; } set { } }
+            public System.IntPtr Window { get { throw null; } set { } }
+            public bool IsDown { get { throw null; } set { } }
+            public int VirtualKey { get { throw null; } set { } }
+            public string Characters { get { throw null; } set { } }
+            public bool IsRepeat { get { throw null; } set { } }
+            public bool Shift { get { throw null; } set { } }
+            public bool Ctrl { get { throw null; } set { } }
+            public bool Alt { get { throw null; } set { } }
+            public int TimestampMs { get { throw null; } set { } }
+            public void Deconstruct(out System.IntPtr Window, out bool IsDown, out int VirtualKey, out string Characters, out bool IsRepeat, out bool Shift, out bool Ctrl, out bool Alt, out int TimestampMs, out uint Keysym) { throw null; }
+            public bool Equals(MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage other) { throw null; }
+            public override bool Equals(object obj) { throw null; }
+            public override int GetHashCode() { throw null; }
+            public static bool operator ==(MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage left, MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage right) { throw null; }
+            public static bool operator !=(MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage left, MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage right) { throw null; }
+            public override string ToString() { throw null; }
+        }
     }
 }
 

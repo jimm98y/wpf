@@ -122,6 +122,12 @@ namespace MS.Internal.Interop.Wayland
         [DllImport(Lib)] internal static extern IntPtr libdecor_frame_get_xdg_surface(IntPtr frame);
         [DllImport(Lib)] internal static extern IntPtr libdecor_frame_get_xdg_toplevel(IntPtr frame);
 
+        /// <summary>The compositor's interactive move and resize (xdg_toplevel.move/resize), started from the
+        /// press that holds the pointer: <paramref name="serial"/> is that press's.</summary>
+        [DllImport(Lib)] internal static extern void libdecor_frame_move(IntPtr frame, IntPtr seat, uint serial);
+        /// <param name="edge">libdecor_resize_edge: 1 top, 2 bottom, 3 left, 4 top-left, 5 bottom-left, 6 right, 7 top-right, 8 bottom-right.</param>
+        [DllImport(Lib)] internal static extern void libdecor_frame_resize(IntPtr frame, IntPtr seat, uint serial, int edge);
+
         /// <summary>
         /// Converts a point in the CONTENT surface's coordinates into the frame's window-geometry
         /// coordinates. xdg_positioner.set_anchor_rect is specified against window geometry, which

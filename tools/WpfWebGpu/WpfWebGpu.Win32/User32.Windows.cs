@@ -50,18 +50,86 @@ public static unsafe partial class Exports
         }
     }
 
-    /// <summary>Runs <paramref name="f"/> on the thread that owns <paramref name="o"/>, as SendMessage would.</summary>
+    /// <summary>
+    /// Runs <paramref name="f"/> on the thread that owns <paramref name="o"/>, as SendMessage would -- and
+    /// with SendMessage's wait: a thread that sends to another thread's window keeps handling what is
+    /// sent to its own while it waits. A plain Invoke did not, and two threads that each asked about the
+    /// other's window at once (a splash screen's timer moving its layered window from the main thread,
+    /// while the splash thread asked where a combo box of the main form was) waited for each other for
+    /// ever, where on Windows both calls return.
+    /// </summary>
     internal static T Ui<T>(object? o, Func<T> f)
     {
-        switch (o)
+        System.Threading.Thread? target = o switch
         {
-            case DispatcherObject d when !d.CheckAccess():
-                return d.Dispatcher.Invoke(f);
-            case Forms.Control c when c.InvokeRequired:
-                return (T)c.Invoke(f)!;
-            default:
-                return f();
+            DispatcherObject d when !d.CheckAccess() => d.Dispatcher.Thread,
+            Forms.Control c when c.InvokeRequired => Forms.Win32Bridge.OwnerThread(c),
+            _ => null,
+        };
+        if (target == null || !target.IsAlive) return f();
+
+        var call = new SentCall(() => f());
+        SentQueue(target).Enqueue(call);
+        SentSignal(target).Set();
+        // ...and to the owner's message loop, which runs it if the owner is not itself waiting in here
+        try
+        {
+            if (o is DispatcherObject d) d.Dispatcher.BeginInvoke((Action)call.Run);
+            else if (o is Forms.Control c) c.BeginInvoke((Action)call.Run);
         }
+        catch (Exception)
+        {
+            call.Run();   // no loop to take it (the owner's window is gone): as SendMessage to a dead window, here
+        }
+        System.Threading.Thread me = System.Threading.Thread.CurrentThread;
+        var waits = new WaitHandle[] { call.Done, SentSignal(me) };
+        while (!call.Done.WaitOne(0))
+        {
+            WaitHandle.WaitAny(waits, 250);
+            RunSentTo(me);
+            if (!target.IsAlive) call.Run();
+        }
+        if (call.Error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(call.Error);
+        return (T)call.Result!;
+    }
+
+    /// <summary>A call one thread sent to another's window: run once, by whichever gets to it first --
+    /// the owner's message loop, or the owner waiting on a call of its own.</summary>
+    private sealed class SentCall
+    {
+        private readonly Func<object?> _work;
+        private int _taken;
+        public object? Result;
+        public Exception? Error;
+        public readonly ManualResetEvent Done = new ManualResetEvent(false);
+
+        public SentCall(Func<object?> work) => _work = work;
+
+        public void Run()
+        {
+            if (System.Threading.Interlocked.Exchange(ref _taken, 1) != 0) return;
+            try { Result = _work(); }
+            catch (Exception e) { Error = e; }
+            finally { Done.Set(); }
+        }
+    }
+
+    private static readonly ConditionalWeakTableQueue s_sent = new();
+
+    private sealed class ConditionalWeakTableQueue
+    {
+        public readonly System.Runtime.CompilerServices.ConditionalWeakTable<System.Threading.Thread, ConcurrentQueue<SentCall>> Queues = new();
+        public readonly System.Runtime.CompilerServices.ConditionalWeakTable<System.Threading.Thread, AutoResetEvent> Signals = new();
+    }
+
+    private static ConcurrentQueue<SentCall> SentQueue(System.Threading.Thread t) => s_sent.Queues.GetValue(t, _ => new ConcurrentQueue<SentCall>());
+    private static AutoResetEvent SentSignal(System.Threading.Thread t) => s_sent.Signals.GetValue(t, _ => new AutoResetEvent(false));
+
+    /// <summary>Runs the calls other threads have sent to this one's windows.</summary>
+    private static void RunSentTo(System.Threading.Thread me)
+    {
+        ConcurrentQueue<SentCall> queue = SentQueue(me);
+        while (queue.TryDequeue(out SentCall? call)) call.Run();
     }
 
     private static nint HandleOf(object? o) => o switch

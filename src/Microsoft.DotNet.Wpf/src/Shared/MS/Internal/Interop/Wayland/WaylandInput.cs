@@ -137,6 +137,8 @@ namespace MS.Internal.Interop.Wayland
         // wl_pointer.set_cursor, xdg_popup.grab, wl_data_device.set_selection, libdecor's
         // interactive move/resize. A stale or zero serial is silently ignored (or a protocol error).
         internal static uint EnterSerial { get; private set; }
+        /// <summary>The wl_seat, for the requests that act on the user's behalf (interactive move/resize).</summary>
+        internal static IntPtr Seat => s_seat;
         internal static uint LastInputSerial { get; private set; }
 
         /// <summary>
@@ -146,6 +148,7 @@ namespace MS.Internal.Interop.Wayland
         internal static uint LastPointerButtonSerial { get; private set; }
 
         private static int s_buttonsDown;
+        private static bool s_nonClientPress;   // the held left press went to a window's frame, not to WPF
         internal static IntPtr FocusSurface { get; private set; }
 
         /// <summary>The pointer's last position, SURFACE-LOCAL and in logical units, together with
@@ -527,6 +530,16 @@ namespace MS.Internal.Interop.Wayland
                 // at the right position.
                 FlushMotion(surface);
 
+                // A press on the frame of a window that draws its own is the system's, not the app's
+                // (WaylandWindow.NonClientPress), and so is the release that ends it.
+                if (state != 0 && button == BTN_LEFT && WaylandWindow.FromHandle(surface) is { } pressed
+                    && pressed.NonClientPress(Px(s_motionX, surface), Py(s_motionY, surface), time))
+                {
+                    s_nonClientPress = true;
+                    return;
+                }
+                if (state == 0 && button == BTN_LEFT && s_nonClientPress) { s_nonClientPress = false; return; }
+
                 var kind = state != 0 ? WaylandMouseKind.ButtonDown : WaylandMouseKind.ButtonUp;
                 Raise(new WaylandMouseMessage(surface, kind, (int)button, Px(s_motionX, surface), Py(s_motionY, surface), 0, 0, (int)time));
             }
@@ -642,6 +655,79 @@ namespace MS.Internal.Interop.Wayland
         internal static int Py(double y, IntPtr surface) => (int)Math.Round(y * WaylandDisplay.ScaleForSurface(surface));
 
         private static void Raise(in WaylandMouseMessage m) => MouseInput?.Invoke(m);
+
+        // Maps an XKB keysym to a Win32 virtual-key code, which WPF's KeyInterop turns into a Key.
+        // Keysyms rather than scancodes because the keysym already accounts for the user's layout,
+        // so AZERTY and Dvorak report the letter the user actually pressed. Returns 0 for keysyms
+        // we do not translate.
+        internal static int VirtualKeyOfKeysym(uint keysym)
+        {
+            // Latin letters and digits: the keysym IS the ASCII code, and VK_A..VK_Z / VK_0..VK_9
+            // are the uppercase ASCII values.
+            if (keysym >= 'a' && keysym <= 'z') return (int)(keysym - 'a' + 'A');
+            if (keysym >= 'A' && keysym <= 'Z') return (int)keysym;
+            if (keysym >= '0' && keysym <= '9') return (int)keysym;
+
+            // Keypad digits (XK_KP_0 = 0xffb0) -> VK_NUMPAD0 = 0x60.
+            if (keysym >= 0xffb0 && keysym <= 0xffb9) return (int)(keysym - 0xffb0 + 0x60);
+            // Function keys (XK_F1 = 0xffbe) -> VK_F1 = 0x70.
+            if (keysym >= 0xffbe && keysym <= 0xffe0) return (int)(keysym - 0xffbe + 0x70);
+
+            switch (keysym)
+            {
+                case 0xff08: return 0x08;   // BackSpace   -> VK_BACK
+                case 0xff09: return 0x09;   // Tab         -> VK_TAB
+                case 0xff0d: return 0x0D;   // Return      -> VK_RETURN
+                case 0xff8d: return 0x0D;   // KP_Enter    -> VK_RETURN
+                case 0xff1b: return 0x1B;   // Escape      -> VK_ESCAPE
+                case 0xff13: return 0x13;   // Pause       -> VK_PAUSE
+                case 0xff14: return 0x91;   // Scroll_Lock -> VK_SCROLL
+                case 0xff50: return 0x24;   // Home        -> VK_HOME
+                case 0xff51: return 0x25;   // Left        -> VK_LEFT
+                case 0xff52: return 0x26;   // Up          -> VK_UP
+                case 0xff53: return 0x27;   // Right       -> VK_RIGHT
+                case 0xff54: return 0x28;   // Down        -> VK_DOWN
+                case 0xff55: return 0x21;   // Prior/PgUp  -> VK_PRIOR
+                case 0xff56: return 0x22;   // Next/PgDn   -> VK_NEXT
+                case 0xff57: return 0x23;   // End         -> VK_END
+                case 0xff63: return 0x2D;   // Insert      -> VK_INSERT
+                case 0xffff: return 0x2E;   // Delete      -> VK_DELETE
+                case 0xff67: return 0x5D;   // Menu        -> VK_APPS
+                case 0xff7f: return 0x90;   // Num_Lock    -> VK_NUMLOCK
+                case 0xffe1: return 0xA0;   // Shift_L     -> VK_LSHIFT
+                case 0xffe2: return 0xA1;   // Shift_R     -> VK_RSHIFT
+                case 0xffe3: return 0xA2;   // Control_L   -> VK_LCONTROL
+                case 0xffe4: return 0xA3;   // Control_R   -> VK_RCONTROL
+                case 0xffe9: return 0xA4;   // Alt_L       -> VK_LMENU
+                case 0xffea: return 0xA5;   // Alt_R       -> VK_RMENU
+                case 0xffe5: return 0x14;   // Caps_Lock   -> VK_CAPITAL
+                case 0xffeb: return 0x5B;   // Super_L     -> VK_LWIN
+                case 0xffec: return 0x5C;   // Super_R     -> VK_RWIN
+                case 0x0020: return 0x20;   // space       -> VK_SPACE
+                case 0xffaa: return 0x6A;   // KP_Multiply -> VK_MULTIPLY
+                case 0xffab: return 0x6B;   // KP_Add      -> VK_ADD
+                case 0xffad: return 0x6D;   // KP_Subtract -> VK_SUBTRACT
+                case 0xffae: return 0x6E;   // KP_Decimal  -> VK_DECIMAL
+                case 0xffaf: return 0x6F;   // KP_Divide   -> VK_DIVIDE
+
+                // OEM punctuation, at their US-layout virtual keys (which is what WPF's Key enum
+                // names them after, e.g. Key.OemComma, regardless of the actual layout).
+                case ';': case ':': return 0xBA;   // VK_OEM_1
+                case '=': case '+': return 0xBB;   // VK_OEM_PLUS
+                case ',': case '<': return 0xBC;   // VK_OEM_COMMA
+                case '-': case '_': return 0xBD;   // VK_OEM_MINUS
+                case '.': case '>': return 0xBE;   // VK_OEM_PERIOD
+                case '/': case '?': return 0xBF;   // VK_OEM_2
+                case '`': case '~': return 0xC0;   // VK_OEM_3
+                case '[': case '{': return 0xDB;   // VK_OEM_4
+                case '\\': case '|': return 0xDC;  // VK_OEM_5
+                case ']': case '}': return 0xDD;   // VK_OEM_6
+                case '\'': case '"': return 0xDE;  // VK_OEM_7
+
+                default: return 0;
+            }
+        }
+
 
         // ---- Shared with the other input sources on this seat --------------------------------
         //

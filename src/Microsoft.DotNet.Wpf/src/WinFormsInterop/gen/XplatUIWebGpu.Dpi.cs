@@ -53,6 +53,12 @@ namespace System.Windows.Forms {
 				systemDpi = AndroidFormHost.ScreenDpi();
 				return systemDpi > 0 ? 2 : 0;
 			}
+			// Linux: the primary output's scale (WaylandFormHost)
+			if (OperatingSystem.IsLinux())
+			{
+				systemDpi = LinuxScreenDpi();
+				return systemDpi > 0 ? 2 : 0;
+			}
 			if (!OperatingSystem.IsWindows())
 				return 0;
 			try
@@ -70,6 +76,11 @@ namespace System.Windows.Forms {
 		/// system-aware, 0 not aware (or no notion of it on this platform).</summary>
 		/// <summary>Whether any window has been created yet.</summary>
 		internal static bool HasCreatedWindows => System.Threading.Volatile.Read(ref instance) is XplatUIWebGpu i && i.next_handle > 1;
+
+		// its own method: the Wayland window layer stands on WindowsBase, which another head need not ship
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("linux")]
+		private static int LinuxScreenDpi() => WaylandFormHost.ScreenDpi();
 
 		internal static int CurrentThreadAwareness()
 		{

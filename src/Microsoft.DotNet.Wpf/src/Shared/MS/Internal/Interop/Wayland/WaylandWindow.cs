@@ -82,6 +82,7 @@ namespace MS.Internal.Interop.Wayland
         private GCHandle _self;
 
         private bool _borderless;
+        private bool _chromeless;            // a toplevel that draws its own frame: libdecor's is hidden
         private IntPtr _ownerHandle;
         private string _title = string.Empty;
 
@@ -271,6 +272,8 @@ namespace MS.Internal.Interop.Wayland
             }
 
             IntPtr positioner = BuildPositioner();
+            _popupParent = ResolveOwner();
+            _popupSeq = ++s_popupSeq;
             _xdgPopup = Wl.Construct(_xdgSurface, XDG_SURFACE_GET_POPUP, "xdg_popup",
                 Wl.wl_proxy_get_version(_xdgSurface),
                 WlArgument.NewId(), WlArgument.Ptr(parentXdg), WlArgument.Ptr(positioner));
@@ -738,7 +741,7 @@ namespace MS.Internal.Interop.Wayland
         /// origin into window-geometry space yields exactly the decoration inset.</summary>
         private double CaptionDips()
         {
-            if (_borderless) return 0;
+            if (_borderless || _chromeless) return 0;
             if (_frame != IntPtr.Zero)
             {
                 try
@@ -753,7 +756,7 @@ namespace MS.Internal.Interop.Wayland
 
         private void NonClientInsetsDips(out double w, out double h)
         {
-            if (_borderless) { w = 0; h = 0; return; }
+            if (_borderless || _chromeless) { w = 0; h = 0; return; }
             w = NonClientWidthDips;
             h = CaptionDips();
         }
@@ -859,9 +862,12 @@ namespace MS.Internal.Interop.Wayland
         /// and the damage below is what asks for that frame. Attaching a buffer here is not possible
         /// (the renderer owns them) and not needed.
         /// </remarks>
+        private bool _hidden;   // SetVisible(false): not on screen, and not what is under the pointer
+
         public void SetVisible(bool visible)
         {
             if (_destroyed || _surface == IntPtr.Zero) return;
+            _hidden = !visible;
 
             if (!visible)
             {
@@ -879,14 +885,160 @@ namespace MS.Internal.Interop.Wayland
             WaylandDisplay.Flush();
         }
 
-        /// <summary>Not wired yet: the Wayland equivalent is xdg_toplevel.move, which needs the seat
-        /// and the serial of the button press that started the drag. Left as a no-op rather than
-        /// guessed at, so a caption drag simply does nothing here instead of moving the wrong window.</summary>
-        public void BeginMoveDrag() { }
+        /// <summary>
+        /// A window that draws its own frame (WindowStyle=None with WindowChrome, a form that takes the
+        /// non-client area over): libdecor's headerbar and borders are hidden, so there is one caption,
+        /// the window's, as on Windows -- and the window is moved and sized by this layer through the
+        /// compositor (<see cref="BeginMoveDrag"/>, <see cref="BeginResizeDrag"/>) from what its own
+        /// hit-testing says is there. The content then IS the window: no non-client inset.
+        /// </summary>
+        public void SetChromeless(bool chromeless)
+        {
+            WaylandDisplay.LogSink?.Invoke($"window 0x{_surface:x}: chromeless {chromeless} (was {_chromeless}, frame {(_frame != IntPtr.Zero)})");
+            if (_frame == IntPtr.Zero || chromeless == _chromeless) return;
+            _chromeless = chromeless;
+            WlDecor.libdecor_frame_set_visibility(_frame, !chromeless);
+            CommitSize();
+            WaylandDisplay.Flush();
+        }
+
+        /// <summary>DefWindowProc's move loop for SC_MOVE (DragMove, a caption the window draws): the
+        /// compositor's interactive move, from the press that holds the pointer.</summary>
+        public void BeginMoveDrag()
+        {
+            if (_frame == IntPtr.Zero || _destroyed) return;
+            uint serial = WaylandInput.LastPointerButtonSerial;
+            if (serial == 0 || WaylandInput.Seat == IntPtr.Zero) return;
+            WlDecor.libdecor_frame_move(_frame, WaylandInput.Seat, serial);
+            WaylandDisplay.Flush();
+        }
+
+        /// <summary>
+        /// WM_NCHITTEST for a point in screen device pixels: the window procedure's answer, HTCLIENT when it
+        /// has none. Set by HwndWrapper, which owns the procedure.
+        /// </summary>
+        public Func<int, int, int>? NonClientHitTest { get; set; }
+
+        private uint _lastCaptionPressTime;
+
+        /// <summary>
+        /// A left press on a window that draws its own frame, where the WINDOW says what is there, as
+        /// Windows asks it (WM_NCHITTEST). On its caption the press is the system's -- WM_NCLBUTTONDOWN,
+        /// which DefWindowProc turns into a move, and a double-click into maximize or restore -- and on its
+        /// sizing border a resize; WPF never sees those. A window whose own chrome hooks the press first
+        /// (WindowChrome's) answers HTCLIENT here, and keeps it. <paramref name="x"/>, <paramref name="y"/>:
+        /// surface-local device pixels.
+        /// </summary>
+        internal bool NonClientPress(int x, int y, uint time)
+        {
+            if (!_chromeless || _frame == IntPtr.Zero || NonClientHitTest == null) return false;
+            int hit;
+            try { hit = NonClientHitTest(_virtualX + x, _virtualY + y); }
+            catch { return false; }
+            const int HTCAPTION = 2;
+            if (hit == HTCAPTION)
+            {
+                bool doubleClick = _lastCaptionPressTime != 0 && time - _lastCaptionPressTime <= 500;
+                _lastCaptionPressTime = doubleClick ? 0 : time;
+                if (doubleClick)
+                {
+                    if ((_windowState & LibdecorWindowState.Maximized) != 0) WlDecor.libdecor_frame_unset_maximized(_frame);
+                    else WlDecor.libdecor_frame_set_maximized(_frame);
+                    WaylandDisplay.Flush();
+                }
+                else BeginMoveDrag();
+                return true;
+            }
+            _lastCaptionPressTime = 0;
+            return hit >= 10 && hit <= 17 && BeginResizeDrag(hit, 0, 0, 0, 0);
+        }
+
+        /// <summary>A window drawing its own frame is sized from its edges here; libdecor's borders size the others.</summary>
+        public bool ResizesFromEdges => _frame != IntPtr.Zero && _chromeless;
+
+        /// <summary>DefWindowProc's size loop for a press on the border (HTLEFT..HTBOTTOMRIGHT): the
+        /// compositor's interactive resize from that edge. The minimum and maximum sizes are libdecor's
+        /// content limits, which the compositor holds the resize to.</summary>
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight)
+        {
+            if (!ResizesFromEdges || _destroyed) return false;
+            int edge = hitTest switch
+            {
+                12 => 1,   // HTTOP
+                15 => 2,   // HTBOTTOM
+                10 => 3,   // HTLEFT
+                13 => 4,   // HTTOPLEFT
+                16 => 5,   // HTBOTTOMLEFT
+                11 => 6,   // HTRIGHT
+                14 => 7,   // HTTOPRIGHT
+                17 => 8,   // HTBOTTOMRIGHT
+                _ => 0,
+            };
+            uint serial = WaylandInput.LastPointerButtonSerial;
+            if (edge == 0 || serial == 0 || WaylandInput.Seat == IntPtr.Zero) return false;
+            double scale = GetBackingScale();
+            if (minWidth > 0 || minHeight > 0)
+                WlDecor.libdecor_frame_set_min_content_size(_frame, Math.Max(1, (int)Math.Round(minWidth / scale)), Math.Max(1, (int)Math.Round(minHeight / scale)));
+            if (maxWidth > 0 || maxHeight > 0)
+                WlDecor.libdecor_frame_set_max_content_size(_frame, maxWidth > 0 ? (int)Math.Round(maxWidth / scale) : 0, maxHeight > 0 ? (int)Math.Round(maxHeight / scale) : 0);
+            WlDecor.libdecor_frame_resize(_frame, WaylandInput.Seat, serial, edge);
+            WaylandDisplay.Flush();
+            return true;
+        }
+
+        // ---- the popup stack ------------------------------------------------------------------
+        //
+        // xdg-shell stacks the popups of a toplevel, and only the TOPMOST may be destroyed: destroying
+        // one with a popup above it -- a later sibling, or a child -- is a protocol error that kills the
+        // connection (xdg_wm_base.not_the_topmost_popup), and every window with it. WPF destroys windows
+        // in its own order (ElementHost's parking window goes while the hosted window made on it stays),
+        // so the popups above one that goes lose their role first, newest first: their surfaces stay,
+        // unmapped, as a window whose owner closed is hidden on Windows.
+
+        private WaylandWindow? _popupParent;
+        private long _popupSeq;
+        private static long s_popupSeq;
+
+        private WaylandWindow RootToplevel()
+        {
+            WaylandWindow w = this;
+            for (int i = 0; i < 64 && w._popupParent is { } p; i++) w = p;
+            return w;
+        }
+
+        /// <summary>Takes the popup role off every popup of this window's toplevel made after
+        /// <paramref name="after"/> (0: all of them), newest first, so that the one after them can go.</summary>
+        private static void DropPopupsAbove(WaylandWindow root, long after)
+        {
+            List<WaylandWindow> above = new();
+            lock (s_lock)
+            {
+                foreach (WaylandWindow w in s_zOrder)
+                    if (!w._destroyed && w._xdgPopup != IntPtr.Zero && w._popupSeq > after && ReferenceEquals(w.RootToplevel(), root))
+                        above.Add(w);
+            }
+            above.Sort((a, b) => b._popupSeq.CompareTo(a._popupSeq));
+            foreach (WaylandWindow w in above) w.DropPopupRole();
+        }
+
+        private void DropPopupRole()
+        {
+            WaylandDisplay.LogSink?.Invoke($"popup 0x{_surface:x}: role dropped (a popup below it is going)");
+            try
+            {
+                if (_xdgPopup != IntPtr.Zero) { Wl.Destroy(_xdgPopup, XDG_POPUP_DESTROY); _xdgPopup = IntPtr.Zero; }
+                if (_xdgSurface != IntPtr.Zero) { Wl.Destroy(_xdgSurface, XDG_SURFACE_DESTROY); _xdgSurface = IntPtr.Zero; }
+            }
+            catch { }
+            _configured = false;
+        }
 
         public void Destroy()
         {
             if (_destroyed) return;
+            // what lies above it goes first (see the popup stack)
+            if (_xdgPopup != IntPtr.Zero) DropPopupsAbove(RootToplevel(), _popupSeq);
+            else if (_frame != IntPtr.Zero) DropPopupsAbove(this, 0);
             _destroyed = true;
 
             lock (s_lock)
@@ -936,7 +1088,7 @@ namespace MS.Internal.Interop.Wayland
                 for (int i = s_zOrder.Count - 1; i >= 0; i--)
                 {
                     WaylandWindow w = s_zOrder[i];
-                    if (w._destroyed) continue;
+                    if (w._destroyed || w._hidden) continue;
                     w.GetPixelSize(out int pw, out int ph);
                     w.GetClientScreenOriginPixels(out int ox, out int oy);
                     if (x >= ox && x < ox + pw && y >= oy && y < oy + ph) return w._surface;
@@ -953,6 +1105,39 @@ namespace MS.Internal.Interop.Wayland
             // Wayland exposes no work area: GNOME's top bar is a layer surface clients cannot see.
             workLeft = monLeft; workTop = monTop; workRight = monRight; workBottom = monBottom;
             return ok;
+        }
+
+        /// <summary>Whether the calling thread is the one that reads the compositor connection (or nothing
+        /// has claimed it yet): the thread a window's requests that wait for the compositor must come from.</summary>
+        public static bool IsUiThread => WaylandDisplay.Display == IntPtr.Zero || WaylandDisplay.IsPumpThread;
+
+        /// <summary>Makes the calling thread the one that reads the compositor connection, before any window
+        /// exists: a stack that starts its UI thread there (the WinForms driver on the app's main thread)
+        /// claims it before a thread of the app's (a splash screen's) makes the first window. False when
+        /// there is no compositor, or another live thread already has it.</summary>
+        public static bool ClaimUiThread()
+        {
+            try
+            {
+                EnsureApplication();
+                WaylandDisplay.ClaimUiThread();
+                return true;
+            }
+            catch (Exception) { return false; }
+        }
+
+        /// <summary>The primary output's scale (device pixels per logical pixel), before there is a window
+        /// to ask: what a stack laying out at the screen's DPI takes for it (WPF_LINUX_FORCE_SCALE wins).</summary>
+        public static double PrimaryScale()
+        {
+            string? force = Environment.GetEnvironmentVariable("WPF_LINUX_FORCE_SCALE");
+            if (!string.IsNullOrEmpty(force) &&
+                double.TryParse(force, System.Globalization.NumberStyles.Float,
+                                System.Globalization.CultureInfo.InvariantCulture, out double forced) && forced > 0)
+                return forced;
+            EnsureApplication();
+            lock (WaylandDisplay.Outputs)
+                return WaylandDisplay.Outputs.Count > 0 ? Math.Max(1, WaylandDisplay.Outputs[0].Scale) : 1;
         }
 
         public static void SetTitle(IntPtr handle, string title)
@@ -1095,6 +1280,19 @@ namespace MS.Internal.Interop.Wayland
                 Resized?.Invoke(_contentW, _contentH);
             }
 
+            // The compositor's activation (xdg_toplevel's ACTIVATED state, through libdecor): the window
+            // with the keyboard, as Windows' active window -- WM_ACTIVATE, Form.Activated, the active
+            // caption. Popups have no such state; they never take activation, as on Windows.
+            if (_frame != IntPtr.Zero)
+            {
+                bool active = (_windowState & LibdecorWindowState.Active) != 0;
+                if (active != _lastReportedActive)
+                {
+                    _lastReportedActive = active;
+                    ActiveChanged?.Invoke(active);
+                }
+            }
+
             if (_closeRequested)
             {
                 _closeRequested = false;
@@ -1102,8 +1300,110 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        private bool _lastReportedActive;
+
+        /// <summary>The window became the active one (true), or stopped being it.</summary>
+        public event Action<bool>? ActiveChanged;
+
+        /// <summary>Whether the compositor has this window active.</summary>
+        public bool IsActive => _frame != IntPtr.Zero && (_windowState & LibdecorWindowState.Active) != 0;
+
         /// <summary>Milliseconds until the pump must wake regardless of compositor traffic (key
         /// repeat), or -1 when nothing is pending.</summary>
         public static int NextDeadlineMs() => WaylandInput.NextDeadlineMs();
+
+        // ---- input for a stack with no WPF window of its own (the WinForms host) ----------------
+        //
+        // The same events WPF's input providers take (WaylandInput.MouseInput/KeyInput), in a public
+        // shape: a surface-local pointer in device pixels, and keys as Windows' virtual keys, by the
+        // mapping WPF uses (WaylandInput.VirtualKeyOfKeysym) so both stacks agree on every key.
+
+        /// <param name="Kind">0 move, 1 button down, 2 button up, 3 wheel, 4 the pointer left the surface.</param>
+        /// <param name="Button">1 left, 2 right, 3 middle, 4 back (X1), 5 forward (X2); 0 for the others.</param>
+        /// <param name="Wheel">Vertical wheel in WHEEL_DELTA units (120 a notch), positive away from the user.</param>
+        public readonly record struct MouseMessage(IntPtr Window, int Kind, int Button, int X, int Y, int Wheel, int WheelHorizontal, int TimestampMs);
+
+        public readonly record struct KeyMessage(IntPtr Window, bool IsDown, int VirtualKey, string? Characters, bool IsRepeat,
+                                                 bool Shift, bool Ctrl, bool Alt, int TimestampMs, uint Keysym);
+
+        private static Action<MouseMessage>? s_mouseInput;
+        private static Action<KeyMessage>? s_keyInput;
+        private static bool s_forwarding;
+
+        public static event Action<MouseMessage>? MouseInput
+        {
+            add { EnsureForwarding(); s_mouseInput += value; }
+            remove { s_mouseInput -= value; }
+        }
+
+        public static event Action<KeyMessage>? KeyInput
+        {
+            add { EnsureForwarding(); s_keyInput += value; }
+            remove { s_keyInput -= value; }
+        }
+
+        private static void EnsureForwarding()
+        {
+            if (s_forwarding) return;
+            s_forwarding = true;
+            WaylandInput.MouseInput += m =>
+            {
+                int kind = m.Kind switch
+                {
+                    WaylandMouseKind.Move => 0,
+                    WaylandMouseKind.ButtonDown => 1,
+                    WaylandMouseKind.ButtonUp => 2,
+                    WaylandMouseKind.Wheel => 3,
+                    _ => 4,
+                };
+                int button = m.Button switch
+                {
+                    WaylandInput.BTN_LEFT => 1,
+                    WaylandInput.BTN_RIGHT => 2,
+                    WaylandInput.BTN_MIDDLE => 3,
+                    WaylandInput.BTN_SIDE => 4,
+                    WaylandInput.BTN_EXTRA => 5,
+                    _ => 0,
+                };
+                s_mouseInput?.Invoke(new MouseMessage(m.Surface, kind, button, m.X, m.Y, m.Wheel, m.WheelHorizontal, m.TimestampMs));
+            };
+            WaylandInput.KeyInput += k => s_keyInput?.Invoke(new KeyMessage(k.Surface, k.IsDown, WaylandInput.VirtualKeyOfKeysym(k.Keysym),
+                k.Characters, k.IsRepeat, (k.Modifiers & WaylandModifiers.Shift) != 0, (k.Modifiers & WaylandModifiers.Control) != 0,
+                (k.Modifiers & WaylandModifiers.Alt) != 0, k.TimestampMs, k.Keysym));
+        }
+
+        /// <summary>A pointer event for a WPF window that the compositor cannot deliver to itself -- one
+        /// whose picture another stack composites into its own window (an ElementHost's tree in a form):
+        /// the host hands it what landed over it, as the compositor would. Kinds and buttons as
+        /// <see cref="MouseMessage"/>; <paramref name="x"/>, <paramref name="y"/> local device pixels.</summary>
+        public static void DeliverMouse(IntPtr window, int kind, int button, int x, int y, int wheel)
+        {
+            var k = kind switch { 0 => WaylandMouseKind.Move, 1 => WaylandMouseKind.ButtonDown, 2 => WaylandMouseKind.ButtonUp, 3 => WaylandMouseKind.Wheel, _ => WaylandMouseKind.Leave };
+            int b = button switch { 1 => WaylandInput.BTN_LEFT, 2 => WaylandInput.BTN_RIGHT, 3 => WaylandInput.BTN_MIDDLE, 4 => WaylandInput.BTN_SIDE, 5 => WaylandInput.BTN_EXTRA, _ => 0 };
+            WaylandInput.InjectMouse(window, k, b, x, y, wheel);
+        }
+
+        /// <summary>A key for such a window (see <see cref="DeliverMouse"/>), as the compositor reported it.</summary>
+        public static void DeliverKey(IntPtr window, KeyMessage key)
+            => WaylandInput.InjectKey(window, key.IsDown, key.Keysym, key.Characters);
+
+        /// <summary>
+        /// For a message loop on the pump thread that is not WPF's (WinForms'): reads and dispatches what
+        /// the compositor sent within <paramref name="timeoutMilliseconds"/>, reconciles (sizes, scale,
+        /// activation, close requests, key repeat), then runs the thread's WPF work -- an ElementHost's
+        /// tree -- which nothing else runs there.
+        /// </summary>
+        public static void RunLoop(int timeoutMilliseconds)
+        {
+            if (WaylandDisplay.IsActive && WaylandDisplay.IsPumpThread)
+            {
+                PumpEvents(timeoutMilliseconds);   // reads, dispatches, reconciles
+            }
+            else if (timeoutMilliseconds > 0)
+            {
+                System.Threading.Thread.Sleep(timeoutMilliseconds);
+            }
+            System.Windows.Threading.Dispatcher.FromThread(System.Threading.Thread.CurrentThread)?.ServeForeignLoop(0, null);
+        }
     }
 }
