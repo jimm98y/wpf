@@ -120,7 +120,18 @@ internal static class Platform
             }
             return list;
         }
-        // one display, as the stack's WPF describes it (the page, in the browser)
+        // one display, in device pixels as Win32 has it: the head's (the page, the screen), or as the
+        // stack's WPF describes it -- in DIPs, which are pixels only at 96 dpi
+        int ml = 0, mt = 0, mr = 0, mb = 0, wl = 0, wt = 0, wr = 0, wb = 0;
+        bool known =
+            OperatingSystem.IsAndroid() ? MS.Internal.Interop.AndroidWindow.GetPrimaryScreenPixels(out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb)
+            : OperatingSystem.IsIOS() ? MS.Internal.Interop.UIKitWindow.GetPrimaryScreenPixels(out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb)
+            : OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserWindow.GetPrimaryScreenPixels(out ml, out mt, out mr, out mb, out wl, out wt, out wr, out wb);
+        if (known && mr > ml && mb > mt)
+        {
+            list.Add((new RECT { Left = ml, Top = mt, Right = mr, Bottom = mb }, new RECT { Left = wl, Top = wt, Right = wr, Bottom = wb }));
+            return list;
+        }
         Rect work = SystemParameters.WorkArea;
         list.Add((new RECT { Left = 0, Top = 0, Right = (int)SystemParameters.PrimaryScreenWidth, Bottom = (int)SystemParameters.PrimaryScreenHeight },
                   new RECT { Left = (int)work.Left, Top = (int)work.Top, Right = (int)work.Right, Bottom = (int)work.Bottom }));

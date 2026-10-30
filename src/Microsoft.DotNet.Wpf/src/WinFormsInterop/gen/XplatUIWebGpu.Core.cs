@@ -1147,6 +1147,7 @@ namespace System.Windows.Forms
 			{
 				SendMessage(handle, Msg.WM_SHOWWINDOW, (IntPtr)1, IntPtr.Zero);
 				Invalidate(handle, new Rectangle(0, 0, hwnd.width, hwnd.height), false);
+				PostMoveUnderCursor(hwnd);
 
 				// Showing a window reveals everything beneath it, whose own visible flags never
 				// changed -- so nothing else would invalidate them, and this driver paints only what
@@ -1184,6 +1185,35 @@ namespace System.Windows.Forms
 					RepaintUnder(hwnd);
 			}
 			return true;
+		}
+
+		/// <summary>
+		/// A top-level window that appears under a cursor that has not moved gets a WM_MOUSEMOVE where the
+		/// cursor is, as Windows posts one when the window under the cursor changes -- so a pointer that
+		/// was already there counts as having moved over it. A menu relies on it: DotNetBar's ignores the
+		/// first move it gets when it opens (that one, on Windows) and hot-tracks from the next, and its
+		/// bottom row of buttons acts only on an item hot-tracked first -- with no such move, a tap's own
+		/// move was the one ignored, and Preferences and About did nothing.
+		/// </summary>
+		private void PostMoveUnderCursor(Hwnd shown)
+		{
+			if (shown.parent != null) return;
+			Point at = ScreenLocation(shown);
+			if (!new Rectangle(at.X, at.Y, shown.width, shown.height).Contains(_cursorX, _cursorY)) return;
+			PostMoveAtCursor(_grabHandle != IntPtr.Zero ? _grabHandle : WindowAtPointIn(shown.Handle, _cursorX, _cursorY));
+		}
+
+		/// <summary>Posts <paramref name="target"/> a WM_MOUSEMOVE where the cursor is, in its client
+		/// coordinates: the move Windows synthesizes when the window under the cursor or the capture
+		/// changes, though the pointer itself did not move.</summary>
+		private void PostMoveAtCursor(IntPtr target)
+		{
+			Hwnd t = target != IntPtr.Zero ? Hwnd.ObjectFromHandle(target) : null;
+			if (t == null) return;
+			Point origin = ScreenLocation(t);
+			int x = _cursorX - origin.X, y = _cursorY - origin.Y;
+			if (InputTrace.On) InputTrace.Log($"synthetic move #{InputTrace.Seq} -> {InputTrace.Describe(target)} at ({x},{y})");
+			PostMessage(target, Msg.WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xFFFF)));
 		}
 
 		/// <summary>Repaint whatever a window that has just been hidden was covering.
@@ -2832,6 +2862,9 @@ namespace System.Windows.Forms
 			{
 				_grabHandle = IntPtr.Zero;
 				CaptureChanged?.Invoke(IntPtr.Zero);
+				// Releasing the capture is a change of the window the mouse is over, as Windows has it: the
+				// window under the cursor hears of it by a move -- a menu opened by that press, first.
+				PostMoveAtCursor(WindowAtPoint(_cursorX, _cursorY));
 			}
 		}
 

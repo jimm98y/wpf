@@ -907,6 +907,13 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // a floating window's surface is composed above the app's own (SurfaceViews are layers of their
         // own, stacked by this rather than by the view order)
         if (view is WpfSurfaceView surface && !surface.FillsScreen) surface.SetZOrderMediaOverlay(true);
+        // ...and the popups stay above it, as they are drawn: a popup's pixels are composed over every
+        // window (WpfPopupView), so its touch target must lie over them too -- under a window brought to
+        // the front, a menu or a floating tool window showed and could not be touched
+        var popups = new List<View>();
+        for (int i = 0; i < _root.ChildCount; i++)
+            if (_root.GetChildAt(i) is WpfPopupView popup) popups.Add(popup);
+        foreach (View popup in popups) popup.BringToFront();
     });
 
     private bool CreateViewCore(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface)

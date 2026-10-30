@@ -189,6 +189,7 @@ namespace MS.Internal.Interop
         public void SetVisible(bool visible)
         {
             if (_view == IntPtr.Zero) return;
+            if (!visible) _minimized = false;
             SendVoidBool(_view, Sel("setHidden:"), !visible);
         }
 
@@ -223,6 +224,97 @@ namespace MS.Internal.Interop
         // that asked for them is being handled, the window follows the finger until it lifts, and the
         // loop takes the touches meanwhile -- the app sees none of them. The browser head's are the same.
 
+        // ---- minimized, maximized, restored: ShowWindow's states -----------------------------------
+        //
+        // As AndroidWindow has them: the app's own window fills the screen and stays a normal window
+        // there; a floating one is maximized to the rectangle WM_GETMINMAXINFO gives it (the screen,
+        // unless the window says otherwise) and restored to the frame it had, and WPF hears of it from
+        // the WM_SIZE that follows (GetWindowState gives its wParam), which raises Window.StateChanged.
+        // Minimized, with no taskbar to go to, it is out of sight until it is restored.
+
+        private bool _maximized, _minimized;
+        private CGRect _restoreFrame, _maximizedFrame;
+
+        /// <summary>The window's maximized rectangle, asked of the window as Windows asks it (WM_GETMINMAXINFO,
+        /// HwndWrapper's): given the monitor's rectangle, then the head's maximized position and size, it
+        /// answers the position and size (device pixels), or null to keep them.</summary>
+        public Func<int[], int[]> QueryMaximizedRect { get; set; }
+
+        public void SetWindowState(int state)
+        {
+            if (_view == IntPtr.Zero || IsMain) return;
+            if (s_trace) Console.WriteLine($"[uikit] 0x{_view:x} state -> SW {state}");
+            switch (state)
+            {
+                case 2: case 6: case 7: case 11:   // SW_SHOWMINIMIZED, SW_MINIMIZE, SW_SHOWMINNOACTIVE, SW_FORCEMINIMIZE
+                    if (_minimized) return;
+                    _minimized = true;
+                    SendVoidBool(_view, Sel("setHidden:"), true);
+                    RaiseResized();
+                    break;
+
+                case 3:   // SW_SHOWMAXIMIZED / SW_MAXIMIZE
+                    Unminimize();
+                    if (!IsMaximizedNow)
+                    {
+                        _restoreFrame = SendRect(_view, Sel("frame"));
+                        GetPrimaryScreenPixels(out _, out _, out int width, out int height, out _, out _, out _, out _);
+                        int x = 0, y = 0;
+                        if (QueryMaximizedRect?.Invoke(new[] { 0, 0, width, height, 0, 0, width, height }) is int[] r && r.Length >= 4 && r[2] > 0 && r[3] > 0)
+                        {
+                            x = r[0]; y = r[1]; width = r[2]; height = r[3];
+                        }
+                        double scale = ScreenScale();
+                        _maximizedFrame = new CGRect { x = x / scale, y = y / scale, width = width / scale, height = height / scale };
+                        SendVoidRect(_view, Sel("setFrame:"), _maximizedFrame);
+                        _maximized = true;
+                    }
+                    RaiseResized();
+                    break;
+
+                case 1: case 9:   // SW_SHOWNORMAL, SW_RESTORE
+                    bool wasMinimized = Unminimize();
+                    if (IsMaximizedNow)
+                    {
+                        _maximized = false;
+                        SendVoidRect(_view, Sel("setFrame:"), _restoreFrame);
+                        RaiseResized();
+                    }
+                    else
+                    {
+                        _maximized = false;
+                        if (wasMinimized) RaiseResized();
+                    }
+                    break;
+            }
+        }
+
+        private bool Unminimize()
+        {
+            if (!_minimized) return false;
+            _minimized = false;
+            SendVoidBool(_view, Sel("setHidden:"), false);
+            return true;
+        }
+
+        /// <summary>Maximized while it keeps its maximized frame: moved or sized out of it (a drag on its
+        /// caption), it is a normal window again, as on Windows.</summary>
+        private bool IsMaximizedNow
+        {
+            get
+            {
+                if (!_maximized || IsMain || _view == IntPtr.Zero) return false;
+                CGRect f = SendRect(_view, Sel("frame"));
+                if (Math.Abs(f.x - _maximizedFrame.x) < 0.5 && Math.Abs(f.y - _maximizedFrame.y) < 0.5
+                    && Math.Abs(f.width - _maximizedFrame.width) < 0.5 && Math.Abs(f.height - _maximizedFrame.height) < 0.5)
+                    return true;
+                _maximized = false;
+                return false;
+            }
+        }
+
+        public int GetWindowState() => _minimized ? 2 : IsMaximizedNow ? 3 : 1;
+
         private sealed class Drag
         {
             public UIKitWindow Window;
@@ -234,6 +326,16 @@ namespace MS.Internal.Interop
 
         private static Drag s_drag;
         private static double s_pressX, s_pressY;   // the last press, in the root view's points
+        private static int s_cursorX, s_cursorY;
+        private static bool s_cursorKnown;
+
+        /// <summary>GetCursorPos: where the finger (or the pointer) last was, in screen device pixels.</summary>
+        internal static bool TryGetCursorPixels(out int x, out int y)
+        {
+            x = s_cursorX;
+            y = s_cursorY;
+            return s_cursorKnown;
+        }
         private static bool s_pressed;
 
         public void BeginMoveDrag()
@@ -908,6 +1010,7 @@ namespace MS.Internal.Interop
             // view itself moves under the finger.
             CGRect at = SendRect(view, Sel("frame"));
             double rx = at.x + x / scale, ry = at.y + y / scale;
+            s_cursorX = (int)Math.Round(rx * scale); s_cursorY = (int)Math.Round(ry * scale); s_cursorKnown = true;
             if (s_drag != null)
             {
                 if (kind == 0) DragTo(rx, ry);

@@ -215,6 +215,8 @@ namespace MS.Win32
                         uikit.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Same synthetic WM_SIZE routing as the other two backends.
                         uikit.Resized += OnCocoaResized;
+                        // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
+                        uikit.QueryMaximizedRect = QueryMaximizedRect;
                         _platformWindow = uikit;
                         _handle = uikit.Handle;
                     }
@@ -231,6 +233,8 @@ namespace MS.Win32
                         android.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Same synthetic WM_SIZE routing as the other backends.
                         android.Resized += OnCocoaResized;
+                        // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
+                        android.QueryMaximizedRect = QueryMaximizedRect;
                         _platformWindow = android;
                         _handle = android.Handle;
                     }

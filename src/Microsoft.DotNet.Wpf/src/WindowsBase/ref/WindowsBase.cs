@@ -21,11 +21,15 @@ namespace MS.Internal.Interop
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void SetVisible(bool visible) { }
         public void BeginMoveDrag() { }
+        public bool ResizesFromEdges { get { throw null; } }
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight) { throw null; }
         public void Destroy() { }
         public static MS.Internal.Interop.AndroidWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
         public void SetWindowState(int state) { }
+        public int GetWindowState() { throw null; }
+        public System.Func<int[], int[]> QueryMaximizedRect { get { throw null; } set { } }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public static System.IntPtr GetNativeWindow(System.IntPtr handle) { throw null; }
@@ -551,6 +555,8 @@ namespace MS.Internal.Interop
         public double GetBackingScale() { throw null; }
         public double GetRefreshRateHz() { throw null; }
         public void SetWindowState(int state) { }
+        public int GetWindowState() { throw null; }
+        public System.Func<int[], int[]> QueryMaximizedRect { get { throw null; } set { } }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }

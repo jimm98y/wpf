@@ -515,7 +515,7 @@ namespace MS.Win32
                 }
 
 #if BASE_NATIVEMETHODS || CORE_NATIVEMETHODS || FRAMEWORK_NATIVEMETHODS
-                // The browser and macOS know where it is too: a Popup with nothing to place it by
+                // The browser, macOS, iOS and Android know where it is too: a Popup with nothing to place it by
                 // (a ContextMenu opened from code) goes where this says, and 0,0 was the corner.
                 if (System.OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserWindow.TryGetCursorPixels(out int bx, out int by))
                 {
@@ -527,6 +527,18 @@ namespace MS.Win32
                 {
                     pt.x = mx;
                     pt.y = my;
+                    return true;
+                }
+                if (System.OperatingSystem.IsIOS() && MS.Internal.Interop.UIKitWindow.TryGetCursorPixels(out int ix, out int iy))
+                {
+                    pt.x = ix;
+                    pt.y = iy;
+                    return true;
+                }
+                if (System.OperatingSystem.IsAndroid() && MS.Internal.Interop.AndroidWindow.TryGetCursorPixels(out int ax, out int ay))
+                {
+                    pt.x = ax;
+                    pt.y = ay;
                     return true;
                 }
 #endif
@@ -1096,7 +1108,18 @@ namespace MS.Win32
             {
                 return SystemParametersInfoNative(nAction, nParam, ref rc, nUpdate);
             }
-            // SPI_GETWORKAREA and friends: report the default desktop work area.
+            // SPI_GETWORKAREA: the primary display's work area, as the head knows it (SystemParameters
+            // .WorkArea, and what a maximized window is held to). A flat 1920x1080 here made a docking
+            // library's floating window maximize to that on a 2560x1600 tablet.
+#if !DRT && !UIAUTOMATIONTYPES
+            const int SPI_GETWORKAREA = 0x0030;
+            if (nAction == SPI_GETWORKAREA && MS.Internal.Interop.PlatformWindow.GetPrimaryScreenPixels(
+                    out _, out _, out _, out _, out int wl, out int wt, out int wr, out int wb) && wr > wl && wb > wt)
+            {
+                rc = new NativeMethods.RECT(wl, wt, wr, wb);
+                return true;
+            }
+#endif
             rc = new NativeMethods.RECT(0, 0, 1920, 1080);
             return true;
         }

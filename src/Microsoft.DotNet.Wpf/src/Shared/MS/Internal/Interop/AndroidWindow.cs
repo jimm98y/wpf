@@ -116,6 +116,8 @@ namespace MS.Internal.Interop
         private static readonly Dictionary<IntPtr, AndroidWindow> s_byHandle = new Dictionary<IntPtr, AndroidWindow>();
         private static readonly List<AndroidWindow> s_zOrder = new List<AndroidWindow>();   // last = topmost
         private static long s_nextHandle;
+        // read when asked: this class is loaded by the activity before the head applies the app's environment
+        private static bool s_trace => Environment.GetEnvironmentVariable("WPF_TRACE_ANDROID") == "1";
 
         private IntPtr _handle;
         private IntPtr _nativeWindow;                 // ANativeWindow*, acquired; Zero when there is no live Surface
@@ -210,6 +212,7 @@ namespace MS.Internal.Interop
                 _xPixels = _yPixels = 0;
             }
 
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} created '{title}' {(main ? "main" : borderless ? (_ownSurface ? "borderless, own surface" : "borderless") : "floating")} at ({_xPixels},{_yPixels}) {_widthPixels}x{_heightPixels}px");
             lock (s_byHandle) s_byHandle[_handle] = this;
             lock (s_zOrder) s_zOrder.Add(this);
             if (main) s_mainHandle = _handle;
@@ -233,11 +236,188 @@ namespace MS.Internal.Interop
         public void SetVisible(bool visible)
         {
             if (_handle == IntPtr.Zero) return;
+            if (!visible) _minimized = false;
             Host?.SetViewVisible(_handle, visible);
         }
 
-        /// <summary>No-op: Android windows are not user-movable (one fullscreen activity).</summary>
-        public void BeginMoveDrag() { }
+        // ---- minimized, maximized, restored: ShowWindow's states -----------------------------------
+        //
+        // The app's own window fills the activity and has no other state to be in: it stays a normal
+        // window there, which is what it looks like -- maximized, a window drawing its own frame pads its
+        // content by the border Windows would hang off the screen (Workbench's ribbon window by 5px). A floating one is
+        // maximized to the screen and restored to the frame it had, as on Windows -- WPF learns it from
+        // the WM_SIZE the change raises (GetWindowState gives its wParam), which is what raises
+        // Window.StateChanged; a docking library's floating host sizes its pane to fill on that event.
+        // Minimized, with no taskbar to go to, it is out of sight until it is restored.
+
+        private bool _maximized, _minimized;
+        private int _restoreX, _restoreY, _restoreWidth, _restoreHeight;
+        private int _maxX, _maxY, _maxWidth, _maxHeight;
+
+        /// <summary>The window's maximized rectangle, asked of the window as Windows asks it (WM_GETMINMAXINFO,
+        /// HwndWrapper's): given the monitor's rectangle, then the head's maximized position and size, it
+        /// answers the position and size (device pixels), or null to keep them.</summary>
+        public Func<int[], int[]> QueryMaximizedRect { get; set; }
+
+        public void SetWindowState(int state)
+        {
+            if (_handle == IntPtr.Zero) return;
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} state -> SW {state}");
+            switch (state)
+            {
+                case 2: case 6: case 7: case 11:   // SW_SHOWMINIMIZED, SW_MINIMIZE, SW_SHOWMINNOACTIVE, SW_FORCEMINIMIZE
+                    if (IsMain || _minimized) return;
+                    _minimized = true;
+                    Host?.SetViewVisible(_handle, false);
+                    RaiseResized();
+                    break;
+
+                case 3:   // SW_SHOWMAXIMIZED / SW_MAXIMIZE
+                    Unminimize();
+                    if (IsMain) return;
+                    if (!IsMaximizedNow)
+                    {
+                        _restoreX = _xPixels; _restoreY = _yPixels; _restoreWidth = _widthPixels; _restoreHeight = _heightPixels;
+                        // the screen, which is all the work area there is -- unless the window says otherwise
+                        int width = _widthPixels, height = _heightPixels;
+                        Host?.GetScreenPixels(out width, out height);
+                        int x = 0, y = 0;
+                        if (QueryMaximizedRect?.Invoke(new[] { 0, 0, width, height, 0, 0, width, height }) is int[] r && r.Length >= 4 && r[2] > 0 && r[3] > 0)
+                        {
+                            x = r[0]; y = r[1]; width = r[2]; height = r[3];
+                        }
+                        _maxX = _xPixels = x;
+                        _maxY = _yPixels = y;
+                        _maxWidth = _widthPixels = width;
+                        _maxHeight = _heightPixels = height;
+                        _maximized = true;
+                        Host?.SetViewFrame(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels);
+                    }
+                    RaiseResized();
+                    break;
+
+                case 1: case 9:   // SW_SHOWNORMAL, SW_RESTORE
+                    bool wasMinimized = Unminimize();
+                    if (IsMaximizedNow && !IsMain)
+                    {
+                        _maximized = false;
+                        _xPixels = _restoreX; _yPixels = _restoreY; _widthPixels = _restoreWidth; _heightPixels = _restoreHeight;
+                        Host?.SetViewFrame(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels);
+                        RaiseResized();
+                    }
+                    else
+                    {
+                        _maximized = false;
+                        if (wasMinimized) RaiseResized();
+                    }
+                    break;
+            }
+        }
+
+        private bool Unminimize()
+        {
+            if (!_minimized) return false;
+            _minimized = false;
+            Host?.SetViewVisible(_handle, true);
+            return true;
+        }
+
+        /// <summary>Maximized while it keeps its maximized frame: moved or sized out of it (a drag on its
+        /// caption), it is a normal window again, as on Windows.</summary>
+        private bool IsMaximizedNow
+        {
+            get
+            {
+                if (!_maximized || IsMain) return false;
+                if (_xPixels == _maxX && _yPixels == _maxY && _widthPixels == _maxWidth && _heightPixels == _maxHeight) return true;
+                _maximized = false;
+                return false;
+            }
+        }
+
+        public int GetWindowState() => _minimized ? 2 : IsMaximizedNow ? 3 : 1;
+
+        // ---- the move and size loops: DefWindowProc's, for a floating window ----------------------
+        //
+        // The app's own window fills the activity; a dialog or a tool window floats over it with no
+        // frame of the platform's, so this layer moves it (DragMove, a caption) and sizes it from its
+        // edges (WindowChrome), as UIKitWindow does. A loop runs from the press that began it until
+        // its release, following the finger in screen pixels; the touches meanwhile are its own.
+
+        private sealed class Drag
+        {
+            public AndroidWindow Window;
+            public int HitTest;                 // 0 for a move; HTLEFT..HTBOTTOMRIGHT for a size
+            public int X0, Y0;                  // the press, screen pixels
+            public int Left0, Top0, Width0, Height0;
+            public int MinW, MinH, MaxW, MaxH;
+        }
+
+        private static Drag s_drag;
+        private static int s_pressX, s_pressY;  // the last press, screen pixels
+        private static int s_cursorX, s_cursorY;
+        private static bool s_cursorKnown;
+
+        /// <summary>GetCursorPos: where the finger (or the mouse) last was, in screen device pixels.</summary>
+        internal static bool TryGetCursorPixels(out int x, out int y)
+        {
+            x = s_cursorX;
+            y = s_cursorY;
+            return s_cursorKnown;
+        }
+        private static bool s_pressed;
+
+        public void BeginMoveDrag()
+        {
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} move loop{(_handle == IntPtr.Zero || IsMain || !s_pressed ? " refused" : "")}");
+            if (_handle == IntPtr.Zero || IsMain || !s_pressed) return;
+            s_drag = new Drag { Window = this, X0 = s_pressX, Y0 = s_pressY, Left0 = _xPixels, Top0 = _yPixels, Width0 = _widthPixels, Height0 = _heightPixels };
+        }
+
+        /// <summary>A floating window has no frame of its own to be resized by: this layer does it.</summary>
+        public bool ResizesFromEdges => !IsBorderless && !IsMain;
+
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight)
+        {
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} size loop ht={hitTest}{(!ResizesFromEdges || !s_pressed || hitTest < 10 || hitTest > 17 ? " refused" : "")}");
+            if (!ResizesFromEdges || !s_pressed || hitTest < 10 || hitTest > 17) return false;
+            s_drag = new Drag
+            {
+                Window = this, HitTest = hitTest, X0 = s_pressX, Y0 = s_pressY,
+                Left0 = _xPixels, Top0 = _yPixels, Width0 = _widthPixels, Height0 = _heightPixels,
+                MinW = Math.Max(minWidth, 1), MinH = Math.Max(minHeight, 1),
+                MaxW = maxWidth > 0 ? maxWidth : int.MaxValue, MaxH = maxHeight > 0 ? maxHeight : int.MaxValue,
+            };
+            return true;
+        }
+
+        private static void DragTo(int x, int y)
+        {
+            Drag d = s_drag;
+            AndroidWindow w = d.Window;
+            if (w._handle == IntPtr.Zero) { s_drag = null; return; }
+            int dx = x - d.X0, dy = y - d.Y0;
+            if (d.HitTest == 0)
+            {
+                // the top edge stays on the screen, so that the caption can be taken hold of again
+                w.SetFrameOrigin(d.Left0 + dx, Math.Max(0, d.Top0 + dy));
+                return;
+            }
+            int ht = d.HitTest;
+            bool left = ht is 10 or 13 or 16, right = ht is 11 or 14 or 17;
+            bool top = ht is 12 or 13 or 14, bottom = ht is 15 or 16 or 17;
+            int width = d.Width0, height = d.Height0;
+            if (right) width += dx; else if (left) width -= dx;
+            if (bottom) height += dy; else if (top) height -= dy;
+            width = Math.Min(Math.Max(width, d.MinW), d.MaxW);
+            height = Math.Min(Math.Max(height, d.MinH), d.MaxH);
+            int fx = left ? d.Left0 + d.Width0 - width : d.Left0;
+            int fy = top ? d.Top0 + d.Height0 - height : d.Top0;
+            if (fy < 0) { if (top) height += fy; fy = 0; }
+            w._xPixels = fx;
+            w._yPixels = fy;
+            w.SetContentSizePixels(width, height);
+        }
 
         public void Destroy()
         {
@@ -271,6 +451,7 @@ namespace MS.Internal.Interop
             // same trap as UIKitWindow.SetContentSize.
             if (IsFullScreenTopLevel) { RaiseResized(); return; }
 
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} size -> {cx}x{cy}px");
             _widthPixels = cx;
             _heightPixels = cy;
             Host?.SetViewFrame(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels);
@@ -279,6 +460,7 @@ namespace MS.Internal.Interop
 
         public void SetFrameOrigin(int xPixels, int yPixels)
         {
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} origin -> ({xPixels},{yPixels})px{(IsFullScreenTopLevel ? " (ignored: the app's own window)" : "")}");
             if (_handle == IntPtr.Zero || IsFullScreenTopLevel) return;
             _xPixels = xPixels;
             _yPixels = yPixels;
@@ -777,6 +959,19 @@ namespace MS.Internal.Interop
 
         private static void Touch(IntPtr handle, int kind, int xPixels, int yPixels)
         {
+            // Where on the screen, which a move or size loop follows: the view itself moves under the finger.
+            AndroidWindow at = FromHandle(handle);
+            int sx = xPixels + (at?._xPixels ?? 0), sy = yPixels + (at?._yPixels ?? 0);
+            if (s_trace && kind != 0) Console.WriteLine($"[android] touch {(kind == 1 ? "down" : "up")} 0x{handle:x} ({xPixels},{yPixels}) screen ({sx},{sy}){(s_drag != null ? " (loop)" : "")}");
+            if (s_drag != null)
+            {
+                if (kind == 0) DragTo(sx, sy);
+                else if (kind == 2) { DragTo(sx, sy); s_drag = null; s_pressed = false; }
+                return;
+            }
+            s_cursorX = sx; s_cursorY = sy; s_cursorKnown = true;
+            if (kind == 1) { s_pressX = sx; s_pressY = sy; s_pressed = true; }
+            else if (kind == 2) s_pressed = false;
             // a press gives a window the keys, and a child window that takes them (an ElementHost's WPF
             // tree) -- never a popup (a menu, a tooltip), as on Windows
             if (kind == 1 && FromHandle(handle) is { } pressed && (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress))

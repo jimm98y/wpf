@@ -38,9 +38,14 @@ namespace System.Windows.Forms
         /// <summary>Milliseconds on the trace's clock.</summary>
         internal static double Now => s_clock.Elapsed.TotalMilliseconds;
 
+        // WF_TRACE_INPUT_LOG=console: to the console, for a head whose files cannot be read back (an
+        // Android release build's private storage)
+        private static readonly bool s_toConsole = Environment.GetEnvironmentVariable("WF_TRACE_INPUT_LOG") == "console";
+
         internal static void Log(string what)
         {
             if (!On) return;
+            if (s_toConsole) { Console.WriteLine($"[input {Now,10:0.00}] {what}"); return; }
             lock (s_lock)
             {
                 if (s_out == null && !s_failed)
