@@ -2071,20 +2071,10 @@ namespace System.Windows.Threading
                 return;
             }
 
-            // Android is the same problem again, and fatal in the same way: Dispatcher.Run is reached
-            // from inside Activity.onCreate, which is a callback on the main Looper. Blocking there
-            // never returns to the Looper, so the activity stays half-created, its window is never
-            // laid out and nothing is ever composited -- the app renders every frame correctly into a
-            // surface the system never shows.
-            if (OperatingSystem.IsAndroid())
-            {
-                if (_frameDepth > 0)
-                {
-                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on Android.");
-                }
-                RunAndroidPump(frame);
-                return;
-            }
+            // Android: the app runs on a UI thread of its own, not on the main Looper's (see
+            // AndroidWindow), so the dispatcher blocks there as on the desktop heads and a nested
+            // frame is one more turn of this loop. (It used to be a Choreographer guest of the Looper
+            // that returned from Dispatcher.Run, and a nested frame was refused.)
 
             SynchronizationContext oldSyncContext = null;
             SynchronizationContext newSyncContext = null;
@@ -2376,100 +2366,6 @@ namespace System.Windows.Threading
                 {
                     _exitAllFrames = false;
                 }
-            }
-        }
-
-        // Android replacement for PushFrameImpl's blocking loop: install a display-aligned per-frame
-        // callback (Choreographer, the Android spelling of requestAnimationFrame) and RETURN, leaving
-        // the main Looper to Android -- which must get it back, see the note in PushFrameImpl.
-        // Synchronous: the callback is delivered on the UI thread, which is already the dispatcher
-        // thread, and ProcessQueue has hard UI-thread affinity.
-        private void RunAndroidPump(DispatcherFrame frame)
-        {
-            // One UI thread (see AndroidWindow.StartFrameCallback); refused before any state changes.
-            MS.Internal.Interop.AndroidWindow.ClaimUiThread("run a Dispatcher");
-            _frameDepth++;
-
-            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
-            if (!MS.Internal.Interop.AndroidWindow.StartFrameCallback(() => PumpAndroidTick(frame, dispatcherSyncContext)))
-            {
-                // No activity/host to drive the pump: nothing can service the queue, so unwind rather
-                // than leaving a frame pushed forever.
-                _frameDepth--;
-                return;
-            }
-
-            // Idle like every other platform -- and on a phone this is the difference between an idle
-            // app and a flat battery. Signal() is raised whenever work is queued or a timer's due time
-            // moves, which is exactly the edge that must un-park the callback; PumpAndroidTick parks
-            // it again once the queue drains.
-            _runLoop.Woken = MS.Internal.Interop.AndroidWindow.RequestWake;
-        }
-
-        // One Choreographer tick: promote due timers, then drain the operation queue. There is no
-        // native event drain because Android delivers touches straight into
-        // AndroidWindow.NotifyTouch rather than queueing them for us.
-        private void PumpAndroidTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
-        {
-            if (_runLoop is null || !frame.Continue)
-            {
-                MS.Internal.Interop.AndroidWindow.StopFrameCallback();
-                _frameDepth--;
-                if (_frameDepth == 0)
-                {
-                    _exitAllFrames = false;
-                    if (_hasShutdownStarted)
-                    {
-                        ShutdownImpl();
-                    }
-                }
-                return;
-            }
-
-            if (_disableProcessingCount > 0)
-            {
-                throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
-            }
-
-            SynchronizationContext oldSyncContext = SynchronizationContext.Current;
-            SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
-            try
-            {
-                if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
-                {
-                    PromoteTimers(Environment.TickCount);
-                }
-
-                // ProcessQueue services ONE operation, so drain back-to-back like the Win32/macOS
-                // loops -- bounded by a frame-ish budget so a flood cannot starve the Looper (input,
-                // animation and the present all ride it).
-                long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
-                do
-                {
-                    ProcessQueue();
-                }
-                while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
-                       && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
-                       && frame.Continue);
-
-                RaiseIdleIfQuiescent();
-
-                // Park the pump if nothing is left to do (the Android spelling of WaitForWork's
-                // block): work still queued keeps it ticking; only a timer pending parks it with a
-                // one-shot wake at its due time; nothing at all parks it until Signal() revives it.
-                if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
-                {
-                    if (_dueTimeFound)
-                    {
-                        MS.Internal.Interop.AndroidWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
-                    }
-                    MS.Internal.Interop.AndroidWindow.SetFrameCallbackPaused(true);
-                }
-            }
-            finally
-            {
-                SynchronizationContext.SetSynchronizationContext(oldSyncContext);
             }
         }
 
@@ -2951,6 +2847,39 @@ namespace System.Windows.Threading
         /// re-signals while work remains, and each signal posts another message that the modal loop
         /// will deliver, so the queue keeps draining without this ever looping unboundedly.
         /// </summary>
+        /// <summary>
+        /// For another framework's message loop running on this thread -- WinForms' -- where nothing
+        /// else runs this dispatcher's queue: waits for its work, the other loop's
+        /// (<paramref name="other"/>) or <paramref name="timeoutMilliseconds"/>, then runs what is due.
+        /// Windows runs it from that loop's DispatchMessage (the message-only window), macOS and iOS
+        /// from the run loop the other loop turns; Android has neither, and an app whose main loop is
+        /// WinForms' never ran its WPF content's work.
+        /// </summary>
+        internal void ServeForeignLoop(int timeoutMilliseconds, WaitHandle other)
+        {
+            DispatcherRunLoop runLoop = _runLoop;
+            if (runLoop is null) return;
+            int timeout = timeoutMilliseconds;
+            lock (_instanceLock)
+            {
+                if (_dueTimeFound)
+                {
+                    int delta = _dueTimeInTicks - Environment.TickCount;
+                    if (delta < 0) delta = 0;
+                    if (timeout < 0 || delta < timeout) timeout = delta;
+                }
+            }
+            WaitHandle[] handles = other is null ? new[] { runLoop.WakeHandle } : new[] { runLoop.WakeHandle, other };
+            WaitHandle.WaitAny(handles, timeout);
+            // bounded, as the Windows drain is: an operation that posts another must not keep this here
+            for (int i = 0; i < 64; i++)
+            {
+                bool due = _dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0;
+                if (!due && _queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive) break;
+                PumpFromNativeLoop();
+            }
+        }
+
         private void PumpFromNativeLoop()
         {
             // DisableProcessing is an explicit "no reentrancy here" from application code. The main

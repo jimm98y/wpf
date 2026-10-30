@@ -26,32 +26,34 @@ internal static class GalleryHost
         {
             PointResourceLookupAt(Assembly.Load(new AssemblyName("WPFGallery")));
 
+            // Once the gallery is up: App.Main does not return until it ends (its dispatcher blocks on
+            // this thread, as on every head), so what this head adjusts is queued for when it first idles.
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(AdjustForTheScreen));
+
             // The gallery's own entry point: builds its generic host, applies the Fluent theme,
             // resolves MainWindow from DI, shows it and calls Application.Run().
             WPFGallery.App.Main();
-            Console.WriteLine("GALLERY: App.Main returned (pump detached, Android owns the loop)");
-
-            // The gallery is a DESKTOP app: MainWindow.xaml sets MinWidth=780 / MinHeight=470, which
-            // no phone screen satisfies. WPF honours the minimums, so the window would be laid out
-            // LARGER than the display and most of the UI would sit outside it. An Android window IS
-            // the activity's content area (AndroidWindow.Create snaps it), so the minimums cannot
-            // apply here.
-            Window? main = Application.Current?.MainWindow;
-            if (main != null)
-            {
-                main.MinWidth = 0;
-                main.MinHeight = 0;
-                Console.WriteLine($"GALLERY: relaxed window minimums, window={main.ActualWidth:F0}x{main.ActualHeight:F0}");
-
-                HideCaptionButtons(main);
-            }
+            Console.WriteLine("GALLERY: App.Main returned");
         }
         catch (Exception e)
         {
-            // An exception escaping into the Java frame that called us kills the process without a
-            // managed stack, so report it here.
+            // Reported here, where the managed stack is still at hand.
             Console.WriteLine($"GALLERY: FAILED {e}");
         }
+    }
+
+    private static void AdjustForTheScreen()
+    {
+        // The gallery is a DESKTOP app: MainWindow.xaml sets MinWidth=780 / MinHeight=470, which no
+        // phone screen satisfies. An Android window IS the activity's content area (AndroidWindow.Create
+        // snaps it), so the minimums cannot apply here.
+        Window? main = Application.Current?.MainWindow;
+        if (main == null) return;
+        main.MinWidth = 0;
+        main.MinHeight = 0;
+        Console.WriteLine($"GALLERY: relaxed window minimums, window={main.ActualWidth:F0}x{main.ActualHeight:F0}");
+        HideCaptionButtons(main);
     }
 
     /// <summary>

@@ -10,7 +10,7 @@
 //                   renders into. Reports that surface's lifetime and its touches back into
 //                   AndroidWindow.
 //   AndroidHost     the IAndroidHost implementation: creates/positions/destroys those views inside
-//                   the activity, answers density/screen queries, and owns the Choreographer pump.
+//                   the activity on the main Looper (OnMain), and answers density/screen queries.
 //
 // It is NOT compiled into WindowsBase -- it needs the Mono.Android bindings, which WindowsBase must
 // not reference. It lives here, beside AndroidWindow.cs, because it is a head PAYLOAD that every
@@ -124,6 +124,9 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
 {
     private readonly IntPtr _wpfHandle;
 
+    /// <summary>The app's own window, which fills the activity; the others float.</summary>
+    public bool FillsScreen { get; init; }
+
     public WpfSurfaceView(Context context, IntPtr wpfHandle) : base(context)
     {
         _wpfHandle = wpfHandle;
@@ -143,7 +146,7 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
     {
         get
         {
-            AndroidAccessibility.Attach();
+            AndroidWindow.InvokeOnUi(() => { AndroidAccessibility.Attach(); return true; });
             return _a11yProvider ??= new WpfAccessibilityNodeProvider(this, _wpfHandle);
         }
     }
@@ -357,8 +360,7 @@ internal static class WpfInput
 /// Deliberately NOT a <c>Java.Lang.Object</c>: the Android SDK generates a Java Callable Wrapper for
 /// every managed type that is one, and doing so means resolving every interface that type implements
 /// — including <see cref="IAndroidHost"/>, which lives in WindowsBase and is not a Java type at all
-/// (build error XA4204). The one genuinely Java-facing piece, the Choreographer callback, is a
-/// nested class instead.
+/// (build error XA4204).
 /// </summary>
 /// <summary>
 /// The input method's end of a WPF text field.
@@ -450,12 +452,12 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
             Android.Views.Accessibility.AccessibilityNodeInfo host = Android.Views.Accessibility.AccessibilityNodeInfo.Obtain(_view)!;
             _view.OnInitializeAccessibilityNodeInfo(host);
 
-            int r = AndroidAccessibility.GetRootId(_handle);
+            int r = AndroidWindow.InvokeOnUi(() => AndroidAccessibility.GetRootId(_handle));
             if (r != AndroidAccessibility.InvalidNode) host.AddChild(_view, r);
             return host;
         }
 
-        string json = AndroidAccessibility.GetNodeJson(virtualViewId);
+        string json = AndroidWindow.InvokeOnUi(() => AndroidAccessibility.GetNodeJson(virtualViewId));
         if (string.IsNullOrEmpty(json)) return null;   // the node is gone; Android expects null
 
         Android.Views.Accessibility.AccessibilityNodeInfo info = Android.Views.Accessibility.AccessibilityNodeInfo.Obtain(_view, virtualViewId)!;
@@ -484,11 +486,11 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
         if ((actions & 4) != 0) info.AddAction(Android.Views.Accessibility.Action.Collapse);
         info.AddAction(Android.Views.Accessibility.Action.AccessibilityFocus);
 
-        int parent = AndroidAccessibility.GetParentId(virtualViewId);
+        int parent = AndroidWindow.InvokeOnUi(() => AndroidAccessibility.GetParentId(virtualViewId));
         if (parent == AndroidAccessibility.InvalidNode) info.SetParent(_view);
         else info.SetParent(_view, parent);
 
-        foreach (int child in AndroidAccessibility.GetChildIds(virtualViewId))
+        foreach (int child in AndroidWindow.InvokeOnUi(() => AndroidAccessibility.GetChildIds(virtualViewId)))
         {
             info.AddChild(_view, child);
         }
@@ -508,7 +510,7 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
             _ => -1,
         };
 
-        return kind >= 0 && AndroidAccessibility.PerformAction(virtualViewId, kind, null);
+        return kind >= 0 && AndroidWindow.InvokeOnUi(() => AndroidAccessibility.PerformAction(virtualViewId, kind, null));
     }
 
     /// <summary>
@@ -665,31 +667,33 @@ internal sealed class WpfDragListener : Java.Lang.Object, View.IOnDragListener
 
         int x = (int)e.GetX();
         int y = (int)e.GetY();
+        // what WPF is told is read here, on the main thread the event belongs to; WPF hears it on its own
+        string[] types = e.Action is DragAction.Started or DragAction.Location or DragAction.Drop ? MimeTypes(e) : Array.Empty<string>();
 
         switch (e.Action)
         {
             case DragAction.Started:
                 // Returning false here unsubscribes this view from the WHOLE drag, drop included.
-                return AndroidDragDrop.NotifyDragStarted(_wpfHandle, MimeTypes(e));
+                return AndroidWindow.InvokeOnUi(() => AndroidDragDrop.NotifyDragStarted(_wpfHandle, types));
 
             case DragAction.Entered:
                 // Carries no usable position; the location event that follows raises WPF's DragEnter.
                 return true;
 
             case DragAction.Location:
-                AndroidDragDrop.NotifyDragLocation(_wpfHandle, x, y, MimeTypes(e));
+                AndroidWindow.InvokeOnUi(() => { AndroidDragDrop.NotifyDragLocation(_wpfHandle, x, y, types); return true; });
                 return true;
 
             case DragAction.Exited:
-                AndroidDragDrop.NotifyDragExited(_wpfHandle);
+                AndroidWindow.InvokeOnUi(() => { AndroidDragDrop.NotifyDragExited(_wpfHandle); return true; });
                 return true;
 
             case DragAction.Drop:
                 ReadClip(e, out string[]? text, out string[]? uris);
-                return AndroidDragDrop.NotifyDrop(_wpfHandle, x, y, MimeTypes(e), text, uris);
+                return AndroidWindow.InvokeOnUi(() => AndroidDragDrop.NotifyDrop(_wpfHandle, x, y, types, text, uris));
 
             case DragAction.Ended:
-                AndroidDragDrop.NotifyDragEnded(_wpfHandle);
+                AndroidWindow.InvokeOnUi(() => { AndroidDragDrop.NotifyDragEnded(_wpfHandle); return true; });
                 return true;
 
             default:
@@ -781,17 +785,15 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     private readonly FrameLayout _root;
     private readonly Android.OS.Handler _handler;
     private readonly Dictionary<IntPtr, View> _views = new();
-    private readonly FrameCallback _frameCallback;
 
-    private Action? _tick;
-    private bool _paused;
-    private bool _posted;
 
     /// <summary>
     /// Puts Android's system print UI up with a rendered document. Must run on the UI thread, which
     /// is where a print request from WPF already is.
     /// </summary>
-    public bool Print(string jobName, byte[] document, double pageWidth, double pageHeight)
+    public bool Print(string jobName, byte[] document, double pageWidth, double pageHeight) => OnMain(() => PrintCore(jobName, document, pageWidth, pageHeight));
+
+    private bool PrintCore(string jobName, byte[] document, double pageWidth, double pageHeight)
     {
         if (document == null || document.Length == 0) return false;
 
@@ -821,26 +823,88 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         _activity = activity;
         _root = root;
         _handler = new Android.OS.Handler(Android.OS.Looper.MainLooper!);
-        _frameCallback = new FrameCallback(this);
     }
 
-    /// <summary>The Java-facing shim Choreographer calls back into (see the class remarks).</summary>
-    private sealed class FrameCallback : Java.Lang.Object, Choreographer.IFrameCallback
+    // ---- the app's thread ------------------------------------------------------
+
+    /// <summary>
+    /// Runs the app's <paramref name="main"/> on a UI thread of its own -- WPF's dispatcher blocks there
+    /// as on a desktop, which Android's main Looper cannot let it do -- and ends the process when it
+    /// returns, as an app's process ends with its Main on Windows. Call it once the activity has its
+    /// content view (after the first layout pass), from the main thread.
+    /// </summary>
+    public void RunApp(Action main)
     {
-        private readonly AndroidHost _host;
-        public FrameCallback(AndroidHost host) => _host = host;
-        public void DoFrame(long frameTimeNanos) => _host.DoFrame();
+        // the stack Windows gives a main thread is 1 MB; a desktop app's layout and BAML recursion is
+        // that deep, and a phone's default for a new thread is less
+        var thread = new System.Threading.Thread(() =>
+        {
+            try { main(); }
+            catch (Exception e) { Console.WriteLine($"WPF Android: the app ended with an exception: {e}"); }
+            _activity.RunOnUiThread(() =>
+            {
+                _activity.FinishAndRemoveTask();
+                Java.Lang.JavaSystem.Exit(0);
+            });
+        }, 8 * 1024 * 1024)
+        {
+            Name = "UI",
+        };
+        thread.Start();
     }
+
+    // ---- the main Looper -------------------------------------------------------
+    //
+    // The app runs on a UI thread of its own -- WPF's dispatcher blocks there as on every desktop
+    // head, so its modal loops work -- and Android's views belong to the main Looper's thread. What
+    // this host does to a view, the clipboard, the print or drag service is done there, and the
+    // caller waits for it, as a SendMessage to another thread's window waits on Windows. The main
+    // thread never waits on the app's (its callbacks are posted to the app's dispatcher), so the
+    // wait cannot deadlock.
+
+    private T OnMain<T>(Func<T> work)
+    {
+        if (Android.OS.Looper.MyLooper() == Android.OS.Looper.MainLooper) return work();
+        T result = default!;
+        Exception? error = null;
+        using var done = new System.Threading.ManualResetEventSlim();
+        _handler.Post(() =>
+        {
+            try { result = work(); }
+            catch (Exception e) { error = e; }
+            finally { done.Set(); }
+        });
+        AndroidWindow.WaitServingMain(done.WaitHandle);
+        if (error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
+        return result;
+    }
+
+    private void OnMain(Action work) => OnMain(() => { work(); return true; });
 
     // ---- views ----------------------------------------------------------------
 
-    public bool CreateView(IntPtr handle, int x, int y, int width, int height, bool borderless)
+    public bool CreateView(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface)
+        => OnMain(() => CreateViewCore(handle, x, y, width, height, borderless, fillsScreen, ownSurface));
+
+    public void BringToFront(IntPtr handle) => OnMain(() =>
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+        view.BringToFront();
+        // a floating window's surface is composed above the app's own (SurfaceViews are layers of their
+        // own, stacked by this rather than by the view order)
+        if (view is WpfSurfaceView surface && !surface.FillsScreen) surface.SetZOrderMediaOverlay(true);
+    });
+
+    private bool CreateViewCore(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface)
     {
         // A popup is drawn into its owner's surface, so it needs no surface of its own -- only a
-        // touch target. See WpfPopupView.
-        View view = borderless
+        // touch target. See WpfPopupView. A window has one: the app's own, a dialog floating over
+        // it, a borderless form.
+        View view = borderless && !ownSurface
             ? new WpfPopupView(_activity, handle)
-            : new WpfSurfaceView(_activity, handle);
+            : new WpfSurfaceView(_activity, handle) { FillsScreen = fillsScreen };
+        // a floating window's surface composes above the app's own; see BringToFront
+        if (view is WpfSurfaceView floating && !fillsScreen) floating.SetZOrderMediaOverlay(true);
 
         // A top-level window IS the activity's content area, so it must FOLLOW it -- MatchParent is
         // the Android spelling of the autoresizing mask UIKitWindow gives its view. Sizing it to the
@@ -848,7 +912,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // rotation then leaves WPF rendering into the old portrait rectangle on a landscape screen.
         // Popups are the opposite: they are placed at an absolute pixel offset, which FrameLayout
         // expresses as gravity + margins (there is no non-obsolete AbsoluteLayout).
-        var lp = borderless
+        var lp = !fillsScreen
             ? new FrameLayout.LayoutParams(width, height)
             {
                 Gravity = GravityFlags.Top | GravityFlags.Left,
@@ -867,7 +931,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         return true;
     }
 
-    public void SetViewFrame(IntPtr handle, int x, int y, int width, int height)
+    public void SetViewFrame(IntPtr handle, int x, int y, int width, int height) => OnMain(() => SetViewFrameCore(handle, x, y, width, height));
+
+    private void SetViewFrameCore(IntPtr handle, int x, int y, int width, int height)
     {
         if (!_views.TryGetValue(handle, out View? view)) return;
 
@@ -882,7 +948,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         view.LayoutParameters = lp;
     }
 
-    public void SetViewVisible(IntPtr handle, bool visible)
+    public void SetViewVisible(IntPtr handle, bool visible) => OnMain(() => SetViewVisibleCore(handle, visible));
+
+    private void SetViewVisibleCore(IntPtr handle, bool visible)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
         // Gone, not Invisible: an Invisible view still occupies its slot for layout and hit-testing,
@@ -890,13 +958,17 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
     }
 
-    public void InvalidateAccessibilityNode(IntPtr handle, int nodeId)
+    public void InvalidateAccessibilityNode(IntPtr handle, int nodeId) => OnMain(() => InvalidateAccessibilityNodeCore(handle, nodeId));
+
+    private void InvalidateAccessibilityNodeCore(IntPtr handle, int nodeId)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
         view.SendAccessibilityEvent(Android.Views.Accessibility.EventTypes.WindowContentChanged);
     }
 
-    public void ShowSoftKeyboard(IntPtr handle, bool multiline, bool password)
+    public void ShowSoftKeyboard(IntPtr handle, bool multiline, bool password) => OnMain(() => ShowSoftKeyboardCore(handle, multiline, password));
+
+    private void ShowSoftKeyboardCore(IntPtr handle, bool multiline, bool password)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
 
@@ -911,7 +983,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         }
     }
 
-    public void HideSoftKeyboard(IntPtr handle)
+    public void HideSoftKeyboard(IntPtr handle) => OnMain(() => HideSoftKeyboardCore(handle));
+
+    private void HideSoftKeyboardCore(IntPtr handle)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
 
@@ -921,7 +995,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         }
     }
 
-    public void SetImeCursorRect(IntPtr handle, int x, int y, int width, int height)
+    public void SetImeCursorRect(IntPtr handle, int x, int y, int width, int height) => OnMain(() => SetImeCursorRectCore(handle, x, y, width, height));
+
+    private void SetImeCursorRectCore(IntPtr handle, int x, int y, int width, int height)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
 
@@ -933,7 +1009,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         }
     }
 
-    public void DestroyView(IntPtr handle)
+    public void DestroyView(IntPtr handle) => OnMain(() => DestroyViewCore(handle));
+
+    private void DestroyViewCore(IntPtr handle)
     {
         if (!_views.Remove(handle, out View? view)) return;
         _root.RemoveView(view);
@@ -946,7 +1024,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     // every view in CreateView. See the header of AndroidDragDrop.cs for what Android's model can
     // and cannot carry.
 
-    public bool StartDrag(IntPtr handle, string[] mimeTypes, string? text, string[]? uris)
+    public bool StartDrag(IntPtr handle, string[] mimeTypes, string? text, string[]? uris) => OnMain(() => StartDragCore(handle, mimeTypes, text, uris));
+
+    private bool StartDragCore(IntPtr handle, string[] mimeTypes, string? text, string[]? uris)
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return false;
 
@@ -1039,13 +1119,14 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     // another app. android.content.ClipboardManager needs a Context, which is why this half lives in
     // the payload rather than in WindowsBase; see the header of AndroidClipboard.cs.
     //
-    // Main-thread only, and every caller arrives on the dispatcher thread, which on this head IS the
-    // main Looper thread. No marshalling is needed and none is done.
+    // Main-thread only: the app's UI thread is not the main Looper's, so each call is run there (OnMain).
 
     private ClipboardManager? Clipboard =>
         _activity.GetSystemService(Context.ClipboardService) as ClipboardManager;
 
-    public void Clear()
+    public void Clear() => OnMain(() => ClearCore());
+
+    private void ClearCore()
     {
         ClipboardManager? clipboard = Clipboard;
         if (clipboard is null) return;
@@ -1064,7 +1145,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         }
     }
 
-    public void SetText(string value)
+    public void SetText(string value) => OnMain(() => SetTextCore(value));
+
+    private void SetTextCore(string value)
     {
         ClipboardManager? clipboard = Clipboard;
         if (clipboard is null) return;
@@ -1074,7 +1157,9 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         clipboard.PrimaryClip = ClipData.NewPlainText(_activity.PackageName ?? "WPF", value ?? "");
     }
 
-    public string? GetText()
+    public string? GetText() => OnMain(() => GetTextCore());
+
+    private string? GetTextCore()
     {
         ClipboardManager? clipboard = Clipboard;
         ClipData? clip = clipboard?.PrimaryClip;
@@ -1484,63 +1569,5 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         Android.Util.DisplayMetrics? m = _activity.Resources?.DisplayMetrics;
         width = m?.WidthPixels ?? 0;
         height = m?.HeightPixels ?? 0;
-    }
-
-    // ---- the Choreographer pump -----------------------------------------------
-    //
-    // Choreographer is Android's requestAnimationFrame: one display-aligned callback per frame,
-    // delivered on the UI thread. It is one-shot, so the pump re-posts itself for as long as it is
-    // running — and simply stops re-posting when the dispatcher parks it, which is what makes an
-    // idle WPF app cost nothing (see Dispatcher.PumpAndroidTick).
-
-    public bool StartFrameCallback(Action tick)
-    {
-        _tick = tick;
-        _paused = false;
-        Post();
-        return true;
-    }
-
-    public void StopFrameCallback()
-    {
-        _tick = null;
-        _paused = true;
-        Choreographer.Instance?.RemoveFrameCallback(_frameCallback);
-        _posted = false;
-    }
-
-    public void SetFrameCallbackPaused(bool paused)
-    {
-        _paused = paused;
-        if (!paused) Post();
-    }
-
-    public void RequestWake()
-    {
-        // Called from ANY thread (Dispatcher.BeginInvoke off the UI thread is the point), and
-        // Choreographer is thread-affine, so hop first.
-        _activity.RunOnUiThread(() => SetFrameCallbackPaused(false));
-    }
-
-    public void ScheduleWake(double seconds)
-    {
-        _handler.RemoveCallbacksAndMessages(null);
-        _handler.PostDelayed(() => SetFrameCallbackPaused(false), (long)Math.Max(0.0, seconds * 1000.0));
-    }
-
-    private void DoFrame()
-    {
-        _posted = false;
-        if (_paused || _tick is null) return;
-
-        _tick();
-        Post();      // no-op if the tick just parked us
-    }
-
-    private void Post()
-    {
-        if (_paused || _posted || _tick is null) return;
-        _posted = true;
-        Choreographer.Instance!.PostFrameCallback(_frameCallback);
     }
 }

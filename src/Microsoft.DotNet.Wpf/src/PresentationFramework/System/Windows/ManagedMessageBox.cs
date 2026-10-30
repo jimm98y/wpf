@@ -132,94 +132,20 @@ namespace System.Windows
             };
             panel.Children.Add(buttonRow);
 
-            // Two layouts, because the heads disagree about what a window IS.
-            //
-            // On a desktop a window is a rectangle the app chooses, so SizeToContent plus
-            // CenterOwner gives the small centred box everyone expects. On iOS, Android and the
-            // browser a window IS the screen -- the head snaps every one of them to the root view --
-            // so SizeToContent has nothing to size and CenterOwner nothing to centre against. Asking
-            // for them there produced a full-screen surface with the prompt jammed into the top-left
-            // corner, its text clipped, over a black background: shown, technically.
-            //
-            // So on those heads centre the prompt INSIDE the screen-sized window and put a scrim
-            // behind it, which is what a modal looks like on a phone regardless.
             Window owner = SafeOwner();
 
-            // Two layouts, because the heads disagree about what a window IS.
-            //
-            // On a desktop a window is a rectangle the app asks for, so SizeToContent plus
-            // CenterOwner gives the small centred box everyone expects. On Android a window IS the
-            // screen: the head snaps every one of them to the root view, so a content-sized dialog
-            // still gets a FULL-SCREEN opaque surface, the prompt in its top-left corner on an
-            // otherwise black screen, because the rest of that surface is nothing but clear colour.
-            //
-            // So there, fill the window and centre the prompt inside it, over a scrim. That is what
-            // a modal looks like on a phone anyway.
-            //
-            // Not the browser or iOS: there a second window floats over the others at the size it
-            // asks for (browser-window.js createWindow, UIKitWindow), like a desktop dialog. Treated
-            // as a phone, the prompt opened as an owner-sized OPAQUE window -- its scrim composited
-            // over the window's own clear colour, a grey slab -- covering most of the screen.
-            bool screenSizedWindow = OperatingSystem.IsAndroid()
-                                     && owner != null
-                                     && owner.ActualWidth >= 1
-                                     && owner.ActualHeight >= 1;
-
-            Window window;
-            if (screenSizedWindow)
+            // A window is a rectangle the app asks for on every head -- on iOS and Android too, where a
+            // second window floats over the app's own (UIKitWindow, AndroidWindow) as it does in the
+            // browser -- so SizeToContent plus CenterOwner gives the small centred box everyone expects.
+            var window = new Window
             {
-                var card = new Border
-                {
-                    Background = SystemColors.WindowBrush,
-                    BorderBrush = SystemColors.ActiveBorderBrush,
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(14),
-                    MaxWidth = 460,
-                    Margin = new Thickness(24),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Child = panel,
-                };
-
-                // The size comes from the OWNER, and SizeToContent stays. Both are load-bearing.
-                //
-                // The owner is the right ruler because a window here IS the screen. It is also the
-                // only correct one to hand: SystemParameters.PrimaryScreenWidth/Height are a desktop
-                // stub on this head -- measured, they report 1920x1080 on an iPhone whose screen is
-                // 402x874, which centres the card most of a thousand DIPs off the display.
-                //
-                // And SizeToContent has to stay, because a window here is never told a size (its
-                // platform size never changes from the one it was created with, so no resize
-                // arrives): drop it and the content measures to zero and only the background paints.
-                var root = new Grid
-                {
-                    Width = owner.ActualWidth,
-                    Height = owner.ActualHeight,
-                    Background = new SolidColorBrush(Color.FromArgb(0x99, 0, 0, 0)),
-                };
-                root.Children.Add(card);
-
-                window = new Window
-                {
-                    Title = caption ?? string.Empty,
-                    Content = root,
-                    SizeToContent = SizeToContent.WidthAndHeight,
-                    ResizeMode = ResizeMode.NoResize,
-                    ShowInTaskbar = false,
-                };
-            }
-            else
-            {
-                window = new Window
-                {
-                    Title = caption ?? string.Empty,
-                    Content = panel,
-                    SizeToContent = SizeToContent.WidthAndHeight,
-                    ResizeMode = ResizeMode.NoResize,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    ShowInTaskbar = false,
-                };
-            }
+                Title = caption ?? string.Empty,
+                Content = panel,
+                SizeToContent = SizeToContent.WidthAndHeight,
+                ResizeMode = ResizeMode.NoResize,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ShowInTaskbar = false,
+            };
 
             // The owner keeps the dialog above the window it belongs to and lets the compositor
             // treat it as a child. Guard against adopting the dialog as its own owner.

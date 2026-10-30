@@ -152,7 +152,7 @@ public static class WpfSpike
         timer.Start();
 
         Dispatcher.Run();
-        Console.WriteLine("WPFSPIKE: Dispatcher.Run returned (pump is detached on Android)");
+        Console.WriteLine("WPFSPIKE: Dispatcher.Run returned");
     }
 
     /// <summary>

@@ -304,7 +304,7 @@ namespace Microsoft.Win32
         ///  there as written.
         /// </remarks>
         private static bool CannotBlock =>
-            (OperatingSystem.IsBrowser() && !MS.Internal.Interop.BrowserBlocking.CanBlock) || OperatingSystem.IsAndroid();
+            OperatingSystem.IsBrowser() && !MS.Internal.Interop.BrowserBlocking.CanBlock;
 
         /// <summary>
         ///  Refuses a synchronous ShowDialog on the three heads that cannot serve one.
@@ -531,11 +531,11 @@ namespace Microsoft.Win32
                 return MS.Internal.Interop.BrowserDialogs.WaitForAnswer(RunBrowserDialogAsync) == true;
             }
 
-            // iOS: the document picker UIKit presents, waited for in a nested frame of the main run loop
-            // (the dispatcher's wait there runs it, so the picker's answer arrives while this waits).
-            if (OperatingSystem.IsIOS())
+            // iOS and Android: the system's picker, waited for in a nested frame (the dispatcher's wait
+            // goes on running what the picker's answer posts, so it arrives while this waits).
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid())
             {
-                System.Threading.Tasks.Task<bool?> picked = RunIosDialogAsync();
+                System.Threading.Tasks.Task<bool?> picked = OperatingSystem.IsIOS() ? RunIosDialogAsync() : RunAndroidDialogAsync();
                 if (!picked.IsCompleted)
                 {
                     var frame = new System.Windows.Threading.DispatcherFrame();

@@ -38,6 +38,9 @@ namespace System.Windows.Forms
 		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
 		[System.Runtime.Versioning.SupportedOSPlatform("ios")]
 		private static void InstallIosScreens() => UIKitFormHost.InstallScreens();
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("android")]
+		private static void InstallAndroidScreens() => AndroidFormHost.InstallScreens();
 		private XplatUIWebGpu()
 		{
 			// the driver's windows in the process's focus model (XplatUIWebGpu.Focus.cs)
@@ -47,6 +50,7 @@ namespace System.Windows.Forms
 			// a head whose screen is the application's main window: every other window is framed (WindowChrome)
 			if (OperatingSystem.IsBrowser()) { FramedWindow = WindowChrome.IsFramed; InstallBrowserScreens(); }
 			else if (OperatingSystem.IsIOS()) { FramedWindow = WindowChrome.IsFramed; InstallIosScreens(); }
+			else if (OperatingSystem.IsAndroid()) { FramedWindow = WindowChrome.IsFramed; InstallAndroidScreens(); }
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
 			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
 			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",

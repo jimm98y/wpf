@@ -450,6 +450,7 @@ namespace System.Windows.Forms
                 else if (OperatingSystem.IsMacOS()) host = new CocoaHost(form);
                 else if (OperatingSystem.IsBrowser()) host = CreateBrowserHost(form);
                 else if (OperatingSystem.IsIOS()) host = CreateIosHost(form);
+                else if (OperatingSystem.IsAndroid()) host = CreateAndroidHost(form);
                 else return;                             // no windowing shell for this OS yet
                 host.Show();                             // Attach happens in the ctor
             }
@@ -464,6 +465,10 @@ namespace System.Windows.Forms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [System.Runtime.Versioning.SupportedOSPlatform("ios")]
         private static IWinFormsHost CreateIosHost(Form form) => new UIKitFormHost(form);
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("android")]
+        private static IWinFormsHost CreateAndroidHost(Form form) => new AndroidFormHost(form);
 
         private static void InvalidateTree(Control c)
         {
@@ -499,6 +504,8 @@ namespace System.Windows.Forms
             // managed wait there left UIKit without the thread: no touch arrived, and no frame after the
             // first was ever committed to the screen
             if (OperatingSystem.IsIOS()) { IdleInRunLoop(ms); return; }
+            // Android: the wait serves the WPF dispatcher of this thread too, which nothing else runs here
+            if (OperatingSystem.IsAndroid()) { IdleServingWpf(ms, posted); return; }
             if (ms <= 0) return;
             if (posted == null) { Thread.Sleep(ms); return; }
             if (OperatingSystem.IsWindows())
@@ -519,6 +526,10 @@ namespace System.Windows.Forms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [System.Runtime.Versioning.SupportedOSPlatform("ios")]
         private static void IdleInRunLoop(int ms) => WindowsBase::MS.Internal.Interop.UIKitWindow.RunLoop(ms);
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("android")]
+        private static void IdleServingWpf(int ms, WaitHandle posted) => WindowsBase::MS.Internal.Interop.AndroidWindow.RunLoop(ms, posted);
 
         [System.Runtime.InteropServices.DllImport("user32")]
         private static extern uint MsgWaitForMultipleObjectsEx(uint count, ref IntPtr handles, uint ms, uint wakeMask, uint flags);

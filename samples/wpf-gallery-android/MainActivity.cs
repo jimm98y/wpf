@@ -86,7 +86,7 @@ public class MainActivity : Activity
         _host = host;
 
         // Start WPF after the first layout pass, so the window it creates is given the activity's
-        // real content size rather than a zero one.
-        root.Post(GalleryHost.Run);
+        // real content size rather than a zero one -- on the app's own UI thread (AndroidHost.RunApp).
+        root.Post(() => host.RunApp(GalleryHost.Run));
     }
 }

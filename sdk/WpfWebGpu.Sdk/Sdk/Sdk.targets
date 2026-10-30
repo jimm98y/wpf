@@ -33,10 +33,11 @@
     <!-- The heads whose app is built ahead of time into a bundle, and so is rewritten onto the stack's
          Windows API at build rather than when it starts (as wpfrun does): the browser and iOS. -->
     <_WpfWebGpuBundled>false</_WpfWebGpuBundled>
-    <_WpfWebGpuBundled Condition="'$(_WpfWebGpuBrowser)' == 'true' or '$(_WpfWebGpuIos)' == 'true'">true</_WpfWebGpuBundled>
+    <_WpfWebGpuBundled Condition="'$(_WpfWebGpuBrowser)' == 'true' or '$(_WpfWebGpuIos)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true'">true</_WpfWebGpuBundled>
     <!-- the head's renderer folder, which the rewrite resolves the stack's references in -->
     <_WpfWebGpuHeadLib Condition="'$(_WpfWebGpuBrowser)' == 'true'">wpf-browser</_WpfWebGpuHeadLib>
     <_WpfWebGpuHeadLib Condition="'$(_WpfWebGpuIos)' == 'true'">wpf-ios</_WpfWebGpuHeadLib>
+    <_WpfWebGpuHeadLib Condition="'$(_WpfWebGpuAndroid)' == 'true'">wpf-desktop</_WpfWebGpuHeadLib>
     <_WpfWebGpuUnix>false</_WpfWebGpuUnix>
     <_WpfWebGpuUnix Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuWin)' != 'true'">true</_WpfWebGpuUnix>
 
@@ -626,11 +627,11 @@
     <StaticWebAssetsFingerprintContent Condition="'$(StaticWebAssetsFingerprintContent)' == ''">false</StaticWebAssetsFingerprintContent>
   </PropertyGroup>
 
-  <!-- iOS: the desktop's always-on behaviours the iOS SDK turns off as it would for a trimmed app, as the
+  <!-- iOS and Android: the desktop's always-on behaviours their SDKs turn off as they would for a trimmed app, as the
        browser head turns them back on above: ResourceManager's custom types (every bitmap and icon of a
        .resx: the app stopped in its first GetString with ResourceManager_ReflectionNotAllowed), the
        designer host, DefaultValueAttribute by type name, reflection-based JSON, exception messages, cultures. -->
-  <PropertyGroup Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+  <PropertyGroup Condition="'$(_WpfWebGpuMobile)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <UseSystemResourceKeys Condition="'$(UseSystemResourceKeys)' == ''">false</UseSystemResourceKeys>
     <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">false</InvariantGlobalization>
     <JsonSerializerIsReflectionEnabledByDefault Condition="'$(JsonSerializerIsReflectionEnabledByDefault)' == ''">true</JsonSerializerIsReflectionEnabledByDefault>
@@ -705,6 +706,14 @@
     <_AOT_InternalForceInterpretAssemblies Include="Accessibility.dll" />
   </ItemGroup>
 
+  <!-- Android: the trimmer runs (it is where the rewrite happens) on what is marked trimmable, so the
+       stack's assemblies that are reached by name (themes, resource readers, the configuration
+       system, the WinForms driver) are kept whole, as the browser head keeps them. -->
+  <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(PublishTrimmed)' == 'true'">
+    <TrimmerRootAssembly RootMode="All" Include="WindowsBase;PresentationCore;PresentationFramework;System.Xaml;PresentationFramework.Fluent;PresentationFramework.Aero;PresentationFramework.Aero2;PresentationFramework.AeroLite;PresentationFramework.Classic;PresentationFramework.Luna;PresentationFramework.Royale;PresentationUI;ReachFramework;System.Printing;DirectWriteForwarder;Microsoft.Wpf.Interop.WebGpu;UIAutomationTypes;UIAutomationProvider;System.Windows.Primitives;System.Windows.Input.Manipulations;System.IO.Packaging;System.Windows.Extensions;System.Configuration.ConfigurationManager;System.Resources.Extensions" />
+    <TrimmerRootAssembly RootMode="All" Include="System.Windows.Forms;Mono.System.Drawing" Condition="'$(_WpfWebGpuUseWinForms)' == 'true'" />
+  </ItemGroup>
+
   <!-- WinForms in the browser (host/BrowserFormHost.cs in the fork's System.Windows.Forms): its driver is
        reached by reflection and its legacy closure is out of the AOT compiler's reach, as in the WinForms
        browser host: rooted, and interpreted. -->
@@ -723,7 +732,7 @@
        WPF apps, unmodified, so correctness beats bundle size. -->
   <Target Name="_WpfWebGpuRootAppAssembliesForTrimming"
           BeforeTargets="PrepareForILLink"
-          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(PublishTrimmed)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="('$(_WpfWebGpuBrowser)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(PublishTrimmed)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <!-- SATELLITES are excluded: a localized app ships Foo.resources.dll per culture (Roslyn alone
            brings a dozen), and ILLink rejects one as a ROOT — "error IL1032: Root assembly
@@ -734,7 +743,7 @@
            into, and the .resources suffix. -->
       <_WpfWebGpuAppAsm Include="@(ReferenceCopyLocalPaths)"
                         Condition="'%(Extension)' == '.dll' and '%(ReferenceCopyLocalPaths.DestinationSubDirectory)' == '' and !$([System.String]::Copy('%(Filename)').EndsWith('.resources'))" />
-      <TrimmerRootAssembly Include="@(_WpfWebGpuAppAsm->'%(Filename)'->Distinct())" />
+      <TrimmerRootAssembly Include="@(_WpfWebGpuAppAsm->'%(Filename)'->Distinct())" RootMode="All" />
     </ItemGroup>
   </Target>
 
@@ -815,9 +824,11 @@
       <_WpfWebGpuDotnet Condition="'$(_WpfWebGpuDotnet)' == ''">dotnet</_WpfWebGpuDotnet>
     </PropertyGroup>
     <ItemGroup>
+      <!-- not, on Android, the head's own assembly: its pipeline takes the rewritten copy for a second
+           assembly of that name (XAAMP7004), and the head calls nothing that needs the rewrite -->
       <_WpfWebGpuRewriteInput Include="@(ResolvedFileToPublish->WithMetadataValue('PostprocessAssembly', 'true'))"
                               Exclude="@(_ManagedRuntimePackAssembly);@(_WpfWebGpuWin32Runtime)"
-                              Condition="'%(Extension)' == '.dll' and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuWin32Root)'))" />
+                              Condition="'%(Extension)' == '.dll' and !('$(_WpfWebGpuAndroid)' == 'true' and '%(Filename)' == '$(AssemblyName)') and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuWin32Root)'))" />
       <_WpfWebGpuRewriteArg Include="--out;$(_WpfWebGpuRewriteDir)" />
       <!-- references: the stack, the implementations, the runtime pack -->
       <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/$(_WpfWebGpuHeadLib);--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
@@ -871,7 +882,7 @@
         <RelativePath Condition="'%(ResolvedFileToPublish.RelativePath)' == ''">%(Filename)%(Extension)</RelativePath>
       </ResolvedFileToPublish>
       <!-- reached by name (WasmBoot initializes them) and implementing through reflection -->
-      <TrimmerRootAssembly Include="WpfWebGpu.Win32;WpfWebGpu.ComInterop;System.Windows.Forms;Mono.System.Drawing" />
+      <TrimmerRootAssembly Include="WpfWebGpu.Win32;WpfWebGpu.ComInterop;System.Windows.Forms;Mono.System.Drawing" RootMode="All" />
       <!-- the WinForms browser host's own choice: interpreted, its legacy closure out of AOT's way -->
       <_AOT_InternalForceInterpretAssemblies Include="WpfWebGpu.Win32.dll;System.Windows.Forms.dll" />
     </ItemGroup>
@@ -889,7 +900,7 @@
       <_WpfWebGpuRootSwapped Include="@(TrimmerRootAssembly)"
                              Condition="'%(Extension)' == '.dll' and Exists('$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
       <TrimmerRootAssembly Remove="@(_WpfWebGpuRootSwapped)" />
-      <TrimmerRootAssembly Include="@(_WpfWebGpuRootSwapped->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" />
+      <TrimmerRootAssembly Include="@(_WpfWebGpuRootSwapped->'$(_WpfWebGpuRewriteDir)%(Filename)%(Extension)')" RootMode="All" />
     </ItemGroup>
   </Target>
 
@@ -1031,12 +1042,12 @@
     </ItemGroup>
   </Target>
 
-  <!-- iOS: the cross-platform SystemEvents / Registry shims (lib/wpf-desktop, the ones the desktop
+  <!-- iOS and Android: the cross-platform SystemEvents / Registry shims (lib/wpf-desktop, the ones the desktop
        heads overlay) in place of the framework's throw-only copies, swapped in the list the app bundle
        is made of, as the browser's are above. -->
   <Target Name="_WpfWebGpuIosPublishShims"
           AfterTargets="_ComputeAssembliesToPostprocessOnPublish"
-          Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuMobile)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <_WpfWebGpuIosShimmed Include="@(ResolvedFileToPublish)"
                             Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry')
@@ -1046,15 +1057,22 @@
     </ItemGroup>
   </Target>
 
-  <!-- iOS: the runtime pack ships a WindowsBase.dll of its own, a type-forwarding facade, and an app
+  <!-- iOS and Android: the runtime pack ships a WindowsBase.dll of its own, a type-forwarding facade, and an app
        that is not trimmed takes the pack whole: it landed on top of the stack's WindowsBase and the
        app died at startup (TypeLoadException: MS.Internal.Interop.UIKitWindow in WindowsBase). -->
   <Target Name="_WpfWebGpuIosDropWindowsBaseFacade" AfterTargets="ResolveRuntimePackAssets"
-          Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+          Condition="'$(_WpfWebGpuMobile)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <RuntimePackAsset Remove="@(RuntimePackAsset)" Condition="'%(Filename)' == 'WindowsBase'" />
     </ItemGroup>
   </Target>
+
+  <!-- Android: the activity-side half of the window layer (AndroidHost: views on the main Looper, the
+       app on a UI thread of its own), compiled into the app, the one assembly that can see
+       Mono.Android. WpfWebGpuAndroidHost=false for a head that brings its own. -->
+  <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuAndroidHost)' != 'false'">
+    <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidHost.cs" Link="WpfWebGpu/AndroidHost.cs" Visible="false" />
+  </ItemGroup>
 
   <!-- iOS: the frameworks the app is linked against are the ones its P/Invokes name, and the stack's
        macOS paths name two that iOS does not have (AppKit, and System, the macOS home of libSystem's

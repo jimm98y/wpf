@@ -47,6 +47,12 @@ namespace System.Windows.Forms {
 				systemDpi = UIKitFormHost.ScreenDpi();
 				return systemDpi > 0 ? 2 : 0;
 			}
+			// Android: the display's density, which a view draws 1:1 (AndroidFormHost)
+			if (OperatingSystem.IsAndroid())
+			{
+				systemDpi = AndroidFormHost.ScreenDpi();
+				return systemDpi > 0 ? 2 : 0;
+			}
 			if (!OperatingSystem.IsWindows())
 				return 0;
 			try

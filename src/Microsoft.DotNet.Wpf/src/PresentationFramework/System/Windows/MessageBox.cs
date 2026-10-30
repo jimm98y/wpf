@@ -571,7 +571,7 @@ namespace System.Windows
         /// call site.
         /// </remarks>
         internal static bool CannotBlock =>
-            OperatingSystem.IsAndroid() || OperatingSystem.IsBrowser();
+            OperatingSystem.IsBrowser();
 
         internal static System.Threading.Tasks.Task<MessageBoxResult> ShowCoreAsync(
             IntPtr owner,

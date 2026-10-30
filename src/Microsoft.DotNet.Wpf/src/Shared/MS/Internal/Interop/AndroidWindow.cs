@@ -5,9 +5,14 @@
 // The Android windowing backend — the Android sibling of CocoaWindow, BrowserWindow and UIKitWindow.
 //
 // Android is shaped like iOS from WPF's point of view: one fullscreen activity, so a WPF "window" is
-// a view inside it, popups are borderless sibling views presenting through their own swap chains
-// (NativePlatform.SupportsLayeredWindows is false off Windows), and the OS owns the main run loop so
-// the dispatcher must be a guest in it (Choreographer here, CADisplayLink there).
+// a view inside it, and popups are borderless sibling views drawn into their owner's surface.
+//
+// The app runs on a UI thread of its own, not on the main Looper's: WPF's dispatcher blocks there,
+// as on the desktop heads, so a modal dialog, a MessageBox or an Invoke's wait is a nested frame like
+// anywhere else -- Android's Looper cannot be re-entered, and a guest pump on it could run none. The
+// host does what it does to views on the main thread (AndroidHost.OnMain), and what Android reports
+// on the main thread -- touches, text, a surface coming or going -- is carried to the app's UI
+// thread here (OnUi), as Windows posts input to the thread that owns the window.
 //
 // Two things are NOT like iOS, and they are why this file looks the way it does:
 //
@@ -51,7 +56,14 @@ namespace MS.Internal.Interop
         /// and forward its touches with <see cref="AndroidWindow.NotifyTouch"/>. Returns false if the
         /// view could not be created (no activity yet), which makes the WPF window a no-op.
         /// </summary>
-        bool CreateView(IntPtr handle, int x, int y, int width, int height, bool borderless);
+        /// <param name="fillsScreen">The app's own window, which fills the activity and follows its size;
+        /// any other keeps the frame given (a dialog floating over it, a popup).</param>
+        /// <param name="ownSurface">A borderless window that presents through a surface of its own (a
+        /// borderless form) rather than its owner's (a popup).</param>
+        bool CreateView(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface);
+
+        /// <summary>A window to the front, above the others (SetForegroundWindow).</summary>
+        void BringToFront(IntPtr handle) { }
 
         /// <summary>Move/resize a view created by <see cref="CreateView"/> (top-left device pixels).</summary>
         void SetViewFrame(IntPtr handle, int x, int y, int width, int height);
@@ -93,26 +105,6 @@ namespace MS.Internal.Interop
         /// <summary>The activity's content area in device pixels — the whole screen minus system bars.</summary>
         void GetScreenPixels(out int width, out int height);
 
-        /// <summary>
-        /// Install a per-frame callback (Choreographer.postFrameCallback), delivered on the UI thread.
-        /// Returns false when not running under an activity, which unwinds the dispatcher frame.
-        /// </summary>
-        bool StartFrameCallback(Action tick);
-
-        /// <summary>Stop the per-frame callback for good (dispatcher shutdown).</summary>
-        void StopFrameCallback();
-
-        /// <summary>Pause/resume the per-frame callback. A paused pump costs nothing, which is how an
-        /// idle WPF app stops draining the battery; see <see cref="AndroidWindow.SetFrameCallbackPaused"/>.</summary>
-        void SetFrameCallbackPaused(bool paused);
-
-        /// <summary>Resume the pump because work was queued. Callable from ANY thread (that is the whole
-        /// point of Dispatcher.BeginInvoke), so implementations must hop to the UI thread themselves.</summary>
-        void RequestWake();
-
-        /// <summary>Resume the pump in <paramref name="seconds"/>, for a pending DispatcherTimer, replacing
-        /// any previously scheduled wake. UI thread only.</summary>
-        void ScheduleWake(double seconds);
     }
 
     /// <summary>
@@ -132,6 +124,31 @@ namespace MS.Internal.Interop
 
         /// <summary>The synthetic handle that stands in for the HWND.</summary>
         public IntPtr Handle => _handle;
+
+        // The app's own window: the first top-level one, which fills the activity. The others float.
+        private static IntPtr s_mainHandle;
+        private bool _ownSurface;
+        private bool IsMain => _handle != IntPtr.Zero && _handle == s_mainHandle;
+
+        /// <summary>A top-level window over the app's own: a dialog, a tool window.</summary>
+        public bool IsSecondary => !IsBorderless && !IsMain;
+
+        /// <summary>Whether the app has its own window yet (the first framed one, whichever stack made it).</summary>
+        public static bool HasMainWindow { get { lock (s_byHandle) return s_mainHandle != IntPtr.Zero && s_byHandle.ContainsKey(s_mainHandle); } }
+
+        public void SetVisible(bool visible, bool activate)
+        {
+            SetVisible(visible);
+            if (visible && activate) Activate();
+        }
+
+        /// <summary>To the front, as SetForegroundWindow brings a window there.</summary>
+        public void Activate()
+        {
+            if (_handle == IntPtr.Zero || (IsBorderless && !_ownSurface)) return;
+            lock (s_zOrder) { s_zOrder.Remove(this); s_zOrder.Add(this); }
+            Host?.BringToFront(_handle);
+        }
 
         public bool IsBorderless { get; private set; }
 
@@ -155,12 +172,20 @@ namespace MS.Internal.Interop
 
         /// <param name="x">Origin in top-left device PIXELS (borderless popups; the main window fills the activity).</param>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
+            => Create(title, x, y, width, height, borderless, ownSurface: false);
+
+        /// <summary>As <see cref="Create(string, int, int, int, int, bool)"/>; <paramref name="ownSurface"/>: a
+        /// borderless window that presents through a surface of its own (a borderless form, a splash
+        /// screen), stacked and activated as a window.</summary>
+        public void Create(string title, int x, int y, int width, int height, bool borderless, bool ownSurface)
         {
-            // Android has one UI thread (the main Looper's); a view touched from another throws
-            // CalledFromWrongThreadException on the Java side, across JNI. Refuse here instead.
-            ClaimUiThread("create a WPF window");
+            // The first thread to make a window is the app's UI thread, whose dispatcher what Android
+            // reports goes to (OnUi); a window of another thread (a splash screen's) is made as well, the
+            // host doing its view work on the main Looper whoever asks.
+            NoteUiThread();
 
             IsBorderless = borderless;
+            _ownSurface = borderless && ownSurface;
             InstallCompositorResolver();
 
             // Start well above zero and step by a page so these never collide with each other, with
@@ -173,20 +198,22 @@ namespace MS.Internal.Interop
             _widthPixels = width;
             _heightPixels = height;
 
-            // Android has no window manager: a top-level window is always the activity's content
-            // area. WPF asks for its own default/desired size (1024x768 etc.), which would leave the
-            // app rendering into a rectangle in a corner. Only real top-level windows are snapped —
-            // borderless views are Popups/menus, which DO need their requested geometry.
-            if (!borderless)
+            // The app's own window fills the activity, which is all the desktop there is: WPF asks for
+            // its own default/desired size (1024x768 etc.), which would leave the app rendering into a
+            // rectangle in a corner. The others -- a dialog, a tool window, a popup -- keep the frame
+            // they ask for and float over it, as the browser and iOS heads have them.
+            bool main = !borderless && (s_mainHandle == IntPtr.Zero || !s_byHandle.ContainsKey(s_mainHandle));
+            if (main)
             {
                 Host?.GetScreenPixels(out _widthPixels, out _heightPixels);
                 _xPixels = _yPixels = 0;
             }
 
-            s_byHandle[_handle] = this;
-            s_zOrder.Add(this);
+            lock (s_byHandle) s_byHandle[_handle] = this;
+            lock (s_zOrder) s_zOrder.Add(this);
+            if (main) s_mainHandle = _handle;
 
-            if (Host is null || !Host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, borderless))
+            if (Host is null || !Host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, borderless, main, _ownSurface))
             {
                 // No activity to host the view. Keep the handle registered so WPF's teardown path
                 // still finds this window, but it will never present anything.
@@ -217,9 +244,9 @@ namespace MS.Internal.Interop
                 return;
 
             Host?.DestroyView(_handle);
-            ReleaseNativeWindow();
-            s_byHandle.Remove(_handle);
-            s_zOrder.Remove(this);
+            lock (this) ReleaseNativeWindow();
+            lock (s_byHandle) s_byHandle.Remove(_handle);
+            lock (s_zOrder) s_zOrder.Remove(this);
             _handle = IntPtr.Zero;
         }
 
@@ -284,7 +311,7 @@ namespace MS.Internal.Interop
         /// WPF's SetWindowPos calls for it are ignored — GetPixelSize keeps reporting the real size
         /// and layout follows that. Popups keep their requested geometry.
         /// </summary>
-        private bool IsFullScreenTopLevel => !IsBorderless && Host != null;
+        private bool IsFullScreenTopLevel => IsMain && Host != null;
 
         public double GetRefreshRateHz() => Host?.RefreshRateHz ?? 0;
 
@@ -340,27 +367,36 @@ namespace MS.Internal.Interop
         /// </summary>
         public static void NotifySurfaceChanged(IntPtr handle, IntPtr nativeWindow, int widthPixels, int heightPixels)
         {
-            if (!s_byHandle.TryGetValue(handle, out AndroidWindow w)) return;
+            AndroidWindow w;
+            lock (s_byHandle) if (!s_byHandle.TryGetValue(handle, out w)) return;
 
-            if (w._nativeWindow != nativeWindow)
+            // the native window at once (the compositor reads it on the app's UI thread), the resize on that thread
+            lock (w)
             {
-                w.ReleaseNativeWindow();
-                if (nativeWindow != IntPtr.Zero)
-                    ANativeWindow_acquire(nativeWindow);
-                w._nativeWindow = nativeWindow;
+                if (w._nativeWindow != nativeWindow)
+                {
+                    w.ReleaseNativeWindow();
+                    if (nativeWindow != IntPtr.Zero)
+                        ANativeWindow_acquire(nativeWindow);
+                    w._nativeWindow = nativeWindow;
+                }
             }
 
-            w._widthPixels = widthPixels;
-            w._heightPixels = heightPixels;
-            w.RaiseResized();
+            OnUi(() =>
+            {
+                w._widthPixels = widthPixels;
+                w._heightPixels = heightPixels;
+                w.RaiseResized();
+            });
         }
 
         /// <summary>A view's Surface is going away (the activity is stopping). The window keeps its
         /// handle and its size; it simply has nothing to present into until a new Surface arrives.</summary>
         public static void NotifySurfaceDestroyed(IntPtr handle)
         {
-            if (!s_byHandle.TryGetValue(handle, out AndroidWindow w)) return;
-            w.ReleaseNativeWindow();
+            AndroidWindow w;
+            lock (s_byHandle) if (!s_byHandle.TryGetValue(handle, out w)) return;
+            lock (w) w.ReleaseNativeWindow();
         }
 
         /// <summary>Called by the head when the display density changed.</summary>
@@ -369,22 +405,23 @@ namespace MS.Internal.Interop
         /// which is the dispatcher thread, so they reach the editor directly.
         /// </summary>
         public static void NotifyComposingText(string text, int cursorPosition)
-            => AndroidTextInput.NotifyComposingText(text, cursorPosition);
+            => OnUi(() => AndroidTextInput.NotifyComposingText(text, cursorPosition));
 
         public static void NotifyCommitText(string text, int cursorPosition)
-            => AndroidTextInput.NotifyCommitText(text, cursorPosition);
+            => OnUi(() => AndroidTextInput.NotifyCommitText(text, cursorPosition));
 
         public static void NotifyFinishComposing()
-            => AndroidTextInput.NotifyFinishComposing();
+            => OnUi(AndroidTextInput.NotifyFinishComposing);
 
         public static void NotifyDeleteSurrounding(int before, int after)
-            => AndroidTextInput.NotifyDeleteSurrounding(before, after);
+            => OnUi(() => AndroidTextInput.NotifyDeleteSurrounding(before, after));
 
         public static void NotifyScaleChanged()
-        {
-            foreach (AndroidWindow w in s_zOrder)
-                w.ScaleChanged?.Invoke(w.GetBackingScale());
-        }
+            => OnUi(() =>
+            {
+                foreach (AndroidWindow w in s_zOrder.ToArray())
+                    w.ScaleChanged?.Invoke(w.GetBackingScale());
+            });
 
         private void ReleaseNativeWindow()
         {
@@ -411,7 +448,11 @@ namespace MS.Internal.Interop
 
         /// <summary>The live ANativeWindow* behind a WPF window handle, or Zero when there is none.</summary>
         public static IntPtr GetNativeWindow(IntPtr handle)
-            => s_byHandle.TryGetValue(handle, out AndroidWindow w) ? w._nativeWindow : IntPtr.Zero;
+        {
+            AndroidWindow w;
+            lock (s_byHandle) if (!s_byHandle.TryGetValue(handle, out w)) return IntPtr.Zero;
+            lock (w) return w._nativeWindow;
+        }
 
         /// <summary>
         /// The window's top-left corner in device pixels within the activity. The compositor needs it
@@ -480,61 +521,81 @@ namespace MS.Internal.Interop
             }
         }
 
-        // ---- The Choreographer dispatcher pump -------------------------------------
-        //
-        // Android owns the main run loop exactly as UIKit does: Activity.onCreate is a callback on
-        // the main Looper, so Dispatcher.Run cannot block there — it installs a per-frame callback and
-        // returns (see Dispatcher.RunAndroidPump). Choreographer is the Android analogue of
-        // CADisplayLink and of the browser's requestAnimationFrame: a display-aligned callback
-        // delivered on the UI thread, which is also the dispatcher thread, so the tick body runs
-        // synchronously inside it. These are thin forwards to the head, which owns the Java objects;
-        // they live here so Dispatcher talks to ONE windowing backend per platform.
-
-        /// <summary>Start the per-frame pump. False when there is no host/activity to drive it.</summary>
-        /// <remarks>The head holds ONE frame callback and delivers it on the UI thread, so a second
-        /// thread's Dispatcher.Run would silently replace the first's pump and have the UI thread
-        /// drain another thread's queue. Refused instead.</remarks>
-        public static bool StartFrameCallback(Action tick)
-        {
-            ClaimUiThread("run a Dispatcher");
-            return Host?.StartFrameCallback(tick) ?? false;
-        }
+        // ---- The app's UI thread ----------------------------------------------------
 
         private static System.Threading.Thread s_uiThread;
+        private static System.Windows.Threading.Dispatcher s_uiDispatcher;
 
-        /// <summary>
-        /// Records the calling thread as THE UI thread on first use (the head reaches WPF from the
-        /// main Looper: Activity.onCreate creates the window and runs the Dispatcher), and throws an
-        /// InvalidOperationException on any other live thread afterwards.
-        /// </summary>
-        internal static void ClaimUiThread(string what)
+        /// <summary>Runs what Android reported on the app's UI thread: now if this is it, else posted to
+        /// its dispatcher at input priority, as Windows posts a window's input to its thread's queue.</summary>
+        private static void OnUi(Action work)
         {
-            System.Threading.Thread me = System.Threading.Thread.CurrentThread;
+            System.Windows.Threading.Dispatcher d = s_uiDispatcher;
+            if (d == null || d.CheckAccess()) { work(); return; }
+            d.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, work);
+        }
+
+        // What the main thread asks the app's UI thread and waits for (accessibility queries, a drop's
+        // answer) goes two ways at once, whichever comes first: to the dispatcher, and here, where the
+        // UI thread looks while it is itself waiting on the main thread (WaitServingMain) -- so neither
+        // ever waits on the other while that one waits back.
+        private static readonly System.Collections.Concurrent.ConcurrentQueue<Action> s_uiCalls = new();
+        private static readonly System.Threading.AutoResetEvent s_uiCallPosted = new(false);
+
+        /// <summary>For the main thread: <paramref name="work"/> run on the app's UI thread, its answer awaited.</summary>
+        public static T InvokeOnUi<T>(Func<T> work)
+        {
+            System.Windows.Threading.Dispatcher d = s_uiDispatcher;
+            if (d == null || d.CheckAccess()) return work();
+            T result = default;
+            Exception error = null;
+            int taken = 0;
+            using var done = new System.Threading.ManualResetEventSlim();
+            Action run = () =>
+            {
+                if (System.Threading.Interlocked.Exchange(ref taken, 1) != 0) return;
+                try { result = work(); }
+                catch (Exception e) { error = e; }
+                finally { done.Set(); }
+            };
+            s_uiCalls.Enqueue(run);
+            s_uiCallPosted.Set();
+            d.BeginInvoke(System.Windows.Threading.DispatcherPriority.Send, run);
+            done.Wait();
+            if (error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(error);
+            return result;
+        }
+
+        /// <summary>For the app's UI thread waiting on the main thread: waits for <paramref name="done"/>,
+        /// running what the main thread asks of it meanwhile (<see cref="InvokeOnUi"/>).</summary>
+        public static void WaitServingMain(System.Threading.WaitHandle done)
+        {
+            var handles = new System.Threading.WaitHandle[] { done, s_uiCallPosted };
             while (true)
             {
-                System.Threading.Thread prior = System.Threading.Interlocked.CompareExchange(ref s_uiThread, me, null);
-                if (prior == null || prior == me) return;
-                if (prior.IsAlive)
-                {
-                    throw new InvalidOperationException(
-                        $"Android has one UI thread; cannot {what} on another. Marshal the call to the UI " +
-                        "thread's Dispatcher.");
-                }
-                if (System.Threading.Interlocked.CompareExchange(ref s_uiThread, me, prior) == prior) return;
+                while (s_uiCalls.TryDequeue(out Action call)) call();
+                if (System.Threading.WaitHandle.WaitAny(handles) == 0) return;
             }
         }
 
-        /// <summary>Stop the pump for good (dispatcher shutdown).</summary>
-        public static void StopFrameCallback() => Host?.StopFrameCallback();
+        /// <summary>
+        /// The idle wait of another framework's message loop on this thread -- WinForms' -- which also
+        /// runs the WPF dispatcher's work as it comes (Dispatcher.ServeForeignLoop): what Android
+        /// reports goes there (OnUi), and on this head no OS loop runs it otherwise.
+        /// </summary>
+        public static void RunLoop(int timeoutMilliseconds, System.Threading.WaitHandle posted)
+            => System.Windows.Threading.Dispatcher.CurrentDispatcher.ServeForeignLoop(timeoutMilliseconds, posted);
 
-        /// <summary>Park/un-park the pump so an idle app costs nothing.</summary>
-        public static void SetFrameCallbackPaused(bool paused) => Host?.SetFrameCallbackPaused(paused);
-
-        /// <summary>Un-park the pump because work was queued. Callable from any thread.</summary>
-        public static void RequestWake() => Host?.RequestWake();
-
-        /// <summary>Un-park the pump in <paramref name="seconds"/>, for a pending DispatcherTimer.</summary>
-        public static void ScheduleWake(double seconds) => Host?.ScheduleWake(Math.Max(0.0, seconds));
+        /// <summary>The first thread that makes a window is the app's UI thread: its dispatcher is where
+        /// what Android reports goes (OnUi). Once it has ended, the next thread to make one is.</summary>
+        private static void NoteUiThread()
+        {
+            System.Threading.Thread me = System.Threading.Thread.CurrentThread;
+            System.Threading.Thread prior = s_uiThread;
+            if (prior == me || (prior != null && prior.IsAlive)) return;
+            s_uiThread = me;
+            s_uiDispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+        }
 
         // ---- Touch input -----------------------------------------------------------
         //
@@ -611,6 +672,11 @@ namespace MS.Internal.Interop
         public static void NotifyTouchContact(IntPtr handle, int kind, int contactId,
                                               int xPixels, int yPixels, double pressure,
                                               double tiltX, double tiltY, bool isEraser = false)
+            => OnUi(() => TouchContact(handle, kind, contactId, xPixels, yPixels, pressure, tiltX, tiltY, isEraser));
+
+        private static void TouchContact(IntPtr handle, int kind, int contactId,
+                                         int xPixels, int yPixels, double pressure,
+                                         double tiltX, double tiltY, bool isEraser)
         {
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
@@ -643,6 +709,9 @@ namespace MS.Internal.Interop
         }
 
         public static void NotifyTouch(IntPtr handle, int kind, int xPixels, int yPixels)
+            => OnUi(() => Touch(handle, kind, xPixels, yPixels));
+
+        private static void Touch(IntPtr handle, int kind, int xPixels, int yPixels)
         {
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
@@ -693,6 +762,9 @@ namespace MS.Internal.Interop
         /// <paramref name="deltaLogical"/> is in density-independent pixels, positive = scroll up.
         /// </summary>
         public static void NotifyScroll(IntPtr handle, double deltaLogical, int xPixels, int yPixels)
+            => OnUi(() => Scroll(handle, deltaLogical, xPixels, yPixels));
+
+        private static void Scroll(IntPtr handle, double deltaLogical, int xPixels, int yPixels)
         {
             try
             {

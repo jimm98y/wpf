@@ -42,18 +42,21 @@ namespace MS.Internal.Interop
         public static void NotifyFinishComposing() { }
         public static void NotifyScaleChanged() { }
         public static void NotifyScroll(System.IntPtr handle, double deltaLogical, int xPixels, int yPixels) { }
+        public bool IsSecondary { get { throw null; } }
+        public static bool HasMainWindow { get { throw null; } }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, bool ownSurface) { }
+        public void SetVisible(bool visible, bool activate) { }
+        public void Activate() { }
+        public static void RunLoop(int timeoutMilliseconds, System.Threading.WaitHandle posted) { }
+        public static T InvokeOnUi<T>(System.Func<T> work) { throw null; }
+        public static void WaitServingMain(System.Threading.WaitHandle done) { }
         public static void NotifySurfaceChanged(System.IntPtr handle, System.IntPtr nativeWindow, int widthPixels, int heightPixels) { }
         public static void NotifySurfaceDestroyed(System.IntPtr handle) { }
         public static void NotifyTouch(System.IntPtr handle, int kind, int xPixels, int yPixels) { }
         public static void NotifyTouchContact(System.IntPtr handle, int kind, int contactId, int xPixels, int yPixels, double pressure, double tiltX, double tiltY, bool isEraser = false) { }
-        public static void RequestWake() { }
-        public static void ScheduleWake(double seconds) { }
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
-        public static void SetFrameCallbackPaused(bool paused) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
-        public static bool StartFrameCallback(System.Action tick) { throw null; }
-        public static void StopFrameCallback() { }
         public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.AndroidWindow.TouchMessage>
         {
             private readonly int _dummyPrimitive;
@@ -398,19 +401,15 @@ namespace MS.Internal.Interop
     {
         double Density { get; }
         double RefreshRateHz { get { throw null; } }
-        bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless);
+        bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface);
+        void BringToFront(System.IntPtr handle) { }
         void HideSoftKeyboard(System.IntPtr handle);
         void SetImeCursorRect(System.IntPtr handle, int x, int y, int width, int height);
         void ShowSoftKeyboard(System.IntPtr handle, bool multiline, bool password);
         void SetViewVisible(System.IntPtr handle, bool visible);
         void DestroyView(System.IntPtr handle);
         void GetScreenPixels(out int width, out int height);
-        void RequestWake();
-        void ScheduleWake(double seconds);
-        void SetFrameCallbackPaused(bool paused);
         void SetViewFrame(System.IntPtr handle, int x, int y, int width, int height);
-        bool StartFrameCallback(System.Action tick);
-        void StopFrameCallback();
     }
     public partial interface IPlatformWindow
     {

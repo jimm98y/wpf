@@ -309,10 +309,10 @@ namespace System.Windows.Forms.Integration
         // The browser is Windows' case: a page's canvas is composited by the browser, but the hosted window
         // is a canvas of the page's window manager like any other, and the host can claim it as Windows'
         // host claims the child HWND -- its picture drawn in the form's frame, its canvas left transparent
-        // over the control to take the page's input, as the child window takes the OS's. iOS is the
-        // browser's case again: the hosted window is a view of the screen (UIKitWindow), with no surface
-        // of its own, over the form's.
-        private static bool CompositeIntoHostFrame => OperatingSystem.IsWindows() || OperatingSystem.IsBrowser() || OperatingSystem.IsIOS();
+        // over the control to take the page's input, as the child window takes the OS's. iOS and Android
+        // are the browser's case again: the hosted window is a view of the screen (UIKitWindow,
+        // AndroidWindow), with no surface of its own, over the form's.
+        private static bool CompositeIntoHostFrame => OperatingSystem.IsWindows() || OperatingSystem.IsBrowser() || OperatingSystem.IsIOS() || OperatingSystem.IsAndroid();
 
         private void EnsureSource()
         {
@@ -392,6 +392,12 @@ namespace System.Windows.Forms.Integration
             {
                 // a canvas is placed in the page, not in its parent: the form's canvas's origin added
                 page.GetClientScreenOriginPixels(out int hx, out int hy);
+                px += hx;
+                py += hy;
+            }
+            else if (OperatingSystem.IsAndroid() && MS.Internal.Interop.AndroidWindow.FromHandle(hostWindow) is { } androidView)
+            {
+                androidView.GetClientScreenOriginPixels(out int hx, out int hy);
                 px += hx;
                 py += hy;
             }
@@ -479,7 +485,7 @@ namespace System.Windows.Forms.Integration
                 return true;
             }
             // a view of the screen likewise, made over the windows there are (UIKitWindow)
-            if (OperatingSystem.IsIOS()) return true;
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid()) return true;
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {

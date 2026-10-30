@@ -40,12 +40,14 @@ public class MainActivity : Activity
         var root = new FrameLayout(this);
         SetContentView(root);
 
-        AndroidWindow.Host = new AndroidHost(this, root);
+        var host = new AndroidHost(this, root);
+        AndroidWindow.Host = host;
 
         // Start WPF after the first layout pass, so the window it creates is given the activity's
         // real content size rather than a zero one. (Post runs on the next Looper turn, by which
-        // point the content view has been measured; a late Surface would fix the size up anyway.)
-        root.Post(WpfSpike.Run);
+        // point the content view has been measured; a late Surface would fix the size up anyway.) On
+        // the app's own UI thread (AndroidHost.RunApp).
+        root.Post(() => host.RunApp(WpfSpike.Run));
     }
 
     /// <summary>

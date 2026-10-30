@@ -69,26 +69,29 @@ public class MainActivity : Activity
         string autoProp = AndroidSystemProperties.Get("debug.wpf.mediaauto");
         if (!string.IsNullOrEmpty(autoProp) && int.TryParse(autoProp, out int seconds)) auto = seconds;
 
-        try
+        // On the app's own UI thread (AndroidHost.RunApp), after the first layout pass.
+        root.Post(() => host.RunApp(() =>
         {
-            var app = new System.Windows.Application();
-            var window = new System.Windows.Window
+            try
             {
-                Title = "WPF media (Android)",
-                Content = MediaTestUi.Create(source, auto, m => Console.WriteLine(m)),
-            };
-            window.Show();
+                var app = new System.Windows.Application();
+                var window = new System.Windows.Window
+                {
+                    Title = "WPF media (Android)",
+                    Content = MediaTestUi.Create(source, auto, m => Console.WriteLine(m)),
+                };
+                window.Show();
 
-            // Returns immediately, as on the other heads: Dispatcher.Run installs the Choreographer
-            // pump and hands the loop back to Android.
-            app.Run();
-            Console.WriteLine("MEDIAANDROID: Application.Run returned (pump detached)");
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine($"MEDIAANDROID: FAILED {e}");
-            Console.WriteLine("RESULT fail");
-        }
+                // Waits on this thread until the app ends, as on every head.
+                app.Run();
+                Console.WriteLine("MEDIAANDROID: Application.Run returned");
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"MEDIAANDROID: FAILED {e}");
+                Console.WriteLine("RESULT fail");
+            }
+        }));
     }
 
     /// <summary>

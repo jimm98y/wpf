@@ -162,6 +162,10 @@ namespace System.Windows.Threading
         /// (<see cref="Wait"/>'s result says only whether the loop is still alive.)</summary>
         internal bool TakeSignal() => !_disposed && _wake.WaitOne(0);
 
+        /// <summary>What <see cref="Signal"/> sets, for a loop that waits on it together with its own
+        /// (Dispatcher.ServeForeignLoop).</summary>
+        internal WaitHandle WakeHandle => _wake;
+
         internal bool Wait(int timeoutMilliseconds)
         {
             if (_disposed)
