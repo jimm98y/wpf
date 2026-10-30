@@ -46,7 +46,7 @@ namespace System.Windows.Forms
 			if (control is not Form form || form.Parent != null)
 				return false;
 			if (s_screenWindow == null || s_screenWindow.IsDisposed) {
-				if (BrowserWindow.PageHasMainWindow)
+				if (OperatingSystem.IsIOS () ? WindowsBase::MS.Internal.Interop.UIKitWindow.HasMainWindow : BrowserWindow.PageHasMainWindow)
 					return true;
 				s_screenWindow = form;
 			}

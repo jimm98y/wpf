@@ -20,9 +20,9 @@ public class SceneDelegate : UIResponder, IUIWindowSceneDelegate
         Window.RootViewController = vc;
         Window.MakeKeyAndVisible();
 
-        GalleryHost.Run(vc.View!.Handle);
-        // Returns immediately: Application.Run -> Dispatcher.Run installs the CADisplayLink pump and
-        // hands the run loop back to UIKit. Blocking here would leave the scene half-connected and
-        // its window never composited (the app renders correctly and the screen stays blank).
+        // After the scene has connected: Application.Run waits in the main run loop until the app
+        // ends, as on every head, and a scene still connecting when it started never composited.
+        IntPtr root = vc.View!.Handle;
+        NSRunLoop.Main.BeginInvokeOnMainThread(() => GalleryHost.Run(root));
     }
 }

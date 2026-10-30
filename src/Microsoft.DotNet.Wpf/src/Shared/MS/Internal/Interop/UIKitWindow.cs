@@ -5,7 +5,11 @@
 // The iOS/UIKit windowing backend — the iOS sibling of CocoaWindow and BrowserWindow.
 //
 // iOS has ONE fullscreen UIWindow, so a WPF "window" is a UIView inside it, and the UIView* is what
-// flows through WPF as the HWND (exactly as CocoaWindow exposes its NSView*). The WebGPU compositor
+// flows through WPF as the HWND (exactly as CocoaWindow exposes its NSView*). The windows are the
+// browser head's: the first top-level window is the app's own and fills the screen; every other one
+// (a dialog, a tool window) floats over it at the size and place it asks for, is brought to the front
+// when activated, and is moved and resized by this layer (BeginMoveDrag, BeginResizeDrag), as
+// DefWindowProc's move and size loops do on Windows. The WebGPU compositor
 // turns that same pointer into a Metal surface (IosInterop.CreateSurface), so a WPF Window maps to:
 // UIWindow -> root UIView -> our WpfMetalView (its backing layer IS a CAMetalLayer).
 //
@@ -42,6 +46,37 @@ namespace MS.Internal.Interop
 
         private IntPtr _view;      // UIView* (WpfMetalView) — the window handle
 
+        private static readonly bool s_trace = Environment.GetEnvironmentVariable("WPF_TRACE_UIKIT") == "1";
+        internal static bool Trace => s_trace;
+
+        // The app's own window: the first top-level one, which fills the screen. The others float.
+        private static IntPtr s_mainView;
+
+        private bool IsMain => _view != IntPtr.Zero && _view == s_mainView;
+
+        private bool _ownSurface;   // a borderless window with a surface of its own (Create)
+
+        /// <summary>A child window that takes the keyboard when pressed, as SetFocus on one does on Windows.</summary>
+        public bool TakesKeyboardOnPress { get; set; }
+
+        /// <summary>Whether the app has its own window yet (the first framed one, whichever stack made it).</summary>
+        public static bool HasMainWindow => s_mainView != IntPtr.Zero && s_byView.ContainsKey(s_mainView);
+
+        /// <summary>A top-level window over the app's own, which fills the screen: a dialog, a tool window.</summary>
+        public bool IsSecondary => !IsBorderless && !IsMain;
+
+        /// <summary>The window draws its own frame -- Windows' title bar, edges and the shadow in the
+        /// see-through margin round them (the WinForms host's WindowChrome) -- so it gets none here.</summary>
+        public void SetOwnFrame()
+        {
+            if (_view == IntPtr.Zero) return;
+            SendVoidBool(_view, Sel("setOpaque:"), false);
+            IntPtr layer = Send(_view, Sel("layer"));
+            if (layer == IntPtr.Zero) return;
+            SendVoidBool(layer, Sel("setOpaque:"), false);
+            SendVoidFloat(layer, Sel("setShadowOpacity:"), 0f);
+        }
+
         /// <summary>The UIView* that stands in for the HWND.</summary>
         public IntPtr Handle => _view;
 
@@ -69,7 +104,14 @@ namespace MS.Internal.Interop
 
         /// <param name="x">Origin in top-left device PIXELS (borderless popups; the main window fills the screen).</param>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
+            => Create(title, x, y, width, height, borderless, ownSurface: false);
+
+        /// <summary>As <see cref="Create(string, int, int, int, int, bool)"/>; <paramref name="ownSurface"/>: a
+        /// borderless window that presents through a surface of its own rather than its owner's, as a
+        /// borderless form does (a splash screen) -- it floats, is stacked and activated as a window.</summary>
+        public void Create(string title, int x, int y, int width, int height, bool borderless, bool ownSurface)
         {
+            _ownSurface = borderless && ownSurface;
             // UIKit views exist on the main thread only; touching one elsewhere is undefined (and
             // the views and z-order registries below are not locked). Refuse catchably, as the
             // Cocoa head does, instead of corrupting the one UI thread there is.
@@ -91,11 +133,11 @@ namespace MS.Internal.Interop
                 height = height / scale,
             };
 
-            // iOS has no window manager: a top-level window is always the full screen. WPF asks for
-            // its own default/desired size (640x400 etc.), which on a phone would leave the app
-            // rendering into a small rectangle in a corner. Only real top-level windows are snapped
-            // - borderless views are Popups/menus, which DO need their requested geometry.
-            if (!borderless && RootView != IntPtr.Zero)
+            // The app's own window fills the screen, which is all the desktop there is: WPF asks for its
+            // own default/desired size (640x400 etc.), which would leave the app rendering into a
+            // rectangle in a corner. Other top-level windows keep the frame they ask for, as popups do.
+            bool main = !borderless && (s_mainView == IntPtr.Zero || !s_byView.ContainsKey(s_mainView));
+            if (main && RootView != IntPtr.Zero)
             {
                 CGRect rootBounds = SendRect(RootView, Sel("bounds"));
 
@@ -115,9 +157,11 @@ namespace MS.Internal.Interop
 
             // A popup is drawn INTO its owner's surface (NativePlatform.PopupsShareOwnerSurface), so it
             // needs no Metal layer of its own -- only somewhere for UIKit to deliver its touches.
-            _view = borderless ? CreateTouchOnlyView(frame) : CreateMetalBackedView(frame);
+            _view = borderless && !_ownSurface ? CreateTouchOnlyView(frame) : CreateMetalBackedView(frame, fillsSuperview: main);
             if (_view == IntPtr.Zero)
                 return;
+            if (main) s_mainView = _view;
+            else if (!borderless) AddShadow(_view);
 
             IntPtr root = RootView;
             if (root != IntPtr.Zero)
@@ -125,6 +169,9 @@ namespace MS.Internal.Interop
 
             s_byView[_view] = this;
             s_zOrder.Add(this);
+            if (s_trace)
+                Console.WriteLine($"[uikit] window 0x{_view:x} '{title}' {(main ? "main" : borderless ? (_ownSurface ? "borderless+surface" : "popup") : "floating")} " +
+                                  $"at ({frame.x:F0},{frame.y:F0}) {frame.width:F0}x{frame.height:F0}pt");
 
             // After the view is registered: a drag can arrive as soon as the interactions exist, and
             // the drop target resolves the window from the view it names.
@@ -145,8 +192,102 @@ namespace MS.Internal.Interop
             SendVoidBool(_view, Sel("setHidden:"), !visible);
         }
 
-        /// <summary>No-op: iOS windows are not user-movable (one fullscreen UIWindow).</summary>
-        public void BeginMoveDrag() { }
+        public void SetVisible(bool visible, bool activate)
+        {
+            SetVisible(visible);
+            if (visible && activate) Activate();
+        }
+
+        /// <summary>To the front, as SetForegroundWindow brings a window there: above the windows, under
+        /// the popups that are open (a menu stays over the window it belongs to).</summary>
+        public void Activate()
+        {
+            if (_view == IntPtr.Zero || RootView == IntPtr.Zero || (IsBorderless && !_ownSurface)) return;
+            s_keyWindow = _view;
+            TakeKeys();
+            SendVoidPtr(RootView, Sel("bringSubviewToFront:"), _view);
+            s_zOrder.Remove(this);
+            s_zOrder.Add(this);
+            foreach (UIKitWindow popup in s_zOrder.ToArray())
+            {
+                if (!popup.IsBorderless || popup._ownSurface || popup._view == IntPtr.Zero) continue;
+                SendVoidPtr(RootView, Sel("bringSubviewToFront:"), popup._view);
+                s_zOrder.Remove(popup);
+                s_zOrder.Add(popup);
+            }
+        }
+
+        // ---- moving and sizing a window -------------------------------------------
+        //
+        // DefWindowProc's move and size loops (WM_SYSCOMMAND SC_MOVE / SC_SIZE): begun while the press
+        // that asked for them is being handled, the window follows the finger until it lifts, and the
+        // loop takes the touches meanwhile -- the app sees none of them. The browser head's are the same.
+
+        private sealed class Drag
+        {
+            public UIKitWindow Window;
+            public int HitTest;                 // 0 for a move; HTLEFT..HTBOTTOMRIGHT for a size
+            public double X0, Y0;               // the press, in the root view's points
+            public CGRect Frame0;               // the window's frame then
+            public double MinW, MinH, MaxW, MaxH;
+        }
+
+        private static Drag s_drag;
+        private static double s_pressX, s_pressY;   // the last press, in the root view's points
+        private static bool s_pressed;
+
+        public void BeginMoveDrag()
+        {
+            if (_view == IntPtr.Zero || IsMain || !s_pressed) return;
+            s_drag = new Drag { Window = this, X0 = s_pressX, Y0 = s_pressY, Frame0 = SendRect(_view, Sel("frame")) };
+        }
+
+        /// <summary>A floating window has no frame of its own to be resized by: this layer does it.</summary>
+        public bool ResizesFromEdges => !IsBorderless && !IsMain;
+
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight)
+        {
+            if (!ResizesFromEdges || !s_pressed || hitTest < 10 || hitTest > 17) return false;
+            double scale = ScreenScale();
+            s_drag = new Drag
+            {
+                Window = this, HitTest = hitTest, X0 = s_pressX, Y0 = s_pressY, Frame0 = SendRect(_view, Sel("frame")),
+                MinW = Math.Max(minWidth / scale, 1), MinH = Math.Max(minHeight / scale, 1),
+                MaxW = maxWidth > 0 ? maxWidth / scale : double.MaxValue, MaxH = maxHeight > 0 ? maxHeight / scale : double.MaxValue,
+            };
+            return true;
+        }
+
+        private static void DragTo(double x, double y)
+        {
+            Drag d = s_drag;
+            if (d.Window._view == IntPtr.Zero) { s_drag = null; return; }
+            double dx = x - d.X0, dy = y - d.Y0;
+            CGRect f = d.Frame0;
+            if (d.HitTest == 0)
+            {
+                f.x += dx;
+                // the top edge stays on the screen, so that the caption can be taken hold of again
+                f.y = Math.Max(0, f.y + dy);
+                SendVoidRect(d.Window._view, Sel("setFrame:"), f);
+                return;
+            }
+            int ht = d.HitTest;
+            bool left = ht is 10 or 13 or 16, right = ht is 11 or 14 or 17;
+            bool top = ht is 12 or 13 or 14, bottom = ht is 15 or 16 or 17;
+            double w = f.width, h = f.height;
+            if (right) w += dx; else if (left) w -= dx;
+            if (bottom) h += dy; else if (top) h -= dy;
+            w = Math.Min(Math.Max(w, d.MinW), d.MaxW);
+            h = Math.Min(Math.Max(h, d.MinH), d.MaxH);
+            f.x = left ? d.Frame0.x + d.Frame0.width - w : d.Frame0.x;
+            f.y = top ? d.Frame0.y + d.Frame0.height - h : d.Frame0.y;
+            if (f.y < 0) { if (top) h += f.y; f.y = 0; }
+            f.width = w;
+            f.height = h;
+            SendVoidRect(d.Window._view, Sel("setFrame:"), f);
+            d.Window.RaiseResized();
+        }
 
         public void Destroy()
         {
@@ -156,6 +297,8 @@ namespace MS.Internal.Interop
             Send(_view, Sel("removeFromSuperview"));
             s_byView.Remove(_view);
             s_zOrder.Remove(this);
+            if (s_keyWindow == _view) s_keyWindow = s_mainView != _view ? s_mainView : IntPtr.Zero;
+            if (s_drag?.Window == this) s_drag = null;
             Send(_view, Sel("release"));
             _view = IntPtr.Zero;
         }
@@ -164,7 +307,7 @@ namespace MS.Internal.Interop
         public void SetContentSize(int width, int height)
         {
             if (_view == IntPtr.Zero) return;
-            // Fullscreen top-level: keep OUR frame, but still report the size. RaiseResized drives
+            // The app's own window: keep OUR frame, but still report the size. RaiseResized drives
             // the synthetic WM_SIZE -> OnResize -> UpdateWindowSettings that tells the compositor
             // its target size; swallowing it leaves the target at 0x0 and NOTHING is composited
             // (window correctly sized and interactive, but a blank screen).
@@ -180,6 +323,7 @@ namespace MS.Internal.Interop
         /// points so an odd pixel size round-trips exactly at @2x/@3x (as CocoaWindow does).</summary>
         public void SetContentSizePixels(int cx, int cy)
         {
+            if (s_trace) Console.WriteLine($"[uikit] 0x{_view:x} size -> {cx}x{cy}px");
             if (_view == IntPtr.Zero) return;
             if (IsFullScreenTopLevel) { RaiseResized(); return; }   // see SetContentSize
             double scale = ScreenScale();
@@ -192,6 +336,7 @@ namespace MS.Internal.Interop
 
         public void SetFrameOrigin(int xPixels, int yPixels)
         {
+            if (s_trace) Console.WriteLine($"[uikit] 0x{_view:x} origin -> ({xPixels},{yPixels})px{(IsFullScreenTopLevel ? " (ignored: the app's own window)" : "")}");
             if (_view == IntPtr.Zero || IsFullScreenTopLevel) return;
             double scale = ScreenScale();
             CGRect f = SendRect(_view, Sel("frame"));
@@ -233,11 +378,11 @@ namespace MS.Internal.Interop
         }
 
         /// <summary>
-        /// A top-level (non-Popup) window on iOS is pinned to the whole screen, so WPF's
-        /// SetWindowPos calls for it are ignored - GetPixelSize keeps reporting the real bounds and
-        /// layout follows those. Popups keep their requested geometry.
+        /// The app's own window is pinned to the whole screen, so WPF's SetWindowPos calls for it are
+        /// ignored - GetPixelSize keeps reporting the real bounds and layout follows those. The other
+        /// windows and the popups keep their requested geometry.
         /// </summary>
-        private bool IsFullScreenTopLevel => !IsBorderless && RootView != IntPtr.Zero;
+        private bool IsFullScreenTopLevel => IsMain && RootView != IntPtr.Zero;
 
         public double GetBackingScale() => ScreenScale();
 
@@ -261,6 +406,8 @@ namespace MS.Internal.Interop
             {
                 UIKitWindow w = s_zOrder[i];
                 if (w._view == IntPtr.Zero) continue;
+                // a hidden window is no window under the point, as WindowFromPoint passes it over
+                if (SendBool(w._view, Sel("isHidden"))) continue;
 
                 w.GetClientScreenOriginPixels(out int ox, out int oy);
                 w.GetPixelSize(out int pw, out int ph);
@@ -297,6 +444,7 @@ namespace MS.Internal.Interop
 
         private void RaiseResized()
         {
+            if (!IsMain && !IsBorderless && _view != IntPtr.Zero) UpdateShadowPath(_view);
             GetPixelSize(out int w, out int h);
             Resized?.Invoke(w, h);
         }
@@ -305,7 +453,7 @@ namespace MS.Internal.Interop
 
         private static IntPtr s_metalViewClass;
 
-        private static IntPtr CreateMetalBackedView(CGRect frame)
+        private static IntPtr CreateMetalBackedView(CGRect frame, bool fillsSuperview)
         {
             IntPtr cls = EnsureMetalViewClass();
             if (cls == IntPtr.Zero) return IntPtr.Zero;
@@ -320,9 +468,36 @@ namespace MS.Internal.Interop
             // portrait rectangle while the screen was landscape. UIViewAutoresizing.FlexibleWidth
             // (1<<1) | FlexibleHeight (1<<4); CALayer.autoresizingMask is macOS-only, but the VIEW
             // mask exists on iOS and UIKit keeps a backing layer in step with its view.
-            SendVoidUIntPtr(view, Sel("setAutoresizingMask:"), (UIntPtr)(2 | 16));
+            // Only the app's own window: a floating one keeps the frame WPF gives it.
+            if (fillsSuperview) SendVoidUIntPtr(view, Sel("setAutoresizingMask:"), (UIntPtr)(2 | 16));
             AddScrollRecognizer(view);
             return view;
+        }
+
+        /// <summary>The shadow round a floating window, as Windows draws one round a top-level window.</summary>
+        private static void AddShadow(IntPtr view)
+        {
+            IntPtr layer = Send(view, Sel("layer"));
+            if (layer == IntPtr.Zero) return;
+            SendVoidBool(layer, Sel("setMasksToBounds:"), false);
+            IntPtr black = Send(Send(objc_getClass("UIColor"), Sel("blackColor")), Sel("CGColor"));
+            SendVoidPtr(layer, Sel("setShadowColor:"), black);
+            SendVoidFloat(layer, Sel("setShadowOpacity:"), 0.45f);
+            SendVoidDouble(layer, Sel("setShadowRadius:"), 20);
+            SendVoidSize(layer, Sel("setShadowOffset:"), new CGSize { width = 0, height = 8 });
+            UpdateShadowPath(view);
+        }
+
+        /// <summary>The shadow's outline, which saves Core Animation working it out of the layer's
+        /// pixels every frame; it follows the window's size.</summary>
+        private static void UpdateShadowPath(IntPtr view)
+        {
+            IntPtr layer = Send(view, Sel("layer"));
+            if (layer == IntPtr.Zero) return;
+            CGRect b = SendRect(view, Sel("bounds"));
+            IntPtr path = CGPathCreateWithRect(b, IntPtr.Zero);
+            SendVoidPtr(layer, Sel("setShadowPath:"), path);
+            CGPathRelease(path);
         }
 
         // ---- The touch-only UIView class, for popups ------------------------------
@@ -729,6 +904,27 @@ namespace MS.Internal.Interop
             Action<TouchMessage> handler = MouseInput;
             if (handler == null) return;
 
+            // Where on the screen (the root view's points), which a move or size loop follows: the
+            // view itself moves under the finger.
+            CGRect at = SendRect(view, Sel("frame"));
+            double rx = at.x + x / scale, ry = at.y + y / scale;
+            if (s_drag != null)
+            {
+                if (kind == 0) DragTo(rx, ry);
+                else if (kind == 2) { DragTo(rx, ry); s_drag = null; s_pressed = false; }
+                return;
+            }
+            if (kind == 1)
+            {
+                s_pressX = rx; s_pressY = ry; s_pressed = true;
+                // a press gives a window the keys, and a child window that takes them (an ElementHost's
+                // WPF tree) -- never a popup (a menu, a tooltip), as on Windows
+                if (s_byView.TryGetValue(view, out UIKitWindow pressed) && (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress))
+                    s_keyWindow = view;
+                TakeKeys();
+            }
+            else if (kind == 2) s_pressed = false;
+
             int timestamp = Environment.TickCount;
             handler(new TouchMessage(view, kind, (int)Math.Round(x), (int)Math.Round(y), timestamp));
 
@@ -781,163 +977,211 @@ namespace MS.Internal.Interop
                                      Environment.TickCount, sign * WheelNotch));
         }
 
-        // ---- The CADisplayLink dispatcher pump ------------------------------------
+        // ---- The hardware keyboard -------------------------------------------------
         //
-        // UIKit owns the main run loop and UIApplicationMain never returns, so - unlike macOS,
-        // where the dispatcher drives the loop itself via CocoaWindow.PumpEvents - WPF here
-        // cannot own the loop; it has to be a guest in it. CADisplayLink is the iOS analogue of
-        // the browser's requestAnimationFrame: a display-aligned callback issued by the run loop.
-        // The tick is delivered on the main thread, which is the dispatcher thread, so the pump
-        // body runs synchronously inside it. (The browser pump is an async/await loop only
-        // because it must yield to the JS event loop; awaiting here would risk resuming the
-        // continuation on a thread-pool thread, and ProcessQueue has hard UI-thread affinity.)
+        // UIKit hands a hardware keyboard's keys (pressesBegan:/pressesEnded:) to the first responder, and
+        // a view becomes one only by asking -- the WPF view does when a text box takes the focus
+        // (UIKitTextInput), and UIKit then shows the soft keyboard, which a press anywhere else must not.
+        // So a hidden key view of the screen holds first responder the rest of the time, and turns each
+        // press into a key message for the window that has the keyboard: the one last pressed or
+        // activated, as Windows gives the keys to the active window and SetFocus to a child window that
+        // was clicked. Its keys are Windows' virtual keys.
 
-        private static IntPtr s_displayLink;
-        private static IntPtr s_linkTarget;   // retained: performSelector wake-ups are sent to it
-        private static Action s_tick;
+        /// <summary>A key of the hardware keyboard, down or up, for <see cref="View"/>'s window.</summary>
+        public readonly record struct UIKitKeyMessage(IntPtr View, bool IsDown, int VirtualKey, string Characters,
+                                                     bool Shift, bool Ctrl, bool Alt, bool Meta, int TimestampMs);
 
-        /// <summary>
-        /// Starts (once) a display-linked callback that invokes <paramref name="tick"/> on the
-        /// main thread every frame. Returns false when not running under UIKit.
-        /// </summary>
-        public static bool StartDisplayLink(Action tick)
+        /// <summary>Raised on the main thread for each hardware key; consumed by the keyboard input providers.</summary>
+        public static event Action<UIKitKeyMessage> KeyInput;
+
+        private static IntPtr s_keyView;
+        private static IntPtr s_keyWindow;   // the window the keys go to
+
+        /// <summary>The view that has the keyboard (pressed or activated last).</summary>
+        public static IntPtr KeyboardWindow => s_keyWindow;
+
+        /// <summary>The keyboard back to the key view, once no text box is editing (UIKitTextInput).</summary>
+        internal static void TakeKeys()
         {
-            if (s_displayLink != IntPtr.Zero) { s_tick = tick; return true; }
-
-            IntPtr cls = objc_getClass("CADisplayLink");
-            IntPtr target = CreateDisplayLinkTarget();
-            if (cls == IntPtr.Zero || target == IntPtr.Zero) return false;
-            s_linkTarget = target;
-
-            IntPtr link = SendPtrPtr(cls, Sel("displayLinkWithTarget:selector:"), target, Sel("wpfTick:"));
-            if (link == IntPtr.Zero) return false;
-
-            IntPtr runLoop = Send(objc_getClass("NSRunLoop"), Sel("currentRunLoop"));
-            if (runLoop == IntPtr.Zero) return false;
-
-
-            // The REAL NSRunLoopCommonModes global, read out of Foundation. An NSString built with
-            // the same characters is NOT interchangeable here: common mode is a pseudo-mode that
-            // CFRunLoop resolves by pointer identity against the constant, so an equal-by-value
-            // string is accepted silently and the source is then attached to a mode that never
-            // runs - the link is installed, retains nothing, and simply never fires.
-            // Common (not default) mode keeps ticking during the tracking loops UIKit enters
-            // while a finger is down.
-            IntPtr mode = GetForegroundConstant("NSRunLoopCommonModes");
-            if (mode == IntPtr.Zero) return false;
-
-            // displayLinkWithTarget: hands back an AUTORELEASED link. Holding it in a static IntPtr
-            // is invisible to ARC/the autorelease pool, so retain it explicitly - otherwise the pool
-            // drains at the end of this run-loop turn and the link dies before its first fire.
-            Send(link, Sel("retain"));
-            SendVoidPtrPtr(link, Sel("addToRunLoop:forMode:"), runLoop, mode);
-
-            s_tick = tick;
-            s_displayLink = link;
-            return true;
-        }
-
-        /// <summary>
-        /// Pause/resume the display link. A paused link costs nothing, which is how the dispatcher
-        /// goes fully idle between changes (the macOS/Win32 loops block in WaitForWork instead);
-        /// <see cref="RequestWake"/> and <see cref="ScheduleWake"/> bring it back.
-        /// </summary>
-        public static void SetDisplayLinkPaused(bool paused)
-        {
-            if (s_displayLink != IntPtr.Zero)
-                SendVoidBool(s_displayLink, Sel("setPaused:"), paused);
-        }
-
-        /// <summary>
-        /// Resume the pump because work was queued. Callable from ANY thread (Dispatcher.BeginInvoke
-        /// off the UI thread is the whole point), so it hops to the main thread rather than touching
-        /// the display link directly - CoreAnimation objects are not thread-safe.
-        /// </summary>
-        public static void RequestWake()
-        {
-            if (s_linkTarget == IntPtr.Zero) return;
-            SendVoidSelPtrBool(s_linkTarget, Sel("performSelectorOnMainThread:withObject:waitUntilDone:"),
-                               Sel("wpfWake:"), IntPtr.Zero, false);
-        }
-
-        /// <summary>
-        /// Resume the pump in <paramref name="seconds"/>, for a pending DispatcherTimer: the link can
-        /// still be paused meanwhile, so an app waiting on a timer idles instead of spinning at the
-        /// display rate. Main thread only; replaces any previously scheduled wake.
-        /// </summary>
-        public static void ScheduleWake(double seconds)
-        {
-            if (s_linkTarget == IntPtr.Zero) return;
-            SendVoidPtr(objc_getClass("NSObject"), Sel("cancelPreviousPerformRequestsWithTarget:"), s_linkTarget);
-            SendVoidSelPtrDouble(s_linkTarget, Sel("performSelector:withObject:afterDelay:"),
-                                 Sel("wpfWake:"), IntPtr.Zero, Math.Max(0.0, seconds));
-        }
-
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void WakeImp(IntPtr self, IntPtr sel, IntPtr arg)
-        {
-            try { SetDisplayLinkPaused(false); }
-            catch (Exception e) { Console.WriteLine($"WPF iOS pump wake failed: {e}"); }
-        }
-
-        public static void StopDisplayLink()
-        {
-            if (s_displayLink == IntPtr.Zero) return;
-            Send(s_displayLink, Sel("invalidate"));
-            s_displayLink = IntPtr.Zero;
-            s_tick = null;
-        }
-
-        /// <summary>Reads an NSString* constant (e.g. NSRunLoopCommonModes) out of Foundation.</summary>
-        private static IntPtr GetForegroundConstant(string symbol)
-        {
-            IntPtr foundation = dlopen("/System/Library/Frameworks/Foundation.framework/Foundation", 2 /*RTLD_NOW*/);
-            if (foundation == IntPtr.Zero) return IntPtr.Zero;
-
-            IntPtr slot = dlsym(foundation, symbol);   // address OF the variable
-            return slot == IntPtr.Zero ? IntPtr.Zero : *(IntPtr*)slot;
-        }
-
-        private static IntPtr CreateDisplayLinkTarget()
-        {
-            IntPtr cls = objc_getClass("WpfDisplayLinkTarget");
-            if (cls == IntPtr.Zero)
+            if (!IsMainThread || RootView == IntPtr.Zero) return;
+            if (s_keyView == IntPtr.Zero)
             {
-                IntPtr nsObject = objc_getClass("NSObject");
-                if (nsObject == IntPtr.Zero) return IntPtr.Zero;
-
-                cls = objc_allocateClassPair(nsObject, "WpfDisplayLinkTarget", UIntPtr.Zero);
-                if (cls == IntPtr.Zero) return IntPtr.Zero;
-
-                // An INSTANCE method this time, so it goes on the class itself (contrast
-                // +layerClass above, which goes on the metaclass).
-                class_addMethod(cls, Sel("wpfTick:"),
-                    (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&TickImp,
-                    "v@:@");   // void; (id self, SEL _cmd, CADisplayLink* sender)
-                class_addMethod(cls, Sel("wpfWake:"),
-                    (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, void>)&WakeImp,
-                    "v@:@");   // void; (id self, SEL _cmd, id arg) - unpauses the link
-
-                objc_registerClassPair(cls);
+                IntPtr cls = EnsureKeyViewClass();
+                if (cls == IntPtr.Zero) return;
+                s_keyView = SendRectArg(Send(cls, Sel("alloc")), Sel("initWithFrame:"), new CGRect { width = 1, height = 1 });
+                if (s_keyView == IntPtr.Zero) return;
+                SendVoidBool(s_keyView, Sel("setHidden:"), true);
+                SendVoidPtr(RootView, Sel("addSubview:"), s_keyView);
             }
+            if (!UIKitTextInput.IsEnabled) Send(s_keyView, Sel("becomeFirstResponder"));
+        }
 
-            return Send(Send(cls, Sel("alloc")), Sel("init"));
+        private static IntPtr EnsureKeyViewClass()
+        {
+            IntPtr existing = objc_getClass("WpfKeyView");
+            if (existing != IntPtr.Zero) return existing;
+            IntPtr uiView = objc_getClass("UIView");
+            if (uiView == IntPtr.Zero) return IntPtr.Zero;
+            IntPtr cls = objc_allocateClassPair(uiView, "WpfKeyView", UIntPtr.Zero);
+            if (cls == IntPtr.Zero) return IntPtr.Zero;
+            class_addMethod(cls, Sel("canBecomeFirstResponder"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, byte>)&CanBecomeFirstResponderImp, "c@:");
+            class_addMethod(cls, Sel("pressesBegan:withEvent:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&PressesBeganImp, "v@:@@");
+            class_addMethod(cls, Sel("pressesEnded:withEvent:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&PressesEndedImp, "v@:@@");
+            class_addMethod(cls, Sel("pressesCancelled:withEvent:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, void>)&PressesEndedImp, "v@:@@");
+            objc_registerClassPair(cls);
+            return cls;
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void TickImp(IntPtr self, IntPtr sel, IntPtr sender)
+        private static byte CanBecomeFirstResponderImp(IntPtr self, IntPtr sel) => 1;
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void PressesBeganImp(IntPtr self, IntPtr sel, IntPtr presses, IntPtr evt) => DispatchPresses(presses, true);
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void PressesEndedImp(IntPtr self, IntPtr sel, IntPtr presses, IntPtr evt) => DispatchPresses(presses, false);
+
+        // UIKeyModifierFlags
+        private const long UIKeyModifierShift = 1 << 17, UIKeyModifierControl = 1 << 18, UIKeyModifierAlternate = 1 << 19, UIKeyModifierCommand = 1 << 20;
+
+        private static void DispatchPresses(IntPtr presses, bool down)
         {
-            // A managed exception unwinding into Objective-C terminates the process without a
-            // usable stack, so the pump's failures are reported here rather than propagated.
+            // Never let a managed exception unwind into UIKit.
             try
             {
-                s_tick?.Invoke();
+                Action<UIKitKeyMessage> handler = KeyInput;
+                if (handler == null || presses == IntPtr.Zero) return;
+                IntPtr all = Send(presses, Sel("allObjects"));
+                nint count = all == IntPtr.Zero ? 0 : SendNInt(all, Sel("count"));
+                for (nint i = 0; i < count; i++)
+                {
+                    IntPtr key = Send(SendPtrNInt(all, Sel("objectAtIndex:"), i), Sel("key"));   // UIKey, nil for a remote's press
+                    if (key == IntPtr.Zero) continue;
+                    int vk = VirtualKeyOfHidUsage((int)SendNInt(key, Sel("keyCode")));
+                    long mods = SendNInt(key, Sel("modifierFlags"));
+                    string chars = NSStringToString(Send(key, Sel("characters")));
+                    if (s_trace) Console.WriteLine($"[uikit] key {(down ? "down" : "up")} vk=0x{vk:x} -> 0x{s_keyWindow:x}");
+                    handler(new UIKitKeyMessage(s_keyWindow, down, vk, chars,
+                        (mods & UIKeyModifierShift) != 0, (mods & UIKeyModifierControl) != 0,
+                        (mods & UIKeyModifierAlternate) != 0, (mods & UIKeyModifierCommand) != 0, Environment.TickCount));
+                }
             }
             catch (Exception e)
             {
-                Console.WriteLine($"WPF iOS dispatcher pump failed: {e}");
+                Console.WriteLine($"WPF iOS key dispatch failed: {e}");
             }
         }
+
+        /// <summary>
+        /// Test seam: a hardware key as if UIKit had pressed it, for the window that has the keys -- the
+        /// route a real press takes from the key view. <paramref name="key"/> is a key's name as a browser's
+        /// KeyboardEvent.key gives it ("a", "Enter", "ArrowDown"), which the visual-tree inspector speaks.
+        /// </summary>
+        public static void InjectKey(bool down, string key, string characters, bool shift, bool ctrl, bool alt, bool meta)
+        {
+            int vk = key switch
+            {
+                { Length: 1 } when char.IsAsciiLetter(key[0]) => char.ToUpperInvariant(key[0]),
+                { Length: 1 } when char.IsAsciiDigit(key[0]) => key[0],
+                " " => 0x20,
+                "Enter" => 0x0D, "Tab" => 0x09, "Backspace" => 0x08, "Escape" => 0x1B, "Delete" => 0x2E, "Insert" => 0x2D,
+                "Home" => 0x24, "End" => 0x23, "PageUp" => 0x21, "PageDown" => 0x22,
+                "ArrowLeft" => 0x25, "ArrowUp" => 0x26, "ArrowRight" => 0x27, "ArrowDown" => 0x28,
+                "Shift" => 0x10, "Control" or "Meta" => 0x11, "Alt" => 0x12,
+                { Length: >= 2 } when key[0] == 'F' && int.TryParse(key.AsSpan(1), out int f) && f >= 1 && f <= 24 => 0x70 + f - 1,
+                _ => 0,
+            };
+            if (s_trace) Console.WriteLine($"[uikit] key {(down ? "down" : "up")} vk=0x{vk:x} '{characters}' -> 0x{s_keyWindow:x} (injected)");
+            KeyInput?.Invoke(new UIKitKeyMessage(s_keyWindow, down, vk, characters, shift, ctrl, alt, meta, Environment.TickCount));
+        }
+
+        private static string NSStringToString(IntPtr nsString)
+        {
+            if (nsString == IntPtr.Zero) return null;
+            IntPtr utf8 = Send(nsString, Sel("UTF8String"));
+            return utf8 == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(utf8);
+        }
+
+        /// <summary>A key's USB HID usage (UIKeyboardHIDUsage) as the Windows virtual key it is.</summary>
+        internal static int VirtualKeyOfHidUsage(int usage)
+        {
+            if (usage >= 0x04 && usage <= 0x1D) return 'A' + (usage - 0x04);          // a..z
+            if (usage >= 0x1E && usage <= 0x26) return '1' + (usage - 0x1E);          // 1..9
+            if (usage >= 0x3A && usage <= 0x45) return 0x70 + (usage - 0x3A);         // F1..F12
+            if (usage >= 0x68 && usage <= 0x73) return 0x7C + (usage - 0x68);         // F13..F24
+            if (usage >= 0x59 && usage <= 0x61) return 0x61 + (usage - 0x59);         // keypad 1..9
+            return usage switch
+            {
+                0x27 => '0',
+                0x28 => 0x0D, 0x29 => 0x1B, 0x2A => 0x08, 0x2B => 0x09, 0x2C => 0x20,  // Return, Escape, Backspace, Tab, Space
+                0x2D => 0xBD, 0x2E => 0xBB, 0x2F => 0xDB, 0x30 => 0xDD, 0x31 => 0xDC,  // - = [ ] \
+                0x33 => 0xBA, 0x34 => 0xDE, 0x35 => 0xC0, 0x36 => 0xBC, 0x37 => 0xBE, 0x38 => 0xBF,   // ; ' ` , . /
+                0x39 => 0x14,                                                          // Caps Lock
+                0x46 => 0x2C, 0x47 => 0x91, 0x48 => 0x13,                              // Print Screen, Scroll Lock, Pause
+                0x49 => 0x2D, 0x4A => 0x24, 0x4B => 0x21, 0x4C => 0x2E, 0x4D => 0x23, 0x4E => 0x22,   // Insert, Home, PgUp, Delete, End, PgDn
+                0x4F => 0x27, 0x50 => 0x25, 0x51 => 0x28, 0x52 => 0x26,                // arrows: right, left, down, up
+                0x53 => 0x90, 0x54 => 0x6F, 0x55 => 0x6A, 0x56 => 0x6D, 0x57 => 0x6B, 0x58 => 0x0D,   // Num Lock, keypad / * - + Enter
+                0x62 => 0x60, 0x63 => 0x6E, 0x65 => 0x5D,                              // keypad 0 and ., Menu
+                0xE0 or 0xE4 => 0x11, 0xE1 or 0xE5 => 0x10, 0xE2 or 0xE6 => 0x12,      // Control, Shift, Alt (Option)
+                0xE3 or 0xE7 => 0x11,                                                  // Command is Control, as on the other Apple head
+                _ => 0,
+            };
+        }
+
+        // ---- The dispatcher's wait ---------------------------------------------------
+        //
+        // The main thread is UIKit's run loop's, as it is AppKit's on macOS: UIApplicationMain runs it,
+        // and the head calls the app's Main from inside it once the scene has connected. The
+        // dispatcher's idle wait (Dispatcher.WaitForWork) runs that run loop: touches, keys and layout
+        // are delivered from it, Core Animation commits what was presented when it is about to sleep,
+        // and posted work ends it through the dispatcher's run-loop source (DispatcherRunLoop), which
+        // handling is the "source handled" that returns. A nested frame -- a modal dialog, an Invoke's
+        // wait -- is one more turn of the same loop.
+
+        [ThreadStatic] private static bool s_waiting;
+        private static IntPtr s_defaultMode;
+
+        /// <summary>Whether the main thread's dispatcher is in its wait (<see cref="WaitForEvents"/>):
+        /// posted work then ends the wait rather than running inside it.</summary>
+        internal static bool IsWaitingForWork => s_waiting;
+
+        /// <summary>Runs the main run loop until a source has been handled -- an event, posted dispatcher
+        /// work -- or <paramref name="timeoutMilliseconds"/> passes (negative: no limit). Main thread.</summary>
+        internal static void WaitForEvents(int timeoutMilliseconds)
+        {
+            if (!IsMainThread) return;
+            if (s_defaultMode == IntPtr.Zero)
+                s_defaultMode = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopDefaultMode", 0x08000100 /* UTF-8 */);
+            double seconds = timeoutMilliseconds < 0 ? 1.0e9 : timeoutMilliseconds / 1000.0;
+            s_waiting = true;
+            int result = 0;
+            try { result = CFRunLoopRunInMode(s_defaultMode, seconds, true); }
+            finally { s_waiting = false; }
+            if (s_trace) Console.WriteLine($"[uikit] wait {timeoutMilliseconds} ms ended: {result}");
+        }
+
+        /// <summary>Runs the main run loop as another loop's idle wait -- WinForms' message loop -- until a
+        /// source has been handled or <paramref name="timeoutMilliseconds"/> passes: UIKit's input and
+        /// Core Animation's commits, and the WPF dispatcher's posted work, which its run-loop source runs
+        /// (it is not the dispatcher's own wait). Main thread.</summary>
+        public static void RunLoop(int timeoutMilliseconds)
+        {
+            if (!IsMainThread) { System.Threading.Thread.Sleep(Math.Max(0, timeoutMilliseconds)); return; }
+            if (s_defaultMode == IntPtr.Zero)
+                s_defaultMode = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopDefaultMode", 0x08000100 /* UTF-8 */);
+            bool wasWaiting = s_waiting;
+            s_waiting = false;
+            try { CFRunLoopRunInMode(s_defaultMode, Math.Max(0, timeoutMilliseconds) / 1000.0, true); }
+            finally { s_waiting = wasWaiting; }
+        }
+
+        private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+        [DllImport(CoreFoundation)] private static extern int CFRunLoopRunInMode(IntPtr mode, double seconds, [MarshalAs(UnmanagedType.I1)] bool returnAfterSourceHandled);
+        [DllImport(CoreFoundation)] private static extern IntPtr CFStringCreateWithCString(IntPtr allocator, string cStr, uint encoding);
 
         /// <summary>nativeScale (not scale): the true pixel ratio on phones that render-and-downsample.</summary>
         private static double ScreenScale()
@@ -958,18 +1202,23 @@ namespace MS.Internal.Interop
         [StructLayout(LayoutKind.Sequential)]
         private struct CGPoint { public double x, y; }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CGSize { public double width, height; }
+
+        private const string CoreGraphics = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+        [DllImport(CoreGraphics)] private static extern IntPtr CGPathCreateWithRect(CGRect rect, IntPtr transform);
+        [DllImport(CoreGraphics)] private static extern void CGPathRelease(IntPtr path);
+
         private static IntPtr Sel(string name) => sel_registerName(name);
 
-        [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
-        [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlsym(IntPtr handle, string symbol);
 
         /// <summary>Non-zero on the process's main thread -- the only one UIKit accepts views on.</summary>
         [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();
 
         /// <summary>
-        /// Whether the calling thread is the main thread: iOS has exactly one UI thread, and the
-        /// display link that drives the Dispatcher fires on it. A second WPF UI thread cannot be
-        /// supported here; WindowsBase's Dispatcher and <see cref="Create"/> refuse one with this.
+        /// Whether the calling thread is the main thread: iOS has exactly one UI thread, the run loop's
+        /// that the Dispatcher waits in. A second WPF UI thread cannot be supported here;
+        /// <see cref="Create"/> refuses one with this.
         /// </summary>
         internal static bool IsMainThread => pthread_main_np() != 0;
 
@@ -983,11 +1232,12 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidFloat(IntPtr receiver, IntPtr selector, float arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidDouble(IntPtr receiver, IntPtr selector, double arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSize(IntPtr receiver, IntPtr selector, CGSize arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidUIntPtr(IntPtr receiver, IntPtr selector, UIntPtr arg);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrBool(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, [MarshalAs(UnmanagedType.I1)] bool wait);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSelPtrDouble(IntPtr receiver, IntPtr selector, IntPtr sel2, IntPtr arg, double delay);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNInt(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDoublePtr(IntPtr receiver, IntPtr selector, IntPtr arg);

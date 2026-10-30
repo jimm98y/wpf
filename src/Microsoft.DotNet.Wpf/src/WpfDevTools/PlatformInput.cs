@@ -92,9 +92,12 @@ namespace Microsoft.Wpf.DevTools
                 // The phones report touches, which the provider already drives the mouse
                 // from; a touch has no button, so the neutral button is dropped rather than
                 // mistranslated.
+                // A press, a move and a release go the way UIKit's touches go (InjectTouch), so every
+                // window's input path takes them -- a WinForms form's host as well as WPF's.
                 if (OperatingSystem.IsIOS())
                 {
-                    UIKitWindow.InjectMouse(window, (int)kind, x, y, wheel);
+                    if (kind == InjectedMouse.Wheel) UIKitWindow.InjectMouse(window, (int)kind, x, y, wheel);
+                    else UIKitWindow.InjectTouch(window, (int)kind, x, y);
                     return;
                 }
 
@@ -152,9 +155,18 @@ namespace Microsoft.Wpf.DevTools
                     return;
                 }
 
-                // iOS and Android have no key path at all: HwndKeyboardInputProvider does not
-                // subscribe to one there, because text arrives through the soft keyboard's own
-                // route. Saying so beats inventing an event nothing is listening for.
+                // iOS: the hardware keyboard's route, to the window that has the keys. A named key
+                // ("Enter") carries no text of its own.
+                if (OperatingSystem.IsIOS())
+                {
+                    UIKitWindow.InjectKey(down, key, characters.Length == 1 ? characters : string.Empty,
+                                          shift: (modifiers & 8) != 0, ctrl: (modifiers & 2) != 0, alt: (modifiers & 1) != 0, meta: (modifiers & 4) != 0);
+                    return;
+                }
+
+                // Android has no key path at all: HwndKeyboardInputProvider does not subscribe to one
+                // there, because text arrives through the soft keyboard's own route. Saying so beats
+                // inventing an event nothing is listening for.
                 Unsupported();
             }
             catch (Exception ex)

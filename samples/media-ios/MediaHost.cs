@@ -44,10 +44,9 @@ internal static class MediaHost
             };
             window.Show();
 
-            // Returns immediately: Application.Run -> Dispatcher.Run installs the CADisplayLink pump
-            // and hands the run loop back to UIKit (see the gallery head's SceneDelegate).
+            // Waits in the main run loop until the app ends, as on every head.
             app.Run();
-            Console.WriteLine("MEDIAIOS: Application.Run returned (pump detached, UIKit owns the loop)");
+            Console.WriteLine("MEDIAIOS: Application.Run returned");
         }
         catch (Exception e)
         {

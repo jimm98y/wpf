@@ -30,6 +30,13 @@
     <_WpfWebGpuMobile Condition="'$(_WpfWebGpuAndroid)' == 'true' or '$(_WpfWebGpuIos)' == 'true'">true</_WpfWebGpuMobile>
     <_WpfWebGpuWin>false</_WpfWebGpuWin>
     <_WpfWebGpuWin Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuMobile)' != 'true' and ( '$(WpfPlatform)' == 'windows' or $(RuntimeIdentifier.StartsWith('win')) or $(TargetFramework.Contains('-windows')) or ( '$(WpfPlatform)' == '' and '$(RuntimeIdentifier)' == '' and '$(OS)' == 'Windows_NT' ) )">true</_WpfWebGpuWin>
+    <!-- The heads whose app is built ahead of time into a bundle, and so is rewritten onto the stack's
+         Windows API at build rather than when it starts (as wpfrun does): the browser and iOS. -->
+    <_WpfWebGpuBundled>false</_WpfWebGpuBundled>
+    <_WpfWebGpuBundled Condition="'$(_WpfWebGpuBrowser)' == 'true' or '$(_WpfWebGpuIos)' == 'true'">true</_WpfWebGpuBundled>
+    <!-- the head's renderer folder, which the rewrite resolves the stack's references in -->
+    <_WpfWebGpuHeadLib Condition="'$(_WpfWebGpuBrowser)' == 'true'">wpf-browser</_WpfWebGpuHeadLib>
+    <_WpfWebGpuHeadLib Condition="'$(_WpfWebGpuIos)' == 'true'">wpf-ios</_WpfWebGpuHeadLib>
     <_WpfWebGpuUnix>false</_WpfWebGpuUnix>
     <_WpfWebGpuUnix Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuWin)' != 'true'">true</_WpfWebGpuUnix>
 
@@ -619,6 +626,19 @@
     <StaticWebAssetsFingerprintContent Condition="'$(StaticWebAssetsFingerprintContent)' == ''">false</StaticWebAssetsFingerprintContent>
   </PropertyGroup>
 
+  <!-- iOS: the desktop's always-on behaviours the iOS SDK turns off as it would for a trimmed app, as the
+       browser head turns them back on above: ResourceManager's custom types (every bitmap and icon of a
+       .resx: the app stopped in its first GetString with ResourceManager_ReflectionNotAllowed), the
+       designer host, DefaultValueAttribute by type name, reflection-based JSON, exception messages, cultures. -->
+  <PropertyGroup Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <UseSystemResourceKeys Condition="'$(UseSystemResourceKeys)' == ''">false</UseSystemResourceKeys>
+    <InvariantGlobalization Condition="'$(InvariantGlobalization)' == ''">false</InvariantGlobalization>
+    <JsonSerializerIsReflectionEnabledByDefault Condition="'$(JsonSerializerIsReflectionEnabledByDefault)' == ''">true</JsonSerializerIsReflectionEnabledByDefault>
+    <CustomResourceTypesSupport Condition="'$(CustomResourceTypesSupport)' == ''">true</CustomResourceTypesSupport>
+    <_DesignerHostSupport Condition="'$(_DesignerHostSupport)' == ''">true</_DesignerHostSupport>
+    <_DefaultValueAttributeSupport Condition="'$(_DefaultValueAttributeSupport)' == ''">true</_DefaultValueAttributeSupport>
+  </PropertyGroup>
+
   <!-- The multithreaded runtime's OS thread id, one per thread (web/thread-id.c, dotnet/runtime#129900):
        its System.Threading.Lock told no two threads apart, and the timer queue aborted the runtime. The
        native runtime is relinked for AOT anyway; the wrap replaces the one function every caller asks. -->
@@ -734,7 +754,7 @@
     functions against the stack's WPF and WinForms windows, so the stack's WinForms comes with them; it
     stays on the interpreter, as in the WinForms browser host. WpfWebGpuWin32=false turns it all off.
   -->
-  <ItemGroup Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false'">
+  <ItemGroup Condition="'$(_WpfWebGpuBundled)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false'">
     <PackageReference Include="WpfWebGpu.Win32" Version="0.1.1" PrivateAssets="all" />
   </ItemGroup>
 
@@ -742,7 +762,7 @@
        Mono's), because the bundle is made of the build's assets and a publish only promotes them; the
        publish below keeps them where something was rewritten and drops them where nothing was. -->
   <Target Name="_WpfWebGpuWin32CopyLocal" AfterTargets="ResolveAssemblyReferences"
-          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
+          Condition="'$(_WpfWebGpuBundled)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
     <ItemGroup>
       <_WpfWebGpuWin32Runtime Include="$(WpfWebGpuWin32Root)lib/WpfWebGpu.Win32.dll;$(WpfWebGpuWin32Root)lib/WpfWebGpu.ComInterop.dll" />
       <_WpfWebGpuWin32Runtime Include="$(WpfWebGpuSdkRoot)lib/wpf-winforms/System.Windows.Forms.dll;$(WpfWebGpuSdkRoot)lib/wpf-winforms/Mono.System.Drawing.dll" />
@@ -757,7 +777,7 @@
        of the build's assets. What the app is built with (its references, its packages, the runtime
        pack, the stack) is provided; only the rest is missing. -->
   <Target Name="_WpfWebGpuPlaceholders" AfterTargets="ResolveAssemblyReferences" DependsOnTargets="_WpfWebGpuWin32CopyLocal"
-          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
+          Condition="'$(_WpfWebGpuBundled)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
     <PropertyGroup>
       <_WpfWebGpuPlaceholderDir>$([MSBuild]::NormalizeDirectory('$(ProjectDir)$(IntermediateOutputPath)wpf-placeholders'))</_WpfWebGpuPlaceholderDir>
       <_WpfWebGpuPlaceholderRsp>$(ProjectDir)$(IntermediateOutputPath)wpf-placeholders.rsp</_WpfWebGpuPlaceholderRsp>
@@ -787,7 +807,7 @@
 
   <Target Name="_WpfWebGpuRewriteForBundle"
           AfterTargets="_ComputeAssembliesToPostprocessOnPublish"
-          Condition="'$(_WpfWebGpuBrowser)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
+          Condition="'$(_WpfWebGpuBundled)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuWin32)' != 'false' and '$(WpfWebGpuWin32Root)' != ''">
     <PropertyGroup>
       <_WpfWebGpuRewriteDir>$([MSBuild]::NormalizeDirectory('$(ProjectDir)$(IntermediateOutputPath)wpf-rewrite'))</_WpfWebGpuRewriteDir>
       <_WpfWebGpuRewriteRsp>$(ProjectDir)$(IntermediateOutputPath)wpf-rewrite.rsp</_WpfWebGpuRewriteRsp>
@@ -800,7 +820,7 @@
                               Condition="'%(Extension)' == '.dll' and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuWin32Root)'))" />
       <_WpfWebGpuRewriteArg Include="--out;$(_WpfWebGpuRewriteDir)" />
       <!-- references: the stack, the implementations, the runtime pack -->
-      <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/wpf-browser;--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
+      <_WpfWebGpuRewriteArg Include="--search;$(WpfWebGpuWin32Root)lib;--search;$(WpfWebGpuSdkRoot)lib/$(_WpfWebGpuHeadLib);--search;$(WpfWebGpuSdkRoot)lib/wpf;--search;$(WpfWebGpuSdkRoot)lib/wpf-winforms" />
       <_WpfWebGpuRewriteArg Include="@(_ManagedRuntimePackAssembly->'%(RootDir)%(Directory)'->Distinct()->'--search=%(Identity)')" />
       <!-- and the placeholders: a rewritten assembly can name a type of one (a parameter's default of an
            enum declared there, which writing the assembly resolves) -->
@@ -1008,6 +1028,41 @@
                                     and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)')) and Exists('$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
       <ResolvedFileToPublish Remove="@(_WpfWebGpuShimmed)" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-browser/%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+
+  <!-- iOS: the cross-platform SystemEvents / Registry shims (lib/wpf-desktop, the ones the desktop
+       heads overlay) in place of the framework's throw-only copies, swapped in the list the app bundle
+       is made of, as the browser's are above. -->
+  <Target Name="_WpfWebGpuIosPublishShims"
+          AfterTargets="_ComputeAssembliesToPostprocessOnPublish"
+          Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_WpfWebGpuIosShimmed Include="@(ResolvedFileToPublish)"
+                            Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry')
+                                       and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)'))" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuIosShimmed)" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuIosShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-desktop/%(Filename)%(Extension)')" />
+    </ItemGroup>
+  </Target>
+
+  <!-- iOS: the runtime pack ships a WindowsBase.dll of its own, a type-forwarding facade, and an app
+       that is not trimmed takes the pack whole: it landed on top of the stack's WindowsBase and the
+       app died at startup (TypeLoadException: MS.Internal.Interop.UIKitWindow in WindowsBase). -->
+  <Target Name="_WpfWebGpuIosDropWindowsBaseFacade" AfterTargets="ResolveRuntimePackAssets"
+          Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <RuntimePackAsset Remove="@(RuntimePackAsset)" Condition="'%(Filename)' == 'WindowsBase'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- iOS: the frameworks the app is linked against are the ones its P/Invokes name, and the stack's
+       macOS paths name two that iOS does not have (AppKit, and System, the macOS home of libSystem's
+       headers): the link failed with "framework 'AppKit' not found". Nothing on an iOS path calls them. -->
+  <Target Name="_WpfWebGpuIosDropMacFrameworks" AfterTargets="_ComputeLinkNativeExecutableInputs"
+          Condition="'$(_WpfWebGpuIos)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
+    <ItemGroup>
+      <_NativeExecutableFrameworks Remove="AppKit;System" />
     </ItemGroup>
   </Target>
 

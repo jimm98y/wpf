@@ -29,7 +29,7 @@ using WpfWebGpu.ComRewrite;
 
 namespace WpfWebGpu;
 
-internal static class Bundle
+internal static partial class Bundle
 {
     /// <summary>Folders that are a native runtime's, never the app's data.</summary>
     private static readonly HashSet<string> s_nativeFolders = new(StringComparer.OrdinalIgnoreCase) { "runtimes", "x86", "x64", "arm64", "amd64" };
@@ -37,7 +37,7 @@ internal static class Bundle
     public static int Run(string[] args)
     {
         string? target = null, outDir = null, feed = null;
-        bool aot = false, verbose = false;
+        bool aot = false, verbose = false, ios = false;
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -45,6 +45,7 @@ internal static class Bundle
                 case "--out" or "-o": outDir = args[++i]; break;
                 case "--feed": feed = args[++i]; break;
                 case "--aot": aot = true; break;
+                case "--ios": ios = true; break;
                 case "-v" or "--verbose": verbose = true; break;
                 default:
                     if (args[i].StartsWith('-')) throw new UserError($"unknown option '{args[i]}'.");
@@ -54,7 +55,7 @@ internal static class Bundle
         }
         if (target == null) throw new UserError("which app? Pass its .dll, .exe or folder.");
         AppFiles app = AppFiles.Resolve(target);
-        outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, app.Name + "-browser"));
+        outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, app.Name + (ios ? "-ios" : "-browser")));
         feed = Path.GetFullPath(feed ?? FindFeed() ?? throw new UserError("no package feed with WpfWebGpu.Sdk found beside wpfrun; pass --feed <folder>."));
 
         var stack = StackAssemblies(feed);
@@ -63,6 +64,7 @@ internal static class Bundle
         Console.WriteLine($"wpfrun bundle: {app.Name}: {assemblies.Count} app assemblies" + (left.Count > 0 ? $" ({left.Count} left out: {string.Join(", ", left.Take(8))}{(left.Count > 8 ? ", ..." : "")})" : ""));
         var (files, folders) = Payload(app);
         Console.WriteLine($"wpfrun bundle: data: {files.Count} files and {folders.Count} folders ({string.Join(", ", folders)})");
+        if (ios) return RunIos(app, assemblies, files, folders, feed, outDir, verbose);
 
         // One project per mode: an AOT publish strips the IL of what it compiled (WasmStripILAfterAOT) and
         // leaves those assemblies in obj, newer than their inputs, and an interpreted publish in the same

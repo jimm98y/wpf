@@ -148,22 +148,19 @@ namespace System.Windows
             // Two layouts, because the heads disagree about what a window IS.
             //
             // On a desktop a window is a rectangle the app asks for, so SizeToContent plus
-            // CenterOwner gives the small centred box everyone expects. On iOS, Android and the
-            // browser a window IS the screen: the head snaps every one of them to the root view, so
-            // a content-sized dialog still gets a FULL-SCREEN opaque surface. Verified on the iPad
-            // simulator -- the prompt was legible and its buttons worked, in the top-left corner, on
-            // an otherwise black screen, because the rest of that surface is nothing but clear
-            // colour.
+            // CenterOwner gives the small centred box everyone expects. On Android a window IS the
+            // screen: the head snaps every one of them to the root view, so a content-sized dialog
+            // still gets a FULL-SCREEN opaque surface, the prompt in its top-left corner on an
+            // otherwise black screen, because the rest of that surface is nothing but clear colour.
             //
             // So there, fill the window and centre the prompt inside it, over a scrim. That is what
             // a modal looks like on a phone anyway.
             //
-            // Not the browser, although it cannot block either: there a second window floats over
-            // the page at the size it asks for (browser-window.js createWindow), like a desktop
-            // dialog. Treated as a phone, the prompt opened as an owner-sized OPAQUE window -- its
-            // scrim composited over the window's own clear colour, a grey slab -- offset from the
-            // owner by its default position, covering most of the page.
-            bool screenSizedWindow = (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid())
+            // Not the browser or iOS: there a second window floats over the others at the size it
+            // asks for (browser-window.js createWindow, UIKitWindow), like a desktop dialog. Treated
+            // as a phone, the prompt opened as an owner-sized OPAQUE window -- its scrim composited
+            // over the window's own clear colour, a grey slab -- covering most of the screen.
+            bool screenSizedWindow = OperatingSystem.IsAndroid()
                                      && owner != null
                                      && owner.ActualWidth >= 1
                                      && owner.ActualHeight >= 1;

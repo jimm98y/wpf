@@ -13,6 +13,7 @@
 // On Windows nothing is rewritten, and these would be the members themselves.
 
 using System.Linq;
+using System.Threading;
 using System.Reflection;
 using System.Text;
 using System.Xml;
@@ -63,6 +64,138 @@ public static class WindowsPaths
             a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0 ? a : "\"" + a.Replace("\"", "\\\"") + "\""));
     }
 
+    // The machine-wide folders (ProgramData and friends): /usr/share or nothing off Windows, and not
+    // writable. A head that keeps the machine's state in a folder of its own (WPFWEBGPU_STATE_DIR: an iOS
+    // app's Library, where the bundle's copy of the installation's data is put) has them there, as the
+    // launcher's detour has them in its state folder on macOS.
+
+    public static string Environment_GetFolderPath(Environment.SpecialFolder folder)
+        => StateFolder(folder, Environment.SpecialFolderOption.None) ?? Environment.GetFolderPath(folder);
+
+    public static string Environment_GetFolderPath(Environment.SpecialFolder folder, Environment.SpecialFolderOption option)
+        => StateFolder(folder, option) ?? Environment.GetFolderPath(folder, option);
+
+    private static string? StateFolder(Environment.SpecialFolder folder, Environment.SpecialFolderOption option)
+    {
+        if (s_windows || AppContext.GetData("WPFWEBGPU_STATE_DIR") is not string state || state.Length == 0) return null;
+        string? relative = folder switch
+        {
+            Environment.SpecialFolder.CommonApplicationData => "ProgramData",
+            Environment.SpecialFolder.CommonDocuments => "Public/Documents",
+            Environment.SpecialFolder.CommonDesktopDirectory => "Public/Desktop",
+            Environment.SpecialFolder.CommonMusic => "Public/Music",
+            Environment.SpecialFolder.CommonPictures => "Public/Pictures",
+            Environment.SpecialFolder.CommonVideos => "Public/Videos",
+            Environment.SpecialFolder.CommonTemplates => "ProgramData/Templates",
+            Environment.SpecialFolder.CommonStartMenu => "ProgramData/Start Menu",
+            Environment.SpecialFolder.CommonPrograms => "ProgramData/Start Menu/Programs",
+            Environment.SpecialFolder.CommonStartup => "ProgramData/Start Menu/Programs/Startup",
+            Environment.SpecialFolder.CommonAdminTools => "ProgramData/Start Menu/Programs/Administrative Tools",
+            _ => null,
+        };
+        if (relative == null) return null;
+        string path = Path.Combine(state, relative);
+        if (option != Environment.SpecialFolderOption.DoNotVerify) Directory.CreateDirectory(path);
+        return path;
+    }
+
+    // ---- System.Threading.Thread ----
+    //
+    // The apartment a thread is to run in. Off Windows .NET refuses STA where it has no COM ("COM Interop
+    // is not supported on this platform"), which an app that starts a thread for a splash screen or a
+    // dialog sets first; it is recorded instead, and reported back -- the launcher's detour on macOS.
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Thread, System.Runtime.CompilerServices.StrongBox<ApartmentState>> s_apartments = new();
+
+    public static void Thread_SetApartmentState(Thread thread, ApartmentState state)
+    {
+        try { thread.SetApartmentState(state); }
+        catch (PlatformNotSupportedException) when (state == ApartmentState.STA) { }
+        s_apartments.AddOrUpdate(thread, new System.Runtime.CompilerServices.StrongBox<ApartmentState>(state));
+    }
+
+    public static bool Thread_TrySetApartmentState(Thread thread, ApartmentState state)
+    {
+        try { if (!thread.TrySetApartmentState(state)) return false; }
+        catch (PlatformNotSupportedException) when (state == ApartmentState.STA) { }
+        s_apartments.AddOrUpdate(thread, new System.Runtime.CompilerServices.StrongBox<ApartmentState>(state));
+        return true;
+    }
+
+    public static ApartmentState Thread_GetApartmentState(Thread thread)
+        => s_apartments.TryGetValue(thread, out var box) ? box.Value : thread.GetApartmentState();
+
+    // ---- System.IO.MemoryMappedFiles.MemoryMappedFile ----
+    //
+    // A named map is how Windows processes share memory; off Windows .NET has none ("Named maps are not
+    // supported"), and an app's client identified itself by one (its server connection, which
+    // never opened). Where the head keeps the machine's state in a folder (WPFWEBGPU_STATE_DIR), a map
+    // is a file there, shared by every process that opens it -- the launcher's detour on macOS.
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_CreateOrOpen(string mapName, long capacity)
+        => NamedMap(mapName, capacity, FileMode.OpenOrCreate, System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.CreateOrOpen(mapName, capacity);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_CreateOrOpen(string mapName, long capacity, System.IO.MemoryMappedFiles.MemoryMappedFileAccess access)
+        => NamedMap(mapName, capacity, FileMode.OpenOrCreate, access)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.CreateOrOpen(mapName, capacity, access);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_CreateOrOpen(string mapName, long capacity, System.IO.MemoryMappedFiles.MemoryMappedFileAccess access,
+        System.IO.MemoryMappedFiles.MemoryMappedFileOptions options, System.IO.HandleInheritability inheritability)
+        => NamedMap(mapName, capacity, FileMode.OpenOrCreate, access)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.CreateOrOpen(mapName, capacity, access, options, inheritability);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_CreateNew(string mapName, long capacity)
+        => NamedMap(mapName, capacity, FileMode.CreateNew, System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.CreateNew(mapName, capacity);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_CreateNew(string mapName, long capacity, System.IO.MemoryMappedFiles.MemoryMappedFileAccess access)
+        => NamedMap(mapName, capacity, FileMode.CreateNew, access)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.CreateNew(mapName, capacity, access);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_CreateNew(string mapName, long capacity, System.IO.MemoryMappedFiles.MemoryMappedFileAccess access,
+        System.IO.MemoryMappedFiles.MemoryMappedFileOptions options, System.IO.HandleInheritability inheritability)
+        => NamedMap(mapName, capacity, FileMode.CreateNew, access)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.CreateNew(mapName, capacity, access, options, inheritability);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_OpenExisting(string mapName)
+        => NamedMap(mapName, 0, FileMode.Open, System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting(mapName);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_OpenExisting(string mapName, System.IO.MemoryMappedFiles.MemoryMappedFileRights desiredAccessRights)
+        => NamedMap(mapName, 0, FileMode.Open, (desiredAccessRights & System.IO.MemoryMappedFiles.MemoryMappedFileRights.Write) != 0
+               ? System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite : System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting(mapName, desiredAccessRights);
+
+    public static System.IO.MemoryMappedFiles.MemoryMappedFile MemoryMappedFile_OpenExisting(string mapName, System.IO.MemoryMappedFiles.MemoryMappedFileRights desiredAccessRights, System.IO.HandleInheritability inheritability)
+        => NamedMap(mapName, 0, FileMode.Open, (desiredAccessRights & System.IO.MemoryMappedFiles.MemoryMappedFileRights.Write) != 0
+               ? System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite : System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read)
+           ?? System.IO.MemoryMappedFiles.MemoryMappedFile.OpenExisting(mapName, desiredAccessRights, inheritability);
+
+    /// <summary>The named map as a file of the state folder; null where the map is the platform's
+    /// (Windows, an unnamed map, a head with no state folder -- macOS, whose detour does this).</summary>
+    private static System.IO.MemoryMappedFiles.MemoryMappedFile? NamedMap(string? name, long capacity, FileMode mode, System.IO.MemoryMappedFiles.MemoryMappedFileAccess access)
+    {
+        if (s_windows || name == null || AppContext.GetData("WPFWEBGPU_STATE_DIR") is not string state || state.Length == 0) return null;
+        // Global\ and Local\ select the session namespace on Windows; there is one namespace here
+        string bare = name.StartsWith(@"Global\", StringComparison.OrdinalIgnoreCase) || name.StartsWith(@"Local\", StringComparison.OrdinalIgnoreCase)
+            ? name[(name.IndexOf('\\') + 1)..] : name;
+        foreach (char c in Path.GetInvalidFileNameChars()) bare = bare.Replace(c, '_');
+        string dir = Path.Combine(state, "shared-memory");
+        Directory.CreateDirectory(dir);
+        string path = Path.Combine(dir, bare);
+        if (mode == FileMode.CreateNew && File.Exists(path) && new FileInfo(path).Length > 0)
+            throw new IOException($"Cannot create '{name}' because a file or directory with the same name already exists.");
+        if (mode == FileMode.Open && !File.Exists(path))
+            throw new FileNotFoundException("Unable to find the specified file.", name);
+        var stream = new FileStream(path, mode == FileMode.Open ? FileMode.Open : FileMode.OpenOrCreate,
+            FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+        if (capacity > 0 && stream.Length < capacity) stream.SetLength(capacity);
+        return System.IO.MemoryMappedFiles.MemoryMappedFile.CreateFromFile(stream, null, capacity > 0 ? capacity : 0,
+            access == System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read ? System.IO.MemoryMappedFiles.MemoryMappedFileAccess.Read : System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite,
+            HandleInheritability.None, leaveOpen: false);
+    }
+
     // ---- System.Diagnostics.Process ----
     //
     // A Windows .NET program an app starts (Workbench's tools menu: the server location utility, the trace
@@ -70,6 +203,14 @@ public static class WindowsPaths
     // the tool not being there, and nothing opened. It is run as the app itself was, through the launcher
     // (WPFWEBGPU_LAUNCHER, set by it): `wpfrun run <exe> <arguments>`. Anything else -- a native program, a
     // document, a URL -- is started as it was.
+
+    /// <summary>The Terminal Services session a process runs in: where the platform cannot say (iOS, the
+    /// browser: "Operation is not supported"), the interactive session, 1, as on a Windows desktop.</summary>
+    public static int Process_get_SessionId(System.Diagnostics.Process process)
+    {
+        try { return process.SessionId; }
+        catch (PlatformNotSupportedException) { return 1; }
+    }
 
     public static System.Diagnostics.Process? Process_Start(string fileName)
         => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName)));

@@ -51,7 +51,7 @@ namespace System.Windows.Threading
             {
                 EnsureMessageWindow();
             }
-            else if (OperatingSystem.IsMacOS())
+            else if (OperatingSystem.IsMacOS() || OperatingSystem.IsIOS())
             {
                 // Same purpose, different mechanism: CFRunLoopGetCurrent binds to the calling
                 // thread, which is the dispatcher's. See EnsureRunLoopSource.
@@ -558,6 +558,16 @@ namespace System.Windows.Threading
             DispatcherRunLoop loop = GCHandle.FromIntPtr(info).Target as DispatcherRunLoop;
             if (loop is null || loop._disposed)
             {
+                return;
+            }
+
+            // iOS: the dispatcher's idle wait runs the run loop itself (UIKitWindow.WaitForEvents), and
+            // handling this source is what ends it, so the work runs in the dispatcher's own frame. Only
+            // a run loop UIKit runs on its own would need the queue run from here.
+            if (OperatingSystem.IsIOS())
+            {
+                if (MS.Internal.Interop.UIKitWindow.Trace && isPerform) Console.WriteLine($"[uikit] dispatcher source fired, waiting={MS.Internal.Interop.UIKitWindow.IsWaitingForWork}");
+                if (!MS.Internal.Interop.UIKitWindow.IsWaitingForWork) loop.Pump?.Invoke();
                 return;
             }
 

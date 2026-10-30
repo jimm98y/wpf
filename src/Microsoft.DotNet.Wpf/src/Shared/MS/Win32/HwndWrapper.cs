@@ -211,6 +211,8 @@ namespace MS.Win32
                         // Checked BEFORE the macOS branch below: both are Darwin.
                         var uikit = new MS.Internal.Interop.UIKitWindow();
                         uikit.Create(name, cx, cy, cw, ch, borderless);
+                        // A child window takes the keyboard when pressed, as SetFocus on one does there.
+                        uikit.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Same synthetic WM_SIZE routing as the other two backends.
                         uikit.Resized += OnCocoaResized;
                         _platformWindow = uikit;

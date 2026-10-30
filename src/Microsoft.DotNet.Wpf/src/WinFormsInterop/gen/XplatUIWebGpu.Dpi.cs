@@ -41,6 +41,12 @@ namespace System.Windows.Forms {
 				systemDpi = BrowserFormHost.PageDpi();
 				return systemDpi > 0 ? 2 : 0;
 			}
+			// iOS: the screen's scale, which a view draws 1:1 (UIKitFormHost)
+			if (OperatingSystem.IsIOS())
+			{
+				systemDpi = UIKitFormHost.ScreenDpi();
+				return systemDpi > 0 ? 2 : 0;
+			}
 			if (!OperatingSystem.IsWindows())
 				return 0;
 			try

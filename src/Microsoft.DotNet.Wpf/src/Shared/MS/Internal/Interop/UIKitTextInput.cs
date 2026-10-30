@@ -120,6 +120,7 @@ namespace MS.Internal.Interop
                 _firstResponder = IntPtr.Zero;
             }
             IsEnabled = false;
+            UIKitWindow.TakeKeys();   // the hardware keyboard's keys go on arriving
         }
 
         /// <summary>

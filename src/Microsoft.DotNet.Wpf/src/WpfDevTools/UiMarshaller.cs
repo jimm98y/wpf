@@ -39,7 +39,7 @@ namespace Microsoft.Wpf.DevTools
         /// </summary>
         private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(1);
 
-        private readonly Dispatcher _dispatcher;
+        private Dispatcher _dispatcher;
         private readonly TimeSpan _timeout;
         private volatile bool _useWinForms;
         private volatile bool _decided;
@@ -58,6 +58,21 @@ namespace Microsoft.Wpf.DevTools
         /// <summary>Run on the UI thread and return the result. Throws TimeoutException if it cannot get there.</summary>
         internal T Invoke<T>(Func<T> body)
         {
+            // The inspector starts on the thread that made the first WPF window, and an app's splash
+            // screen is often that, on a thread of its own that ends once the app is up: from then on
+            // nothing would ever run what is sent there. The application's dispatcher takes over then,
+            // and whether it is pumped is found out afresh.
+            if (!_dispatcher.Thread.IsAlive || _dispatcher.HasShutdownFinished)
+            {
+                Dispatcher? app = System.Windows.Application.Current?.Dispatcher;
+                if (app != null && app != _dispatcher && app.Thread.IsAlive)
+                {
+                    _dispatcher = app;
+                    _decided = false;
+                    _useWinForms = false;
+                }
+            }
+
             if (_useWinForms)
                 return InvokeOnForm(body);
 

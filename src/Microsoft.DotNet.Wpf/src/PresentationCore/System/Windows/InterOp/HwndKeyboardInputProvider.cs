@@ -24,6 +24,10 @@ namespace System.Windows.Interop
             {
                 MS.Internal.Interop.BrowserWindow.KeyInput += OnBrowserKeyInput;
             }
+            else if (OperatingSystem.IsIOS())
+            {
+                MS.Internal.Interop.UIKitWindow.KeyInput += OnIosKeyInput;
+            }
             else if (OperatingSystem.IsLinux())
             {
                 MS.Internal.Interop.Wayland.WaylandInput.KeyInput += OnLinuxKeyInput;
@@ -39,6 +43,10 @@ namespace System.Windows.Interop
             if (OperatingSystem.IsBrowser())
             {
                 MS.Internal.Interop.BrowserWindow.KeyInput -= OnBrowserKeyInput;
+            }
+            else if (OperatingSystem.IsIOS())
+            {
+                MS.Internal.Interop.UIKitWindow.KeyInput -= OnIosKeyInput;
             }
             else if (OperatingSystem.IsLinux())
             {
@@ -883,6 +891,32 @@ namespace System.Windows.Interop
                 if (c >= ' ' && c != '\x7f')
                 {
                     ReportMacText(c, msg.TimestampMs);
+                }
+            }
+        }
+
+        // iOS: a hardware keyboard's presses, for the window that has the keys (UIKitWindow.KeyInput), the
+        // key already a Win32 virtual key. Typed text is the key's characters, as the browser's is its
+        // KeyboardEvent.key; the arrows and function keys report characters of Apple's private-use area,
+        // which are no text.
+        private void OnIosKeyInput(MS.Internal.Interop.UIKitWindow.UIKitKeyMessage msg)
+        {
+            if (_source == null || _site == null || _source.IsDisposed) return;
+            if (msg.View != _source.Handle) return;
+
+            if (msg.VirtualKey != 0)
+            {
+                if (!ReportMacKey(msg.IsDown ? RawKeyboardActions.KeyDown : RawKeyboardActions.KeyUp, msg.VirtualKey, msg.TimestampMs,
+                                  alt: msg.Alt, repeat: false))
+                    return;
+            }
+
+            if (msg.IsDown && !msg.Ctrl && !msg.Meta && msg.Characters is { Length: > 0 } text)
+            {
+                foreach (char c in text)
+                {
+                    if (c >= ' ' && c != '\x7f' && (c < '\uF700' || c > '\uF8FF'))
+                        ReportMacText(c, msg.TimestampMs);
                 }
             }
         }

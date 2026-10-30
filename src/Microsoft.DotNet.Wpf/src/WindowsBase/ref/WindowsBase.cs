@@ -507,8 +507,21 @@ namespace MS.Internal.Interop
         public event System.Action<int, int> Resized { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
+        public void Create(string title, int x, int y, int width, int height, bool borderless, bool ownSurface) { }
+        public static bool HasMainWindow { get { throw null; } }
+        public static void RunLoop(int timeoutMilliseconds) { }
+        public bool TakesKeyboardOnPress { get { throw null; } set { } }
+        public static System.IntPtr KeyboardWindow { get { throw null; } }
+        public static void InjectKey(bool down, string key, string characters, bool shift, bool ctrl, bool alt, bool meta) { }
+        public static event System.Action<MS.Internal.Interop.UIKitWindow.UIKitKeyMessage> KeyInput { add { } remove { } }
+        public bool IsSecondary { get { throw null; } }
+        public void SetOwnFrame() { }
         public void SetVisible(bool visible) { }
+        public void SetVisible(bool visible, bool activate) { }
+        public void Activate() { }
         public void BeginMoveDrag() { }
+        public bool ResizesFromEdges { get { throw null; } }
+        public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight) { throw null; }
         public void Destroy() { }
         public static MS.Internal.Interop.UIKitWindow FromHandle(System.IntPtr handle) { throw null; }
         public double GetBackingScale() { throw null; }
@@ -523,14 +536,31 @@ namespace MS.Internal.Interop
         public static void InjectTouch(System.IntPtr view, int kind, int xPixels, int yPixels) { }
         public void NotifyResized() { }
         public void NotifyScaleChanged() { }
-        public static void RequestWake() { }
-        public static void ScheduleWake(double seconds) { }
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
-        public static void SetDisplayLinkPaused(bool paused) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
-        public static bool StartDisplayLink(System.Action tick) { throw null; }
-        public static void StopDisplayLink() { }
+        public readonly partial struct UIKitKeyMessage : System.IEquatable<MS.Internal.Interop.UIKitWindow.UIKitKeyMessage>
+        {
+            private readonly object _dummy;
+            private readonly int _dummyPrimitive;
+            public UIKitKeyMessage(System.IntPtr View, bool IsDown, int VirtualKey, string Characters, bool Shift, bool Ctrl, bool Alt, bool Meta, int TimestampMs) { throw null; }
+            public bool Alt { get { throw null; } set { } }
+            public string Characters { get { throw null; } set { } }
+            public bool Ctrl { get { throw null; } set { } }
+            public bool IsDown { get { throw null; } set { } }
+            public bool Meta { get { throw null; } set { } }
+            public bool Shift { get { throw null; } set { } }
+            public int TimestampMs { get { throw null; } set { } }
+            public System.IntPtr View { get { throw null; } set { } }
+            public int VirtualKey { get { throw null; } set { } }
+            public void Deconstruct(out System.IntPtr View, out bool IsDown, out int VirtualKey, out string Characters, out bool Shift, out bool Ctrl, out bool Alt, out bool Meta, out int TimestampMs) { throw null; }
+            public bool Equals(MS.Internal.Interop.UIKitWindow.UIKitKeyMessage other) { throw null; }
+            public override bool Equals(object obj) { throw null; }
+            public override int GetHashCode() { throw null; }
+            public static bool operator ==(MS.Internal.Interop.UIKitWindow.UIKitKeyMessage left, MS.Internal.Interop.UIKitWindow.UIKitKeyMessage right) { throw null; }
+            public static bool operator !=(MS.Internal.Interop.UIKitWindow.UIKitKeyMessage left, MS.Internal.Interop.UIKitWindow.UIKitKeyMessage right) { throw null; }
+            public override string ToString() { throw null; }
+        }
         public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.UIKitWindow.TouchMessage>
         {
             private readonly int _dummyPrimitive;

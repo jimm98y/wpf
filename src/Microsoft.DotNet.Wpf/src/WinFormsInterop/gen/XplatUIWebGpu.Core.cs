@@ -35,6 +35,9 @@ namespace System.Windows.Forms
 		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
 		[System.Runtime.Versioning.SupportedOSPlatform("browser")]
 		private static void InstallBrowserScreens() => BrowserFormHost.InstallScreens();
+		[System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+		[System.Runtime.Versioning.SupportedOSPlatform("ios")]
+		private static void InstallIosScreens() => UIKitFormHost.InstallScreens();
 		private XplatUIWebGpu()
 		{
 			// the driver's windows in the process's focus model (XplatUIWebGpu.Focus.cs)
@@ -43,6 +46,7 @@ namespace System.Windows.Forms
 			Application.RegisterThreadWindows();
 			// a head whose screen is the application's main window: every other window is framed (WindowChrome)
 			if (OperatingSystem.IsBrowser()) { FramedWindow = WindowChrome.IsFramed; InstallBrowserScreens(); }
+			else if (OperatingSystem.IsIOS()) { FramedWindow = WindowChrome.IsFramed; InstallIosScreens(); }
 			// Graphics.FromHwnd(control.Handle): this driver's windows are not GDI windows anywhere, so
 			// System.Drawing asks here what drawing on one means -- CreateGraphics' answer.
 			AppContext.SetData ("System.Drawing.HwndGraphicsResolver",
@@ -991,6 +995,7 @@ namespace System.Windows.Forms
 		internal override IntPtr CreateWindow(CreateParams cp)
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
+			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
 			var hwnd = new Hwnd();
 			// WinForms passes the WINDOW rectangle; keep the client one (see _frames).
 			Padding frame = TopLevelFrame(cp.Style, cp.ExStyle, cp.menu != null, CreateDpi(cp), cp.control);
@@ -1126,6 +1131,7 @@ namespace System.Windows.Forms
 		internal override bool SetVisible(IntPtr handle, bool visible, bool activate)
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
+			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return false;
 			if (Trace && hwnd.visible != visible)
@@ -1212,6 +1218,7 @@ namespace System.Windows.Forms
 		internal override void SetWindowPos(IntPtr handle, int x, int y, int width, int height)
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
+			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
 			Padding frame = FrameOf(handle);
@@ -1292,6 +1299,7 @@ namespace System.Windows.Forms
 		internal override void Invalidate(IntPtr handle, Rectangle rc, bool clear)
 		{
 			if (OperatingSystem.IsMacOS()) CocoaHost.DrainMainWork();   // a busy main thread still does other threads' window work
+			else if (OperatingSystem.IsIOS()) UIKitFormHost.DrainMainWork();
 			// A rubber band is scribbled ON TOP of a window, and the caller's way of taking it back is
 			// to repaint underneath -- Splitter ends a drag with Parent.Refresh and a comment saying so.
 			// With an XOR pen on a real screen that works; a band the compositor draws over the finished

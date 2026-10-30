@@ -182,6 +182,19 @@ namespace Microsoft.Wpf.DevTools.Domains
 
                     Point device = source.CompositionTarget?.TransformToDevice.Transform(page) ?? page;
 
+                    // iOS: every window is a view of one screen, and what is under the point there may be
+                    // no WPF window at all (a WinForms form's): the topmost one takes it, at its own
+                    // origin, as a touch would land.
+                    if (OperatingSystem.IsIOS() && MS.Internal.Interop.UIKitWindow.HitTest((int)Math.Round(device.X), (int)Math.Round(device.Y)) is var hit
+                        && hit != IntPtr.Zero && MS.Internal.Interop.UIKitWindow.FromHandle(hit) is { } under)
+                    {
+                        under.GetClientScreenOriginPixels(out int ox, out int oy);
+                        view = hit;
+                        x = (int)Math.Round(device.X) - ox;
+                        y = (int)Math.Round(device.Y) - oy;
+                        return true;
+                    }
+
                     view = source.Handle;
                     x = (int)Math.Round(device.X);
                     y = (int)Math.Round(device.Y);

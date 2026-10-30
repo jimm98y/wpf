@@ -18,36 +18,42 @@ internal static class GalleryHost
 
         try
         {
+            // Once the gallery is up: App.Main does not return until it ends (it waits in the main run
+            // loop, as on every head), so what this head adjusts is queued to run when it first idles.
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(() => AdjustForTheScreen(rootView)));
+
             // The gallery's own entry point: builds its generic host, applies the Fluent theme,
             // resolves MainWindow from DI, shows it and calls Application.Run().
             WPFGallery.App.Main();
-            Console.WriteLine("GALLERY: App.Main returned (pump detached, UIKit owns the loop)");
-
-            // The gallery is a DESKTOP app: MainWindow.xaml sets MinWidth=780 / MinHeight=470, which
-            // no phone screen satisfies (402x874pt portrait). WPF honours the minimums, so the window
-            // is laid out LARGER than the display and most of the UI sits outside it -- the page is
-            // clipped and much of what you touch is nav or chrome rather than content. An iOS window
-            // IS the screen (Create snaps it to the root view), so the minimums cannot apply here.
-            Window main = Application.Current?.MainWindow;
-            if (main != null)
-            {
-                main.MinWidth = 0;
-                main.MinHeight = 0;
-                Console.WriteLine($"GALLERY: relaxed window minimums, window={main.ActualWidth:F0}x{main.ActualHeight:F0}");
-
-                HideCaptionButtons(main);
-            }
-
-            if (Environment.GetEnvironmentVariable("WPF_IOS_ROTATE_TEST") == "1")
-                ScheduleRotateTest(rootView);
-
-            if (Environment.GetEnvironmentVariable("WPF_IOS_SIZEPROBE") == "1")
-                ScheduleSizeProbe(rootView);
+            Console.WriteLine("GALLERY: App.Main returned");
         }
         catch (Exception e)
         {
             Console.WriteLine($"GALLERY: FAILED {e}");
         }
+    }
+
+    private static void AdjustForTheScreen(IntPtr rootView)
+    {
+        // The gallery is a DESKTOP app: MainWindow.xaml sets MinWidth=780 / MinHeight=470, which
+        // no phone screen satisfies (402x874pt portrait). WPF honours the minimums, so the window
+        // is laid out LARGER than the display and most of the UI sits outside it.
+        Window main = Application.Current?.MainWindow;
+        if (main != null)
+        {
+            main.MinWidth = 0;
+            main.MinHeight = 0;
+            Console.WriteLine($"GALLERY: relaxed window minimums, window={main.ActualWidth:F0}x{main.ActualHeight:F0}");
+
+            HideCaptionButtons(main);
+        }
+
+        if (Environment.GetEnvironmentVariable("WPF_IOS_ROTATE_TEST") == "1")
+            ScheduleRotateTest(rootView);
+
+        if (Environment.GetEnvironmentVariable("WPF_IOS_SIZEPROBE") == "1")
+            ScheduleSizeProbe(rootView);
     }
 
     /// <summary>

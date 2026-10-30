@@ -10,6 +10,8 @@
 // no WinForms message loop to reach that seam, so WindowsFormsHost drives Tick from the composition
 // tick instead -- otherwise a form opened with Show() reports Visible == true and never appears.
 
+extern alias WindowsBase;
+
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -447,6 +449,7 @@ namespace System.Windows.Forms
                 if (OperatingSystem.IsWindows()) host = new Win32Host(form);
                 else if (OperatingSystem.IsMacOS()) host = new CocoaHost(form);
                 else if (OperatingSystem.IsBrowser()) host = CreateBrowserHost(form);
+                else if (OperatingSystem.IsIOS()) host = CreateIosHost(form);
                 else return;                             // no windowing shell for this OS yet
                 host.Show();                             // Attach happens in the ctor
             }
@@ -457,6 +460,10 @@ namespace System.Windows.Forms
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         [System.Runtime.Versioning.SupportedOSPlatform("browser")]
         private static IWinFormsHost CreateBrowserHost(Form form) => new BrowserFormHost(form);
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("ios")]
+        private static IWinFormsHost CreateIosHost(Form form) => new UIKitFormHost(form);
 
         private static void InvalidateTree(Control c)
         {
@@ -488,6 +495,10 @@ namespace System.Windows.Forms
         {
             const int MaxIdle = 8;      // ~120Hz polling: input stays responsive, idle CPU stays low
             int ms = nextTimerMs < 0 ? MaxIdle : Math.Min(nextTimerMs, MaxIdle);
+            // iOS: the main thread's wait is UIKit's run loop, as AppKit's event wait is on macOS -- a
+            // managed wait there left UIKit without the thread: no touch arrived, and no frame after the
+            // first was ever committed to the screen
+            if (OperatingSystem.IsIOS()) { IdleInRunLoop(ms); return; }
             if (ms <= 0) return;
             if (posted == null) { Thread.Sleep(ms); return; }
             if (OperatingSystem.IsWindows())
@@ -503,6 +514,11 @@ namespace System.Windows.Forms
             }
             posted.WaitOne(ms);
         }
+
+        // its own method: the iOS window layer stands on WindowsBase, which a WinForms app on another head need not ship
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        [System.Runtime.Versioning.SupportedOSPlatform("ios")]
+        private static void IdleInRunLoop(int ms) => WindowsBase::MS.Internal.Interop.UIKitWindow.RunLoop(ms);
 
         [System.Runtime.InteropServices.DllImport("user32")]
         private static extern uint MsgWaitForMultipleObjectsEx(uint count, ref IntPtr handles, uint ms, uint wakeMask, uint flags);

@@ -566,12 +566,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
                 if (root is null) continue;
 
-                // Already drawn into its owner above; it has no surface of its own to present to.
-                if (popupOverlays != null && IsCompositedIntoOwner(t)) continue;
-
                 // This window is hosted INSIDE a non-WPF app (a WinForms ElementHost): hand its scene
                 // to that host, which composites it into its own frame at the hosting control's rect.
-                // Deliberately before EnsureSurface -- a hosted window must never acquire a swap chain.
+                // Deliberately before EnsureSurface -- a hosted window must never acquire a swap chain --
+                // and before the popups drawn into their owners: on iOS a hosted window is a view with
+                // no surface of its own, as a popup is, and its owner is the host's, not WPF's; taken
+                // for a popup, it was drawn into no window at all.
                 if (HostedWpfContent.Any && HostedWpfContent.IsClaimed(t.Hwnd))
                 {
                     HostedWpfContent.Publish(t.Hwnd, root, t.Width, t.Height);
@@ -581,6 +581,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     NotePresented(t.Hwnd);
                     continue;
                 }
+
+                // Already drawn into its owner above; it has no surface of its own to present to.
+                if (popupOverlays != null && IsCompositedIntoOwner(t)) continue;
 
                 if (s_logPath != null && (_diagCount < 5 || _diagCount % 30 == 0) && _diagCount < 200)
                 {
@@ -696,6 +699,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 MilTarget t = kv.Value;
                 if (!IsCompositedIntoOwner(t) || t.IsBitmap || t.Hwnd == 0 || t.RootHandle == 0) continue;
+                if (HostedWpfContent.Any && HostedWpfContent.IsClaimed(t.Hwnd)) continue;   // its host draws it
                 if (t.Width <= 0 || t.Height <= 0) continue;
 
                 SceneVisual? root = _engine.VisualByHandle(t.RootHandle);

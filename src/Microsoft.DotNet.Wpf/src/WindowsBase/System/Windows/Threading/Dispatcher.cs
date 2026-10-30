@@ -2071,32 +2071,6 @@ namespace System.Windows.Threading
                 return;
             }
 
-            // iOS is the same shape of problem as the browser: UIKit owns the main run loop and
-            // UIApplicationMain never returns, so the dispatcher cannot own the loop -- it has to be
-            // a guest in it, driven by CADisplayLink (the iOS analog of requestAnimationFrame).
-            // Blocking here is not merely slower, it is fatal: Application.Run/Dispatcher.Run is
-            // reached from inside a UIKit callback (scene:willConnectToSession:), so the blocking
-            // loop below would never return to UIKit, the scene would stay half-connected and its
-            // window would never be composited -- the app renders and presents every frame
-            // correctly, and the screen stays blank.
-            if (OperatingSystem.IsIOS())
-            {
-                if (_frameDepth > 0)
-                {
-                    throw new NotSupportedException("Nested dispatcher frames (modal loops) are not supported on iOS.");
-                }
-                // One UI thread. The display link fires on the main thread and UIKitWindow keeps ONE
-                // tick, so a Dispatcher.Run anywhere else would replace the main thread's pump with
-                // this one's and have the main thread drain another thread's queue.
-                if (!MS.Internal.Interop.UIKitWindow.IsMainThread)
-                {
-                    throw new InvalidOperationException(
-                        "iOS has one UI thread: Dispatcher.Run is supported on the main thread only.");
-                }
-                RunIosPump(frame);
-                return;
-            }
-
             // Android is the same problem again, and fatal in the same way: Dispatcher.Run is reached
             // from inside Activity.onCreate, which is a callback on the main Looper. Blocking there
             // never returns to the Looper, so the activity stays half-created, its window is never
@@ -2405,111 +2379,11 @@ namespace System.Windows.Threading
             }
         }
 
-        // iOS replacement for PushFrameImpl's blocking loop, and the counterpart of
-        // RunBrowserPumpAsync: install a display-linked tick and RETURN, leaving the run loop to
-        // UIKit (which must get it back -- see the note in PushFrameImpl).
-        //
-        // Synchronous, unlike the browser pump: CADisplayLink delivers its callback on the main
-        // thread, which is already the dispatcher thread, so the tick body can run directly inside
-        // it. Awaiting instead would risk resuming the continuation on a thread-pool thread, and
-        // ProcessQueue has hard UI-thread affinity.
-        private void RunIosPump(DispatcherFrame frame)
-        {
-            _frameDepth++;
-
-            var dispatcherSyncContext = new DispatcherSynchronizationContext(this);
-            if (!MS.Internal.Interop.UIKitWindow.StartDisplayLink(() => PumpIosTick(frame, dispatcherSyncContext)))
-            {
-                // Not running under UIKit (no CADisplayLink / no run loop): nothing can drive the
-                // queue, so unwind rather than leaving a frame pushed forever.
-                _frameDepth--;
-                return;
-            }
-
-            // Idle like every other platform: the Win32/macOS loops block in WaitForWork until
-            // something is queued, so a window that has rendered its content costs nothing until it
-            // changes. A display link left running would instead tick 60-120x/second forever --
-            // on a phone that is the difference between an idle app and a flat battery. Signal() is
-            // raised whenever work is queued or a timer's due time moves, so it is exactly the edge
-            // that must un-park the link; PumpIosTick parks it again once the queue drains.
-            _runLoop.Woken = MS.Internal.Interop.UIKitWindow.RequestWake;
-        }
-
-        // One CADisplayLink tick: promote due timers, then drain the operation queue. Mirrors the
-        // browser pump's body; there is no native event drain because UIKit delivers touches
-        // straight into UIKitWindow's touch handlers rather than queueing them for us.
-        private void PumpIosTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
-        {
-            if (_runLoop is null || !frame.Continue)
-            {
-                MS.Internal.Interop.UIKitWindow.StopDisplayLink();
-                _frameDepth--;
-                if (_frameDepth == 0)
-                {
-                    _exitAllFrames = false;
-                    if (_hasShutdownStarted)
-                    {
-                        ShutdownImpl();
-                    }
-                }
-                return;
-            }
-
-            if (_disableProcessingCount > 0)
-            {
-                throw new InvalidOperationException(SR.DispatcherProcessingDisabledButStillPumping);
-            }
-
-            SynchronizationContext oldSyncContext = SynchronizationContext.Current;
-            SynchronizationContext.SetSynchronizationContext(dispatcherSyncContext);
-            try
-            {
-                if (_dueTimeFound && (_dueTimeInTicks - Environment.TickCount) <= 0)
-                {
-                    PromoteTimers(Environment.TickCount);
-                }
-
-                // ProcessQueue services ONE operation, so drain back-to-back like the Win32/macOS
-                // loops -- bounded by a frame-ish budget so a flood cannot starve UIKit's run loop
-                // (input, animation and the present all ride it).
-                long drain0 = System.Diagnostics.Stopwatch.GetTimestamp();
-                long drainBudget = System.Diagnostics.Stopwatch.Frequency / 80;   // ~12.5ms
-                do
-                {
-                    ProcessQueue();
-                }
-                while (_queue.MaxPriority is not (DispatcherPriority.Invalid or DispatcherPriority.Inactive)
-                       && System.Diagnostics.Stopwatch.GetTimestamp() - drain0 < drainBudget
-                       && frame.Continue);
-
-                RaiseIdleIfQuiescent();
-
-                // Park the link if nothing is left to do, so the app renders on change and then
-                // idles (the iOS spelling of WaitForWork's block). Three cases:
-                //   queue still has work  -> keep ticking, drain it next frame
-                //   only a timer pending  -> park, and schedule a one-shot wake at its due time
-                //   nothing at all        -> park; Signal() (via _runLoop.Woken) revives us
-                if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
-                {
-                    if (_dueTimeFound)
-                    {
-                        MS.Internal.Interop.UIKitWindow.ScheduleWake((_dueTimeInTicks - Environment.TickCount) / 1000.0);
-                    }
-                    MS.Internal.Interop.UIKitWindow.SetDisplayLinkPaused(true);
-                }
-            }
-            finally
-            {
-                SynchronizationContext.SetSynchronizationContext(oldSyncContext);
-            }
-        }
-
-        // Android replacement for PushFrameImpl's blocking loop, and the exact counterpart of
-        // RunIosPump: install a display-aligned per-frame callback (Choreographer, the Android
-        // spelling of CADisplayLink / requestAnimationFrame) and RETURN, leaving the main Looper to
-        // Android -- which must get it back, see the note in PushFrameImpl. Synchronous for the same
-        // reason the iOS pump is: the callback is delivered on the UI thread, which is already the
-        // dispatcher thread, and ProcessQueue has hard UI-thread affinity.
+        // Android replacement for PushFrameImpl's blocking loop: install a display-aligned per-frame
+        // callback (Choreographer, the Android spelling of requestAnimationFrame) and RETURN, leaving
+        // the main Looper to Android -- which must get it back, see the note in PushFrameImpl.
+        // Synchronous: the callback is delivered on the UI thread, which is already the dispatcher
+        // thread, and ProcessQueue has hard UI-thread affinity.
         private void RunAndroidPump(DispatcherFrame frame)
         {
             // One UI thread (see AndroidWindow.StartFrameCallback); refused before any state changes.
@@ -2532,8 +2406,8 @@ namespace System.Windows.Threading
             _runLoop.Woken = MS.Internal.Interop.AndroidWindow.RequestWake;
         }
 
-        // One Choreographer tick: promote due timers, then drain the operation queue. Mirrors
-        // PumpIosTick; there is no native event drain because Android delivers touches straight into
+        // One Choreographer tick: promote due timers, then drain the operation queue. There is no
+        // native event drain because Android delivers touches straight into
         // AndroidWindow.NotifyTouch rather than queueing them for us.
         private void PumpAndroidTick(DispatcherFrame frame, SynchronizationContext dispatcherSyncContext)
         {
@@ -2582,7 +2456,8 @@ namespace System.Windows.Threading
                 RaiseIdleIfQuiescent();
 
                 // Park the pump if nothing is left to do (the Android spelling of WaitForWork's
-                // block); see the three cases spelled out in PumpIosTick.
+                // block): work still queued keeps it ticking; only a timer pending parks it with a
+                // one-shot wake at its due time; nothing at all parks it until Signal() revives it.
                 if (_queue.MaxPriority is DispatcherPriority.Invalid or DispatcherPriority.Inactive)
                 {
                     if (_dueTimeFound)
@@ -2660,6 +2535,25 @@ namespace System.Windows.Threading
                 // polls that have no notification of their own (CocoaWindow.DetectResizes) going.
                 int cap = (timeout < 0 || timeout > IdleEventWaitCapMs) ? IdleEventWaitCapMs : timeout;
                 MS.Internal.Interop.CocoaWindow.WaitForEvents(cap);
+                runLoop.TakeSignal();   // the signal that ended it is spent
+                return _runLoop != null;
+            }
+
+            // iOS: the same wait in UIKit's run loop. UIApplicationMain has started it and the app's Main
+            // was called from it (once its scene had connected), so the main thread is the run loop's
+            // as on macOS: running it here delivers touches, keys and layout, lets Core Animation commit
+            // what was presented, and a nested frame -- ShowDialog, an Invoke's wait -- is just another
+            // turn of this loop. (The pump used to be a CADisplayLink guest that returned from
+            // Dispatcher.Run, and a nested frame was refused.) Posted work signals the run-loop source,
+            // which ends the wait.
+            if (OperatingSystem.IsIOS() && MS.Internal.Interop.UIKitWindow.IsMainThread)
+            {
+                if (runLoop.TakeSignal())
+                {
+                    MS.Internal.Interop.UIKitWindow.WaitForEvents(0);
+                    return _runLoop != null;
+                }
+                MS.Internal.Interop.UIKitWindow.WaitForEvents(timeout);
                 runLoop.TakeSignal();   // the signal that ended it is spent
                 return _runLoop != null;
             }
