@@ -371,6 +371,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private readonly Dictionary<long, CachedLayer> _layerCache = new();
         // Window surfaces drawn directly: their bake asked for paper from under the window (see CollectVisual)
         private readonly HashSet<long> _directSurfaces = new();
+        // window surfaces seen once and drawn directly, by layer key: the next sighting is kept (see CollectVisual)
+        private readonly Dictionary<long, long> _surfaceSightings = new();
 
         /// <summary>A blurred drop shadow shared by every layer bake with the same silhouette (see
         /// ShadowSilhouetteKey). Outlives the layers that use it: each use refreshes LastFrame, and
@@ -1759,6 +1761,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // Full-target bakes are clipped only by the render target, and stable region
                     // bakes only by their own region, so the cached content is position-complete;
                     // the composite scissors to the live clip.
+                    // A window surface is kept only once it has been seen as it is now: the first time
+                    // a content appears it is drawn directly. A window being resized is repainted at a
+                    // new size every frame, and each one was baked into a texture of that size, created
+                    // for it (slow on the GL backend) and never drawn from again -- ~40 of them a frame,
+                    // most of the time a resize step took. What stays as it is is kept from its second
+                    // frame on.
+                    if (v.CacheAsSurface && s_surfaces && !fullTarget && v.Effect == null && v.ClipGeometry == null
+                        && v.OpacityMask == null && !(vOpacity < 0.999 && CountDrawables(v) > 1)
+                        && !_surfaceSightings.ContainsKey(key))
+                    {
+                        if (_surfaceSightings.Count > 4096) _surfaceSightings.Clear();
+                        _surfaceSightings[key] = _frameId;
+                        EmitSubtree(v, world, inheritedOpacity * vOpacity, clip, outData, plan, width, height, outFormat);
+                        return;
+                    }
+                    _surfaceSightings.Remove(key);
                     Scissor bakeClip = fullTarget ? new Scissor((int)_devOX, (int)_devOY, width, height)
                         : stableRegion ? region : clip;
                     _layerCache[key] = cl = RenderLayerToCache(v, world, region, bakeClip, plan, width, height,

@@ -771,17 +771,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // thing the windowing traces cannot show -- a window can be created, shown and unoccluded
             // and still display nothing, because presenting it is a separate step driven by WPF having
             // composed a frame for it.
-            if (s_tracePresent)
-            {
-                System.Console.Error.WriteLine(
-                    $"[present] hwnd=0x{t.Hwnd:x} {t.Width}x{t.Height} visible=" +
-                    Platform.NativePlatform.IsWindowVisible((IntPtr)t.Hwnd));
-            }
-
             // Nothing to present to. Asking for the next texture of a Fifo swap chain whose surface
             // the compositor has stopped scheduling BLOCKS -- on the UI thread, until the window is
-            // visible again -- so this check has to come before the acquire, not after.
-            if (!Platform.NativePlatform.IsWindowVisible((IntPtr)t.Hwnd))
+            // visible again -- so this check has to come before the acquire, not after. Asked once a
+            // frame: the windowing layer counts the frames it lets through to a surface not yet shown.
+            bool visible = Platform.NativePlatform.IsWindowVisible((IntPtr)t.Hwnd);
+            if (s_tracePresent)
+                System.Console.Error.WriteLine($"[present] hwnd=0x{t.Hwnd:x} {t.Width}x{t.Height} visible={visible}");
+            if (!visible)
             {
                 return;
             }

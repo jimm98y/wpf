@@ -157,6 +157,26 @@ namespace MS.Internal.Interop.Wayland
         internal bool IsVisible => !_destroyed && !_hidden && IsMapped && (_windowState & LibdecorWindowState.Suspended) == 0
             && (_xdgPopup == IntPtr.Zero || _popupParent is not { } parent || (parent._xdgPopup != IntPtr.Zero ? parent._onScreen && parent.IsVisible : parent.IsVisible));
 
+        /// <summary>
+        /// Whether a frame may be presented now (asked once a frame by the compositor of WPF's windows).
+        /// A Fifo swap waits for the frame callback of the frame before, which comes only from a surface
+        /// the compositor shows -- and whether it shows one is said by wl_surface.enter, not by anything
+        /// this side knows: a popup of a window nothing presents, a window hidden as it closes. So a
+        /// surface not on an output yet gets ONE frame (the one that maps it) and then none until it is
+        /// on screen; without this, a frame for such a window hung the app inside eglSwapBuffers.
+        /// </summary>
+        internal bool CanPresent()
+        {
+            if (!IsVisible) return false;
+            if (_outputsEntered > 0) return true;
+            if (_framePending) return false;
+            _framePending = true;
+            return true;
+        }
+
+        private int _outputsEntered;   // outputs the surface is on (wl_surface.enter less leave)
+        private bool _framePending;    // a frame went to the surface while it was on none
+
         /// <summary>Whether the surface has a role the compositor shows (a toplevel, or a popup with a
         /// parent) and has been configured: only then may anything be presented into it.</summary>
         public bool IsMapped => !_destroyed && _configured && (_frame != IntPtr.Zero || _xdgPopup != IntPtr.Zero);
@@ -184,7 +204,7 @@ namespace MS.Internal.Interop.Wayland
                 x = y = 0;
                 FromHandle(s)?.GetClientScreenOriginPixels(out x, out y);
             };
-            WaylandDisplay.WindowVisibleQuery ??= static h => FromHandle(h)?.IsVisible ?? true;
+            WaylandDisplay.WindowVisibleQuery ??= static h => FromHandle(h)?.CanPresent() ?? true;
             WaylandDisplay.EnsureInitialized();
         }
 
@@ -781,6 +801,8 @@ namespace MS.Internal.Interop.Wayland
                 WaylandWindow? w = FromUserData(userData);
                 if (w is null) return;
                 w._onScreen = true;
+                w._outputsEntered++;
+                w._framePending = false;
                 w.DropDialog();   // on screen, so placed: an ordinary window from now on
                 lock (WaylandDisplay.Outputs)
                 {
@@ -797,7 +819,15 @@ namespace MS.Internal.Interop.Wayland
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnSurfaceLeave(IntPtr userData, IntPtr surface, IntPtr output) { }
+        private static void OnSurfaceLeave(IntPtr userData, IntPtr surface, IntPtr output)
+        {
+            try
+            {
+                WaylandWindow? w = FromUserData(userData);
+                if (w is not null && w._outputsEntered > 0) w._outputsEntered--;
+            }
+            catch { }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnPreferredBufferScale(IntPtr userData, IntPtr surface, int factor)
@@ -1009,12 +1039,16 @@ namespace MS.Internal.Interop.Wayland
 
             if (!visible)
             {
+                // off every output now, and shown again only by the next frame (see CanPresent)
+                _outputsEntered = 0;
+                _framePending = false;
                 Wl.Request(_surface, WL_SURFACE_ATTACH,
                     WlArgument.Ptr(IntPtr.Zero), WlArgument.Int(0), WlArgument.Int(0));
                 Wl.Request(_surface, WL_SURFACE_COMMIT);
             }
             else
             {
+                _framePending = false;
                 Wl.Request(_surface, WL_SURFACE_DAMAGE,
                     WlArgument.Int(0), WlArgument.Int(0), WlArgument.Int(int.MaxValue), WlArgument.Int(int.MaxValue));
                 Wl.Request(_surface, WL_SURFACE_COMMIT);

@@ -413,14 +413,13 @@ namespace System.Windows.Forms
 				return;
 			}
 			// The compositor sends a size for each step of a drag and shows the window at that size once a
-			// buffer of it is committed. Laying the form out, running what it posts itself, the embedded WPF
-			// trees' frame and the render take a few hundred milliseconds here, and the edge trailed the
-			// pointer by all of it. So each step commits the last frame at the new size at once -- the edge
-			// follows the pointer, as a native window's does -- and the form is laid out and drawn at the
-			// latest size when the drag pauses, or every half second while it goes on (Present).
+			// buffer of it is committed. So each step commits the last frame at the new size at once -- the
+			// edge follows the pointer, as a native window's does -- and the form is laid out and drawn at
+			// the latest size as soon as the one before is done (Present): sizes that arrive meanwhile are
+			// folded into one. Held back until the drag paused (or every half second), the content moved in
+			// jumps while the edge moved smoothly.
 			_pendingW = logicalW;
 			_pendingH = logicalH;
-			_lastConfigure = Environment.TickCount64;
 			if (_resizing)
 				return;
 			if (_wgpu != null && _ready) {
@@ -430,14 +429,10 @@ namespace System.Windows.Forms
 			}
 		}
 
-		/// <summary>The size the compositor gave last, laid out and drawn: when the drag has paused (or not
-		/// for a while), from the idle frame.</summary>
+		/// <summary>The size the compositor gave last, laid out and drawn, from the idle frame.</summary>
 		private void ApplyPendingSize ()
 		{
 			if (_pendingW == 0 || _resizing)
-				return;
-			long now = Environment.TickCount64;
-			if (now - _lastConfigure < 100 && now - _lastFullResize < 500)
 				return;
 			_resizing = true;
 			try {
@@ -448,11 +443,9 @@ namespace System.Windows.Forms
 				}
 			} finally {
 				_resizing = false;
-				_lastFullResize = Environment.TickCount64;
 			}
 		}
 
-		private long _lastConfigure, _lastFullResize;
 		private bool _resizing;
 		private int _pendingW, _pendingH;
 
