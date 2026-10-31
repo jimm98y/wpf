@@ -33,6 +33,7 @@ OS_PROVIDED = {
     # macOS
     "helvetica neue", "helvetica", "apple symbols", "menlo", "monaco", "times", "geneva",
     "apple color emoji", "sf pro", "sf pro text", "lucida grande", "courier",
+    "tahoma", "microsoft sans serif",                    # /System/Library/Fonts/Supplemental
     # Linux (the head lists these as prerequisites: fonts-liberation, fonts-dejavu-core)
     "liberation sans", "liberation serif", "liberation mono",
     "dejavu sans", "dejavu serif", "dejavu sans mono",

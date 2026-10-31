@@ -44,7 +44,28 @@ public static unsafe partial class Exports
         return v;
     }
 
-    private static int SystemMetric(int index)
+    /// <summary>
+    /// GetSystemMetrics as a DPI-aware process gets it: the sizes (frames, borders, captions, scroll bars,
+    /// icons) at the system DPI, as Windows reports them -- 8 for SM_CXFRAME at 200%, not 4. The values
+    /// were Windows' 96-dpi ones on every display, and a window drawing its own frame from them (Telerik's
+    /// ribbon window: SM_CXFRAME + SM_CXPADDEDBORDER) had a resize border half as wide as it should be,
+    /// two pixels a side at 200% -- its corners could hardly be taken hold of.
+    /// </summary>
+    private static int SystemMetric(int index) => SystemMetricForDpi(index, SystemDpi);
+
+    private static int SystemMetricForDpi(int index, uint dpi)
+    {
+        int value = SystemMetricAt96(index);
+        if (dpi == 0 || dpi == 96 || !ScalesWithDpi(index)) return value;
+        return (int)Math.Round(value * (dpi / 96.0));
+    }
+
+    // The metrics that are sizes; the screen, the counts and the flags are not.
+    private static bool ScalesWithDpi(int index) => index is
+        >= 2 and <= 4 or >= 7 and <= 15 or 20 or 21 or >= 28 and <= 39 or 45 or 46 or 47 or 48 or
+        >= 49 and <= 55 or 57 or 58 or 68 or 69 or 71 or 72 or 92;
+
+    private static int SystemMetricAt96(int index)
     {
         var main = Screens.All()[0];
         RECT v = VirtualScreen();
@@ -92,7 +113,7 @@ public static unsafe partial class Exports
     }
 
     [Win32Export("GetSystemMetrics")] public static int GetSystemMetrics(int index) => SystemMetric(index);
-    [Win32Export("GetSystemMetricsForDpi")] public static int GetSystemMetricsForDpi(int index, uint dpi) => SystemMetric(index);
+    [Win32Export("GetSystemMetricsForDpi")] public static int GetSystemMetricsForDpi(int index, uint dpi) => SystemMetricForDpi(index, dpi);
 
     private static int SystemParameter(uint action, uint param, void* pv, bool wide = true)
     {

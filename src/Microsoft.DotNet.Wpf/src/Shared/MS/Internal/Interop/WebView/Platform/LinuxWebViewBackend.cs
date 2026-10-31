@@ -87,10 +87,12 @@ namespace MS.Internal.Interop.WebView
                 return _attach.Task;
             }
 
-            // The handle IS the parent wl_surface* on this head, and it is stable for the window's
-            // life, so it can be handed straight to the Wayland layer.
+            // The parent is the window's wl_surface*, which stands behind its handle (WaylandWindow) and is
+            // stable for the window's life. Asked through AppContext: this file is built into assemblies
+            // that do not see the Wayland layer.
+            IntPtr parent = AppContext.GetData("WpfWebGpu.Wayland.SurfaceOf") is Func<IntPtr, IntPtr> surfaceOf ? surfaceOf(ownerWindow) : ownerWindow;
             object created = LinuxWebViewRegistration.Invoke(
-                LinuxWebViewCommands.CreateSubsurface, ownerWindow, 0, 0, 1, 1);
+                LinuxWebViewCommands.CreateSubsurface, parent, 0, 0, 1, 1);
 
             _subsurface = created is int id ? id : 0;
 

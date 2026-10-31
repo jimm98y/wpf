@@ -468,14 +468,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static readonly string[] s_sansSubstitutes = { "Liberation Sans", "Arial", "Helvetica", "Selawik", "DejaVu Sans", "Roboto", "Droid Sans" };
         private static readonly string[] s_serifSubstitutes = { "Liberation Serif", "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" };
         private static readonly string[] s_monoSubstitutes = { "Liberation Mono", "Courier New", "Cascadia Mono", "Cascadia Code", "Menlo", "DejaVu Sans Mono", "Droid Sans Mono" };
+        // Calibri and Cambria have metric-compatible open faces of their own (WpfWebGpu.Fonts carries both)
+        private static readonly string[] s_calibriSubstitutes = { "Carlito", "Liberation Sans", "Arial", "Helvetica", "Selawik", "DejaVu Sans", "Roboto", "Droid Sans" };
+        private static readonly string[] s_cambriaSubstitutes = { "Caladea", "Liberation Serif", "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" };
         private static readonly string[] s_uiSubstitutes = { "Selawik", "Liberation Sans", "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans", "Roboto", "Droid Sans" };
         private static readonly Dictionary<string, string[]> s_substitutes = new(StringComparer.OrdinalIgnoreCase)
         {
             ["Microsoft Sans Serif"] = s_sansSubstitutes, ["MS Sans Serif"] = s_sansSubstitutes, ["MS Shell Dlg"] = s_sansSubstitutes,
             ["MS Shell Dlg 2"] = s_sansSubstitutes, ["Arial"] = s_sansSubstitutes, ["Tahoma"] = s_sansSubstitutes, ["Verdana"] = s_sansSubstitutes,
-            ["Calibri"] = s_sansSubstitutes, ["Trebuchet MS"] = s_sansSubstitutes, ["Arial Narrow"] = s_sansSubstitutes,
+            ["Calibri"] = s_calibriSubstitutes, ["Trebuchet MS"] = s_sansSubstitutes, ["Arial Narrow"] = s_sansSubstitutes,
             ["Segoe UI"] = s_uiSubstitutes, ["Segoe UI Semibold"] = s_uiSubstitutes, ["Segoe UI Light"] = s_uiSubstitutes, ["Segoe UI Variable"] = s_uiSubstitutes,
-            ["Times New Roman"] = s_serifSubstitutes, ["Cambria"] = s_serifSubstitutes, ["Georgia"] = s_serifSubstitutes, ["Palatino Linotype"] = s_serifSubstitutes,
+            ["Times New Roman"] = s_serifSubstitutes, ["Cambria"] = s_cambriaSubstitutes, ["Georgia"] = s_serifSubstitutes, ["Palatino Linotype"] = s_serifSubstitutes,
             ["Courier New"] = s_monoSubstitutes, ["Consolas"] = s_monoSubstitutes, ["Lucida Console"] = s_monoSubstitutes, ["Courier"] = s_monoSubstitutes,
         };
 

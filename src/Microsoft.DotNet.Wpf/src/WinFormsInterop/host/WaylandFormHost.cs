@@ -15,9 +15,11 @@
 // The forms' screen is that space at the driver's scale: a form's client origin there is the toplevel's
 // client origin, so a menu the driver opens at a point of the screen lands at that point of the window.
 //
-// POPUPS of the driver -- menus, drop-downs, their shadows -- are drawn into the form's own surface, as
-// WPF's popups are drawn into their owner's on this head (NativePlatform.PopupsShareOwnerSurface: the GL
-// backend has no translucent surfaces); one that reaches past the form is cut at its edge.
+// POPUPS of the driver -- menus, drop-downs, their shadows -- go to a popup layer: an xdg_popup of the
+// form's toplevel over the rectangle they cover, see-through around them, so one that reaches past the
+// form's edge is seen past it, as on Windows (CocoaHost's popup layer). The pointer over the layer is the
+// form's, at the point of the screen it is over. A form of a thread that does not read the compositor
+// connection has its popups drawn into its own surface, cut at its edge.
 //
 // A hosted WPF tree (ElementHost) is composited into the form's frame, and its window -- which the
 // compositor never shows, so never sends anything -- gets the pointer and keys that land over it from
@@ -90,6 +92,68 @@ namespace System.Windows.Forms
 			}
 		}
 
+		static WaylandFormHost ()
+		{
+			XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
+			// DefWindowProc's move and size loops (SC_MOVE, SC_SIZE, a press on a caption or a sizing edge
+			// left to the default): the compositor's interactive move and resize, from the press in hand
+			XplatUIWebGpu.BeginWindowMove ??= h => HostOf (h)?.BeginCompositorMove ();
+			XplatUIWebGpu.BeginWindowSize ??= (h, edge) => HostOf (h)?.BeginCompositorSize (edge);
+		}
+
+		private static WaylandFormHost HostOf (IntPtr formHandle)
+		{
+			lock (s_hosts)
+				foreach (WaylandFormHost h in s_hosts)
+					if (!h._closed && h._ready && h._form.IsHandleCreated && h._form.Handle == formHandle)
+						return h;
+			return null;
+		}
+
+		private void BeginCompositorMove () => OnPump (() => { if (!_closed) _window.BeginMoveDrag (); });
+
+		/// <param name="edge">WMSZ_LEFT (1) .. WMSZ_BOTTOMRIGHT (8): the hit-test code less 9.</param>
+		private void BeginCompositorSize (int edge)
+		{
+			Size min = _form.MinimumSize, max = _form.MaximumSize;
+			int minW = (int)Math.Round (min.Width * _scale), minH = (int)Math.Round (min.Height * _scale);
+			int maxW = (int)Math.Round (max.Width * _scale), maxH = (int)Math.Round (max.Height * _scale);
+			OnPump (() => { if (!_closed) _window.BeginResizeDrag (edge + 9, minW, minH, maxW, maxH); });
+		}
+
+		/// <summary>Form.WindowState was set (its own minimize and maximize buttons, SC_RESTORE): the
+		/// toplevel is minimized, maximized or restored by the compositor, as Windows does it to the window.
+		/// Nothing listened here, so those buttons changed only the form's idea of itself -- a restore put
+		/// the form back to its restore bounds inside a still maximized window, framed in white.</summary>
+		private static void ApplyWindowState (IntPtr formHandle, FormWindowState state)
+		{
+			if (s_trace) Console.WriteLine ($"[wayland form] window 0x{formHandle:x}: state {state} requested");
+			WaylandFormHost host = null;
+			lock (s_hosts)
+				foreach (WaylandFormHost h in s_hosts)
+					if (!h._closed && h._form.IsHandleCreated && h._form.Handle == formHandle) { host = h; break; }
+			if (host == null || !host._ready)
+				return;   // the window, when it is made, takes the state the form has then (MakeWindow)
+			int sw = state switch { FormWindowState.Minimized => 6, FormWindowState.Maximized => 3, _ => 9 };
+			if (s_trace) Console.WriteLine ($"[wayland form] '{host._form.Text}' state {state} requested");
+			OnPump (() => { if (!host._closed) host._window.SetWindowState (sw); });
+		}
+
+		private FormWindowState _reportedState = FormWindowState.Normal;
+
+		/// <summary>The window's state as the compositor has it, for the driver (Form.WindowState): a
+		/// caption double-click maximizes there, and a window back from the dock is no longer minimized.</summary>
+		private void ReportWindowState ()
+		{
+			if (_window == null || !_ready || _form.IsDisposed || !_form.IsHandleCreated)
+				return;
+			FormWindowState state = _window.GetWindowState () == 3 ? FormWindowState.Maximized : FormWindowState.Normal;
+			if (state == _reportedState && _driver.GetWindowState (_form.Handle) == state)
+				return;
+			_reportedState = state;
+			_driver.HostWindowState (_form.Handle, state);
+		}
+
 		internal WaylandFormHost (Form form)
 		{
 			_form = form;
@@ -98,11 +162,34 @@ namespace System.Windows.Forms
 
 		private Padding Frame => _form.IsHandleCreated ? _driver.FrameOf (_form.Handle) : Padding.Empty;
 
+		/// <summary>
+		/// What lies between the form's bounds and the window's content: the frame Windows gives the form
+		/// (the headerbar is its frame here), none for a chromeless window -- except maximized. A maximized
+		/// window that draws its own frame is, on Windows, the work area grown by the sizing frame
+		/// (SM_CXFRAME + SM_CXPADDEDBORDER) on every side, which lies off the screen; the form pads its
+		/// content by it (DotNetBar's ribbon form does). The compositor makes the window the screen exactly,
+		/// so the form is that much bigger than it and the window shows what is inside -- the padding was a
+		/// white border all round (CocoaHost.Maximize's overhang).
+		/// </summary>
+		private const int MaximizedOverhang = 4 + 4;   // SM_CXFRAME + SM_CXPADDEDBORDER at 96 dpi
+
+		private Padding Inset
+		{
+			get {
+				if (!_chromeless)
+					return Frame;
+				if (_window == null || !_ready || _popup || _form.FormBorderStyle == FormBorderStyle.None || _window.GetWindowState () != 3)
+					return Padding.Empty;
+				int o = (int)Math.Round (MaximizedOverhang * _k);   // in the form's units: 96-dpi ones scaled as it lays out
+				return new Padding (o);
+			}
+		}
+
 		/// <summary>The form's client area on the screen (driver units): what the toplevel's content shows.</summary>
 		private Rectangle ClientScreen
 		{
 			get {
-				Padding f = _chromeless ? Padding.Empty : Frame;
+				Padding f = Inset;
 				Rectangle b = _form.Bounds;
 				return new Rectangle (b.X + f.Left, b.Y + f.Top, Math.Max (1, b.Width - f.Horizontal), Math.Max (1, b.Height - f.Vertical));
 			}
@@ -141,6 +228,7 @@ namespace System.Windows.Forms
 
 		public void Show ()
 		{
+			if (s_trace) Console.WriteLine ($"[wayland form] show '{_form.Text}' {_form.Bounds} border={_form.FormBorderStyle} thread={Environment.CurrentManagedThreadId} pump={WaylandWindow.IsUiThread}");
 			_window = new WaylandWindow ();
 			// no border, or a frame the form draws itself: a toplevel without libdecor's
 			_chromeless = _form.FormBorderStyle == FormBorderStyle.None || (Frame == Padding.Empty && _form.FormBorderStyle != FormBorderStyle.None);
@@ -157,7 +245,22 @@ namespace System.Windows.Forms
 			string title = _form.Text;
 			int ox = (int)Math.Round (_form.Left * _scale), oy = (int)Math.Round (_form.Top * _scale);
 			int ow = Math.Max (1, (int)Math.Round (_form.Width * _scale)), oh = Math.Max (1, (int)Math.Round (_form.Height * _scale));
-			OnPump (() => MakeWindow (title, ox, oy, ow, oh, client.Size));
+			// A borderless form over the app's window -- a docking splitter's drag bar, a floating hint -- is
+			// a popup of that window: placed where the form says (a toplevel cannot be placed on Wayland,
+			// and GNOME put the bar wherever it liked) and never activated, so it does not take the keyboard
+			// from the window it is drawn over. The first window (a splash screen) has nothing to belong to.
+			WaylandFormHost over = _form.FormBorderStyle == FormBorderStyle.None ? OwnerHost () : null;
+			IntPtr owner = over?._window?.Handle ?? IntPtr.Zero;
+			if (owner != IntPtr.Zero)
+				_popup = true;
+			// The window a dialog belongs to: its Owner, or for a modal dialog with none the active form's,
+			// as ShowDialog takes the active window for its owner on Windows
+			IntPtr parent = IntPtr.Zero;
+			if (owner == IntPtr.Zero) {
+				WaylandFormHost of = HostOfForm (_form.Owner) ?? (_form.Modal ? OwnerHost () : null);
+				parent = of?._window?.Handle ?? IntPtr.Zero;
+			}
+			OnPump (() => MakeWindow (title, ox, oy, ow, oh, client.Size, owner, parent));
 			_form.VisibleChanged += OnVisibleChanged;
 			_form.HandleDestroyed += OnHandleDestroyed;
 			_form.LocationChanged += OnFormMoved;
@@ -169,24 +272,33 @@ namespace System.Windows.Forms
 		}
 
 		/// <summary>The toplevel, on the compositor's thread; then the form takes its place, on its own.</summary>
-		private void MakeWindow (string title, int x, int y, int width, int height, Size client)
+		private void MakeWindow (string title, int x, int y, int width, int height, Size client, IntPtr owner, IntPtr parent)
 		{
 			if (_closed)
 				return;
 			try {
 				// the outer rectangle in device pixels, as WaylandWindow takes it; the content is then set to
 				// the client exactly
-				_window.Create (title, x, y, width, height, borderless: false);
+				if (owner != IntPtr.Zero)
+					_window.Create (title, x, y, width, height, borderless: true, owner);
+				else
+					_window.Create (title, x, y, width, height, borderless: false, parent);
 			} catch (Exception e) {
 				Console.Error.WriteLine ($"WaylandFormHost: '{title}' has no window: {e.Message}");
 				_closed = true;
 				return;
 			}
-			if (_chromeless)
+			if (_chromeless && !_popup)
 				_window.SetChromeless (true);
 			_sizedTo = client;
 			_window.SetContentSize (Math.Max (1, (int)Math.Round (client.Width / _k)), Math.Max (1, (int)Math.Round (client.Height / _k)));
-			_window.NonClientHitTest = NonClientHitTest;
+			// the state the form was given before it had a window (an app that starts maximized)
+			FormWindowState initial = _driver.GetWindowState (_form.Handle);
+			if (initial == FormWindowState.Maximized)
+				_window.SetWindowState (3);
+			// No NonClientHitTest for the window layer: a press on the frame goes to the form as Windows
+			// sends it (WM_NCLBUTTONDOWN, OnNonClient), which handles its own caption buttons there and leaves
+			// the rest to DefWindowProc -- whose move and size come back here (BeginWindowMove/Size).
 			_window.Resized += OnResized;
 			_window.Closed += OnCloseRequested;
 			_window.ActiveChanged += OnActiveChanged;
@@ -222,7 +334,7 @@ namespace System.Windows.Forms
 			if (_window == null || !_ready || _form.IsDisposed || !_form.IsHandleCreated)
 				return;
 			_window.GetClientScreenOriginPixels (out int px, out int py);
-			Padding f = _chromeless ? Padding.Empty : Frame;
+			Padding f = Inset;
 			int x = (int)Math.Round (px / _scale) - f.Left, y = (int)Math.Round (py / _scale) - f.Top;
 			if (_form.Left != x || _form.Top != y)
 				XplatUI.SetWindowPos (_form.Handle, x, y, _form.Width, _form.Height);
@@ -269,15 +381,88 @@ namespace System.Windows.Forms
 				_form.BeginInvoke ((Action)(() => OnResized (logicalW, logicalH)));
 				return;
 			}
+			// The compositor sends a size for each step of a drag and shows the window at that size once a
+			// buffer of it is committed. Laying the form out, running what it posts itself, the embedded WPF
+			// trees' frame and the render take a few hundred milliseconds here, and the edge trailed the
+			// pointer by all of it. So each step commits the last frame at the new size at once -- the edge
+			// follows the pointer, as a native window's does -- and the form is laid out and drawn at the
+			// latest size when the drag pauses, or every half second while it goes on (Present).
+			_pendingW = logicalW;
+			_pendingH = logicalH;
+			_lastConfigure = Environment.TickCount64;
+			if (_resizing)
+				return;
+			if (_wgpu != null && _ready) {
+				var client = new Size ((int)Math.Round (logicalW * _k), (int)Math.Round (logicalH * _k));
+				if (client != _form.ClientSize && client.Width > 0 && client.Height > 0)
+					_wgpu.PresentLastAtSize (client.Width, client.Height);
+			}
+		}
+
+		/// <summary>The size the compositor gave last, laid out and drawn: when the drag has paused (or not
+		/// for a while), from the idle frame.</summary>
+		private void ApplyPendingSize ()
+		{
+			if (_pendingW == 0 || _resizing)
+				return;
+			long now = Environment.TickCount64;
+			if (now - _lastConfigure < 100 && now - _lastFullResize < 500)
+				return;
+			_resizing = true;
+			try {
+				while (_pendingW != 0) {
+					int pw = _pendingW, ph = _pendingH;
+					_pendingW = _pendingH = 0;
+					ResizeTo (pw, ph);
+				}
+			} finally {
+				_resizing = false;
+				_lastFullResize = Environment.TickCount64;
+			}
+		}
+
+		private long _lastConfigure, _lastFullResize;
+		private bool _resizing;
+		private int _pendingW, _pendingH;
+
+		private void ResizeTo (int logicalW, int logicalH)
+		{
+			ReportWindowState ();
 			var client = new Size ((int)Math.Round (logicalW * _k), (int)Math.Round (logicalH * _k));
 			_sizedTo = client;
-			Padding f = _chromeless ? Padding.Empty : Frame;
+			Padding f = Inset;
 			int w = client.Width + f.Horizontal, h = client.Height + f.Vertical;
-			if (w != _form.Width || h != _form.Height)
+			long t0 = System.Diagnostics.Stopwatch.GetTimestamp ();
+			bool changed = w != _form.Width || h != _form.Height;
+			if (changed)
 				XplatUI.SetWindowPos (_form.Handle, _form.Left, _form.Top, w, h);
 			SyncFromWindow ();
 			_lastVer = -1;
+			if (!changed)
+				return;
+			// A frame at the new size now, as Windows' sizing loop paints between moves: the compositor
+			// shows the window at the size it asked for only once a buffer of that size is committed, and
+			// waiting for the next idle tick -- after every other message -- made the edge trail the
+			// pointer. The messages the form posted to itself first (DotNetBar lays its ribbon out from
+			// one), then the embedded trees' frames, then the present.
+			long t1 = System.Diagnostics.Stopwatch.GetTimestamp ();
+			if (!s_inResize) {
+				s_inResize = true;
+				try { Application.DoEvents (); } finally { s_inResize = false; }
+			}
+			long t2 = System.Diagnostics.Stopwatch.GetTimestamp ();
+			EmbeddedScenes.Pump ();
+			long t3 = System.Diagnostics.Stopwatch.GetTimestamp ();
+			Present ();
+			if (s_traceResize) {
+				long t4 = System.Diagnostics.Stopwatch.GetTimestamp ();
+				static double Ms (long a, long b) => (b - a) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+				Console.WriteLine ($"[resize] {logicalW}x{logicalH} layout={Ms (t0, t1):F1}ms events={Ms (t1, t2):F1}ms embedded={Ms (t2, t3):F1}ms present={Ms (t3, t4):F1}ms [configure {_wgpu?.LastConfigureMs:F1} ms; {_wgpu?.LastTiming}]");
+			}
 		}
+
+		[ThreadStatic] private static bool s_inResize;
+		private static readonly bool s_traceResize = Environment.GetEnvironmentVariable ("WF_TRACE_RESIZE") == "1";
 
 		/// <summary>The headerbar's close button, or the compositor's close: SC_CLOSE, as Windows' does.</summary>
 		private void OnCloseRequested (IntPtr handle)
@@ -301,6 +486,10 @@ namespace System.Windows.Forms
 				return;
 			}
 			if (s_trace) Console.WriteLine ($"[wayland form] '{_form.Text}' active={active}");
+			if (active) {
+				s_activeHost = this;
+				ReportWindowState ();   // back from the dock: not minimized any more
+			}
 			_driver.HostActivate ((long)_form.Handle, active);
 			if (!active)
 				s_keyboardOwner = IntPtr.Zero;
@@ -340,6 +529,12 @@ namespace System.Windows.Forms
 
 		private bool EnsurePresenter ()
 		{
+			if (!_window.IsMapped) {
+				// no role (a popup whose owner went): nothing may be presented into it, EGL aborts
+				_wgpu?.Dispose ();
+				_wgpu = null;
+				return false;
+			}
 			if (_wgpu != null)
 				return true;
 			var ctx = ProcessGpu.Acquire ();
@@ -351,9 +546,16 @@ namespace System.Windows.Forms
 			_surfaceW = client.Width;
 			_surfaceH = client.Height;
 			_wgpu = new WgpuPresenter (ctx, surface, _surfaceW, _surfaceH, _scale, srgb: true, threadDevice: true);
-			Color bc = _form.BackColor;
-			_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			if (IsLayered ()) {
+				// a layered window (a splash with soft corners) is see-through where its picture is, as
+				// CocoaHost's: cleared to nothing, and the surface keeps the alpha the scene leaves in it
+				_wgpu.SetTransparent (true);
+			} else {
+				Color bc = _form.BackColor;
+				_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			}
 			_lastVer = -1;
+			if (s_trace) Console.WriteLine ($"[wayland form] '{_form.Text}' layered={IsLayered ()}");
 			return true;
 		}
 
@@ -361,6 +563,10 @@ namespace System.Windows.Forms
 		{
 			if (_closed || _window == null || !_ready || !_form.Visible)
 				return;
+			if (_pendingW != 0 && !_resizing) {
+				ApplyPendingSize ();   // presents itself
+				return;
+			}
 			ApplyCursor ();
 			if (!EnsurePresenter ())
 				return;
@@ -369,7 +575,8 @@ namespace System.Windows.Forms
 			if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk)
 				return;
 			Rectangle client = ClientScreen;
-			var scenes = GetScenes (client.X, client.Y);
+			var popups = s_popupLayer && WaylandWindow.IsUiThread ? new List<(object, int, int)> () : null;
+			var scenes = GetScenes (client.X, client.Y, popups, out Rectangle popupBounds);
 			Rectangle? caret = caretOn && _driver.GetCaret (_form.Handle, out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - client.X, cy - client.Y, Math.Max (1, cw), ch) : null;
 			_surfaceW = client.Width;
@@ -377,14 +584,116 @@ namespace System.Windows.Forms
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, _surfaceW, _surfaceH);
 			if (s_trace && scenes.Count > 0 && ver != _lastVer)
 				Console.WriteLine ($"[wayland form] '{_form.Text}' form={_form.Bounds} client={client} scale={_scale} ok={_lastPresentOk} scenes={scenes.Count}");
+			if (popups != null)
+				PresentPopups (popups, popupBounds);
 			_lastVer = ver;
 			_lastCaretOn = caretOn;
+		}
+
+		// ---- the popup layer -------------------------------------------------------------------------
+
+		private static readonly bool s_popupLayer = Environment.GetEnvironmentVariable ("WF_WAYLAND_POPUP_LAYER") != "0";
+		private WaylandWindow _layer;
+		private WgpuPresenter _layerWgpu;
+		private Rectangle _layerRect;           // what the layer shows, in client space (driver units)
+		private int _layerX, _layerY;           // where it was put on the virtual screen (device pixels)
+		private bool _layerDismissed, _layerCreating;
+
+		/// <summary>In a popup window (WS_POPUP) -- a menu, a drop-down, a shadow -- and not the form's own
+		/// (CocoaHost.IsPopup).</summary>
+		private bool IsPopup (IntPtr handle)
+		{
+			// up to the window that is not a child: a popup's parent is its owner, the form itself
+			Hwnd h = Hwnd.ObjectFromHandle (handle);
+			while (h?.parent != null && (h.initial_style & WindowStyles.WS_CHILD) != 0) h = h.parent;
+			if (h == null || (_form.IsHandleCreated && h.Handle == _form.Handle)) return false;
+			return (h.initial_style & WindowStyles.WS_POPUP) != 0 && h.width > 1 && h.height > 1;
+		}
+
+		/// <summary>The popups on the layer, which is put over the rectangle they cover; with none, the
+		/// layer goes.</summary>
+		private void PresentPopups (List<(object, int, int)> popups, Rectangle bounds)
+		{
+			// Making the layer waits for the compositor's configure and dispatches what comes meanwhile,
+			// which can present again: that frame waits for this one, or there were two layers, the
+			// second over the first and taking its pointer
+			if (_layerCreating)
+				return;
+			if (popups.Count == 0 || bounds.Width <= 0 || bounds.Height <= 0 || _closed) {
+				CloseLayer ();
+				return;
+			}
+			if (_layer != null && (_layerDismissed || !_layer.IsMapped))
+				CloseLayer ();
+			_window.GetClientScreenOriginPixels (out int cx, out int cy);
+			int vx = cx + (int)Math.Round (bounds.X * _scale), vy = cy + (int)Math.Round (bounds.Y * _scale);
+			int pw = Math.Max (1, (int)Math.Round (bounds.Width * _scale)), ph = Math.Max (1, (int)Math.Round (bounds.Height * _scale));
+			try {
+				if (_layer == null) {
+					var layer = new WaylandWindow ();
+					_layerCreating = true;
+					try {
+						layer.Create (string.Empty, vx, vy, pw, ph, borderless: true, _window.Handle);
+					} finally {
+						_layerCreating = false;
+					}
+					layer.Closed += _ => _layerDismissed = true;
+					_layer = layer;
+					_layerDismissed = false;
+					if (s_trace) Console.WriteLine ($"[wayland form] '{_form.Text}' popup layer 0x{_layer.Handle:x} {bounds} at ({vx},{vy})");
+				} else if (bounds != _layerRect || vx != _layerX || vy != _layerY) {
+					if (bounds.Size != _layerRect.Size)
+						_layer.SetContentSizePixels (pw, ph);
+					_layer.SetFrameOrigin (vx, vy);
+				}
+				_layerRect = bounds;
+				_layerX = vx;
+				_layerY = vy;
+				if (!_layer.IsMapped) {
+					_lastPresentOk = false;   // again on the next frame
+					return;
+				}
+				if (_layerWgpu == null) {
+					var ctx = ProcessGpu.Acquire ();
+					IntPtr surface = NativePlatform.CreateWindowSurface (ctx.Instance, _layer.Handle);
+					if (surface == IntPtr.Zero)
+						return;
+					_layerWgpu = new WgpuPresenter (ctx, surface, bounds.Width, bounds.Height, _scale, srgb: true, threadDevice: true);
+					_layerWgpu.SetTransparent (true);
+				}
+				var placed = new List<(object, int, int)> (popups.Count);
+				foreach (var (scene, x, y) in popups)
+					placed.Add ((scene, x - bounds.X, y - bounds.Y));
+				if (!_layerWgpu.PresentScenes (placed, null, bounds.Width, bounds.Height))
+					_lastPresentOk = false;
+			} catch (Exception e) {
+				Console.Error.WriteLine ($"[WaylandFormHost] popup layer failed: {e.Message}");
+				CloseLayer ();
+			}
+		}
+
+		private void CloseLayer ()
+		{
+			if (s_trace && _layer != null) Console.WriteLine ($"[wayland form] '{_form.Text}' popup layer 0x{_layer.Handle:x} closed (dismissed={_layerDismissed}, mapped={_layer.IsMapped})");
+			_layerWgpu?.Dispose ();
+			_layerWgpu = null;
+			WaylandWindow layer = _layer;
+			_layer = null;
+			_layerRect = Rectangle.Empty;
+			if (layer != null)
+				OnPump (layer.Destroy);
 		}
 
 		/// <summary>The form's windows and the windows over it -- its popups, and the WPF trees it hosts --
 		/// in client space (AndroidFormHost.GetScenes, without the surface growing to hold the popups).</summary>
 		private List<(object, int, int)> GetScenes (int ox, int oy)
+			=> GetScenes (ox, oy, null, out _);
+
+		/// <summary>With <paramref name="popups"/> given, the popup windows go there instead (the popup
+		/// layer), and <paramref name="popupBounds"/> is the rectangle they cover, in client space.</summary>
+		private List<(object, int, int)> GetScenes (int ox, int oy, List<(object, int, int)> popups, out Rectangle popupBounds)
 		{
+			popupBounds = Rectangle.Empty;
 			long[] wins = _driver.GetPresentWindows (_form.Handle);
 			var list = new List<(object, int, int)> (wins.Length / 3);
 			var roots = new List<IntPtr> (wins.Length / 3);
@@ -393,7 +702,15 @@ namespace System.Windows.Forms
 				object scene = _driver.GetWindowScene (h);
 				if (scene == null)
 					continue;
-				list.Add ((scene, (int)wins [i + 1] - ox, (int)wins [i + 2] - oy));
+				var item = (scene, (int)wins [i + 1] - ox, (int)wins [i + 2] - oy);
+				if (popups != null && IsPopup (h)) {
+					long size = _driver.GetWindowSizePacked (h);
+					var r = new Rectangle (item.Item2, item.Item3, (int)(size >> 32), (int)(size & 0xFFFFFFFF));
+					popupBounds = popupBounds.IsEmpty ? r : Rectangle.Union (popupBounds, r);
+					popups.Add (item);
+					continue;
+				}
+				list.Add (item);
 				roots.Add (Control.FromHandle (h)?.TopLevelControl is Control top && top.IsHandleCreated ? top.Handle : h);
 			}
 			var embedded = EmbeddedScenes.GetWithOwners (ox, oy);
@@ -410,6 +727,12 @@ namespace System.Windows.Forms
 			return list;
 		}
 
+		private bool IsLayered ()
+		{
+			Hwnd hwnd = _form.IsHandleCreated ? Hwnd.ObjectFromHandle (_form.Handle) : null;
+			return hwnd != null && (hwnd.initial_ex_style & WindowExStyles.WS_EX_LAYERED) != 0;
+		}
+
 		private bool CaretOn () => _driver.GetCaret (_form.Handle, out _, out _, out _, out _) && (_blink.ElapsedMilliseconds / 530) % 2 == 0;
 
 		private static float SrgbToLinear (float c) => c <= 0.04045f ? c / 12.92f : (float)Math.Pow ((c + 0.055) / 1.055, 2.4);
@@ -420,7 +743,12 @@ namespace System.Windows.Forms
 		{
 			if (!WaylandWindow.IsUiThread || (Form.ActiveForm != _form && !_pointerOver))
 				return;
-			int id = _driver.GetActiveCursor ();
+			// over the sizing border, the sizing cursor, as DefWindowProc's WM_SETCURSOR shows it
+			int id = _ncHit switch {
+				10 or 11 => 24, 12 or 15 => 22, 13 or 17 => 23, 14 or 16 => 21,
+				_ => _driver.GetActiveCursor (),
+			};
+			if (s_trace && id != _lastCursor) Console.WriteLine ($"[wayland form] cursor {_lastCursor} -> {id} (frame {_ncHit})");
 			if (id == _lastCursor)
 				return;
 			_lastCursor = id;
@@ -433,18 +761,61 @@ namespace System.Windows.Forms
 		}
 
 		private bool _pointerOver;
+		private bool _popup;                    // a popup of another form's window (see Show)
+		private static WaylandFormHost s_activeHost;
+
+		/// <summary>The window a borderless form shown now belongs to: the active form's, else the newest
+		/// framed one of this thread.</summary>
+		private static WaylandFormHost HostOfForm (Form form)
+		{
+			if (form == null) return null;
+			lock (s_hosts)
+				foreach (WaylandFormHost h in s_hosts)
+					if (h._form == form && !h._closed && h._ready && !h._popup)
+						return h;
+			return null;
+		}
+
+		private WaylandFormHost OwnerHost ()
+		{
+			WaylandFormHost active = s_activeHost;
+			if (active != null && active != this && !active._closed && active._ready && !active._popup && !active._form.InvokeRequired)
+				return active;
+			lock (s_hosts)
+				for (int i = s_hosts.Count - 1; i >= 0; i--) {
+					WaylandFormHost h = s_hosts [i];
+					if (h != this && !h._closed && h._ready && !h._popup && h._form.FormBorderStyle != FormBorderStyle.None && !h._form.InvokeRequired)
+						return h;
+				}
+			return null;
+		}
 
 		// ---- input ---------------------------------------------------------------------------
 
 		public bool Pump () => !_closed;   // input arrives through WaylandWindow's events
 
-		private bool Mine (IntPtr surface) => !_closed && _window != null && surface == _window.Handle && _form.IsHandleCreated && !_form.IsDisposed;
+		private bool Mine (IntPtr surface) => !_closed && _window != null && (surface == _window.Handle || (_layer != null && surface == _layer.Handle))
+			&& _form.IsHandleCreated && !_form.IsDisposed;
 
-		/// <summary>A hosted WPF window (an ElementHost's) under a point of the virtual screen, or zero.</summary>
-		private static IntPtr HostedWindowAt (int vx, int vy)
+		/// <summary>A hosted WPF window (an ElementHost's) under a point of the virtual screen, or zero --
+		/// only where the form's own windows put that ElementHost: its window is the control's child, clipped
+		/// to it and under the controls over it, as on Windows. Taken by its rectangle alone, it took the
+		/// presses on the docking splitter beside the canvas, which could hardly be grabbed.</summary>
+		private IntPtr HostedWindowAt (int vx, int vy)
 		{
-			IntPtr h = WaylandWindow.HitTest (vx, vy);
-			return h != IntPtr.Zero && HostedWpfContent.Any && HostedWpfContent.IsClaimed ((ulong)h) ? h : IntPtr.Zero;
+			if (!HostedWpfContent.Any)
+				return IntPtr.Zero;
+			IntPtr wpf = WaylandWindow.HitTest (vx, vy, h => HostedWpfContent.IsClaimed ((ulong)h));
+			if (wpf == IntPtr.Zero)
+				return IntPtr.Zero;
+			Control owner = Control.FromChildHandle (wpf);
+			if (owner == null || !owner.IsHandleCreated)
+				return wpf;
+			IntPtr under = _driver.WindowAtPointIn (_form.Handle, (int)Math.Floor (vx / _scale), (int)Math.Floor (vy / _scale));
+			for (Control c = Control.FromHandle (under); c != null; c = c.Parent)
+				if (c == owner)
+					return wpf;
+			return IntPtr.Zero;
 		}
 
 		private void OnMouse (WaylandWindow.MouseMessage m)
@@ -455,8 +826,17 @@ namespace System.Windows.Forms
 				_form.BeginInvoke ((Action)(() => OnMouse (m)));
 				return;
 			}
-			_window.GetClientScreenOriginPixels (out int cx, out int cy);
-			int vx = cx + m.X, vy = cy + m.Y;
+			int vx, vy;
+			if (_layer != null && m.Window == _layer.Handle) {
+				// over the popup layer: the point of the screen it shows (where it was put, whatever the
+				// compositor made of that)
+				vx = _layerX + m.X;
+				vy = _layerY + m.Y;
+			} else {
+				_window.GetClientScreenOriginPixels (out int cx, out int cy);
+				vx = cx + m.X;
+				vy = cy + m.Y;
+			}
 			if (m.Kind == 4) {
 				_pointerOver = false;
 				if (s_pointerOwner == IntPtr.Zero)
@@ -468,6 +848,10 @@ namespace System.Windows.Forms
 			// Over a hosted WPF tree, unless a WinForms control holds the mouse: that window's input, as
 			// the OS routes it to a child window on Windows. It keeps the pointer from a press to its release.
 			IntPtr wpf = s_pointerOwner != IntPtr.Zero ? s_pointerOwner : _driver.GrabHandle == IntPtr.Zero ? HostedWindowAt (vx, vy) : IntPtr.Zero;
+			if (s_trace && m.Kind == 1) {
+				IntPtr under = WaylandWindow.HitTest (vx, vy);
+				Console.WriteLine ($"[wayland form] press at ({vx},{vy}) under=0x{under:x} claimed={(under != IntPtr.Zero && HostedWpfContent.Any && HostedWpfContent.IsClaimed ((ulong)under))} grab=0x{_driver.GrabHandle:x} -> wpf=0x{wpf:x}");
+			}
 			if (wpf != IntPtr.Zero && WaylandWindow.FromHandle (wpf) is { } hosted) {
 				hosted.GetClientScreenOriginPixels (out int hx, out int hy);
 				if (m.Kind == 1) {
@@ -477,6 +861,7 @@ namespace System.Windows.Forms
 					s_pointerOwner = IntPtr.Zero;
 				}
 				_driver.InjectMouseLeaveAll ();
+				_lastCursor = int.MinValue;   // the WPF tree sets the cursor itself: set ours again on the way out
 				WaylandWindow.DeliverMouse (wpf, m.Kind, m.Button, vx - hx, vy - hy, m.Wheel);
 				Present ();
 				return;
@@ -485,11 +870,20 @@ namespace System.Windows.Forms
 				s_keyboardOwner = IntPtr.Zero;
 
 			int x = (int)Math.Floor (vx / _scale), y = (int)Math.Floor (vy / _scale);
+			if (OnNonClient (m, x, y)) {
+				Present ();
+				return;
+			}
 			IntPtr outerRoot = XplatUIWebGpu.InputRoot;
 			XplatUIWebGpu.InputRoot = _form.Handle;
 			try {
 				switch (m.Kind) {
-				case 0: _driver.InjectMouseMove (x, y, s_leftDown); break;
+				case 0:
+					// a move without the button down is Windows' WM_SETCURSOR, which ends a Cursor.Current
+					if (!s_leftDown && _driver.GrabHandle == IntPtr.Zero)
+						_driver.EndCursorOverride ();
+					_driver.InjectMouseMove (x, y, s_leftDown);
+					break;
 				case 1:
 					if (m.Button == 1) { s_leftDown = true; _driver.InjectMouseDown (x, y); }
 					else if (m.Button == 2) _driver.InjectRightDown (x, y);
@@ -504,6 +898,65 @@ namespace System.Windows.Forms
 				XplatUIWebGpu.InputRoot = outerRoot;
 			}
 			Present ();
+		}
+
+		// ---- the non-client area: what Windows sends a window about its frame ------------------------
+
+		private const int HTCLIENT = 1;
+		private int _ncHit;                  // the frame part the pointer was last over, 0 when the client
+		private long _ncPressTime;
+		private Point _ncPressAt;
+
+		/// <summary>
+		/// The pointer over the form's frame -- WM_NCHITTEST says what is there: WM_NCMOUSEMOVE, and the left
+		/// button's WM_NCLBUTTONDOWN (WM_NCLBUTTONDBLCLK for a second press soon enough) and WM_NCLBUTTONUP,
+		/// with the hit-test code and the point on the screen, as Windows sends them. A form that draws its
+		/// own frame (DotNetBar's ribbon form) handles its caption buttons from these and leaves the caption
+		/// and the edges to DefWindowProc. True when the event was the frame's.
+		/// </summary>
+		private bool OnNonClient (WaylandWindow.MouseMessage m, int x, int y)
+		{
+			// a window holding the mouse (a control that captured it) gets everything as its client's
+			if (_driver.GrabHandle != IntPtr.Zero || (m.Button != 0 && m.Button != 1) || m.Kind > 2)
+				return false;
+			IntPtr lp = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
+			// the deepest window there answers first (a ribbon's caption buttons are its client, though the
+			// form calls the strip around them caption), as Windows asks it; only a caption or an edge is
+			// the frame's
+			// The sizing border is the form's, whatever lies under it: on Windows the frame is outside the
+			// children (a ribbon form keeps a 5-pixel border there), and asked deepest-first the children
+			// reaching the edge left a band of a pixel or two to take hold of. The rest the deepest window
+			// answers first (a ribbon's caption buttons are its client, though the form calls the strip
+			// around them caption); only a caption or an edge is the frame's.
+			int hit = _form.WindowState == FormWindowState.Normal && _form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow
+				? (int)(long)XplatUI.SendMessage (_form.Handle, Msg.WM_NCHITTEST, IntPtr.Zero, lp) : 0;
+			if (hit < 10 || hit > 17)
+				hit = _driver.HostHitTest (x, y);
+			if (hit == 0) hit = HTCLIENT;
+			const int WM_NCMOUSEMOVE = 0xA0, WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2, WM_NCLBUTTONDBLCLK = 0xA3, WM_NCMOUSELEAVE = 0x2A2;
+			if (hit == HTCLIENT || hit <= 0) {
+				if (_ncHit != 0) {
+					_ncHit = 0;
+					XplatUI.SendMessage (_form.Handle, (Msg)WM_NCMOUSELEAVE, IntPtr.Zero, IntPtr.Zero);
+				}
+				return false;
+			}
+			_ncHit = hit;
+			int message = WM_NCMOUSEMOVE;
+			if (m.Kind == 1) {
+				long now = Environment.TickCount64;
+				bool second = now - _ncPressTime <= SystemInformation.DoubleClickTime
+					&& Math.Abs (x - _ncPressAt.X) <= SystemInformation.DoubleClickSize.Width / 2
+					&& Math.Abs (y - _ncPressAt.Y) <= SystemInformation.DoubleClickSize.Height / 2;
+				_ncPressTime = second ? 0 : now;
+				_ncPressAt = new Point (x, y);
+				message = second ? WM_NCLBUTTONDBLCLK : WM_NCLBUTTONDOWN;
+			} else if (m.Kind == 2) {
+				message = WM_NCLBUTTONUP;
+			}
+			if (s_trace && m.Kind != 0) Console.WriteLine ($"[wayland form] '{_form.Text}' 0x{message:x} hit {hit} at ({x},{y})");
+			XplatUI.SendMessage (_form.Handle, (Msg)message, (IntPtr)hit, lp);
+			return true;
 		}
 
 		/// <summary>A key for the window that has the keyboard (BrowserFormHost's): WM_KEYDOWN/UP and the
@@ -571,6 +1024,7 @@ namespace System.Windows.Forms
 			_form.HandleDestroyed -= OnHandleDestroyed;
 			WaylandWindow.MouseInput -= OnMouse;
 			WaylandWindow.KeyInput -= OnKey;
+			CloseLayer ();
 			_wgpu?.Dispose ();
 			_wgpu = null;
 			WaylandWindow window = _window;

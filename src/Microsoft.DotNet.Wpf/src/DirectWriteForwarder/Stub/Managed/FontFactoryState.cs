@@ -176,21 +176,25 @@ namespace MS.Internal.Text.TextInterface.Managed
             // could not be drawn, and the emoji rendered as nothing. They stay in the list after the
             // COLR face so a machine without the vendored file still resolves to something real.
             ["segoe ui emoji"] = new[] { "Twemoji Mozilla", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Symbols" },
-            ["tahoma"] = new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
-            ["ms shell dlg"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
-            ["ms shell dlg 2"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
-            ["microsoft sans serif"] = new[] { "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
-            ["arial"] = new[] { "Arial", "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
-            ["calibri"] = new[] { "Helvetica Neue", "Helvetica", "Liberation Sans", "DejaVu Sans", "Roboto", "Droid Sans" },
+            // The Windows families themselves where the system has them (macOS does), then the
+            // metric-compatible open faces WpfWebGpu.Fonts carries -- Liberation for Arial, Times New Roman
+            // and Courier New, Carlito for Calibri, Caladea for Cambria -- so text measures as on Windows.
+            // Tahoma and Microsoft Sans Serif have no permissively licensed metric clone: Liberation Sans.
+            ["tahoma"] = new[] { "Tahoma", "Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["ms shell dlg"] = new[] { "Microsoft Sans Serif", "Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["ms shell dlg 2"] = new[] { "Tahoma", "Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["microsoft sans serif"] = new[] { "Microsoft Sans Serif", "Liberation Sans", "Arial", "Helvetica", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["arial"] = new[] { "Arial", "Liberation Sans", "Helvetica Neue", "Helvetica", "DejaVu Sans", "Roboto", "Droid Sans" },
+            ["calibri"] = new[] { "Carlito", "Liberation Sans", "Helvetica Neue", "Helvetica", "DejaVu Sans", "Roboto", "Droid Sans" },
             // Cascadia Code ships with this repo (sdk/WpfWebGpu.Sdk/web/fonts), so it normally
             // resolves by its own name; the chain is for a head that does not bundle it. Nothing
             // else here has its programming ligatures, so those degrade to plain characters.
             ["cascadia code"] = new[] { "Cascadia Code", "Cascadia Mono", "Menlo", "Consolas", "DejaVu Sans Mono", "Droid Sans Mono" },
             ["cascadia mono"] = new[] { "Cascadia Mono", "Cascadia Code", "Menlo", "Consolas", "DejaVu Sans Mono", "Droid Sans Mono" },
             ["consolas"] = new[] { "Menlo", "Courier New", "Monaco", "DejaVu Sans Mono", "Droid Sans Mono", "Cutive Mono" },
-            ["courier new"] = new[] { "Courier New", "Menlo", "Monaco", "DejaVu Sans Mono", "Droid Sans Mono", "Cutive Mono" },
-            ["times new roman"] = new[] { "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" },
-            ["cambria"] = new[] { "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" },
+            ["courier new"] = new[] { "Courier New", "Liberation Mono", "Menlo", "Monaco", "DejaVu Sans Mono", "Droid Sans Mono", "Cutive Mono" },
+            ["times new roman"] = new[] { "Times New Roman", "Liberation Serif", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" },
+            ["cambria"] = new[] { "Caladea", "Liberation Serif", "Times New Roman", "Times", "DejaVu Serif", "Noto Serif", "Droid Serif" },
         };
 
         // The ultimate fallback family when nothing else resolves (a face is guaranteed to exist).

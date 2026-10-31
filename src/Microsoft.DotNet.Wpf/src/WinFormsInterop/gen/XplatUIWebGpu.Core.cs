@@ -2154,6 +2154,8 @@ namespace System.Windows.Forms
 			return 0;
 		}
 
+		private static readonly bool s_traceSysCommand = Environment.GetEnvironmentVariable("WF_TRACE_WAYLAND") == "1" || Environment.GetEnvironmentVariable("WF_TRACE_FRAMES") == "1";
+
 		internal override IntPtr DefWndProc(ref Message msg)
 		{
 			if (msg.Msg == (int)Msg.WM_NCCALCSIZE)
@@ -2173,6 +2175,8 @@ namespace System.Windows.Forms
 			if (msg.Msg == (int)Msg.WM_SYSCOMMAND && Control.FromHandle(msg.HWnd) is Form form)
 			{
 				const int SC_MOVE = 0xF010, SC_MINIMIZE = 0xF020, SC_MAXIMIZE = 0xF030, SC_CLOSE = 0xF060, SC_RESTORE = 0xF120;
+				if (s_traceSysCommand)
+					Console.WriteLine($"[syscommand] '{form.Text}' 0x{msg.WParam.ToInt64():x} state={form.WindowState} driver={GetWindowState(msg.HWnd)} bounds={form.Bounds}");
 				switch ((int)msg.WParam.ToInt64() & 0xFFF0)
 				{
 					case SC_MOVE: BeginWindowMove?.Invoke(msg.HWnd); return IntPtr.Zero;

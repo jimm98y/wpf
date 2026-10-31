@@ -6,10 +6,11 @@
 // AndroidWindow and BrowserWindow, and deliberately shaped like CocoaWindow so the change at every
 // dispatch site is symmetric with the macOS one already there.
 //
-// The window handle is the wl_surface*. It is stable for the window's lifetime (unlike Android's
-// Surface, which is destroyed and recreated under a live window, hence that backend's synthetic
-// handles), and it is exactly what WGPUSurfaceSourceWaylandSurface wants, so the handle WPF passes
-// around IS the thing the renderer builds on.
+// The window handle is a small value of its own (Handle), and the wl_surface* stands behind it
+// (Surface): a Windows window handle always fits in 32 bits, and code relies on that -- app's
+// WindowUtil.SetOwner takes owner.ToInt32(), which the 64-bit wl_surface* overflowed, so Workbench's
+// login dialog never opened (CocoaWindow's handles are small for the same reason). Input reaches WPF
+// with the handle (HandleOf); the renderer resolves the surface it builds on (SurfaceOf).
 //
 // TOPLEVELS ARE OWNED BY LIBDECOR. It creates the xdg_surface/xdg_toplevel pair, draws the GNOME
 // titlebar, and runs interactive move/resize -- see WlDecor. POPUPS are ours: libdecor has no
@@ -72,7 +73,8 @@ namespace MS.Internal.Interop.Wayland
         private const double NonClientWidthDips = 10.0;
         private const double FallbackCaptionDips = 37.0;
 
-        private IntPtr _surface;            // wl_surface* -- THE HANDLE
+        private IntPtr _surface;            // wl_surface*
+        private IntPtr _handle;             // the HWND: see the file header
         private IntPtr _frame;              // libdecor_frame* (toplevels)
         private IntPtr _xdgSurface;         // popups only
         private IntPtr _xdgPopup;           // popups only
@@ -115,7 +117,29 @@ namespace MS.Internal.Interop.Wayland
         private static IntPtr* s_fractionalScaleListener;
         private static IntPtr* s_surfaceListener;
 
-        public IntPtr Handle => _surface;
+        public IntPtr Handle => _handle;
+
+        /// <summary>The window's wl_surface*: what the compositor and the renderer are given.</summary>
+        public IntPtr Surface => _surface;
+
+        // 0x0D00_0000 up, clear of the other heads' and the shims' handle ranges (CocoaWindow's comment)
+        private static int s_nextHandle = 0x0D00_0000;
+        private static readonly Dictionary<IntPtr, WaylandWindow> s_bySurface = new();
+
+        /// <summary>The handle of the window whose wl_surface is <paramref name="surfaceOrHandle"/>;
+        /// anything else (a handle already, or a surface that is no window of ours) as it is.</summary>
+        public static IntPtr HandleOf(IntPtr surfaceOrHandle)
+        {
+            if (surfaceOrHandle == IntPtr.Zero) return IntPtr.Zero;
+            lock (s_lock) return s_bySurface.TryGetValue(surfaceOrHandle, out WaylandWindow? w) ? w._handle : surfaceOrHandle;
+        }
+
+        /// <summary>The wl_surface* of window <paramref name="handle"/>; anything else as it is.</summary>
+        public static IntPtr SurfaceOf(IntPtr handle)
+        {
+            if (handle == IntPtr.Zero) return IntPtr.Zero;
+            lock (s_lock) return s_byHandle.TryGetValue(handle, out WaylandWindow? w) && w._surface != IntPtr.Zero ? w._surface : handle;
+        }
         public bool IsBorderless => _borderless;
 
         /// <summary>
@@ -124,12 +148,17 @@ namespace MS.Internal.Interop.Wayland
         /// this, stop drawing". Presenting anyway would block the UI thread on a Fifo swap chain
         /// (see NativePlatform.IsWindowVisible).
         /// </summary>
-        internal bool IsVisible => !_destroyed && (_windowState & LibdecorWindowState.Suspended) == 0;
+        internal bool IsVisible => !_destroyed && IsMapped && (_windowState & LibdecorWindowState.Suspended) == 0;
+
+        /// <summary>Whether the surface has a role the compositor shows (a toplevel, or a popup with a
+        /// parent) and has been configured: only then may anything be presented into it.</summary>
+        public bool IsMapped => !_destroyed && _configured && (_frame != IntPtr.Zero || _xdgPopup != IntPtr.Zero);
 
         // ---- Creation -----------------------------------------------------------------------
 
         public static void EnsureApplication()
         {
+            AppContext.SetData("WpfWebGpu.Wayland.SurfaceOf", (Func<IntPtr, IntPtr>)SurfaceOf);
             WaylandDisplay.SurfaceScaleQuery ??= static s => FromHandle(s)?.GetBackingScale() ?? 1.0;
             // A borderless window (popup, menu, tooltip) is not opaque: its rounded chrome and drop
             // shadow have to composite over whatever is behind them.
@@ -208,7 +237,9 @@ namespace MS.Internal.Interop.Wayland
             _self = GCHandle.Alloc(this);
             lock (s_lock)
             {
-                s_byHandle[_surface] = this;
+                _handle = (IntPtr)System.Threading.Interlocked.Add(ref s_nextHandle, 4);
+                s_byHandle[_handle] = this;
+                s_bySurface[_surface] = this;
                 s_zOrder.Add(this);
             }
 
@@ -246,6 +277,10 @@ namespace MS.Internal.Interop.Wayland
             WlDecor.libdecor_frame_set_app_id(_frame, AppId);
             WlDecor.libdecor_frame_set_title(_frame, _title);
             WlDecor.libdecor_frame_set_min_content_size(_frame, 1, 1);
+            // an owned window (a dialog) belongs to its owner before it is shown: the compositor places it
+            // when it maps, over the owner (see SetOwnerWindow)
+            if (FromHandle(_ownerHandle) is { } owner && !ReferenceEquals(owner, this) && owner._frame != IntPtr.Zero && !owner._destroyed)
+                WlDecor.libdecor_frame_set_parent(_frame, owner._frame);
             WlDecor.libdecor_frame_map(_frame);
         }
 
@@ -288,8 +323,12 @@ namespace MS.Internal.Interop.Wayland
         /// </summary>
         private WaylandWindow? ResolveOwner()
         {
+            // the owner, if it can still parent a popup: a popup that lost its role (one below it went, see
+            // the popup stack) or a destroyed window cannot, and a popup made against it was never mapped --
+            // presenting into that surface then aborted the process inside EGL
             WaylandWindow? owner = FromHandle(_ownerHandle);
-            if (owner is not null && !ReferenceEquals(owner, this)) return owner;
+            if (owner is not null && !ReferenceEquals(owner, this) && !owner._destroyed
+                && (owner._frame != IntPtr.Zero || owner._xdgPopup != IntPtr.Zero)) return owner;
 
             // No explicit owner (WPF does not always supply one for menus): fall back to the
             // topmost mapped toplevel, which is the window the menu visually belongs to.
@@ -892,6 +931,20 @@ namespace MS.Internal.Interop.Wayland
         /// compositor (<see cref="BeginMoveDrag"/>, <see cref="BeginResizeDrag"/>) from what its own
         /// hit-testing says is there. The content then IS the window: no non-client inset.
         /// </summary>
+        /// <summary>
+        /// The window belongs to <paramref name="ownerHandle"/> (a form's Owner, a modal dialog's owner): the
+        /// compositor keeps it above that window and places it over it, as Windows centres a dialog on its
+        /// owner. Without it GNOME put every dialog in the top left corner of the screen.
+        /// </summary>
+        public void SetOwnerWindow(IntPtr ownerHandle)
+        {
+            if (_frame == IntPtr.Zero || _destroyed) return;
+            WaylandWindow? owner = FromHandle(ownerHandle);
+            IntPtr parent = owner is not null && !ReferenceEquals(owner, this) && owner._frame != IntPtr.Zero && !owner._destroyed ? owner._frame : IntPtr.Zero;
+            WlDecor.libdecor_frame_set_parent(_frame, parent);
+            WaylandDisplay.Flush();
+        }
+
         public void SetChromeless(bool chromeless)
         {
             WaylandDisplay.LogSink?.Invoke($"window 0x{_surface:x}: chromeless {chromeless} (was {_chromeless}, frame {(_frame != IntPtr.Zero)})");
@@ -935,6 +988,7 @@ namespace MS.Internal.Interop.Wayland
             int hit;
             try { hit = NonClientHitTest(_virtualX + x, _virtualY + y); }
             catch { return false; }
+            WaylandDisplay.LogSink?.Invoke($"window 0x{_handle:x}: press at ({x},{y}) of {_contentW}x{_contentH} -> WM_NCHITTEST {hit}");
             const int HTCAPTION = 2;
             if (hit == HTCAPTION)
             {
@@ -1043,7 +1097,8 @@ namespace MS.Internal.Interop.Wayland
 
             lock (s_lock)
             {
-                s_byHandle.Remove(_surface);
+                s_byHandle.Remove(_handle);
+                s_bySurface.Remove(_surface);
                 s_zOrder.Remove(this);
             }
 
@@ -1069,7 +1124,9 @@ namespace MS.Internal.Interop.Wayland
         public static WaylandWindow? FromHandle(IntPtr handle)
         {
             if (handle == IntPtr.Zero) return null;
-            lock (s_lock) return s_byHandle.TryGetValue(handle, out WaylandWindow? w) ? w : null;
+            lock (s_lock)
+                return s_byHandle.TryGetValue(handle, out WaylandWindow? w) ? w
+                     : s_bySurface.TryGetValue(handle, out w) ? w : null;   // the wl_surface* names it too
         }
 
         internal static double ScaleForSurface(IntPtr surface) => FromHandle(surface)?.GetBackingScale() ?? 1.0;
@@ -1081,7 +1138,12 @@ namespace MS.Internal.Interop.Wayland
         /// all -- there is no equivalent of NSWindow's orderedIndex -- so creation order is tracked
         /// explicitly and searched back to front.
         /// </summary>
-        public static IntPtr HitTest(int x, int y)
+        public static IntPtr HitTest(int x, int y) => HitTest(x, y, null);
+
+        /// <summary>The topmost window at a point of the virtual screen that <paramref name="accept"/> takes
+        /// (by handle): a host looking for one kind of window among those stacked there -- the WPF trees it
+        /// composites into its own surface, which lie under it in creation order.</summary>
+        public static IntPtr HitTest(int x, int y, Func<IntPtr, bool>? accept)
         {
             lock (s_lock)
             {
@@ -1091,7 +1153,7 @@ namespace MS.Internal.Interop.Wayland
                     if (w._destroyed || w._hidden) continue;
                     w.GetPixelSize(out int pw, out int ph);
                     w.GetClientScreenOriginPixels(out int ox, out int oy);
-                    if (x >= ox && x < ox + pw && y >= oy && y < oy + ph) return w._surface;
+                    if (x >= ox && x < ox + pw && y >= oy && y < oy + ph && (accept is null || accept(w._handle))) return w._handle;
                 }
             }
             return IntPtr.Zero;
@@ -1182,6 +1244,7 @@ namespace MS.Internal.Interop.Wayland
         /// </remarks>
         public void SetWindowState(int state)
         {
+            WaylandDisplay.LogSink?.Invoke($"window 0x{_handle:x}: state SW {state}");
             if (_frame == IntPtr.Zero) return;
             switch (state)
             {
@@ -1198,6 +1261,9 @@ namespace MS.Internal.Interop.Wayland
                     WlDecor.libdecor_frame_unset_maximized(_frame);
                     break;
             }
+            // now: a request left in the connection's buffer waited for whatever was sent next, and a
+            // window whose content did not change (a minimize) sent nothing
+            WaylandDisplay.Flush();
         }
 
         public static bool IsMaximized(IntPtr handle)
@@ -1296,7 +1362,7 @@ namespace MS.Internal.Interop.Wayland
             if (_closeRequested)
             {
                 _closeRequested = false;
-                Closed?.Invoke(_surface);
+                Closed?.Invoke(_handle);
             }
         }
 

@@ -652,6 +652,7 @@ namespace MS.Internal.Interop.Wayland
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
         public void GetWindowPixelSize(out int width, out int height) { throw null; }
         public static System.IntPtr HitTest(int x, int y) { throw null; }
+        public static System.IntPtr HitTest(int x, int y, System.Func<System.IntPtr, bool> accept) { throw null; }
         public static bool IsMaximized(System.IntPtr handle) { throw null; }
         public static int NextDeadlineMs() { throw null; }
         public static void PumpEvents(int maxMilliseconds) { }
@@ -672,6 +673,11 @@ namespace MS.Internal.Interop.Wayland
         public static event System.Action<MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage> KeyInput { add { } remove { } }
         public static void RunLoop(int timeoutMilliseconds) { }
         public static double PrimaryScale() { throw null; }
+        public void SetOwnerWindow(System.IntPtr ownerHandle) { }
+        public bool IsMapped { get { throw null; } }
+        public System.IntPtr Surface { get { throw null; } }
+        public static System.IntPtr HandleOf(System.IntPtr surfaceOrHandle) { throw null; }
+        public static System.IntPtr SurfaceOf(System.IntPtr handle) { throw null; }
         public static bool IsUiThread { get { throw null; } }
         public static bool ClaimUiThread() { throw null; }
         public static void DeliverMouse(System.IntPtr window, int kind, int button, int x, int y, int wheel) { }

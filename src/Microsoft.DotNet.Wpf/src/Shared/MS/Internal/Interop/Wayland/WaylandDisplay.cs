@@ -266,6 +266,8 @@ namespace MS.Internal.Interop.Wayland
                 }
                 t.GetProperty("WaylandDisplay")?.SetValue(null, Display);
                 t.GetProperty("FlushDisplay")?.SetValue(null, new Action(Flush));
+                // a window's handle is not its wl_surface (WaylandWindow's header): the renderer asks
+                t.GetProperty("SurfaceResolver")?.SetValue(null, new Func<IntPtr, IntPtr>(WaylandWindow.SurfaceOf));
 
                 if (WindowOpaqueQuery is not null)
                     t.GetProperty("WindowOpaqueQuery")?.SetValue(null, WindowOpaqueQuery);

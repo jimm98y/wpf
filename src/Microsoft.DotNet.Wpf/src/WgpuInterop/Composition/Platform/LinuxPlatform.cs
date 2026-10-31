@@ -46,6 +46,14 @@ namespace Microsoft.Wpf.Interop.WebGpu
         /// premultiplied-alpha surface so their shadow and rounded corners composite over what is
         /// behind them. Null means "assume opaque".
         /// </summary>
+        /// <summary>The wl_surface* behind a window handle (the windowing layer's handles are not its
+        /// surfaces). Null: the handle IS the surface.</summary>
+        public static Func<IntPtr, IntPtr>? SurfaceResolver
+        {
+            get => Composition.Platform.LinuxInterop.SurfaceResolver;
+            set => Composition.Platform.LinuxInterop.SurfaceResolver = value;
+        }
+
         public static Func<IntPtr, bool>? WindowOpaqueQuery
         {
             get => Composition.Platform.LinuxInterop.OpaqueQuery;

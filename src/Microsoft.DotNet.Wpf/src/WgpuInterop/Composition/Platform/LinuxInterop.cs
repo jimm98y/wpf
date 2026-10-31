@@ -27,6 +27,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         internal static IntPtr WaylandDisplay;
 
         internal static Func<IntPtr, bool>? OpaqueQuery;
+        internal static Func<IntPtr, IntPtr>? SurfaceResolver;
         internal static LinuxPlatform.WindowOriginCallback? OriginQuery;
         internal static Action? FlushDisplayHook;
 
@@ -45,7 +46,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (windowHandle == IntPtr.Zero) return IntPtr.Zero;
 
             if (WaylandDisplay != IntPtr.Zero)
-                return CreateWaylandSurface(instance, WaylandDisplay, windowHandle);
+                return CreateWaylandSurface(instance, WaylandDisplay, SurfaceResolver?.Invoke(windowHandle) ?? windowHandle);
 
             // No Wayland connection installed. Only take the X11 path when this really is an X11
             // session -- under Wayland, DISPLAY is also set (XWayland), and silently building an

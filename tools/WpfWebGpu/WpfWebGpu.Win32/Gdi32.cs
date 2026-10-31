@@ -8,6 +8,7 @@
 
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using Forms = System.Windows.Forms;
 
 namespace WpfWebGpu.Win32;
 
@@ -208,7 +209,8 @@ public static unsafe partial class Exports
             24 => -1,                          // NUMCOLORS: more than 256
             38 => 0x7E99,                      // RASTERCAPS: the usual display set
             40 => 36, 42 => 36, 44 => 51,      // ASPECTX, ASPECTY, ASPECTXY
-            88 or 90 => 96,                    // LOGPIXELSX, LOGPIXELSY
+            // LOGPIXELSX, LOGPIXELSY: the system DPI, as a DPI-aware process reads it from the screen DC
+            88 or 90 => Forms.Win32Bridge.InitialSystemDpi > 0 ? Forms.Win32Bridge.InitialSystemDpi : 96,
             104 => 0, 108 => 32,               // SIZEPALETTE, COLORRES
             116 => 60,                         // VREFRESH
             117 => h, 118 => w,                // DESKTOPVERTRES, DESKTOPHORZRES

@@ -493,8 +493,9 @@ namespace System.Windows.Forms.Integration
                 if (_source != null) MS.Internal.Interop.BrowserWindow.FromHandle(_source.Handle)?.SetParentWindow(parent);
                 return true;
             }
-            // a view of the screen likewise, made over the windows there are (UIKitWindow)
-            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid()) return true;
+            // a view of the screen likewise, made over the windows there are (UIKitWindow); and a Wayland
+            // window composited into its form's frame, placed in the virtual screen by EnsureSource
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid() || OperatingSystem.IsLinux()) return true;
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {

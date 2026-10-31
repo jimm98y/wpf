@@ -102,6 +102,7 @@ namespace MS.Internal.Interop.Wayland
         {
             s_currentName = name ?? "Arrow";
             uint shape = MapName(s_currentName);
+            WaylandDisplay.LogSink?.Invoke($"cursor {s_currentName} (shape {shape}, was {s_currentShape}) serial={WaylandInput.EnterSerial} shapeDevice={s_shapeDevice != IntPtr.Zero} pointer={s_pointer != IntPtr.Zero}");
             if (shape != s_currentShape || s_shapeDevice == IntPtr.Zero)
             {
                 s_currentShape = shape;
@@ -160,7 +161,7 @@ namespace MS.Internal.Interop.Wayland
                 if (cursor != null && cursor->image_count > 0) break;
                 cursor = null;
             }
-            if (cursor == null) return;
+            if (cursor == null) { WaylandDisplay.LogSink?.Invoke($"cursor {name}: not in the theme '{LinuxDesktopSettings.CursorTheme}'"); return; }
 
             // Frame 0. Animated cursors (the "wait" spinner) would need a timer driven off
             // image->delay; a static first frame is the right trade for now.

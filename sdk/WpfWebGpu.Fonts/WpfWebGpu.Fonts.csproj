@@ -20,7 +20,7 @@
     <PackageId>WpfWebGpu.Fonts</PackageId>
     <Version>0.1.1</Version>
     <Authors>wpf-webgpu</Authors>
-    <Description>Font bundle for the WPF-on-WebGPU stack: the families the non-Windows heads have no system copy of (Selawik for Segoe UI, Segoe Fluent Icons/MDL2 as Symbols, Cascadia Code, Noto Sans CJK, and a COLR emoji face). Consumed by WpfWebGpu.Sdk through $(WpfWebGpuFontsRoot); see each font's own LICENSE file in the package.</Description>
+    <Description>Font bundle for the WPF-on-WebGPU stack: the families the non-Windows heads have no system copy of (Selawik for Segoe UI, Liberation for Arial/Times New Roman/Courier New, Carlito for Calibri, Caladea for Cambria, Segoe Fluent Icons/MDL2 as Symbols, Cascadia Code, Noto Sans CJK, and a COLR emoji face). Consumed by WpfWebGpu.Sdk through $(WpfWebGpuFontsRoot); see each font's own LICENSE file in the package.</Description>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <EnableDefaultItems>false</EnableDefaultItems>

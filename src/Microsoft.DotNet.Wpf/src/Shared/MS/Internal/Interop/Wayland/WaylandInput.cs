@@ -39,7 +39,7 @@ namespace MS.Internal.Interop.Wayland
     /// </summary>
     internal readonly struct WaylandMouseMessage
     {
-        /// <summary>The wl_surface the event belongs to -- the WPF window handle.</summary>
+        /// <summary>The window the event belongs to: its handle (WaylandWindow.Handle), not its wl_surface.</summary>
         public IntPtr Surface { get; }
         public WaylandMouseKind Kind { get; }
         /// <summary>Linux evdev button code (BTN_LEFT = 0x110), or 0 for move/wheel.</summary>
@@ -52,7 +52,7 @@ namespace MS.Internal.Interop.Wayland
 
         public WaylandMouseMessage(IntPtr surface, WaylandMouseKind kind, int button, int x, int y, int wheel, int wheelH, int timestampMs)
         {
-            Surface = surface; Kind = kind; Button = button;
+            Surface = WaylandWindow.HandleOf(surface); Kind = kind; Button = button;
             X = x; Y = y; Wheel = wheel; WheelHorizontal = wheelH; TimestampMs = timestampMs;
         }
     }
@@ -77,7 +77,7 @@ namespace MS.Internal.Interop.Wayland
         public WaylandKeyMessage(IntPtr surface, bool isDown, uint keysym, uint scancode, string? characters,
                                  bool isRepeat, WaylandModifiers modifiers, int timestampMs)
         {
-            Surface = surface; IsDown = isDown; Keysym = keysym; Scancode = scancode;
+            Surface = WaylandWindow.HandleOf(surface); IsDown = isDown; Keysym = keysym; Scancode = scancode;
             Characters = characters; IsRepeat = isRepeat; Modifiers = modifiers; TimestampMs = timestampMs;
         }
     }
@@ -338,7 +338,7 @@ namespace MS.Internal.Interop.Wayland
                 if (sink is not null)
                 {
                     ToScreen(surface, fx, fy, out int screenX, out int screenY);
-                    handled = sink.TouchDown(surface, id, screenX, screenY, PenState.None, time);
+                    handled = sink.TouchDown(WaylandWindow.HandleOf(surface), id, screenX, screenY, PenState.None, time);
                 }
 
                 if (s_primaryTouchId >= 0 || handled) return;
@@ -389,7 +389,7 @@ namespace MS.Internal.Interop.Wayland
                 if (sink is not null)
                 {
                     ToScreen(s_touchSurface, fx, fy, out int screenX, out int screenY);
-                    sink.TouchMove(s_touchSurface, id, screenX, screenY, PenState.None, time);
+                    sink.TouchMove(WaylandWindow.HandleOf(s_touchSurface), id, screenX, screenY, PenState.None, time);
                 }
 
                 if (id != s_primaryTouchId) return;
@@ -414,7 +414,7 @@ namespace MS.Internal.Interop.Wayland
 
                 // An up names only the contact, so the seam is told there is no position and lifts
                 // it where it was last seen.
-                PlatformTouch.Sink?.TouchUp(s_touchSurface, id, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
+                PlatformTouch.Sink?.TouchUp(WaylandWindow.HandleOf(s_touchSurface), id, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
 
                 if (id == s_primaryTouchId) ReleasePromotedTouch(s_touchSurface, time);
             }
@@ -436,7 +436,7 @@ namespace MS.Internal.Interop.Wayland
             {
                 // The compositor took the whole sequence -- it started a gesture of its own, or the
                 // surface lost the touch. Every live contact is abandoned, not completed.
-                PlatformTouch.CancelAll(s_touchSurface);
+                PlatformTouch.CancelAll(WaylandWindow.HandleOf(s_touchSurface));
 
                 // The emulated mouse has no way to express "abandoned", and a button left down would
                 // be worse than one released in a place nothing was clicked -- WPF would hold capture
@@ -531,7 +531,9 @@ namespace MS.Internal.Interop.Wayland
                 FlushMotion(surface);
 
                 // A press on the frame of a window that draws its own is the system's, not the app's
-                // (WaylandWindow.NonClientPress), and so is the release that ends it.
+                // (WaylandWindow.NonClientPress), and so is the release that ends it -- if it comes: the
+                // compositor's move or resize keeps it, so the next press means it is over.
+                if (state != 0) s_nonClientPress = false;
                 if (state != 0 && button == BTN_LEFT && WaylandWindow.FromHandle(surface) is { } pressed
                     && pressed.NonClientPress(Px(s_motionX, surface), Py(s_motionY, surface), time))
                 {

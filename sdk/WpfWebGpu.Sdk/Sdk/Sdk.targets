@@ -518,9 +518,17 @@
                   Android is CBDT/CBLC (colour bitmaps) and Apple Color Emoji is sbix — so emoji
                   rendered as nothing at all off Windows. See TwemojiMozilla-LICENSE.txt.
 
-    Only these: DejaVu and Liberation are the rest of what the bundle carries, and those are already
-    installed on any normal Linux (the head lists them as prerequisites), so shipping them again
-    would add megabytes to every app for nothing. The browser and mobile heads take the whole bundle
+    Liberation    Sans, Serif and Mono: metric-compatible with Arial, Times New Roman and Courier New:
+                  the same advances and vertical metrics, so a form sized from those families lays
+                  out as on Windows. They were left to the system as "on any normal Linux", and a
+                  distribution without them (or a minimal image) drew every Arial in whatever its
+                  fallback was, at other widths. Tahoma and Microsoft Sans Serif fall back to
+                  Liberation Sans too (no permissively licensed metric clone of either exists).
+    Carlito,      metric-compatible with Calibri and Cambria, the Office families documents and
+    Caladea       reports ask for. SIL OFL 1.1, as Liberation is.
+
+    Not DejaVu: no Windows family is metric-compatible with it; it is in the bundle for the heads with
+    no font store at all. The browser and mobile heads take the whole bundle
     instead — see the scaffolding target below and @(AndroidAsset)/@(BundleResource) here — because
     there is no system font store to fall back to at all.
   -->
@@ -530,6 +538,7 @@
     <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)Selawik*.ttf" />
     <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)NotoSansCJK-Regular.ttc" Condition="Exists('$(WpfWebGpuFontsRoot)NotoSansCJK-Regular.ttc')" />
     <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)TwemojiMozilla.ttf" Condition="Exists('$(WpfWebGpuFontsRoot)TwemojiMozilla.ttf')" />
+    <_WpfWebGpuAppFont Include="$(WpfWebGpuFontsRoot)Liberation*.ttf;$(WpfWebGpuFontsRoot)Carlito*.ttf;$(WpfWebGpuFontsRoot)Caladea*.ttf" />
   </ItemGroup>
 
   <!-- macOS/Linux desktop (and any portable build, which may be run there): beside the app, in

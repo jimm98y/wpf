@@ -1669,6 +1669,21 @@ namespace System.Windows.Forms {
 		}
 
 		public DialogResult ShowDialog(IWin32Window owner) {
+			if (Environment.GetEnvironmentVariable ("WF_TRACE_HOSTS") == "1") {
+				Console.WriteLine ($"[hosts] ShowDialog '{Text}' ({GetType ().Name}) owner={owner?.GetType ().Name ?? "null"} thread={Environment.CurrentManagedThreadId}");
+				try {
+					DialogResult r = ShowDialogCore (owner);
+					Console.WriteLine ($"[hosts] ShowDialog '{Text}' returned {r}");
+					return r;
+				} catch (Exception e) {
+					Console.WriteLine ($"[hosts] ShowDialog '{Text}' threw {e}");
+					throw;
+				}
+			}
+			return ShowDialogCore (owner);
+		}
+
+		private DialogResult ShowDialogCore(IWin32Window owner) {
 			Rectangle	area;
 			bool		confined;
 			IntPtr		capture_window;

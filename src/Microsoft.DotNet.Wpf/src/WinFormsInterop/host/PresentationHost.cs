@@ -412,12 +412,17 @@ namespace System.Windows.Forms
         /// <summary>Give every visible top-level form that has no window one of its own. Menus,
         /// drop-downs and tooltips are not Forms on this stack, so they are not swept up here --
         /// they stay windows of the driver, composited into whichever host claims them.</summary>
+        // WF_TRACE_HOSTS=1: the forms considered for a window of their own, and why one was passed over
+        private static readonly bool s_traceHosts = Environment.GetEnvironmentVariable("WF_TRACE_HOSTS") == "1";
+
         private static void AdoptNewForms()
         {
             FormCollection open = Application.OpenForms;
             for (int i = 0; i < open.Count; i++)
             {
                 Form form = open[i];
+                if (s_traceHosts && form != null && !s_forms.ContainsValue(form))
+                    Console.WriteLine($"[hosts] '{form.Text}' ({form.GetType().Name}) visible={form.Visible} disposed={form.IsDisposed} otherThread={form.InvokeRequired} parent={form.Parent != null} topLevel={form.TopLevel} suppressed={s_suppressed.Contains(form)}");
                 if (form == null || form.IsDisposed || !form.Visible) continue;
                 if (form.InvokeRequired) continue;      // belongs to another UI thread
 

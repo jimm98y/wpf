@@ -85,7 +85,7 @@ namespace MS.Internal.Interop.Wayland
             if (target is null) { Accept(EffectNone); return; }
 
             ToScreen(out int sx, out int sy);
-            s_lastEffect = Guard(() => target.DragEnter(surface, sx, sy, s_offerTypes, ReadType, AllowedEffects()));
+            s_lastEffect = Guard(() => target.DragEnter(WaylandWindow.HandleOf(surface), sx, sy, s_offerTypes, ReadType, AllowedEffects()));
             Accept(s_lastEffect);
         }
 
@@ -99,7 +99,7 @@ namespace MS.Internal.Interop.Wayland
             if (target is null) return;
 
             ToScreen(out int sx, out int sy);
-            s_lastEffect = Guard(() => target.DragOver(s_surface, sx, sy, AllowedEffects()));
+            s_lastEffect = Guard(() => target.DragOver(WaylandWindow.HandleOf(s_surface), sx, sy, AllowedEffects()));
             Accept(s_lastEffect);
         }
 
@@ -122,7 +122,7 @@ namespace MS.Internal.Interop.Wayland
             if (target is not null)
             {
                 ToScreen(out int sx, out int sy);
-                effect = Guard(() => target.Drop(s_surface, sx, sy, AllowedEffects()));
+                effect = Guard(() => target.Drop(WaylandWindow.HandleOf(s_surface), sx, sy, AllowedEffects()));
             }
 
             // finish is only legal after a drop the target actually accepted, and only from v3.
@@ -260,6 +260,7 @@ namespace MS.Internal.Interop.Wayland
                                       Action<int>? giveFeedback = null)
         {
             started = false;
+            originSurface = WaylandWindow.SurfaceOf(originSurface);   // a window handle names its wl_surface
 
             if (!WaylandClipboard.IsAvailable || originSurface == IntPtr.Zero) return EffectNone;
             if (mimeTypes is null || mimeTypes.Length == 0) return EffectNone;

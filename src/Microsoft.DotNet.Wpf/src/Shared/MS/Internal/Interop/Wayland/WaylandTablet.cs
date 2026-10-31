@@ -273,7 +273,7 @@ namespace MS.Internal.Interop.Wayland
                 // proximity_out first -- but if the connection is being torn down under us, an
                 // abandoned contact would stay alive in WPF forever.
                 if (state.IsDown && state.Surface != IntPtr.Zero)
-                    PlatformTouch.Sink?.TouchCancel(state.Surface, state.ContactId);
+                    PlatformTouch.Sink?.TouchCancel(WaylandWindow.HandleOf(state.Surface), state.ContactId);
 
                 s_tools.Remove(tool);
 
@@ -467,7 +467,7 @@ namespace MS.Internal.Interop.Wayland
                 if (state.IsDown && sink is not null)
                 {
                     ToScreen(surface, state, out int moveX, out int moveY);
-                    sink.TouchMove(surface, state.ContactId, moveX, moveY, state.Pen, time);
+                    sink.TouchMove(WaylandWindow.HandleOf(surface), state.ContactId, moveX, moveY, state.Pen, time);
                 }
             }
 
@@ -479,7 +479,7 @@ namespace MS.Internal.Interop.Wayland
                 if (sink is not null)
                 {
                     ToScreen(surface, state, out int downX, out int downY);
-                    sink.TouchDown(surface, state.ContactId, downX, downY, state.Pen, time);
+                    sink.TouchDown(WaylandWindow.HandleOf(surface), state.ContactId, downX, downY, state.Pen, time);
                 }
 
                 RaiseMouse(surface, WaylandMouseKind.ButtonDown, WaylandInput.BTN_LEFT, state, time);
@@ -503,7 +503,7 @@ namespace MS.Internal.Interop.Wayland
 
                 // The up carries no position either, so the seam is told there is none and lifts the
                 // contact where it was last seen.
-                sink?.TouchUp(surface, state.ContactId, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
+                sink?.TouchUp(WaylandWindow.HandleOf(surface), state.ContactId, PlatformTouch.NoPosition, PlatformTouch.NoPosition, time);
                 RaiseMouse(surface, WaylandMouseKind.ButtonUp, WaylandInput.BTN_LEFT, state, time);
             }
 
@@ -541,7 +541,7 @@ namespace MS.Internal.Interop.Wayland
             {
                 state.IsDown = false;
                 WaylandInput.NoteButtonSerial(0, pressed: false);
-                sink?.TouchCancel(surface, state.ContactId);
+                sink?.TouchCancel(WaylandWindow.HandleOf(surface), state.ContactId);
                 RaiseMouse(surface, WaylandMouseKind.ButtonUp, WaylandInput.BTN_LEFT, state, time);
             }
 

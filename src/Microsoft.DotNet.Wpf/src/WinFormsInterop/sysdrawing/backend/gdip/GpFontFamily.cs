@@ -51,6 +51,8 @@ namespace System.Drawing.WebGpuBackend.Gdip
             ("Arial", new[] { "Liberation Sans" }),
             ("Times New Roman", new[] { "Liberation Serif" }),
             ("Courier New", new[] { "Liberation Mono" }),
+            ("Calibri", new[] { "Carlito" }),
+            ("Cambria", new[] { "Caladea" }),
         };
 
         static string StandInFor (string name)

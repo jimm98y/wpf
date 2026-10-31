@@ -262,7 +262,7 @@ namespace MS.Internal.Interop.Wayland
             IntPtr surface = FocusSurface;
             if (surface == IntPtr.Zero) return;
 
-            if (window != surface && WaylandDisplay.WindowOriginQuery != null)
+            if (WaylandWindow.SurfaceOf(window) != surface && WaylandDisplay.WindowOriginQuery != null)
             {
                 WaylandDisplay.WindowOriginQuery(window, out int originX, out int originY);
                 x += originX;
@@ -368,7 +368,7 @@ namespace MS.Internal.Interop.Wayland
             {
                 FocusSurface = surface;
                 WaylandDisplay.LogSink?.Invoke("text-input entered surface");
-                FocusChanged?.Invoke(surface, true);
+                FocusChanged?.Invoke(WaylandWindow.HandleOf(surface), true);
             }
             catch { }
         }
@@ -383,7 +383,7 @@ namespace MS.Internal.Interop.Wayland
                 IsComposing = false;
                 if (FocusSurface == surface) FocusSurface = IntPtr.Zero;
                 ResetPending();
-                FocusChanged?.Invoke(surface, false);
+                FocusChanged?.Invoke(WaylandWindow.HandleOf(surface), false);
             }
             catch { }
         }
