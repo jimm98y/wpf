@@ -196,15 +196,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         {
             PlatformKind.Android => AndroidInterop.PopupQuery?.Invoke(windowHandle) == true,
 
-            // Linux is here for the Android reason exactly -- under GLES a popup surface cannot be
-            // transparent, so a popup given its own swap chain scans out solid BLACK around its
-            // rounded chrome and shadow, which is what PopupsShareOwnerSurface exists to avoid. It is
-            // gated on that property, so WPF_LINUX_COMPOSITE_POPUPS=0 still opts a real-Vulkan box
-            // out of compositing entirely.
-            //
-            // NOT verified on a Wayland session -- there is none on the machine this was written on.
-            // What is verified is the same mis-routing on the two heads that could be run: on iOS it
-            // aborted the process, on Android it made popups invisible.
+            // Linux, when its popups are drawn into their owners (WPF_LINUX_COMPOSITE_POPUPS=1, see
+            // PopupsShareOwnerSurface): a popup then has a surface the compositor maps but nothing may
+            // be presented to.
             PlatformKind.Linux => PopupsShareOwnerSurface
                                   && LinuxInterop.PopupQuery?.Invoke(windowHandle) == true,
 
@@ -250,20 +244,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// in the order WPF asked for rather than by the platform's own view/layer ordering rules.
         /// </summary>
         /// <remarks>
-        /// Linux joins the mobile heads for the Android reason exactly, now measured rather than
-        /// assumed: on a GNOME/Wayland session the surface advertises `alphaModes: Opaque` and
-        /// nothing else (tests/WaylandSpike prints the capability list), because wgpu-hal's GLES
-        /// backend hardcodes `composite_alpha_modes: vec![Opaque]` and the GL backend is the one
-        /// that reaches the GPU under VirGL. A popup surface that cannot be transparent clears to
-        /// solid BLACK around the popup's rounded chrome and drop shadow.
+        /// Linux does NOT join them by default. The GL backend reaching the GPU under VirGL advertises
+        /// `alphaModes: Opaque` only (wgpu-hal's GLES hardcode, above), and that was taken for "cannot
+        /// be transparent" -- but the label is all it is: the EGL config wgpu picks has eight bits of
+        /// alpha, the Wayland buffer is ARGB8888, and the compositor blends the premultiplied colour
+        /// the renderer leaves in it. Measured on GNOME 46: a combo drop-down presenting its own
+        /// surface shows rounded and see-through where it should, and -- unlike one drawn into its
+        /// owner -- past the owner's edge, as on Windows.
         ///
-        /// WPF_LINUX_COMPOSITE_POPUPS=0 opts out, for a Linux box whose Vulkan is real hardware and
-        /// therefore does advertise premultiplied alpha.
+        /// WPF_LINUX_COMPOSITE_POPUPS=1 draws them into their owners again.
         /// </remarks>
         public static bool PopupsShareOwnerSurface
             => Current is PlatformKind.Android or PlatformKind.IOS
                || (Current == PlatformKind.Linux &&
-                   Environment.GetEnvironmentVariable("WPF_LINUX_COMPOSITE_POPUPS") != "0");
+                   Environment.GetEnvironmentVariable("WPF_LINUX_COMPOSITE_POPUPS") == "1");
 
         /// <summary>
         /// Whether a window is currently on screen and worth presenting to.

@@ -24,7 +24,7 @@
 // what the compositor advertises) -- see WaylandWindow's registry handler.
 //
 // Sources: xdg-shell.xml, viewporter.xml, fractional-scale-v1.xml, cursor-shape-v1.xml,
-// tablet-v2.xml (wayland-protocols, MIT).
+// tablet-v2.xml, xdg-dialog-v1.xml (wayland-protocols, MIT).
 //
 
 using System;
@@ -117,6 +117,13 @@ namespace MS.Internal.Interop.Wayland
         internal const uint XDG_POSITIONER_SET_REACTIVE = 7;
         internal const uint XDG_POSITIONER_SET_PARENT_SIZE = 8;
         internal const uint XDG_POSITIONER_SET_PARENT_CONFIGURE = 9;
+
+        internal const uint XDG_WM_DIALOG_V1_GET_XDG_DIALOG = 1;
+        internal const uint XDG_DIALOG_V1_DESTROY = 0;
+        internal const uint XDG_DIALOG_V1_SET_MODAL = 1;
+        internal const uint GTK_SHELL1_GET_GTK_SURFACE = 0;
+        internal const uint GTK_SURFACE1_SET_MODAL = 1;
+        internal const uint GTK_SURFACE1_UNSET_MODAL = 2;
 
         internal const uint XDG_SURFACE_DESTROY = 0;
         internal const uint XDG_SURFACE_GET_TOPLEVEL = 1;
@@ -384,6 +391,52 @@ namespace MS.Internal.Interop.Wayland
                     new WlMsgDef("set_destination", "ii", null, null),
                 },
                 events: Array.Empty<WlMsgDef>()),
+
+            // xdg-dialog-v1: a toplevel marked a (modal) dialog. GNOME places a dialog that has no
+            // parent at the centre of the monitor, as Windows does a CenterScreen window.
+            new WlInterfaceDef("xdg_wm_dialog_v1", 1,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                    new WlMsgDef("get_xdg_dialog", "no", "xdg_dialog_v1", "xdg_toplevel"),
+                },
+                events: Array.Empty<WlMsgDef>()),
+
+            new WlInterfaceDef("xdg_dialog_v1", 1,
+                requests: new[]
+                {
+                    new WlMsgDef("destroy", ""),
+                    new WlMsgDef("set_modal", ""),
+                    new WlMsgDef("unset_modal", ""),
+                },
+                events: Array.Empty<WlMsgDef>()),
+
+            // gtk_shell1 (mutter's own; version 1 only): the same modal hint on a GNOME without
+            // xdg-dialog-v1 -- GNOME 46, Ubuntu 24.04's.
+            new WlInterfaceDef("gtk_shell1", 1,
+                requests: new[]
+                {
+                    new WlMsgDef("get_gtk_surface", "no", "gtk_surface1", "wl_surface"),
+                    new WlMsgDef("set_startup_id", "?s", (string?)null),
+                    new WlMsgDef("system_bell", "?o", "gtk_surface1"),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("capabilities", "u", (string?)null),
+                }),
+
+            new WlInterfaceDef("gtk_surface1", 1,
+                requests: new[]
+                {
+                    new WlMsgDef("set_dbus_properties", "?s?s?s?s?s?s", null, null, null, null, null, null),
+                    new WlMsgDef("set_modal", ""),
+                    new WlMsgDef("unset_modal", ""),
+                    new WlMsgDef("present", "u", (string?)null),
+                },
+                events: new[]
+                {
+                    new WlMsgDef("configure", "a", (string?)null),
+                }),
 
             new WlInterfaceDef("wp_fractional_scale_manager_v1", 1,
                 requests: new[]

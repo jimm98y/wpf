@@ -99,6 +99,8 @@ namespace System.Windows.Forms
 			// left to the default): the compositor's interactive move and resize, from the press in hand
 			XplatUIWebGpu.BeginWindowMove ??= h => HostOf (h)?.BeginCompositorMove ();
 			XplatUIWebGpu.BeginWindowSize ??= (h, edge) => HostOf (h)?.BeginCompositorSize (edge);
+			// WindowFromPoint over a form finds the hosted WPF window under the point, its child
+			WaylandWindow.ChildWindowAt ??= (top, x, y) => HostOfWindow (top)?.HostedWindowAt (x, y) ?? IntPtr.Zero;
 		}
 
 		private static WaylandFormHost HostOf (IntPtr formHandle)
@@ -106,6 +108,15 @@ namespace System.Windows.Forms
 			lock (s_hosts)
 				foreach (WaylandFormHost h in s_hosts)
 					if (!h._closed && h._ready && h._form.IsHandleCreated && h._form.Handle == formHandle)
+						return h;
+			return null;
+		}
+
+		private static WaylandFormHost HostOfWindow (IntPtr window)
+		{
+			lock (s_hosts)
+				foreach (WaylandFormHost h in s_hosts)
+					if (!h._closed && h._ready && h._window != null && h._window.Handle == window && !h._form.InvokeRequired)
 						return h;
 			return null;
 		}
@@ -260,6 +271,10 @@ namespace System.Windows.Forms
 				WaylandFormHost of = HostOfForm (_form.Owner) ?? (_form.Modal ? OwnerHost () : null);
 				parent = of?._window?.Handle ?? IntPtr.Zero;
 			}
+			// a window the app put at the centre of the screen opens there (a toplevel cannot be placed;
+			// the compositor centres it -- WaylandWindow.CenterWhenMapped)
+			if (owner == IntPtr.Zero && parent == IntPtr.Zero && CenteredOnScreen ())
+				_window.CenterWhenMapped = true;
 			OnPump (() => MakeWindow (title, ox, oy, ow, oh, client.Size, owner, parent));
 			_form.VisibleChanged += OnVisibleChanged;
 			_form.HandleDestroyed += OnHandleDestroyed;
@@ -269,6 +284,22 @@ namespace System.Windows.Forms
 			WaylandWindow.MouseInput += OnMouse;
 			WaylandWindow.KeyInput += OnKey;
 			lock (s_hosts) s_hosts.Add (this);
+		}
+
+		/// <summary>The form is where StartPosition.CenterScreen puts it: the middle of the screen's
+		/// working area (or of its bounds), give or take a pixel of rounding.</summary>
+		private bool CenteredOnScreen ()
+		{
+			if (_form.StartPosition == FormStartPosition.CenterScreen)
+				return true;
+			Screen screen = Screen.FromRectangle (_form.Bounds);
+			Point c = new Point (_form.Left + _form.Width / 2, _form.Top + _form.Height / 2);
+			foreach (Rectangle area in new[] { screen.WorkingArea, screen.Bounds }) {
+				Point m = new Point (area.Left + area.Width / 2, area.Top + area.Height / 2);
+				if (Math.Abs (c.X - m.X) <= 1 && Math.Abs (c.Y - m.Y) <= 1)
+					return true;
+			}
+			return false;
 		}
 
 		/// <summary>The toplevel, on the compositor's thread; then the form takes its place, on its own.</summary>
@@ -854,6 +885,10 @@ namespace System.Windows.Forms
 			}
 			if (wpf != IntPtr.Zero && WaylandWindow.FromHandle (wpf) is { } hosted) {
 				hosted.GetClientScreenOriginPixels (out int hx, out int hy);
+				if (s_trace && m.Kind == 1) {
+					hosted.GetPixelSize (out int hw, out int hh);
+					Console.WriteLine ($"[wayland form] -> hosted 0x{wpf:x} at ({hx},{hy}) {hw}x{hh}: local ({vx - hx},{vy - hy}); form client {ClientScreen} scale {_scale}");
+				}
 				if (m.Kind == 1) {
 					s_pointerOwner = wpf;
 					s_keyboardOwner = wpf;

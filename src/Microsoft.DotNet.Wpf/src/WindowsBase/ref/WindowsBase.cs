@@ -675,6 +675,8 @@ namespace MS.Internal.Interop.Wayland
         public static double PrimaryScale() { throw null; }
         public void SetOwnerWindow(System.IntPtr ownerHandle) { }
         public bool IsMapped { get { throw null; } }
+        public bool CenterWhenMapped { get { throw null; } set { } }
+        public static System.Func<System.IntPtr, int, int, System.IntPtr> ChildWindowAt { get { throw null; } set { } }
         public System.IntPtr Surface { get { throw null; } }
         public static System.IntPtr HandleOf(System.IntPtr surfaceOrHandle) { throw null; }
         public static System.IntPtr SurfaceOf(System.IntPtr handle) { throw null; }

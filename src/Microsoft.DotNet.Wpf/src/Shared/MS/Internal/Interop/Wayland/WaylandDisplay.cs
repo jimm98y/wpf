@@ -66,6 +66,8 @@ namespace MS.Internal.Interop.Wayland
         public static IntPtr Viewporter { get; private set; }
         public static IntPtr FractionalScaleManager { get; private set; }
         public static IntPtr CursorShapeManager { get; private set; }
+        public static IntPtr WmDialog { get; private set; }
+        public static IntPtr GtkShell { get; private set; }
         public static IntPtr DataDeviceManager { get; private set; }
         public static IntPtr TextInputManager { get; private set; }
         public static IntPtr TabletManager { get; private set; }
@@ -220,7 +222,7 @@ namespace MS.Internal.Interop.Wayland
 
                 LogSink?.Invoke($"connected: compositor={Compositor != IntPtr.Zero} xdg_wm_base={XdgWmBase != IntPtr.Zero} " +
                                 $"seat=v{SeatVersion} viewporter={Viewporter != IntPtr.Zero} " +
-                                $"fractional={FractionalScaleManager != IntPtr.Zero} cursorShape={CursorShapeManager != IntPtr.Zero} " +
+                                $"fractional={FractionalScaleManager != IntPtr.Zero} cursorShape={CursorShapeManager != IntPtr.Zero} dialog={WmDialog != IntPtr.Zero} gtkShell={GtkShell != IntPtr.Zero} " +
                                 $"tablet={TabletManager != IntPtr.Zero} " +
                                 $"outputs={Outputs.Count} libdecor={Decor != IntPtr.Zero}");
 
@@ -347,6 +349,12 @@ namespace MS.Internal.Interop.Wayland
                         break;
                     case "wp_fractional_scale_manager_v1":
                         FractionalScaleManager = Bind(registry, name, iface, 1);
+                        break;
+                    case "gtk_shell1":
+                        GtkShell = Bind(registry, name, iface, 1);
+                        break;
+                    case "xdg_wm_dialog_v1":
+                        WmDialog = Bind(registry, name, iface, 1);
                         break;
                     case "wp_cursor_shape_manager_v1":
                         CursorShapeManager = Bind(registry, name, iface, 1);

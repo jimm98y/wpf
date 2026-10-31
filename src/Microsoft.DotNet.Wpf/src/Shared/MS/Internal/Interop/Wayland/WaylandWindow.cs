@@ -147,8 +147,15 @@ namespace MS.Internal.Interop.Wayland
         /// xdg_toplevel's SUSPENDED state, which exists for exactly this: it means "nobody can see
         /// this, stop drawing". Presenting anyway would block the UI thread on a Fifo swap chain
         /// (see NativePlatform.IsWindowVisible).
-        /// </summary>
-        internal bool IsVisible => !_destroyed && IsMapped && (_windowState & LibdecorWindowState.Suspended) == 0;
+        ///
+        /// Nor is a window that was hidden (SetVisible(false): its buffer taken away). WPF hides a
+        /// popup as it closes and destroys it later, and the frame it composed in between went to a
+        /// surface the compositor no longer shows -- whose frame callback never comes, so the swap
+        /// waited on it for good and the app hung.
+        /// A popup, too, only while what it is placed against is: the compositor shows nothing of a
+        /// popup whose parent it does not show.
+        internal bool IsVisible => !_destroyed && !_hidden && IsMapped && (_windowState & LibdecorWindowState.Suspended) == 0
+            && (_xdgPopup == IntPtr.Zero || _popupParent is not { } parent || (parent._xdgPopup != IntPtr.Zero ? parent._onScreen && parent.IsVisible : parent.IsVisible));
 
         /// <summary>Whether the surface has a role the compositor shows (a toplevel, or a popup with a
         /// parent) and has been configured: only then may anything be presented into it.</summary>
@@ -183,9 +190,8 @@ namespace MS.Internal.Interop.Wayland
 
         /// <summary>
         /// A popup's top-left corner in device pixels relative to its owner's CONTENT origin. Used
-        /// when the popup is drawn INTO the owner's surface rather than presenting its own -- which
-        /// on Linux is the normal case, because the GL backend advertises no premultiplied
-        /// composite-alpha mode (see NativePlatform.PopupsShareOwnerSurface).
+        /// when the popup is drawn INTO the owner's surface rather than presenting its own
+        /// (WPF_LINUX_COMPOSITE_POPUPS=1, see NativePlatform.PopupsShareOwnerSurface).
         ///
         /// Content origin, not the owner's virtual origin. The virtual origin is the OUTER top left
         /// (Win32 semantics), so subtracting it leaves the caption height in the offset and the
@@ -221,6 +227,9 @@ namespace MS.Internal.Interop.Wayland
 
             _borderless = borderless;
             _ownerHandle = owner;
+            // a window asked for at the middle of the screen (CenterScreen) is put there by the compositor
+            if (!borderless && owner == IntPtr.Zero && !CenterWhenMapped && IsCenteredOnScreen(x, y, width, height))
+                CenterWhenMapped = true;
             _title = title ?? string.Empty;
             _virtualX = x;
             _virtualY = y;
@@ -259,6 +268,10 @@ namespace MS.Internal.Interop.Wayland
 
             PumpUntilVisible();
 
+            // after the initial commit, which made the compositor's window, and before the first
+            // buffer, which places it
+            if (CenterWhenMapped && !borderless && _ownerHandle == IntPtr.Zero) MarkDialogUntilMapped();
+
             // Only a real toplevel is worth exporting: a popup is a menu or a tooltip belonging to a
             // window that has already registered, and AT-SPI wants one application root, not one per
             // surface. The bridge itself decides whether an assistive technology is present.
@@ -282,6 +295,75 @@ namespace MS.Internal.Interop.Wayland
             if (FromHandle(_ownerHandle) is { } owner && !ReferenceEquals(owner, this) && owner._frame != IntPtr.Zero && !owner._destroyed)
                 WlDecor.libdecor_frame_set_parent(_frame, owner._frame);
             WlDecor.libdecor_frame_map(_frame);
+        }
+
+        /// <summary>
+        /// Set before Create: the window should open at the centre of the screen (a CenterScreen
+        /// form, a splash). A client cannot place a toplevel on Wayland, but GNOME centres a dialog
+        /// that has no parent on its monitor, so the toplevel is a modal dialog (xdg-dialog-v1) until
+        /// it is on screen -- placed by then -- and an ordinary window after.
+        /// </summary>
+        public bool CenterWhenMapped { get; set; }
+
+        /// <summary>The outer rectangle (device pixels) is centred on the primary screen, or on its work
+        /// area, give or take a pixel of rounding.</summary>
+        private static bool IsCenteredOnScreen(int x, int y, int width, int height)
+        {
+            if (!GetPrimaryScreenPixels(out int l, out int t, out int r, out int b, out int wl, out int wt, out int wr, out int wb))
+                return false;
+            int cx = x + width / 2, cy = y + height / 2;
+            return (Math.Abs(cx - (l + r) / 2) <= 1 && Math.Abs(cy - (t + b) / 2) <= 1)
+                || (Math.Abs(cx - (wl + wr) / 2) <= 1 && Math.Abs(cy - (wt + wb) / 2) <= 1);
+        }
+
+        private IntPtr _dialog;       // the xdg_dialog_v1 that has the compositor centre the window
+        private IntPtr _gtkSurface;   // or, on a GNOME without it, gtk_surface1's modal hint
+        private bool _onScreen;       // the surface has entered an output: shown, and placed
+        private bool _gtkModal;
+
+        private void MarkDialogUntilMapped()
+        {
+            try
+            {
+                if (WaylandDisplay.WmDialog != IntPtr.Zero && _frame != IntPtr.Zero)
+                {
+                    IntPtr toplevel = WlDecor.libdecor_frame_get_xdg_toplevel(_frame);
+                    if (toplevel != IntPtr.Zero)
+                    {
+                        _dialog = Wl.Construct(WaylandDisplay.WmDialog, XDG_WM_DIALOG_V1_GET_XDG_DIALOG, "xdg_dialog_v1", 1,
+                            WlArgument.NewId(), WlArgument.Ptr(toplevel));
+                        if (_dialog != IntPtr.Zero) { Wl.Request(_dialog, XDG_DIALOG_V1_SET_MODAL); return; }
+                    }
+                }
+                if (WaylandDisplay.GtkShell != IntPtr.Zero)
+                {
+                    _gtkSurface = Wl.Construct(WaylandDisplay.GtkShell, GTK_SHELL1_GET_GTK_SURFACE, "gtk_surface1", 1,
+                        WlArgument.NewId(), WlArgument.Ptr(_surface));
+                    if (_gtkSurface != IntPtr.Zero) { Wl.Request(_gtkSurface, GTK_SURFACE1_SET_MODAL); _gtkModal = true; }
+                }
+                WaylandDisplay.LogSink?.Invoke($"centre on map: xdg_dialog={_dialog != IntPtr.Zero} gtk_surface={_gtkSurface != IntPtr.Zero}");
+            }
+            catch { _dialog = IntPtr.Zero; }
+        }
+
+        /// <summary>The window is on screen, so placed: an ordinary window from now on.</summary>
+        private void DropDialog()
+        {
+            try
+            {
+                if (_dialog != IntPtr.Zero)
+                {
+                    IntPtr dialog = _dialog;
+                    _dialog = IntPtr.Zero;
+                    Wl.Destroy(dialog, XDG_DIALOG_V1_DESTROY);
+                }
+                if (_gtkModal && _gtkSurface != IntPtr.Zero)
+                {
+                    _gtkModal = false;
+                    Wl.Request(_gtkSurface, GTK_SURFACE1_UNSET_MODAL);
+                }
+            }
+            catch { }
         }
 
         private void CreatePopup()
@@ -326,9 +408,17 @@ namespace MS.Internal.Interop.Wayland
             // the owner, if it can still parent a popup: a popup that lost its role (one below it went, see
             // the popup stack) or a destroyed window cannot, and a popup made against it was never mapped --
             // presenting into that surface then aborted the process inside EGL
+            // Once placed, a popup keeps the window it was placed against: every conversion between its
+            // position and the owner's must use the same one.
+            if (_popupParent is { } placed && !placed._destroyed && (placed._frame != IntPtr.Zero || placed._xdgPopup != IntPtr.Zero))
+                return placed;
+            // A popup owner only if the compositor shows it: a WPF tree hosted in a WinForms form has a
+            // window of its own that nothing ever presents (the form composites it) -- made while a
+            // splash screen was the only window, it is a popup of that -- and a popup placed against it
+            // was never shown, so its second frame waited for good on the first (the app hung).
             WaylandWindow? owner = FromHandle(_ownerHandle);
             if (owner is not null && !ReferenceEquals(owner, this) && !owner._destroyed
-                && (owner._frame != IntPtr.Zero || owner._xdgPopup != IntPtr.Zero)) return owner;
+                && (owner._frame != IntPtr.Zero || (owner._xdgPopup != IntPtr.Zero && owner._onScreen && !owner._hidden))) return owner;
 
             // No explicit owner (WPF does not always supply one for menus): fall back to the
             // topmost mapped toplevel, which is the window the menu visually belongs to.
@@ -361,22 +451,21 @@ namespace MS.Internal.Interop.Wayland
         /// A point in the VIRTUAL space to the space xdg_positioner.set_anchor_rect is specified
         /// against: the parent xdg_surface's WINDOW GEOMETRY.
         ///
-        /// For a libdecor toplevel that window geometry is the CONTENT area. The decorations are
-        /// separate subsurfaces that sit outside it, so the geometry origin coincides with the top
-        /// left of the client area and the conversion is simply "relative to the client origin".
-        ///
-        /// It is tempting to run the point through libdecor_frame_translate_coordinate first, since
-        /// that converts content coordinates into libdecor's decorated-FRAME space. That is a
-        /// different space from the window geometry, and using it puts every popup exactly one
-        /// titlebar too low -- which is how this was found.
+        /// For a libdecor toplevel that window geometry is the decorated FRAME, less its shadow: on
+        /// GNOME the headerbar lies inside it, so the content origin is one headerbar below the
+        /// geometry origin. libdecor_frame_translate_coordinate gives that offset (none for a frame
+        /// whose decorations are hidden). Measured: without it a combo drop-down presenting its own
+        /// surface opened one headerbar (37 px) above the combo. The way back (OwnerGeometryToVirtual)
+        /// takes the same offset off, so a popup drawn into its owner lands where it did.
         /// </summary>
         private static void VirtualToOwnerGeometry(WaylandWindow owner, int virtualX, int virtualY,
                                                    out int geometryX, out int geometryY)
         {
             double scale = owner.GetBackingScale();
             owner.GetClientScreenOriginPixels(out int clientX, out int clientY);
-            geometryX = (int)Math.Round((virtualX - clientX) / scale);
-            geometryY = (int)Math.Round((virtualY - clientY) / scale);
+            OwnerDecorationInset(owner, out int insetX, out int insetY);
+            geometryX = (int)Math.Round((virtualX - clientX) / scale) + insetX;
+            geometryY = (int)Math.Round((virtualY - clientY) / scale) + insetY;
         }
 
         /// <summary>
@@ -393,8 +482,9 @@ namespace MS.Internal.Interop.Wayland
         {
             double scale = owner.GetBackingScale();
             owner.GetClientScreenOriginPixels(out int clientX, out int clientY);
-            virtualX = clientX + (int)Math.Round(geometryX * scale);
-            virtualY = clientY + (int)Math.Round(geometryY * scale);
+            OwnerDecorationInset(owner, out int insetX, out int insetY);
+            virtualX = clientX + (int)Math.Round((geometryX - insetX) * scale);
+            virtualY = clientY + (int)Math.Round((geometryY - insetY) * scale);
         }
 
         /// <summary>Diagnostics: how the owner's decoration geometry actually measures.</summary>
@@ -690,6 +780,8 @@ namespace MS.Internal.Interop.Wayland
             {
                 WaylandWindow? w = FromUserData(userData);
                 if (w is null) return;
+                w._onScreen = true;
+                w.DropDialog();   // on screen, so placed: an ordinary window from now on
                 lock (WaylandDisplay.Outputs)
                 {
                     foreach (WaylandOutput o in WaylandDisplay.Outputs)
@@ -840,6 +932,13 @@ namespace MS.Internal.Interop.Wayland
         {
             _virtualX = xPixels;
             _virtualY = yPixels;
+            // moved to the middle of the screen before it is first shown (WPF places a CenterScreen
+            // window after making it): the compositor centres it, as it would have at Create
+            if (_frame != IntPtr.Zero && !_onScreen && _ownerHandle == IntPtr.Zero && _dialog == IntPtr.Zero && !_gtkModal)
+            {
+                GetWindowPixelSize(out int w, out int h);
+                if (IsCenteredOnScreen(xPixels, yPixels, w, h)) MarkDialogUntilMapped();
+            }
             if (_xdgPopup != IntPtr.Zero) Reposition();
         }
 
@@ -1042,16 +1141,30 @@ namespace MS.Internal.Interop.Wayland
 
         // ---- the popup stack ------------------------------------------------------------------
         //
-        // xdg-shell stacks the popups of a toplevel, and only the TOPMOST may be destroyed: destroying
-        // one with a popup above it -- a later sibling, or a child -- is a protocol error that kills the
-        // connection (xdg_wm_base.not_the_topmost_popup), and every window with it. WPF destroys windows
-        // in its own order (ElementHost's parking window goes while the hosted window made on it stays),
-        // so the popups above one that goes lose their role first, newest first: their surfaces stay,
-        // unmapped, as a window whose owner closed is hidden on Windows.
+        // A popup cannot outlive the popup it is placed against: destroying one with a popup of its own
+        // still open is a protocol error that kills the connection (xdg_wm_base.not_the_topmost_popup),
+        // and every window with it. WPF destroys windows in its own order (ElementHost's parking window
+        // goes while the hosted window made on it stays), so the popups placed against one that goes --
+        // and theirs -- lose their role first, newest first: their surfaces stay, unmapped, as a window
+        // whose owner closed is hidden on Windows. A later SIBLING is left alone: none of these popups
+        // takes a grab, and only a grab chain is ordered -- dropping siblings took a context menu down
+        // with the tooltip that happened to be closing as it opened.
 
         private WaylandWindow? _popupParent;
         private long _popupSeq;
         private static long s_popupSeq;
+
+        /// <summary>This popup is placed against <paramref name="other"/>, directly or through popups of popups.</summary>
+        private bool IsPlacedAgainst(WaylandWindow other)
+        {
+            WaylandWindow w = this;
+            for (int i = 0; i < 64 && w._popupParent is { } p; i++)
+            {
+                if (ReferenceEquals(p, other)) return true;
+                w = p;
+            }
+            return false;
+        }
 
         private WaylandWindow RootToplevel()
         {
@@ -1060,15 +1173,16 @@ namespace MS.Internal.Interop.Wayland
             return w;
         }
 
-        /// <summary>Takes the popup role off every popup of this window's toplevel made after
-        /// <paramref name="after"/> (0: all of them), newest first, so that the one after them can go.</summary>
+        /// <summary>Takes the popup role off every popup placed against <paramref name="root"/> (directly
+        /// or through others) made after <paramref name="after"/> (0: all of them), newest first, so that
+        /// <paramref name="root"/> can go.</summary>
         private static void DropPopupsAbove(WaylandWindow root, long after)
         {
             List<WaylandWindow> above = new();
             lock (s_lock)
             {
                 foreach (WaylandWindow w in s_zOrder)
-                    if (!w._destroyed && w._xdgPopup != IntPtr.Zero && w._popupSeq > after && ReferenceEquals(w.RootToplevel(), root))
+                    if (!w._destroyed && w._xdgPopup != IntPtr.Zero && w._popupSeq > after && w.IsPlacedAgainst(root))
                         above.Add(w);
             }
             above.Sort((a, b) => b._popupSeq.CompareTo(a._popupSeq));
@@ -1091,7 +1205,7 @@ namespace MS.Internal.Interop.Wayland
         {
             if (_destroyed) return;
             // what lies above it goes first (see the popup stack)
-            if (_xdgPopup != IntPtr.Zero) DropPopupsAbove(RootToplevel(), _popupSeq);
+            if (_xdgPopup != IntPtr.Zero) DropPopupsAbove(this, _popupSeq);
             else if (_frame != IntPtr.Zero) DropPopupsAbove(this, 0);
             _destroyed = true;
 
@@ -1108,6 +1222,8 @@ namespace MS.Internal.Interop.Wayland
                 // role attached is a protocol error.
                 if (_xdgPopup != IntPtr.Zero) { Wl.Destroy(_xdgPopup, XDG_POPUP_DESTROY); _xdgPopup = IntPtr.Zero; }
                 if (_xdgSurface != IntPtr.Zero) { Wl.Destroy(_xdgSurface, XDG_SURFACE_DESTROY); _xdgSurface = IntPtr.Zero; }
+                DropDialog();
+                if (_gtkSurface != IntPtr.Zero) { Wl.wl_proxy_destroy(_gtkSurface); _gtkSurface = IntPtr.Zero; }   // v1 has no destructor
                 if (_frame != IntPtr.Zero) { WlDecor.libdecor_frame_unref(_frame); _frame = IntPtr.Zero; }
                 if (_fractionalScale != IntPtr.Zero) { Wl.Destroy(_fractionalScale, WP_FRACTIONAL_SCALE_DESTROY); _fractionalScale = IntPtr.Zero; }
                 if (_viewport != IntPtr.Zero) { Wl.Destroy(_viewport, WP_VIEWPORT_DESTROY); _viewport = IntPtr.Zero; }
@@ -1138,7 +1254,21 @@ namespace MS.Internal.Interop.Wayland
         /// all -- there is no equivalent of NSWindow's orderedIndex -- so creation order is tracked
         /// explicitly and searched back to front.
         /// </summary>
-        public static IntPtr HitTest(int x, int y) => HitTest(x, y, null);
+        public static IntPtr HitTest(int x, int y)
+        {
+            IntPtr top = HitTest(x, y, null);
+            // the window the toplevel's own owner puts at that point inside it: a WinForms form's hosted
+            // WPF tree (ElementHost), whose window lies UNDER the form's in creation order but is its child,
+            // as WindowFromPoint finds the deepest child on Windows -- or WPF's mouse hit-testing found the
+            // form's window, no source of its own, and the hosted tree's controls never saw the mouse
+            if (top != IntPtr.Zero && ChildWindowAt is { } child && child(top, x, y) is var inner && inner != IntPtr.Zero)
+                return inner;
+            return top;
+        }
+
+        /// <summary>Installed by a host that puts windows of its own inside a toplevel (WinForms'): the window
+        /// at a point of the virtual screen inside that toplevel, or zero.</summary>
+        public static Func<IntPtr, int, int, IntPtr>? ChildWindowAt { get; set; }
 
         /// <summary>The topmost window at a point of the virtual screen that <paramref name="accept"/> takes
         /// (by handle): a host looking for one kind of window among those stacked there -- the WPF trees it

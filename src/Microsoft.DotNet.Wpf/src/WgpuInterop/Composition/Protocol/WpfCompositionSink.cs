@@ -760,6 +760,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             Configure(ts);
         }
 
+        private bool IsGlBackend => _isGl ??= _ctx?.AdapterDescription?.Contains("backend=OpenGL") == true;
+        private bool? _isGl;
         private static readonly bool s_tracePresent =
             System.Environment.GetEnvironmentVariable("WF_TRACE_PRESENT") == "1";
 
@@ -855,8 +857,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // (WinForms) scenes are part of the tree it diffs, so their changes are damage too.
             // Scroll snapping needs a frame drawn when the scroll settles, which only the render
             // thread can draw unprompted (its idle wait watches SettleDue).
-            ts.Partial ??= new WgpuSceneRenderer.PartialTarget(_renderer!, $" wpf 0x{t.Hwnd:x}") { SnapScroll = UseRenderThread };
-            ts.Partial.Render(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+            // A see-through window (a popup with its own surface, a layered window) on the GL backend is
+            // drawn whole, straight into its swap chain. Kept in a texture of its own and copied across
+            // like the rest, it broke the OTHER windows' pictures on the Linux/virgl head: once a combo's
+            // drop-down had presented, its owner showed a black strip over nothing and stayed so after
+            // the drop-down closed -- a GL interaction between the two copies (with the copy submitted
+            // apart and the GPU waited for, as the damage verifier does, it never happened). Popups
+            // are small and short-lived; a whole frame each costs little.
+            if (ts.Transparent && IsGlBackend)
+            {
+                _renderer!.RenderSceneToView(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+            }
+            else
+            {
+                ts.Partial ??= new WgpuSceneRenderer.PartialTarget(_renderer!, $" wpf 0x{t.Hwnd:x}") { SnapScroll = UseRenderThread };
+                ts.Partial.Render(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+            }
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
             // Definitive on-screen capture: read back the REAL swapchain texture (not a separate
