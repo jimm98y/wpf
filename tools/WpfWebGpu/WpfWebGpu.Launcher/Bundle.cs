@@ -65,7 +65,7 @@ internal static partial class Bundle
         Console.WriteLine($"wpfrun bundle: {app.Name}: {assemblies.Count} app assemblies" + (left.Count > 0 ? $" ({left.Count} left out: {string.Join(", ", left.Take(8))}{(left.Count > 8 ? ", ..." : "")})" : ""));
         var (files, folders) = Payload(app);
         Console.WriteLine($"wpfrun bundle: data: {files.Count} files and {folders.Count} folders ({string.Join(", ", folders)})");
-        if (ios) return RunIos(app, assemblies, files, folders, feed, outDir, verbose);
+        if (ios) return RunIos(app, assemblies, files, folders, feed, outDir, verbose, aot);
         if (android) return RunAndroid(app, assemblies, files, folders, feed, outDir, verbose);
 
         // One project per mode: an AOT publish strips the IL of what it compiled (WasmStripILAfterAOT) and

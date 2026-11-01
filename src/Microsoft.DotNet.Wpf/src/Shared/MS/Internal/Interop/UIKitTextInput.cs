@@ -96,6 +96,8 @@ namespace MS.Internal.Interop
         /// <summary>Raises the keyboard on the view backing the focused window.</summary>
         public static void Enable(IntPtr view, bool multiline, bool password)
         {
+            // a window handle (UIKitWindow.Handle) to its view: messaged as an object, the number crashed
+            view = UIKitWindow.ViewOf(view);
             if (!IsAvailable || view == IntPtr.Zero) return;
 
             _ = multiline;

@@ -24,11 +24,12 @@ internal static partial class Bundle
 {
     private const string IosRid = "iossimulator-arm64";
 
-    private static int RunIos(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose)
+    private static int RunIos(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose, bool aot)
     {
-        string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name + "-ios");
+        // one project per mode, as for the browser (an AOT build's objects are not an interpreted one's)
+        string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name + (aot ? "-ios-aot" : "-ios"));
         Directory.CreateDirectory(project);
-        WriteIosProject(project, app, assemblies, files, folders, feed);
+        WriteIosProject(project, app, assemblies, files, folders, feed, aot);
 
         string csproj = Path.Combine(project, "Bundle.csproj");
         Console.WriteLine($"wpfrun bundle: building {project}");
@@ -58,8 +59,14 @@ internal static partial class Bundle
         return id.ToString();
     }
 
-    private static void WriteIosProject(string dir, AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed)
+    private static void WriteIosProject(string dir, AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, bool aot)
     {
+        // --aot: the stack and the runtime compiled ahead of time, the app's own assemblies interpreted --
+        // the stack is what runs every frame (layout, the renderer), and interpreted it was the whole of
+        // the bundle's slowness; the app's 300-odd assemblies stay out of the compile.
+        string interpreter = aot
+            ? "-all," + string.Join(",", assemblies.Select(a => Path.GetFileNameWithoutExtension(a)))
+            : "all";
         var refs = new StringBuilder();
         foreach (string a in assemblies)
             refs.Append($"    <Reference Include=\"{Xml(Path.GetFileNameWithoutExtension(a))}\"><HintPath>{Xml(a)}</HintPath><Private>true</Private></Reference>\n");
@@ -100,8 +107,9 @@ internal static partial class Bundle
                 <!-- nothing trimmed: the app reaches its parts by name, as on Windows -->
                 <MtouchLink>None</MtouchLink>
                 <!-- interpreted, as a non-AOT browser bundle is: compiling 300-odd assemblies ahead of time
-                     (and through LLVM, which a Release build does) takes the better part of an hour -->
-                <MtouchInterpreter>all</MtouchInterpreter>
+                     (and through LLVM, which a Release build does) takes the better part of an hour; for an
+                     AOT bundle, only the app's own assemblies -->
+                <MtouchInterpreter>{interpreter}</MtouchInterpreter>
                 <MtouchUseLlvm>false</MtouchUseLlvm>
                 <!-- the app's binaries were built against .NET's WindowsDesktop assemblies, which the stack replaces -->
                 <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277;MSB3243;MSB3245</MSBuildWarningsAsMessages>

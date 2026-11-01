@@ -385,6 +385,8 @@ namespace System.Windows.Forms
 					_driver.LiftPointer ();
 					break;
 				case 3: _driver.InjectWheel (x, y, m.Wheel); break;
+				case AndroidWindow.RightPress: _driver.InjectRightDown (x, y); break;   // press and hold
+				case AndroidWindow.RightRelease: _driver.InjectRightUp (x, y); break;
 				}
 			} finally {
 				XplatUIWebGpu.InputRoot = outerRoot;

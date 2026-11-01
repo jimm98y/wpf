@@ -188,6 +188,13 @@ namespace System.Drawing
 
 		// ---- recorded drawing -------------------------------------------------------------------
 
+		/// <summary>A Graphics on a bitmap records, as one on a window does, rather than drawing its pixels
+		/// with the GDI+ engine: the recording is drawn as a nested scene when the bitmap is drawn -- a
+		/// back buffer reaches the screen through the GPU renderer, never rasterized and uploaded for each
+		/// paint -- and is rasterized onto the pixels only when something reads them.
+		/// WF_DEFER_BITMAPS=0 draws with the engine.</summary>
+		internal static readonly bool DeferDrawing = Environment.GetEnvironmentVariable ("WF_DEFER_BITMAPS") != "0";
+
 		// Graphics drawing into this bitmap (FromImage), and scenes they finished, not yet rasterized.
 		readonly List<Graphics> drawing = new List<Graphics> ();
 		readonly List<object> pending = new List<object> ();
@@ -270,8 +277,9 @@ namespace System.Drawing
 					if (WebGpuBackend.SceneRaster.NeedsDestination (s)) return false;
 					text |= WebGpuBackend.SceneRaster.HasText (s);
 				}
-				// Without text the CPU rasterizer draws it as GDI+ does, blends and all.
-				if (!text) return false;
+				// Without text the CPU rasterizer draws it as GDI+ does, blends and all -- unless drawing
+				// into bitmaps is deferred (DeferDrawing): then the recording is what there is.
+				if (!text && !DeferDrawing) return false;
 				scenes = pending.ToArray ();
 				return scenes.Length > 0;
 			}

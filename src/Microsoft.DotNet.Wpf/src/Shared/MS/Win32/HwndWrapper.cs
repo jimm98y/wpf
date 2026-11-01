@@ -211,6 +211,11 @@ namespace MS.Win32
                         // Checked BEFORE the macOS branch below: both are Darwin.
                         var uikit = new MS.Internal.Interop.UIKitWindow();
                         uikit.Create(name, cx, cy, cw, ch, borderless);
+                        // Not on screen until it is shown (ShowWindow), as a window made without WS_VISIBLE
+                        // is not on Windows: the app's own window, filling the screen black and then white
+                        // while the app loaded, hid the splash screen it shows meanwhile.
+                        const int WS_VISIBLE = 0x10000000;
+                        if ((style & WS_VISIBLE) == 0) uikit.SetVisible(false);
                         // A child window takes the keyboard when pressed, as SetFocus on one does there.
                         uikit.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Same synthetic WM_SIZE routing as the other two backends.

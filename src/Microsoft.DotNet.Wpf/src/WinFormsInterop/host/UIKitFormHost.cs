@@ -197,6 +197,12 @@ namespace System.Windows.Forms
 				if (action == null) return;
 				try { action (); }
 				catch (Exception e) { Console.Error.WriteLine ($"[UIKitFormHost] main-thread work failed: {e}"); }
+				// Committed now: Core Animation commits a run-loop pass's changes as the pass ends, and the
+				// main thread runs this from inside its dispatcher's wait, then goes back to the app's own
+				// work -- a splash screen's view, made and shown here while the app loads, came on screen
+				// only when the loading was over, for a moment before the splash closed.
+				try { NativePlatform.CommitPresent (); }
+				catch (Exception) { }
 			}
 		}
 
@@ -458,6 +464,8 @@ namespace System.Windows.Forms
 					_driver.LiftPointer ();
 					break;
 				case 3: _driver.InjectWheel (x, y, m.Wheel); break;
+				case UIKitWindow.RightPress: _driver.InjectRightDown (x, y); break;   // press and hold
+				case UIKitWindow.RightRelease: _driver.InjectRightUp (x, y); break;
 				}
 			} finally {
 				XplatUIWebGpu.InputRoot = outerRoot;

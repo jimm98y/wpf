@@ -1477,6 +1477,8 @@ namespace System.Windows.Interop
                 1 => RawMouseActions.Button1Press,
                 2 => RawMouseActions.Button1Release,
                 3 => RawMouseActions.VerticalWheelRotate,   // drag-to-scroll, synthesized by UIKitWindow
+                MS.Internal.Interop.UIKitWindow.RightPress => RawMouseActions.Button2Press,     // press and hold
+                MS.Internal.Interop.UIKitWindow.RightRelease => RawMouseActions.Button2Release,
                 _ => default,
             };
             if (actions == default) return;
@@ -1518,6 +1520,8 @@ namespace System.Windows.Interop
                 1 => RawMouseActions.Button1Press,
                 2 => RawMouseActions.Button1Release,
                 3 => RawMouseActions.VerticalWheelRotate,   // drag-to-scroll, synthesized by AndroidWindow
+                MS.Internal.Interop.AndroidWindow.RightPress => RawMouseActions.Button2Press,     // press and hold
+                MS.Internal.Interop.AndroidWindow.RightRelease => RawMouseActions.Button2Release,
                 _ => default,
             };
             if (actions == default) return;

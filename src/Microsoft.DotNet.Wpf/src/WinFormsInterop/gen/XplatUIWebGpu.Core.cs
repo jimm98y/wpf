@@ -1856,8 +1856,8 @@ namespace System.Windows.Forms
 		// pumps; ours has a managed one, so this is a list and a clock.
 
 		private readonly List<Timer> timers = new List<Timer>();
-		// The thread that enabled each timer. A WPF UI thread pumping its hosted controls fires only
-		// its own (TickTimers(callingThreadOnly: true)); the list is shared by every thread.
+		// The thread that enabled each timer: each thread's loop fires only its own (TickTimers); the list
+		// is shared by every thread.
 		private readonly Dictionary<Timer, int> timerThreads = new Dictionary<Timer, int>();
 
 		internal override void SetTimer(Timer timer)
@@ -1873,7 +1873,10 @@ namespace System.Windows.Forms
 		/// <summary>Fire every timer whose deadline has passed, and return the shortest wait until the
 		/// next one is due (or -1 when none are). Ticks run OUTSIDE the lock: a handler is arbitrary
 		/// app code and routinely starts or stops timers.</summary>
-		internal int TickTimers() => TickTimers(callingThreadOnly: false);
+		/// A thread's own timers only, as WM_TIMER goes to the thread whose window the timer is on: fired
+		/// from any other thread's loop, a tick ran on the wrong thread -- a splash form's timer, ticked by
+		/// the main thread's modal loop, waited there for its own thread (Exports.Ui) and froze the app.
+		internal int TickTimers() => TickTimers(callingThreadOnly: true);
 
 		internal int TickTimers(bool callingThreadOnly)
 		{

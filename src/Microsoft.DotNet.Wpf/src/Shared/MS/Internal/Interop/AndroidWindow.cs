@@ -955,7 +955,27 @@ namespace MS.Internal.Interop
         }
 
         public static void NotifyTouch(IntPtr handle, int kind, int xPixels, int yPixels)
-            => OnUi(() => Touch(handle, kind, xPixels, yPixels));
+            => OnUi(() => s_hold.Touch(handle, kind, xPixels, yPixels, s_byHandle.TryGetValue(handle, out AndroidWindow w) ? w.GetBackingScale() : 1.0));
+
+        // Press and hold: the right button (TouchHold). Its right press and release go to MouseInput as they
+        // are; the left button's kinds through Touch, as every touch did.
+        private static readonly TouchHold s_hold = new TouchHold(EmitHeld, OnUi, h => s_byHandle.ContainsKey(h));
+
+        private static void EmitHeld(IntPtr handle, int kind, double x, double y)
+        {
+            int px = (int)Math.Round(x), py = (int)Math.Round(y);
+            if (kind is TouchHold.RightPress or TouchHold.RightRelease)
+            {
+                if (s_trace && kind == TouchHold.RightPress) Console.WriteLine($"[android] press and hold 0x{handle:x} ({px},{py}): right click");
+                try { MouseInput?.Invoke(new TouchMessage(handle, kind, px, py, Environment.TickCount)); }
+                catch (Exception e) { Console.WriteLine($"WPF Android touch dispatch failed: {e}"); }
+                return;
+            }
+            Touch(handle, kind, px, py);
+        }
+
+        /// <summary>TouchMessage kinds of the right button (a press held still, TouchHold).</summary>
+        public const int RightPress = TouchHold.RightPress, RightRelease = TouchHold.RightRelease;
 
         private static void Touch(IntPtr handle, int kind, int xPixels, int yPixels)
         {

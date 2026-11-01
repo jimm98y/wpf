@@ -4757,7 +4757,7 @@ namespace System.Drawing
 				Graphics g = WebGpuBackend.GpuRaster.NewRecording ();
 				g.image_target = bitmap;
 				GdipFrame frame = bitmap.managed.Frame;
-				if (WebGpuBackend.Gdip.GpScan.Supports (frame.Format))
+				if (WebGpuBackend.Gdip.GpScan.Supports (frame.Format) && !Bitmap.DeferDrawing)
 					g.gp = new GpGraphics (frame);
 				bitmap.AttachGraphics (g);
 				return g;

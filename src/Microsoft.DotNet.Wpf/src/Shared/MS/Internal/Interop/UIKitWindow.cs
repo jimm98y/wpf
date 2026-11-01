@@ -836,7 +836,7 @@ namespace MS.Internal.Interop
         // here; the first touch wins, as it does for a mouse.
 
         /// <param name="Kind">0 = move, 1 = press, 2 = release, 3 = wheel (drag-to-scroll; see
-        /// <see cref="DispatchTouch"/>). <paramref name="Wheel"/> is set only for kind 3.</param>
+        /// <see cref="DispatchTouch"/>), 5/6 = the right button's press/release (press and hold). <paramref name="Wheel"/> is set only for kind 3.</param>
         public readonly record struct TouchMessage(IntPtr View, int Kind, int X, int Y, int TimestampMs, int Wheel = 0);
 
         /// <summary>Raised on the UI thread as UIKit delivers touches; consumed by HwndMouseInputProvider.</summary>
@@ -1051,13 +1051,13 @@ namespace MS.Internal.Interop
         // our loops gets control back (WaitForEvents, RunLoop) or, failing that, from a run-loop source
         // of its own.
 
-        private static readonly Queue<Action> s_input = new();
+        private static readonly System.Collections.Concurrent.ConcurrentQueue<Action> s_input = new();
         private static IntPtr s_inputSource, s_mainRunLoop;
 
         private static void PostInput(Action deliver)
         {
             s_input.Enqueue(deliver);
-            EnsureInputSource();
+            if (IsMainThread) EnsureInputSource();   // made on the main thread; signalled from any
             if (s_inputSource != IntPtr.Zero)
             {
                 CFRunLoopSourceSignal(s_inputSource);
@@ -1071,9 +1071,8 @@ namespace MS.Internal.Interop
         internal static void DrainInput()
         {
             if (!IsMainThread) return;
-            while (s_input.Count > 0)
+            while (s_input.TryDequeue(out Action next))
             {
-                Action next = s_input.Dequeue();
                 try { next(); }
                 catch (Exception e) { Console.WriteLine($"WPF iOS input delivery failed: {e}"); }
             }
@@ -1118,6 +1117,26 @@ namespace MS.Internal.Interop
             public IntPtr perform;
         }
 
+        // Press and hold: the right button (TouchHold). Its right press and release go to MouseInput as
+        // they are; the left button's kinds through Emit, as every touch did.
+        private static readonly TouchHold s_hold = new TouchHold(EmitHeld, PostInput, v => s_byView.ContainsKey(v));
+
+        private static void Gesture(IntPtr view, int kind, double x, double y, double scale) => s_hold.Touch(view, kind, x, y, scale);
+
+        private static void EmitHeld(IntPtr view, int kind, double x, double y)
+        {
+            if (kind is RightPress or RightRelease)
+            {
+                if (s_trace && kind == RightPress) Console.WriteLine($"[uikit] press and hold at ({x:F0},{y:F0}): right click");
+                MouseInput?.Invoke(new TouchMessage(HandleOf(view), kind, (int)Math.Round(x), (int)Math.Round(y), Environment.TickCount));
+                return;
+            }
+            Emit(view, kind, x, y, ScreenScale());
+        }
+
+        /// <summary>TouchMessage kinds of the right button (a press held still, TouchHold).</summary>
+        public const int RightPress = TouchHold.RightPress, RightRelease = TouchHold.RightRelease;
+
         private static void DispatchTouch(IntPtr view, IntPtr touches, int kind)
         {
             // Never let a managed exception unwind into UIKit.
@@ -1143,7 +1162,7 @@ namespace MS.Internal.Interop
                 {
                     // the window may have gone since (a tap on its close box): its view is released
                     if (!s_byView.ContainsKey(view)) return;
-                    Emit(view, mouseKind, p.x * scale, p.y * scale, scale);
+                    Gesture(view, mouseKind, p.x * scale, p.y * scale, scale);
                     contacts?.Invoke();
                 });
             }

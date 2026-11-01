@@ -10,6 +10,8 @@ namespace MS.Internal.Interop
 {
     public sealed partial class AndroidWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public const int RightPress = 5;
+        public const int RightRelease = 6;
         public AndroidWindow() { }
         public System.IntPtr Handle { get { throw null; } }
         public static MS.Internal.Interop.IAndroidHost Host { get { throw null; } set { } }
@@ -526,6 +528,8 @@ namespace MS.Internal.Interop
     }
     public sealed partial class UIKitWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public const int RightPress = 5;
+        public const int RightRelease = 6;
         public UIKitWindow() { }
         public System.IntPtr Handle { get { throw null; } }
         public bool IsBorderless { get { throw null; } }

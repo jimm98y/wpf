@@ -673,6 +673,50 @@ function resizeDragTo(e) {
     setContentSize(d.handle, w, h);
 }
 
+// ---- press and hold: a finger's right button ------------------------------
+//
+// A finger has one button, and a context menu wants the other: a touch held still for a moment is a
+// right click, as on Windows (and as TouchHold makes it on iOS and Android). The browser gives a touch
+// to the mouse only after it lifts (the compatibility mouse events), so nothing of it has reached the
+// app by the time the hold is known: the right press and release go at once, and the mouse events the
+// browser makes of that touch afterwards are dropped.
+const HOLD_MS = 600, HOLD_SLOP = 10;
+const hold = { id: -1, x: 0, y: 0, timer: 0, swallow: false };
+
+function holdCancel() {
+    if (hold.timer) clearTimeout(hold.timer);
+    hold.timer = 0;
+    hold.id = -1;
+}
+
+function holdDown(e) {
+    hold.swallow = false;   // a new touch, or the mouse: its events are its own again
+    holdCancel();
+    if (e.pointerType !== "touch" || !e.isPrimary) return;
+    hold.id = e.pointerId;
+    hold.x = e.clientX;
+    hold.y = e.clientY;
+    hold.timer = setTimeout(() => {
+        hold.timer = 0;
+        hold.id = -1;
+        hold.swallow = true;
+        const at = { clientX: hold.x, clientY: hold.y, button: 2, timeStamp: performance.now(),
+                     ctrlKey: false, shiftKey: false, altKey: false, metaKey: false };
+        pushMouse(0, { ...at, button: 0 });
+        pushMouse(1, at);
+        pushMouse(2, at);
+    }, HOLD_MS);
+}
+
+function holdMove(e) {
+    if (e.pointerId !== hold.id) return;
+    if (Math.abs(e.clientX - hold.x) > HOLD_SLOP || Math.abs(e.clientY - hold.y) > HOLD_SLOP) holdCancel();
+}
+
+function holdEnd(e) {
+    if (e.pointerId === hold.id) holdCancel();
+}
+
 function pushMouse(kind, e, wheel = 0) {
     if (kind === 1 && (e.button ?? 0) === 0) press = { x: e.clientX, y: e.clientY };
     else if (kind === 2 && (e.button ?? 0) === 0) press = null;
@@ -869,9 +913,9 @@ function installListeners() {
     installDragListeners();
     installClipboardListeners();
 
-    window.addEventListener("mousemove", (e) => pushMouse(0, e));
-    window.addEventListener("mousedown", (e) => pushMouse(1, e));
-    window.addEventListener("mouseup", (e) => pushMouse(2, e));
+    window.addEventListener("mousemove", (e) => { if (!hold.swallow) pushMouse(0, e); });
+    window.addEventListener("mousedown", (e) => { if (!hold.swallow) pushMouse(1, e); });
+    window.addEventListener("mouseup", (e) => { if (!hold.swallow) pushMouse(2, e); });
     window.addEventListener("wheel", (e) => {
         // deltaMode 0 = pixels; convert to Win32 notches (~100px per 120 units).
         const notches = Math.max(-960, Math.min(960, Math.round(-e.deltaY * 120 / 100)));
@@ -883,10 +927,10 @@ function installListeners() {
     // Touch and pen only: a mouse already has its own path above, and routing it through both would
     // deliver every click twice.
     const isContact = (e) => e.pointerType === "touch" || e.pointerType === "pen";
-    window.addEventListener("pointerdown", (e) => { if (isContact(e)) pushContact(1, e); });
-    window.addEventListener("pointermove", (e) => { if (isContact(e)) pushContact(0, e); });
-    window.addEventListener("pointerup", (e) => { if (isContact(e)) pushContact(2, e); });
-    window.addEventListener("pointercancel", (e) => { if (isContact(e)) pushContact(3, e); });
+    window.addEventListener("pointerdown", (e) => { holdDown(e); if (isContact(e)) pushContact(1, e); });
+    window.addEventListener("pointermove", (e) => { holdMove(e); if (isContact(e)) pushContact(0, e); });
+    window.addEventListener("pointerup", (e) => { holdEnd(e); if (isContact(e)) pushContact(2, e); });
+    window.addEventListener("pointercancel", (e) => { holdEnd(e); if (isContact(e)) pushContact(3, e); });
 
     window.addEventListener("keydown", (e) => pushKey(true, e));
     window.addEventListener("keyup", (e) => pushKey(false, e));

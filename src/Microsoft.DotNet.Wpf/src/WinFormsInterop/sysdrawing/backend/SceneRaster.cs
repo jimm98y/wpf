@@ -167,20 +167,10 @@ namespace System.Drawing.WebGpuBackend
 
         public void ClipPath (PagePath path)
         {
+            CoverageMask cm = RasterizeInFrame (Device (path));
             var mask = new byte [_w * _h];
-            CoverageMask cm = PathRasterizer.Rasterize (Device (path));
-            if (!cm.IsEmpty) {
-                int ox = (int) cm.OriginX, oy = (int) cm.OriginY;
-                for (int y = 0; y < cm.Height; y++) {
-                    int py = oy + y;
-                    if (py < 0 || py >= _h) continue;
-                    for (int x = 0; x < cm.Width; x++) {
-                        int px = ox + x;
-                        if (px < 0 || px >= _w) continue;
-                        mask [py * _w + px] = cm.Coverage [y * cm.Width + x];
-                    }
-                }
-            }
+            for (int y = 0; y < cm.Height; y++)
+                Array.Copy (cm.Coverage, y * cm.Width, mask, ((int) cm.OriginY + y) * _w + (int) cm.OriginX, cm.Width);
             Intersect (mask);
         }
 
@@ -220,12 +210,45 @@ namespace System.Drawing.WebGpuBackend
             return new PathGeometry (path.EvenOdd ? FillRule.EvenOdd : FillRule.NonZero, figures);
         }
 
+        /// <summary>
+        /// The path's coverage over the part of it inside the bitmap. A path is often far larger than
+        /// what it is drawn on -- GDI+'s infinite region, +-4194304 pixels, as a clip or the fill of
+        /// one -- and coverage the size of the path (PathRasterizer.Rasterize) overflowed and threw:
+        /// DotNetBar's popup shadow, its recorded drawing rendered when its pixels were read.
+        /// </summary>
+        CoverageMask RasterizeInFrame (PathGeometry device)
+        {
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (PathFigure f in device.Figures) {
+                Grow (f.Start);
+                foreach (PathSegment sg in f.Segments) {
+                    switch (sg) {
+                    case LineSegment l: Grow (l.Point); break;
+                    case CubicBezierSegment c: Grow (c.Control1); Grow (c.Control2); Grow (c.Point); break;
+                    case QuadraticBezierSegment q: Grow (q.Control); Grow (q.Point); break;
+                    }
+                }
+            }
+            if (!(minX <= maxX) || !(minY <= maxY)) return default;   // nothing, or NaN
+            int x0 = Math.Max (0, (int) MathF.Floor (minX) - 1), y0 = Math.Max (0, (int) MathF.Floor (minY) - 1);
+            int x1 = (int) Math.Min (_w, MathF.Ceiling (maxX) + 1), y1 = (int) Math.Min (_h, MathF.Ceiling (maxY) + 1);
+            if (x1 <= x0 || y1 <= y0) return default;
+            byte [] bytes = PathRasterizer.RasterizeInto (device, x1 - x0, y1 - y0, x0, y0);
+            return new CoverageMask (bytes, x1 - x0, y1 - y0, x0, y0);
+
+            void Grow (Vector2 p)
+            {
+                minX = MathF.Min (minX, p.X); minY = MathF.Min (minY, p.Y);
+                maxX = MathF.Max (maxX, p.X); maxY = MathF.Max (maxY, p.Y);
+            }
+        }
+
         // ---- fills ------------------------------------------------------------------------------
 
         public void Fill (PagePath path, SceneBrush brush)
         {
             if (path.IsEmpty || brush == null) return;
-            CoverageMask cm = PathRasterizer.Rasterize (Device (path));
+            CoverageMask cm = RasterizeInFrame (Device (path));
             if (cm.IsEmpty) return;
             Paint (cm, brush, path.Bounds ());
         }
@@ -253,7 +276,7 @@ namespace System.Drawing.WebGpuBackend
             }
             local.EvenOdd = false;
             if (local.IsEmpty) return;
-            CoverageMask cm = PathRasterizer.Rasterize (Device (local));
+            CoverageMask cm = RasterizeInFrame (Device (local));
             if (!cm.IsEmpty) Paint (cm, brush, path.Bounds ());
         }
 

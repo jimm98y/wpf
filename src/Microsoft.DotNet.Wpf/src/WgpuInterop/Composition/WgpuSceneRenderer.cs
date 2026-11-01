@@ -1637,6 +1637,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 return;
             }
 
+            // A clip that is nothing but whole-pixel rectangles -- a GDI region, which is what a WinForms
+            // control's SetClip(Region) records -- is drawn as those rectangles: the subtree once under
+            // each as a scissor, no layer, no mask, no composite. Pixel for pixel what the mask gives (its
+            // edges cover a pixel all or nothing), without an offscreen texture and, where the GPU
+            // rasterizer is off (virgl), a mask rasterized on the CPU every frame -- most of a resize
+            // frame once a DotNetBar back buffer was drawn as the scene it recorded.
+            if (v.ClipGeometry is { } rectClip && v.Effect == null && v.OpacityMask == null
+                && !(vOpacity < 0.999 && CountDrawables(v) > 1)
+                && !(v.CacheAsSurface && s_surfaces && !_directSurfaces.Contains(v.Serial))
+                && PixelRectClip(rectClip, world, out List<Scissor> rects))
+            {
+                // its own list: a subtree drawn under one holds clips of its own
+                foreach (Scissor r in rects)
+                {
+                    Scissor rc = Intersect(clip, r);
+                    if (!rc.IsEmpty)
+                        EmitSubtree(v, world, inheritedOpacity * vOpacity, rc, outData, plan, width, height, outFormat);
+                }
+                return;
+            }
+
             // All layer kinds are sized to just the region they touch (the big perf win): a card-sized
             // clip / opacity-mask / effect costs a card-sized offscreen + mask + composite instead of a
             // full-window (e.g. 3420x2005) one -- which on the immediate GL backend is the difference
@@ -1967,6 +1988,97 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             HF(x0 - region.X); HF(y0 - region.Y); HF(x1 - region.X); HF(y1 - region.Y);
             HF(radius * world.M11); HF(radius * world.M22);
             return _hash == 0 ? 1 : _hash;
+        }
+
+        /// <summary>
+        /// The clip as disjoint whole-pixel device rectangles (into <paramref name="rects"/>, at most 16),
+        /// when every filled figure of it is an axis-aligned rectangle that the axis-aligned
+        /// <paramref name="world"/> puts on whole pixels; false for any other clip. The rectangles are
+        /// combined by the clip's fill rule, band by band.
+        /// </summary>
+        private static bool PixelRectClip(PathGeometry clip, Matrix3x2 world, out List<Scissor> rects)
+        {
+            rects = new List<Scissor>(4);
+            if (world.M12 != 0f || world.M21 != 0f || clip.Figures.Count == 0 || clip.Figures.Count > 16) return false;
+            Span<(int X0, int Y0, int X1, int Y1, int Dir)> boxes = stackalloc (int, int, int, int, int)[16];
+            Span<Vector2> c = stackalloc Vector2[5];
+            int count = 0;
+            foreach (PathFigure f in clip.Figures)
+            {
+                if (!f.Filled) continue;
+                int n = f.Segments.Count;
+                if (n < 3 || n > 4) return false;
+                c[0] = Vector2.Transform(f.Start, world);
+                for (int i = 0; i < n; i++)
+                {
+                    if (f.Segments[i] is not LineSegment line) return false;
+                    c[i + 1] = Vector2.Transform(line.Point, world);
+                }
+                if (n == 4 && Vector2.DistanceSquared(c[4], c[0]) > 1e-6f) return false;
+                float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+                for (int i = 0; i < 4; i++)
+                {
+                    if (MathF.Abs(c[i].X - MathF.Round(c[i].X)) > 1e-3f || MathF.Abs(c[i].Y - MathF.Round(c[i].Y)) > 1e-3f) return false;
+                    c[i] = new Vector2(MathF.Round(c[i].X), MathF.Round(c[i].Y));
+                    minX = MathF.Min(minX, c[i].X); maxX = MathF.Max(maxX, c[i].X);
+                    minY = MathF.Min(minY, c[i].Y); maxY = MathF.Max(maxY, c[i].Y);
+                }
+                float area = 0;
+                for (int i = 0; i < 4; i++)
+                {
+                    Vector2 a = c[i], b = c[(i + 1) % 4];
+                    if (a.X != b.X && a.Y != b.Y) return false;                                     // slanted
+                    if ((a.X != minX && a.X != maxX) || (a.Y != minY && a.Y != maxY)) return false;  // not a corner
+                    area += a.X * b.Y - b.X * a.Y;
+                }
+                if (area == 0) continue;
+                boxes[count++] = ((int)minX, (int)minY, (int)maxX, (int)maxY, area > 0 ? 1 : -1);
+            }
+            if (count == 0) return true;   // nothing filled: nothing shows
+            bool evenOdd = clip.FillRule == FillRule.EvenOdd;
+            // bands between successive y edges; in each, the x intervals the rule fills
+            Span<int> ys = stackalloc int[32];
+            int ny = 0;
+            for (int i = 0; i < count; i++) { ys[ny++] = boxes[i].Y0; ys[ny++] = boxes[i].Y1; }
+            ys = ys[..ny];
+            ys.Sort();
+            Span<(int X, int D)> xs = stackalloc (int, int)[32];
+            for (int b = 0; b + 1 < ys.Length; b++)
+            {
+                int y0 = ys[b], y1 = ys[b + 1];
+                if (y0 == y1) continue;
+                int nx = 0;
+                for (int i = 0; i < count; i++)
+                    if (boxes[i].Y0 <= y0 && boxes[i].Y1 >= y1)
+                    {
+                        xs[nx++] = (boxes[i].X0, boxes[i].Dir);
+                        xs[nx++] = (boxes[i].X1, -boxes[i].Dir);
+                    }
+                Span<(int X, int D)> edges = xs[..nx];
+                edges.Sort((p, q) => p.X.CompareTo(q.X));
+                int wind = 0, parity = 0, start = 0;
+                bool inside = false;
+                for (int e = 0; e < edges.Length; e++)
+                {
+                    wind += edges[e].D;
+                    parity ^= 1;
+                    bool now = evenOdd ? parity != 0 : wind != 0;
+                    if (e + 1 < edges.Length && edges[e + 1].X == edges[e].X) continue;   // settle the coincident ones first
+                    if (now && !inside) start = edges[e].X;
+                    else if (!now && inside && edges[e].X > start)
+                    {
+                        // one band below another with the same span is one rectangle
+                        int last = rects.Count - 1;
+                        if (last >= 0 && rects[last].X == start && rects[last].W == edges[e].X - start && rects[last].Y + rects[last].H == y0)
+                            rects[last] = new Scissor(start, rects[last].Y, edges[e].X - start, rects[last].H + (y1 - y0));
+                        else
+                            rects.Add(new Scissor(start, y0, edges[e].X - start, y1 - y0));
+                        if (rects.Count > 16) return false;
+                    }
+                    inside = now;
+                }
+            }
+            return true;
         }
 
         private static bool HasEffectBelow(SceneVisual v)
