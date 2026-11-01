@@ -271,6 +271,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // command buffer → a gradient/image-heavy page bursts past the 4096 limit). The mask is in the
         // geometry's LOCAL space (transform-independent), so it caches by geometry hash like solid masks.
         private readonly Dictionary<long, (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame)> _covCache = new();
+        // the same, CPU-rasterized and uploaded (s_gpuRaster off): sampled textures, not pooled render targets
+        private readonly Dictionary<long, (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame)> _cpuCovCache = new();
         // Per-fill brush-param UNIFORM buffers, keyed by their 64-byte contents (were a fresh
         // mappedAtCreation buffer every frame per gradient/image fill).
         private readonly Dictionary<long, (IntPtr Buf, long LastFrame)> _uniCache = new();
@@ -486,6 +488,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     ReturnMaskTexture(kv.Value.Tex, kv.Value.View, kv.Value.W, kv.Value.H);
                 }
                 if (deadC != null) foreach (long k in deadC) _covCache.Remove(k);
+            }
+
+            if (_cpuCovCache.Count > 0)
+            {
+                List<long>? deadP = null;
+                foreach (KeyValuePair<long, (IntPtr Tex, IntPtr View, int Ox, int Oy, int W, int H, long LastFrame)> kv in _cpuCovCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadP ??= new List<long>()).Add(kv.Key);
+                    wgpuTextureViewRelease(kv.Value.View);
+                    wgpuTextureRelease(kv.Value.Tex);
+                }
+                if (deadP != null) foreach (long k in deadP) _cpuCovCache.Remove(k);
             }
 
             if (_imgCache.Count > 0)
@@ -4718,7 +4733,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Non-solid fills: rasterize coverage + evaluate the brush entirely on the GPU
             // (fs_maskbrush for gradients, fs_maskimage for image/tile brushes) — no CPU
             // per-texel bake. Only unsupported brushes fall back to the CPU EmitMask bake.
-            if (s_gpuRaster)
+            // Also where the coverage itself is rasterized on the CPU (virgl, s_gpuRaster off): only
+            // the coverage shader is broken there, and the bake evaluated the brush for every texel
+            // of the shape on the CPU -- a canvas's tiled background, ~170 times a resize drag.
             {
                 if (IsGpuGradient(brush) &&
                     EmitGpuGradientMask(coverageGeometry, brush, world, opacity, clip, width, height, format, data))
@@ -7954,6 +7971,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             PathGeometry rasterGeom = bucket == 1f
                 ? localGeom
                 : TransformGeometry(localGeom, Matrix3x2.CreateScale(bucket));
+            if (!s_gpuRaster)
+            {
+                // the coverage on the CPU (the GPU rasterizer is off: virgl), uploaded; the brush is
+                // still evaluated per fragment on the GPU
+                if (_cpuCovCache.TryGetValue(key, out e))
+                {
+                    _cpuCovCache[key] = (e.Tex, e.View, e.Ox, e.Oy, e.W, e.H, _frameId);
+                    view = e.View;
+                    rx = e.Ox * inv; ry = e.Oy * inv; rw = e.W * inv; rh = e.H * inv;
+                    return true;
+                }
+                CoverageMask m = PathRasterizer.Rasterize(rasterGeom);
+                if (m.IsEmpty) return false;
+                (IntPtr ctex, view) = CreateR8Texture(m.Coverage, m.Width, m.Height);
+                int cx = (int)m.OriginX, cy = (int)m.OriginY;
+                _cpuCovCache[key] = (ctex, view, cx, cy, m.Width, m.Height, _frameId);
+                rx = cx * inv; ry = cy * inv; rw = m.Width * inv; rh = m.Height * inv;
+                return true;
+            }
             if (!GpuRasterizeCoverage(rasterGeom, gamma: false, out IntPtr tex, out view,
                     out int ox, out int oy, out int w, out int h))
                 return false;
