@@ -222,6 +222,8 @@ namespace MS.Win32
                         uikit.Resized += OnCocoaResized;
                         // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
                         uikit.QueryMaximizedRect = QueryMaximizedRect;
+                        // ...and activation is WM_ACTIVATE, as AppKit's key window is.
+                        uikit.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = uikit;
                         _handle = uikit.Handle;
                     }
@@ -240,6 +242,8 @@ namespace MS.Win32
                         android.Resized += OnCocoaResized;
                         // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
                         android.QueryMaximizedRect = QueryMaximizedRect;
+                        // ...and activation is WM_ACTIVATE, as AppKit's key window is.
+                        android.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = android;
                         _handle = android.Handle;
                     }

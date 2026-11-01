@@ -116,6 +116,41 @@ namespace MS.Internal.Interop
         /// <summary>Raised when the view's content size changed (device pixels).</summary>
         public event Action<int, int> Resized;
 
+        /// <summary>The window became the active one (true) or stopped being it (false): WM_ACTIVATE, which
+        /// Window.IsActive and GetActiveWindow follow -- a dialog shown without an owner takes the active
+        /// window for one, and centred on nothing when there was none.</summary>
+        public event Action<bool> ActiveChanged;
+
+        // The active window: the top-level one (framed, or borderless with a surface of its own) that was
+        // last activated or pressed, as Windows' foreground window is. A popup or a child window taking
+        // the keys leaves it as it is.
+        private static UIKitWindow s_active;
+
+        private bool CanBeActive => _view != IntPtr.Zero && (!IsBorderless || _ownSurface);
+
+        /// <summary>Makes <paramref name="window"/> the active window: the one that was is told first that
+        /// it no longer is, as WM_ACTIVATE (WA_INACTIVE) reaches it before the new one's WA_ACTIVE.</summary>
+        private static void SetActive(UIKitWindow window)
+        {
+            if (window != null && !window.CanBeActive) return;
+            if (ReferenceEquals(s_active, window)) return;
+            UIKitWindow old = s_active;
+            s_active = window;
+            if (s_trace) Console.WriteLine($"[uikit] active 0x{old?._view ?? IntPtr.Zero:x} -> 0x{window?._view ?? IntPtr.Zero:x}");
+            old?.ActiveChanged?.Invoke(false);
+            window?.ActiveChanged?.Invoke(true);
+        }
+
+        /// <summary>The active window goes away (hidden, destroyed): the activation passes to the app's
+        /// own window, as Windows activates the next one, or to none.</summary>
+        private void PassActivation()
+        {
+            if (!ReferenceEquals(s_active, this)) return;
+            UIKitWindow next = s_mainView != _view && s_byView.TryGetValue(s_mainView, out UIKitWindow main) ? main : null;
+            if (next != null && SendBool(next._view, Sel("isHidden"))) next = null;
+            SetActive(next);
+        }
+
         /// <summary>
         /// iOS changes scale only when a window moves between displays (external display / Stage
         /// Manager); declared to satisfy IPlatformWindow and raised by <see cref="NotifyScaleChanged"/>.
@@ -224,6 +259,7 @@ namespace MS.Internal.Interop
             if (_view == IntPtr.Zero) return;
             if (!visible) _minimized = false;
             SendVoidBool(_view, Sel("setHidden:"), !visible);
+            if (!visible) PassActivation();
         }
 
         public void SetVisible(bool visible, bool activate)
@@ -239,6 +275,7 @@ namespace MS.Internal.Interop
             if (_view == IntPtr.Zero || RootView == IntPtr.Zero || (IsBorderless && !_ownSurface)) return;
             s_keyWindow = _view;
             TakeKeys();
+            SetActive(this);
             SendVoidPtr(RootView, Sel("bringSubviewToFront:"), _view);
             s_zOrder.Remove(this);
             s_zOrder.Add(this);
@@ -429,6 +466,8 @@ namespace MS.Internal.Interop
             if (_view == IntPtr.Zero)
                 return;
 
+            PassActivation();
+            if (ReferenceEquals(s_active, this)) s_active = null;
             Send(_view, Sel("removeFromSuperview"));
             s_byView.Remove(_view);
             s_byHandle.Remove(_handle);
@@ -1201,6 +1240,7 @@ namespace MS.Internal.Interop
                 if (s_byView.TryGetValue(view, out UIKitWindow pressed) && (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress))
                     s_keyWindow = view;
                 TakeKeys();
+                if (pressed != null) SetActive(pressed);   // a popup or a child leaves it (SetActive)
             }
             else if (kind == 2) s_pressed = false;
 

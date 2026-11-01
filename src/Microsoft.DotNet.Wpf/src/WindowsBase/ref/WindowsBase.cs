@@ -18,6 +18,7 @@ namespace MS.Internal.Interop
         public bool IsBorderless { get { throw null; } }
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.AndroidWindow.TouchMessage> MouseInput { add { } remove { } }
+        public event System.Action<bool> ActiveChanged { add { } remove { } }
         public event System.Action<int, int> Resized { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
@@ -536,6 +537,7 @@ namespace MS.Internal.Interop
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static System.IntPtr RootView { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.UIKitWindow.TouchMessage> MouseInput { add { } remove { } }
+        public event System.Action<bool> ActiveChanged { add { } remove { } }
         public event System.Action<int, int> Resized { add { } remove { } }
         public event System.Action<double> ScaleChanged { add { } remove { } }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }

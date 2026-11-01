@@ -176,8 +176,9 @@ public static unsafe partial class Exports
 
     // A Windows DLL has no file here: its functions are reached by the app's rewritten P/Invokes. What
     // LoadLibrary and GetModuleHandle hand out for one is a handle of its own, as Windows does (each DLL
-    // an address, 64 KB aligned), so a check that the DLL is there passes; GetProcAddress on it finds no
-    // native entry point (there is none to find), as on a Windows whose DLL lacks the function.
+    // an address, 64 KB aligned), so a check that the DLL is there passes; GetProcAddress on it finds a
+    // native entry point only for the few functions an app calls through a pointer (NativeEntry), and
+    // otherwise none, as on a Windows whose DLL lacks the function.
     private static readonly Dictionary<string, nint> s_systemModules = new(StringComparer.OrdinalIgnoreCase);
     private static HashSet<string>? s_windowsModules;
     private const long SystemModuleBase = 0x7FF800000000;
@@ -255,6 +256,7 @@ public static unsafe partial class Exports
         string? n = Marshal.PtrToStringUTF8((IntPtr)name);
         if (SystemModuleName(module) is string dll)
         {
+            if (n != null && NativeEntry(dll, n) is var entry && entry != 0) return entry;
             LogOnce("getproc:" + dll + "!" + n, $"win32 shim: GetProcAddress({dll}, {n}): a Windows DLL has no native entry points here; returned NULL (ERROR_PROC_NOT_FOUND)");
             SetLastError(127);
             return 0;

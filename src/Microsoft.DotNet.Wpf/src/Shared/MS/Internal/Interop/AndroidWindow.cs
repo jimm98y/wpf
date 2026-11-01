@@ -151,6 +151,7 @@ namespace MS.Internal.Interop
             lock (s_zOrder) { s_zOrder.Remove(this); s_zOrder.Add(this); }
             s_keyWindow = _handle;
             Host?.BringToFront(_handle);
+            SetActive(this);
         }
 
         public bool IsBorderless { get; private set; }
@@ -159,6 +160,41 @@ namespace MS.Internal.Interop
 
         /// <summary>Raised when the view's content size changed (device pixels).</summary>
         public event Action<int, int> Resized;
+
+        /// <summary>The window became the active one (true) or stopped being it (false): WM_ACTIVATE, which
+        /// Window.IsActive and GetActiveWindow follow -- a dialog shown without an owner takes the active
+        /// window for one, and centred on nothing when there was none.</summary>
+        public event Action<bool> ActiveChanged;
+
+        // The active window: the top-level one (framed, or borderless with a surface of its own) that was
+        // last activated or pressed, as Windows' foreground window is. A popup or a child window taking
+        // the keys leaves it as it is.
+        private static AndroidWindow s_active;
+
+        private bool CanBeActive => _handle != IntPtr.Zero && (!IsBorderless || _ownSurface);
+
+        /// <summary>Makes <paramref name="window"/> the active window: the one that was is told first that
+        /// it no longer is, as WM_ACTIVATE (WA_INACTIVE) reaches it before the new one's WA_ACTIVE.</summary>
+        private static void SetActive(AndroidWindow window)
+        {
+            if (window != null && !window.CanBeActive) return;
+            if (ReferenceEquals(s_active, window)) return;
+            AndroidWindow old = s_active;
+            s_active = window;
+            if (s_trace) Console.WriteLine($"[android] active 0x{old?._handle ?? IntPtr.Zero:x} -> 0x{window?._handle ?? IntPtr.Zero:x}");
+            old?.ActiveChanged?.Invoke(false);
+            window?.ActiveChanged?.Invoke(true);
+        }
+
+        /// <summary>The active window goes away (hidden, destroyed): the activation passes to the app's
+        /// own window, as Windows activates the next one, or to none.</summary>
+        private void PassActivation()
+        {
+            if (!ReferenceEquals(s_active, this)) return;
+            AndroidWindow next = s_mainHandle != _handle ? FromHandle(s_mainHandle) : null;
+            if (next != null && !next._visible) next = null;
+            SetActive(next);
+        }
 
         /// <summary>
         /// Android changes density only when the app moves to a display with another one (desktop
@@ -237,8 +273,12 @@ namespace MS.Internal.Interop
         {
             if (_handle == IntPtr.Zero) return;
             if (!visible) _minimized = false;
+            _visible = visible;
             Host?.SetViewVisible(_handle, visible);
+            if (!visible) PassActivation();
         }
+
+        private bool _visible = true;
 
         // ---- minimized, maximized, restored: ShowWindow's states -----------------------------------
         //
@@ -424,6 +464,8 @@ namespace MS.Internal.Interop
             if (_handle == IntPtr.Zero)
                 return;
 
+            PassActivation();
+            if (ReferenceEquals(s_active, this)) s_active = null;
             Host?.DestroyView(_handle);
             lock (this) ReleaseNativeWindow();
             lock (s_byHandle) s_byHandle.Remove(_handle);
@@ -994,8 +1036,11 @@ namespace MS.Internal.Interop
             else if (kind == 2) s_pressed = false;
             // a press gives a window the keys, and a child window that takes them (an ElementHost's WPF
             // tree) -- never a popup (a menu, a tooltip), as on Windows
-            if (kind == 1 && FromHandle(handle) is { } pressed && (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress))
-                s_keyWindow = handle;
+            if (kind == 1 && FromHandle(handle) is { } pressed)
+            {
+                if (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress) s_keyWindow = handle;
+                SetActive(pressed);   // a popup or a child leaves it (SetActive)
+            }
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
             {
