@@ -92,8 +92,8 @@ namespace MS.Internal.Interop.WebView
 
             _attach = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            // On this head the window handle IS a UIView* (see UIKitWindow).
-            _hostView = ownerWindow;
+            // The window's view: its handle is a small value of its own (UIKitWindow.Handle).
+            _hostView = AppContext.GetData("WpfWebGpu.UIKitWindow.ViewOf") is Func<IntPtr, IntPtr> viewOf ? viewOf(ownerWindow) : ownerWindow;
             _self = GCHandle.Alloc(this);
 
             dlopen(WebKit, RTLD_NOW);

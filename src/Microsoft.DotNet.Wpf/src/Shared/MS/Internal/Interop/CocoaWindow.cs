@@ -59,7 +59,13 @@ namespace MS.Internal.Interop
         public static IntPtr ViewOf(IntPtr handle)
         {
             lock (s_lock)
-                return s_byHandle.TryGetValue(handle, out CocoaWindow w) ? w._contentView : handle;
+            {
+                if (s_byHandle.TryGetValue(handle, out CocoaWindow w)) return w._contentView;
+                // one of these handles whose window has gone has no view: passed on as it is, the
+                // number would be messaged as an object
+                if ((long)handle >= 0x0E00_0000 && (long)handle <= s_nextHandle) return IntPtr.Zero;
+                return handle;
+            }
         }
 
         /// <summary>The handle of the window whose content view is <paramref name="view"/>, or

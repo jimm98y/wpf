@@ -451,7 +451,12 @@ namespace System.Windows.Forms
 				switch (m.Kind) {
 				case 0: _driver.InjectMouseMove (x, y, _leftDown); break;
 				case 1: _leftDown = true; _driver.InjectMouseDown (x, y); break;
-				case 2: _leftDown = false; _driver.InjectMouseUp (x, y); break;
+				case 2:
+					_leftDown = false;
+					_driver.InjectMouseUp (x, y);
+					// a finger leaves no pointer behind (LiftPointer): the button tapped stayed lit
+					_driver.LiftPointer ();
+					break;
 				case 3: _driver.InjectWheel (x, y, m.Wheel); break;
 				}
 			} finally {

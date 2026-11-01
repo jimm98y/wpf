@@ -36,15 +36,38 @@ using System.Runtime.InteropServices;
 namespace MS.Internal.Interop
 {
     /// <summary>
-    /// A single WPF window on iOS: a Metal-backed UIView inside the app's one UIWindow. The UIView*
-    /// stands in for the HWND. IntPtr.Zero until <see cref="Create"/>.
+    /// A single WPF window on iOS: a Metal-backed UIView inside the app's one UIWindow. Its HWND is a
+    /// small value of its own (<see cref="Handle"/>), IntPtr.Zero until <see cref="Create"/>.
     /// </summary>
     public sealed unsafe class UIKitWindow : IPlatformWindow
     {
         private static readonly Dictionary<IntPtr, UIKitWindow> s_byView = new Dictionary<IntPtr, UIKitWindow>();
         private static readonly List<UIKitWindow> s_zOrder = new List<UIKitWindow>();   // last = topmost
 
-        private IntPtr _view;      // UIView* (WpfMetalView) — the window handle
+        private IntPtr _view;      // UIView* (WpfMetalView)
+        private IntPtr _handle;    // the HWND (see Handle)
+
+        // 0x0F00_0000 up: clear of WinForms' driver handles, the Win32 shim's, BrowserWindow's 0x0B00_0000+,
+        // the web overlays' 0x0C00_0000+, WaylandWindow's 0x0D00_0000+, CocoaWindow's 0x0E00_0000+ and
+        // HwndWrapper's hidden windows at 0x7F00_0000+.
+        private static int s_nextHandle = 0x0F00_0000;
+        private static readonly Dictionary<IntPtr, UIKitWindow> s_byHandle = new Dictionary<IntPtr, UIKitWindow>();
+
+        /// <summary>The UIView* of a window <paramref name="handle"/>; anything that is not one of these
+        /// windows' handles (a view already, a WinForms host's own) is returned as it is.</summary>
+        internal static IntPtr ViewOf(IntPtr handle)
+        {
+            if (s_byHandle.TryGetValue(handle, out UIKitWindow w)) return w._view;
+            // one of these handles whose window has gone has no view: passed on as it is, the number
+            // was messaged as an object (the compositor asks about a closed window's target once more)
+            if ((long)handle >= 0x0F00_0000 && (long)handle <= s_nextHandle) return IntPtr.Zero;
+            return handle;
+        }
+
+        /// <summary>The handle of the window whose view is <paramref name="view"/>, or <paramref name="view"/>
+        /// itself when it is no such view (it may be a handle already).</summary>
+        internal static IntPtr HandleOf(IntPtr view)
+            => s_byView.TryGetValue(view, out UIKitWindow w) && w._handle != IntPtr.Zero ? w._handle : view;
 
         private static readonly bool s_trace = Environment.GetEnvironmentVariable("WPF_TRACE_UIKIT") == "1";
         internal static bool Trace => s_trace;
@@ -77,8 +100,14 @@ namespace MS.Internal.Interop
             SendVoidFloat(layer, Sel("setShadowOpacity:"), 0f);
         }
 
-        /// <summary>The UIView* that stands in for the HWND.</summary>
-        public IntPtr Handle => _view;
+        /// <summary>
+        /// The window's HWND: a small value of its own, not the view's address, as on macOS (CocoaWindow.Handle).
+        /// A Windows window handle always fits in 32 bits and code relies on it -- an app's
+        /// WindowUtil.SetOwner takes owner.ToInt32(), which overflowed on a 64-bit UIView* and its login
+        /// dialog never opened. What reaches UIKit or Metal with a handle resolves it through
+        /// <see cref="ViewOf"/>; what UIKit reports by view is turned into this through <see cref="HandleOf"/>.
+        /// </summary>
+        public IntPtr Handle => _handle;
 
         public bool IsBorderless { get; private set; }
 
@@ -99,8 +128,9 @@ namespace MS.Internal.Interop
         /// </summary>
         public static IntPtr RootView { get; set; }
 
+        /// <summary>The window of a handle -- or of its view, which UIKit's callbacks name.</summary>
         public static UIKitWindow FromHandle(IntPtr handle)
-            => s_byView.TryGetValue(handle, out UIKitWindow w) ? w : null;
+            => s_byHandle.TryGetValue(handle, out UIKitWindow w) || s_byView.TryGetValue(handle, out w) ? w : null;
 
         /// <param name="x">Origin in top-left device PIXELS (borderless popups; the main window fills the screen).</param>
         public void Create(string title, int x, int y, int width, int height, bool borderless)
@@ -168,6 +198,9 @@ namespace MS.Internal.Interop
                 SendVoidPtr(root, Sel("addSubview:"), _view);
 
             s_byView[_view] = this;
+            _handle = (IntPtr)(s_nextHandle += 4);
+            s_byHandle[_handle] = this;
+            AppContext.SetData("WpfWebGpu.UIKitWindow.ViewOf", (Func<IntPtr, IntPtr>)ViewOf);
             s_zOrder.Add(this);
             if (s_trace)
                 Console.WriteLine($"[uikit] window 0x{_view:x} '{title}' {(main ? "main" : borderless ? (_ownSurface ? "borderless+surface" : "popup") : "floating")} " +
@@ -398,11 +431,13 @@ namespace MS.Internal.Interop
 
             Send(_view, Sel("removeFromSuperview"));
             s_byView.Remove(_view);
+            s_byHandle.Remove(_handle);
             s_zOrder.Remove(this);
             if (s_keyWindow == _view) s_keyWindow = s_mainView != _view ? s_mainView : IntPtr.Zero;
             if (s_drag?.Window == this) s_drag = null;
             Send(_view, Sel("release"));
             _view = IntPtr.Zero;
+            _handle = IntPtr.Zero;
         }
 
         /// <summary>Resize the content area, in POINTS.</summary>
@@ -514,7 +549,7 @@ namespace MS.Internal.Interop
                 w.GetClientScreenOriginPixels(out int ox, out int oy);
                 w.GetPixelSize(out int pw, out int ph);
                 if (x >= ox && x < ox + pw && y >= oy && y < oy + ph)
-                    return w._view;
+                    return w._handle;
             }
             return IntPtr.Zero;
         }
@@ -715,9 +750,13 @@ namespace MS.Internal.Interop
                 CGPoint p = SendPointPtr(recognizer, Sel("locationInView:"), self);
                 double scale = ScreenScale();
                 double x = p.x * scale, y = p.y * scale;
-                handler(new TouchMessage(self, 0, (int)Math.Round(x), (int)Math.Round(y), Environment.TickCount));
-
-                EmitWheel(self, deltaLogical, x, y);
+                // queued, as a touch is (PostInput)
+                PostInput(() =>
+                {
+                    if (!s_byView.ContainsKey(self)) return;   // gone since: its view is released
+                    MouseInput?.Invoke(new TouchMessage(HandleOf(self), 0, (int)Math.Round(x), (int)Math.Round(y), Environment.TickCount));
+                    EmitWheel(self, deltaLogical, x, y);
+                });
             }
             catch (Exception e)
             {
@@ -811,7 +850,7 @@ namespace MS.Internal.Interop
         /// <param name="kind">0 move, 1 down, 2 up, 3 wheel (drag-to-scroll).</param>
         internal static void InjectMouse(IntPtr view, int kind, int x, int y, int wheel)
         {
-            MouseInput?.Invoke(new TouchMessage(view, kind, x, y, Environment.TickCount, wheel));
+            MouseInput?.Invoke(new TouchMessage(HandleOf(view), kind, x, y, Environment.TickCount, wheel));
         }
 
         /// <summary>
@@ -822,7 +861,26 @@ namespace MS.Internal.Interop
         /// of that segment.
         /// </summary>
         public static void InjectTouch(IntPtr view, int kind, int xPixels, int yPixels)
-            => Emit(view, kind, xPixels, yPixels, ScreenScale());
+        {
+            // To the window on top at that point, as UIKit hit-tests a real touch -- a dialog over the
+            // window the point was given in -- and that window keeps the touch until it lifts.
+            UIKitWindow given = FromHandle(view);
+            if (given != null)
+            {
+                given.GetClientScreenOriginPixels(out int gx, out int gy);
+                int sx = gx + xPixels, sy = gy + yPixels;
+                UIKitWindow target = kind == 1 || s_injectTarget == null ? FromHandle(HitTest(sx, sy)) ?? given : s_injectTarget;
+                if (kind == 1) s_injectTarget = target;
+                else if (kind == 2) s_injectTarget = null;
+                target.GetClientScreenOriginPixels(out int tx, out int ty);
+                view = target._view;
+                xPixels = sx - tx;
+                yPixels = sy - ty;
+            }
+            Emit(ViewOf(view), kind, xPixels, yPixels, ScreenScale());
+        }
+
+        private static UIKitWindow s_injectTarget;   // the window an injected press went to, until its release
 
         private static void AddTouchMethods(IntPtr cls)
         {
@@ -900,13 +958,15 @@ namespace MS.Internal.Interop
         private static readonly Dictionary<IntPtr, int> s_contactIds = new();
         private static int s_nextContactId;
 
-        private static void ReportContacts(IntPtr view, IntPtr touches, int kind, double scale)
+        /// <summary>The contacts of a touch event, read while UIKit's UITouch objects are valid (inside its
+        /// callback), as the delivery to the touch sink that is run later (see <see cref="PostInput"/>).</summary>
+        private static Action ReportContacts(IntPtr view, IntPtr touches, int kind, double scale)
         {
-            IPlatformTouchSink sink = PlatformTouch.Sink;
-            if (sink is null) return;
+            if (PlatformTouch.Sink is null) return null;
 
             IntPtr all = Send(touches, Sel("allObjects"));
-            if (all == IntPtr.Zero) return;
+            if (all == IntPtr.Zero) return null;
+            var contacts = new List<(int Id, int X, int Y, PenState Pen)>();
 
             nint count = SendNInt(all, Sel("count"));
             for (nint i = 0; i < count; i++)
@@ -943,15 +1003,26 @@ namespace MS.Internal.Interop
                                        degrees * Math.Sin(azimuth));
                 }
 
-                uint timestamp = (uint)Environment.TickCount;
-                switch (kind)
-                {
-                    case 1: sink.TouchDown(view, id, x, y, pen, timestamp); break;
-                    case 0: sink.TouchMove(view, id, x, y, pen, timestamp); break;
-                    case 2: sink.TouchUp(view, id, x, y, timestamp); break;
-                    case 3: sink.TouchCancel(view, id); break;
-                }
+                contacts.Add((id, x, y, pen));
             }
+            if (contacts.Count == 0) return null;
+            return () =>
+            {
+                IPlatformTouchSink sink = PlatformTouch.Sink;
+                if (sink is null) return;
+                uint timestamp = (uint)Environment.TickCount;
+                IntPtr window = HandleOf(view);
+                foreach (var (id, x, y, pen) in contacts)
+                {
+                    switch (kind)
+                    {
+                        case 1: sink.TouchDown(window, id, x, y, pen, timestamp); break;
+                        case 0: sink.TouchMove(window, id, x, y, pen, timestamp); break;
+                        case 2: sink.TouchUp(window, id, x, y, timestamp); break;
+                        case 3: sink.TouchCancel(window, id); break;
+                    }
+                }
+            };
         }
 
         /// <summary>The contact id for a UITouch, allocating on a down and releasing on an up.</summary>
@@ -968,6 +1039,85 @@ namespace MS.Internal.Interop
             return true;
         }
 
+        // ---- Input is queued, as Windows queues it ----
+        //
+        // UIKit calls touchesBegan/Ended from inside its event dispatch, and what a touch sets off -- a
+        // click whose handler shows a modal dialog -- ran right there, its modal loop nested in UIKit's
+        // callout. One such level was survived; a dialog opened from a dialog (Security Login's Change
+        // Password) was two callouts deep, and UIKit delivered it no touch at all: it could not be
+        // pressed, moved or closed, while its caret went on blinking. On Windows the input sits in the
+        // message queue and the app's own loop dispatches it, never inside the system's delivery. So
+        // here: the callout reads what the touch says and returns, and the touch is delivered when one of
+        // our loops gets control back (WaitForEvents, RunLoop) or, failing that, from a run-loop source
+        // of its own.
+
+        private static readonly Queue<Action> s_input = new();
+        private static IntPtr s_inputSource, s_mainRunLoop;
+
+        private static void PostInput(Action deliver)
+        {
+            s_input.Enqueue(deliver);
+            EnsureInputSource();
+            if (s_inputSource != IntPtr.Zero)
+            {
+                CFRunLoopSourceSignal(s_inputSource);
+                CFRunLoopWakeUp(s_mainRunLoop);
+            }
+        }
+
+        /// <summary>Delivers the input UIKit queued (main thread). Each delivery checks that its window is
+        /// still there: one queued behind a tap that closed it would message a released view. Not re-entrant: input delivered from a
+        /// modal loop that a delivery started is delivered by that loop, in order.</summary>
+        internal static void DrainInput()
+        {
+            if (!IsMainThread) return;
+            while (s_input.Count > 0)
+            {
+                Action next = s_input.Dequeue();
+                try { next(); }
+                catch (Exception e) { Console.WriteLine($"WPF iOS input delivery failed: {e}"); }
+            }
+        }
+
+        private static void EnsureInputSource()
+        {
+            if (s_inputSource != IntPtr.Zero || !IsMainThread) return;
+            s_mainRunLoop = CFRunLoopGetCurrent();
+            var context = new CFRunLoopSourceContext
+            {
+                perform = (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, void>)&InputSourcePerform,
+            };
+            s_inputSource = CFRunLoopSourceCreate(IntPtr.Zero, 0, ref context);
+            if (s_inputSource == IntPtr.Zero) return;
+            // the default mode by name; the common-modes set is matched by the exported constant only
+            // (DispatcherRunLoop.EnsureRunLoopSource), which the default mode's loops are enough for here
+            if (s_defaultMode == IntPtr.Zero)
+                s_defaultMode = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopDefaultMode", 0x08000100 /* UTF-8 */);
+            CFRunLoopAddSource(s_mainRunLoop, s_inputSource, s_defaultMode);
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void InputSourcePerform(IntPtr info)
+        {
+            try { DrainInput(); }
+            catch { }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct CFRunLoopSourceContext
+        {
+            public nint version;
+            public IntPtr info;
+            public IntPtr retain;
+            public IntPtr release;
+            public IntPtr copyDescription;
+            public IntPtr equal;
+            public IntPtr hash;
+            public IntPtr schedule;
+            public IntPtr cancel;
+            public IntPtr perform;
+        }
+
         private static void DispatchTouch(IntPtr view, IntPtr touches, int kind)
         {
             // Never let a managed exception unwind into UIKit.
@@ -982,13 +1132,20 @@ namespace MS.Internal.Interop
                 CGPoint p = SendPointPtr(touch, Sel("locationInView:"), view);
                 double scale = ScreenScale();
 
-                // The mouse has no notion of a cancelled press, so a cancel still releases it.
-                Emit(view, kind == 3 ? 2 : kind, p.x * scale, p.y * scale, scale);
-
-                // Every touch, not just the one the mouse follows. The mouse emulation above stays:
-                // a TouchDevice raises the Touch events and drives Manipulation but does not promote
+                // Every touch, not just the one the mouse follows. The mouse emulation stays: a
+                // TouchDevice raises the Touch events and drives Manipulation but does not promote
                 // itself to the mouse, so contacts alone would gain pinch and lose Button.Click.
-                ReportContacts(view, touches, kind, scale);
+                Action contacts = ReportContacts(view, touches, kind, scale);
+
+                // The mouse has no notion of a cancelled press, so a cancel still releases it.
+                int mouseKind = kind == 3 ? 2 : kind;
+                PostInput(() =>
+                {
+                    // the window may have gone since (a tap on its close box): its view is released
+                    if (!s_byView.ContainsKey(view)) return;
+                    Emit(view, mouseKind, p.x * scale, p.y * scale, scale);
+                    contacts?.Invoke();
+                });
             }
             catch (Exception e)
             {
@@ -1029,7 +1186,7 @@ namespace MS.Internal.Interop
             else if (kind == 2) s_pressed = false;
 
             int timestamp = Environment.TickCount;
-            handler(new TouchMessage(view, kind, (int)Math.Round(x), (int)Math.Round(y), timestamp));
+            handler(new TouchMessage(HandleOf(view), kind, (int)Math.Round(x), (int)Math.Round(y), timestamp));
 
             switch (kind)
             {
@@ -1076,7 +1233,7 @@ namespace MS.Internal.Interop
             s_panAccum -= sign * LogicalPixelsPerNotch;
             if (Math.Abs(s_panAccum) > MaxCarryPixels) s_panAccum = sign * MaxCarryPixels;
 
-            handler(new TouchMessage(view, 3, (int)Math.Round(x), (int)Math.Round(y),
+            handler(new TouchMessage(HandleOf(view), 3, (int)Math.Round(x), (int)Math.Round(y),
                                      Environment.TickCount, sign * WheelNotch));
         }
 
@@ -1100,8 +1257,8 @@ namespace MS.Internal.Interop
         private static IntPtr s_keyView;
         private static IntPtr s_keyWindow;   // the window the keys go to
 
-        /// <summary>The view that has the keyboard (pressed or activated last).</summary>
-        public static IntPtr KeyboardWindow => s_keyWindow;
+        /// <summary>The window that has the keyboard (pressed or activated last), by handle.</summary>
+        public static IntPtr KeyboardWindow => HandleOf(s_keyWindow);
 
         /// <summary>The keyboard back to the key view, once no text box is editing (UIKitTextInput).</summary>
         internal static void TakeKeys()
@@ -1168,9 +1325,11 @@ namespace MS.Internal.Interop
                     long mods = SendNInt(key, Sel("modifierFlags"));
                     string chars = NSStringToString(Send(key, Sel("characters")));
                     if (s_trace) Console.WriteLine($"[uikit] key {(down ? "down" : "up")} vk=0x{vk:x} -> 0x{s_keyWindow:x}");
-                    handler(new UIKitKeyMessage(s_keyWindow, down, vk, chars,
+                    // queued, as a touch is (PostInput): a key can open a dialog too
+                    var message = new UIKitKeyMessage(HandleOf(s_keyWindow), down, vk, chars,
                         (mods & UIKeyModifierShift) != 0, (mods & UIKeyModifierControl) != 0,
-                        (mods & UIKeyModifierAlternate) != 0, (mods & UIKeyModifierCommand) != 0, Environment.TickCount));
+                        (mods & UIKeyModifierAlternate) != 0, (mods & UIKeyModifierCommand) != 0, Environment.TickCount);
+                    PostInput(() => KeyInput?.Invoke(message));
                 }
             }
             catch (Exception e)
@@ -1199,7 +1358,7 @@ namespace MS.Internal.Interop
                 _ => 0,
             };
             if (s_trace) Console.WriteLine($"[uikit] key {(down ? "down" : "up")} vk=0x{vk:x} '{characters}' -> 0x{s_keyWindow:x} (injected)");
-            KeyInput?.Invoke(new UIKitKeyMessage(s_keyWindow, down, vk, characters, shift, ctrl, alt, meta, Environment.TickCount));
+            KeyInput?.Invoke(new UIKitKeyMessage(HandleOf(s_keyWindow), down, vk, characters, shift, ctrl, alt, meta, Environment.TickCount));
         }
 
         private static string NSStringToString(IntPtr nsString)
@@ -1264,6 +1423,7 @@ namespace MS.Internal.Interop
             int result = 0;
             try { result = CFRunLoopRunInMode(s_defaultMode, seconds, true); }
             finally { s_waiting = false; }
+            DrainInput();
             if (s_trace) Console.WriteLine($"[uikit] wait {timeoutMilliseconds} ms ended: {result}");
         }
 
@@ -1280,11 +1440,17 @@ namespace MS.Internal.Interop
             s_waiting = false;
             try { CFRunLoopRunInMode(s_defaultMode, Math.Max(0, timeoutMilliseconds) / 1000.0, true); }
             finally { s_waiting = wasWaiting; }
+            DrainInput();
         }
 
         private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
         [DllImport(CoreFoundation)] private static extern int CFRunLoopRunInMode(IntPtr mode, double seconds, [MarshalAs(UnmanagedType.I1)] bool returnAfterSourceHandled);
         [DllImport(CoreFoundation)] private static extern IntPtr CFStringCreateWithCString(IntPtr allocator, string cStr, uint encoding);
+        [DllImport(CoreFoundation)] private static extern IntPtr CFRunLoopGetCurrent();
+        [DllImport(CoreFoundation)] private static extern IntPtr CFRunLoopSourceCreate(IntPtr allocator, nint order, ref CFRunLoopSourceContext context);
+        [DllImport(CoreFoundation)] private static extern void CFRunLoopAddSource(IntPtr runLoop, IntPtr source, IntPtr mode);
+        [DllImport(CoreFoundation)] private static extern void CFRunLoopSourceSignal(IntPtr source);
+        [DllImport(CoreFoundation)] private static extern void CFRunLoopWakeUp(IntPtr runLoop);
 
         /// <summary>nativeScale (not scale): the true pixel ratio on phones that render-and-downsample.</summary>
         private static double ScreenScale()

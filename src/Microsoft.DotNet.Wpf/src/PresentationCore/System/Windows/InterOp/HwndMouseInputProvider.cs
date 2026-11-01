@@ -1482,6 +1482,18 @@ namespace System.Windows.Interop
             if (actions == default) return;
 
             ReportMacInput(actions, msg.X, msg.Y, msg.Wheel, msg.TimestampMs);
+
+            // A finger leaves no pointer behind: once it lifts, the mouse leaves the window, as Windows
+            // follows a touch's promoted click with WM_MOUSELEAVE -- or what was tapped stayed lit as
+            // hovered (the status bar's login button, after its dialog closed). Not while something
+            // holds the mouse.
+            if (actions == RawMouseActions.Button1Release && _active && _source != null && !_source.IsDisposed && _site != null
+                && _site.CriticalInputManager?.PrimaryMouseDevice?.Captured == null)
+            {
+                _site.ReportInput(new RawMouseInputReport(InputMode.Foreground, msg.TimestampMs, _source,
+                    RawMouseActions.Deactivate, 0, 0, 0, IntPtr.Zero));
+                _active = false;
+            }
         }
 
         /// <summary>

@@ -251,10 +251,10 @@ namespace MS.Internal.Interop
                 LeaveCurrent(target);
                 s_offeredMimes = OfferedMimes(session);
                 s_inside = view;
-                return target.DragEnter(view, sx, sy, s_offeredMimes, Read, AllowedEffects());
+                return target.DragEnter(UIKitWindow.HandleOf(view), sx, sy, s_offeredMimes, Read, AllowedEffects());
             }
 
-            return target.DragOver(view, sx, sy, AllowedEffects());
+            return target.DragOver(UIKitWindow.HandleOf(view), sx, sy, AllowedEffects());
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -416,11 +416,11 @@ namespace MS.Internal.Interop
                     {
                         s_offeredMimes = ToArray(pending.Data.Keys);
                         s_inside = pending.View;
-                        target.DragEnter(pending.View, pending.ScreenX, pending.ScreenY,
+                        target.DragEnter(UIKitWindow.HandleOf(pending.View), pending.ScreenX, pending.ScreenY,
                                          s_offeredMimes, Read, AllowedEffects());
                     }
 
-                    target.Drop(pending.View, pending.ScreenX, pending.ScreenY, AllowedEffects());
+                    target.Drop(UIKitWindow.HandleOf(pending.View), pending.ScreenX, pending.ScreenY, AllowedEffects());
                 }
                 catch (Exception e) { Log("the drop", e); }
                 finally

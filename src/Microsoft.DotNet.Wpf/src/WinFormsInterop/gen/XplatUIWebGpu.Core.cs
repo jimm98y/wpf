@@ -751,6 +751,19 @@ namespace System.Windows.Forms
 		/// says so. Whatever was hot no longer is.</summary>
 		internal void InjectMouseLeaveAll() => TrackHover(IntPtr.Zero);
 
+		/// <summary>A touch lifted: the finger leaves no pointer behind. What the mouse was over is
+		/// left, as Windows follows a touch's promoted click with WM_MOUSELEAVE, and a window shown
+		/// or a capture released later is not sent the move Windows makes where a cursor rests --
+		/// a dialog opened again at the same place lit the button the last tap had closed it with.
+		/// Until the next touch puts the pointer down somewhere.</summary>
+		internal void LiftPointer()
+		{
+			TrackHover(IntPtr.Zero);
+			_pointerLifted = true;
+		}
+
+		private bool _pointerLifted;
+
 		// Rubber-band rectangles, in this driver's screen space, with the width of the line each
 		// was asked for.
 		private readonly List<(IntPtr Owner, Rectangle Rect, int Width)> _reversible =
@@ -820,6 +833,7 @@ namespace System.Windows.Forms
 		internal void NotePointer(int screenX, int screenY)
 		{
 			_cursorX = screenX;
+			_pointerLifted = false;
 			_cursorY = screenY;
 		}
 
@@ -862,6 +876,7 @@ namespace System.Windows.Forms
 			// message, so answering the origin meant every menu thought the pointer was in the
 			// top-left corner and no item ever highlighted.
 			_cursorX = screenX;
+			_pointerLifted = false;
 			_cursorY = screenY;
 			if (target == IntPtr.Zero) return;
 			Hwnd h = Hwnd.ObjectFromHandle(target);
@@ -988,6 +1003,7 @@ namespace System.Windows.Forms
 		internal void InjectWheel(int screenX, int screenY, int delta)
 		{
 			_cursorX = screenX;
+			_pointerLifted = false;
 			_cursorY = screenY;
 			IntPtr target = WindowAtPoint(screenX, screenY);
 			if (target == IntPtr.Zero) return;
@@ -1223,6 +1239,7 @@ namespace System.Windows.Forms
 		/// changes, though the pointer itself did not move.</summary>
 		private void PostMoveAtCursor(IntPtr target)
 		{
+			if (_pointerLifted) return;   // no pointer rests anywhere (LiftPointer)
 			Hwnd t = target != IntPtr.Zero ? Hwnd.ObjectFromHandle(target) : null;
 			if (t == null) return;
 			Point origin = ScreenLocation(t);

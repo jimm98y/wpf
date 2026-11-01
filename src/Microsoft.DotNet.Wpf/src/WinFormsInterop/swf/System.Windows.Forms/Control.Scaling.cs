@@ -148,7 +148,11 @@ namespace System.Windows.Forms
 				int edge = XplatUIWebGpu.BorderEdgeOf (cp.Style, cp.ExStyle);
 				return new Size (2 * edge, 2 * edge);
 			}
-			Padding f = XplatUIWebGpu.TopLevelFrame (cp.Style, cp.ExStyle, false, ScaleHelper.IsDeviceScaled ? dpi : ScaleHelper.OneHundredPercentLogicalDpi);
+			// Asked for this control: on a head that frames only some windows (FramedWindow) a
+			// frame asked for no control in particular is none -- and a dialog sized with its frame
+			// (CalculateWindowRect asks for the control) was scaled as though all of it were client,
+			// so its anchored buttons sat that much off the bottom-right corner.
+			Padding f = XplatUIWebGpu.TopLevelFrame (cp.Style, cp.ExStyle, false, ScaleHelper.IsDeviceScaled ? dpi : ScaleHelper.OneHundredPercentLogicalDpi, this);
 			return new Size (f.Horizontal, f.Vertical);
 		}
 

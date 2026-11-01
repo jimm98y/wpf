@@ -25,12 +25,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
 {
     internal static unsafe class IosInterop
     {
+        /// <summary>The UIView* of a WPF window handle (UIKitWindow hands out small handles, as Windows
+        /// does, not the view's address); any other value -- a WinForms host's own view -- as it is.</summary>
+        private static IntPtr View(IntPtr handle)
+        {
+            s_viewOf ??= AppContext.GetData("WpfWebGpu.UIKitWindow.ViewOf") as Func<IntPtr, IntPtr>;
+            return s_viewOf != null ? s_viewOf(handle) : handle;
+        }
+        private static Func<IntPtr, IntPtr>? s_viewOf;
+
         /// <summary>
         /// Create a wgpu Metal surface for a UIView* whose backing layer is a CAMetalLayer
         /// (i.e. a view whose +layerClass returns CAMetalLayer). Main-thread only, like all UIKit.
         /// </summary>
         public static IntPtr CreateSurface(IntPtr instance, IntPtr uiView)
         {
+            uiView = View(uiView);
             if (uiView == IntPtr.Zero) return IntPtr.Zero;
 
             IntPtr metalLayer = Send(uiView, Sel("layer"));
@@ -122,6 +132,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </remarks>
         public static bool CanPresentTo(IntPtr uiView)
         {
+            uiView = View(uiView);
             if (uiView == IntPtr.Zero) return false;
 
             IntPtr layer = Send(uiView, Sel("layer"));
@@ -134,6 +145,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the screen scale.</summary>
         public static void SetContentsScale(IntPtr uiView, double scale)
         {
+            uiView = View(uiView);
             if (uiView == IntPtr.Zero) return;
             IntPtr layer = Send(uiView, Sel("layer"));
             if (layer != IntPtr.Zero) SendVoidDouble(layer, Sel("setContentsScale:"), scale);
@@ -187,6 +199,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         internal static double BackingScale(IntPtr uiView)
         {
             IntPtr screen = IntPtr.Zero;
+            uiView = View(uiView);
 
             if (uiView != IntPtr.Zero)
             {
@@ -213,6 +226,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         public static void GetWindowOrigin(IntPtr uiView, out int x, out int y)
         {
             x = y = 0;
+            uiView = View(uiView);
             if (uiView == IntPtr.Zero) return;
 
             CGRect bounds = SendRect(uiView, Sel("bounds"));

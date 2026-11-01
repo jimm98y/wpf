@@ -207,7 +207,7 @@ namespace MS.Win32
                     {
                         // iOS: one fullscreen UIWindow, so a WPF window is a Metal-backed UIView
                         // inside it and popups are borderless sibling subviews (no child windows).
-                        // The UIView* is the handle, exactly as Cocoa uses its NSView*.
+                        // Its handle is a small value of its own, as Cocoa's is (UIKitWindow.Handle).
                         // Checked BEFORE the macOS branch below: both are Darwin.
                         var uikit = new MS.Internal.Interop.UIKitWindow();
                         uikit.Create(name, cx, cy, cw, ch, borderless);
