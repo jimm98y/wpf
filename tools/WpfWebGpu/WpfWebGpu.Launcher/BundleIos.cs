@@ -24,10 +24,23 @@ internal static partial class Bundle
 {
     private const string IosRid = "iossimulator-arm64";
 
+    /// <summary>The assemblies a default (not --aot) bundle compiles ahead of time.</summary>
+    private static readonly string[] CompiledStack =
+    {
+        "System.Private.CoreLib", "WindowsBase", "PresentationCore", "PresentationFramework", "System.Xaml",
+        "Microsoft.Wpf.Interop.WebGpu", "System.Windows.Forms", "System.Windows.Forms.Primitives",
+        "Mono.System.Drawing", "System.Drawing.Common", "WpfWebGpu.Win32",
+    };
+
     private static int RunIos(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose, bool aot)
     {
         // one project per mode, as for the browser (an AOT build's objects are not an interpreted one's)
         string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name + (aot ? "-ios-aot" : "-ios"));
+        // From clean: a compiled image built against an assembly that has changed since is rejected at
+        // start-up ("a dependency cannot be found or it is out of date") and the app aborts -- and the
+        // build reused them when only some had changed.
+        foreach (string stale in new[] { "obj", "bin" })
+            if (Directory.Exists(Path.Combine(project, stale))) Directory.Delete(Path.Combine(project, stale), recursive: true);
         Directory.CreateDirectory(project);
         WriteIosProject(project, app, assemblies, files, folders, feed, aot);
 
@@ -61,12 +74,13 @@ internal static partial class Bundle
 
     private static void WriteIosProject(string dir, AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, bool aot)
     {
-        // --aot: the stack and the runtime compiled ahead of time, the app's own assemblies interpreted --
-        // the stack is what runs every frame (layout, the renderer), and interpreted it was the whole of
-        // the bundle's slowness; the app's 300-odd assemblies stay out of the compile.
+        // What runs compiled. By default the core library and the stack -- what every frame runs (layout, the
+        // renderer, the drivers) -- and everything else interpreted: Workbench came up in 10 s against 19 s
+        // all interpreted, built in the same three minutes. --aot: the rest of the runtime's libraries too,
+        // the app's own assemblies still interpreted (11 s, and twice the build).
         string interpreter = aot
             ? "-all," + string.Join(",", assemblies.Select(a => Path.GetFileNameWithoutExtension(a)))
-            : "all";
+            : "all," + string.Join(",", CompiledStack.Select(a => "-" + a));
         var refs = new StringBuilder();
         foreach (string a in assemblies)
             refs.Append($"    <Reference Include=\"{Xml(Path.GetFileNameWithoutExtension(a))}\"><HintPath>{Xml(a)}</HintPath><Private>true</Private></Reference>\n");
