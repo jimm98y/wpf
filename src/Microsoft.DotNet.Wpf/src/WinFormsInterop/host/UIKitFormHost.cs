@@ -91,6 +91,10 @@ namespace System.Windows.Forms
 
 		static UIKitFormHost ()
 		{
+			// for long work the main thread does outside WinForms -- the app's own start-up, in WPF, while
+			// its splash screen waits on a thread of its own for the view the main thread makes: WPF's
+			// dispatcher and the assembly loader keep the work other threads queue for it moving (MainWork)
+			if (AppContext.GetData ("WinFormsWebGpu.DrainMainWork") == null) AppContext.SetData ("WinFormsWebGpu.DrainMainWork", (Action)DrainMainWork);
 			XplatUIWebGpu.CaptureChanged += OnCaptureChanged;
 		}
 

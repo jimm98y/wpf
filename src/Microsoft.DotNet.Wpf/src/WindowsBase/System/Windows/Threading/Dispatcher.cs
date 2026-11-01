@@ -1971,8 +1971,16 @@ namespace System.Windows.Threading
             return notify;
         }
 
+        private static Action s_drainMainWork;
+
         private void ProcessQueue()
         {
+            // Window work another thread queued for this one (a splash screen's view, made on the main
+            // thread while the app loads on it, CocoaHost/UIKitFormHost MainWork): done between operations,
+            // as Windows makes another thread's window without the main thread's help.
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsMacOS())   // the drain itself runs only on the main thread
+                (s_drainMainWork ??= AppContext.GetData("WinFormsWebGpu.DrainMainWork") as Action)?.Invoke();
+
             DispatcherPriority maxPriority = DispatcherPriority.Invalid; // NOTE: should be Priority.Invalid
             DispatcherOperation op = null;
             DispatcherHooks hooks = null;
