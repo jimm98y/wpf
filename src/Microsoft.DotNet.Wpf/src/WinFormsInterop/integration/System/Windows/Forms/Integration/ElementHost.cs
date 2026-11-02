@@ -494,8 +494,17 @@ namespace System.Windows.Forms.Integration
                 return true;
             }
             // a view of the screen likewise, made over the windows there are (UIKitWindow); and a Wayland
-            // window composited into its form's frame, placed in the virtual screen by EnsureSource
-            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid() || OperatingSystem.IsLinux()) return true;
+            // window composited into its form's frame, placed in the virtual screen by EnsureSource. On
+            // Android its place among the views follows the window its form is presented in, as a
+            // child window's does (AndroidWindow.SetParentWindow): raised with the popups instead, it lay
+            // over a dialog shown above the form and took the dialog's touches.
+            if (OperatingSystem.IsAndroid())
+            {
+                if (_source != null && AppContext.GetData("WinFormsWebGpu.HostWindowOf") is Func<IntPtr, IntPtr> hostWindowOf)
+                    MS.Internal.Interop.AndroidWindow.FromHandle(_source.Handle)?.SetParentWindow(hostWindowOf(parent));
+                return true;
+            }
+            if (OperatingSystem.IsIOS() || OperatingSystem.IsLinux()) return true;
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {

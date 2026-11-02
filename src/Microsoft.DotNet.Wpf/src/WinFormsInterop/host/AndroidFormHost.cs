@@ -128,6 +128,9 @@ namespace System.Windows.Forms
 			// device pixels, origin and size alike
 			_window.Create (_form.Text, (int)Math.Round (_form.Left * _scale), (int)Math.Round (_form.Top * _scale),
 				Math.Max (1, (int)Math.Round (_form.Width * _scale)), Math.Max (1, (int)Math.Round (_form.Height * _scale)), borderless, ownSurface: true);
+			// the resize margin outside the visible edge is see-through, as Windows'; the chrome draws its shadow
+			if (_chrome.HasFrame)
+				_window.SetOwnFrame ();
 			_window.Resized += OnResized;
 			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
 			_form.VisibleChanged += OnVisibleChanged;
@@ -159,10 +162,14 @@ namespace System.Windows.Forms
 			_surfaceW = _form.Width;
 			_surfaceH = _form.Height;
 			_wgpu = new WgpuPresenter (ctx, surface, _surfaceW, _surfaceH, _scale, srgb: true, threadDevice: true);
-			// The frame's see-through margin needs a translucent surface, which a SurfaceView is not: the
-			// form's own colour fills it.
-			Color bc = _form.BackColor;
-			_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			// The frame's margin is see-through (its view's surface is translucent, SetOwnFrame); a window
+			// without a frame is cleared to its own colour.
+			if (_chrome.HasFrame) {
+				_wgpu.SetTransparent (true);
+			} else {
+				Color bc = _form.BackColor;
+				_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			}
 			_lastVer = -1;
 			return true;
 		}
@@ -351,6 +358,9 @@ namespace System.Windows.Forms
 		private bool Mine (IntPtr view) => !_closed && _window != null && view == _window.Handle && _form.IsHandleCreated && !_form.IsDisposed;
 
 		/// <summary>A touch, as the left button: kind 0 move, 1 press, 2 release, 3 wheel.</summary>
+		// where a press was aimed, from where the finger is (TouchTarget), for the rest of its drag
+		private int _aimX, _aimY;
+
 		private void OnTouch (AndroidWindow.TouchMessage m)
 		{
 			// UIKit's touches come on the main thread; a form of another thread takes them on its own
@@ -376,10 +386,19 @@ namespace System.Windows.Forms
 			XplatUIWebGpu.InputRoot = _form.Handle;
 			try {
 				switch (m.Kind) {
-				case 0: _driver.InjectMouseMove (x, y, _leftDown); break;
-				case 1: _leftDown = true; _driver.InjectMouseDown (x, y); break;
+				case 0: _driver.InjectMouseMove (x + _aimX, y + _aimY, _leftDown); break;
+				case 1:
+					// a finger is wider than a splitter: the press goes where a resize cursor is within
+					// its reach (TouchTarget), and the drag keeps that offset
+					var aim = _driver.TouchTarget (x, y);
+					_aimX = aim.X - x; _aimY = aim.Y - y;
+					_leftDown = true;
+					_driver.InjectMouseDown (aim.X, aim.Y);
+					break;
 				case 2:
 					_leftDown = false;
+					x += _aimX; y += _aimY;
+					_aimX = _aimY = 0;
 					_driver.InjectMouseUp (x, y);
 					// a finger leaves no pointer behind (LiftPointer): the button tapped stayed lit
 					_driver.LiftPointer ();

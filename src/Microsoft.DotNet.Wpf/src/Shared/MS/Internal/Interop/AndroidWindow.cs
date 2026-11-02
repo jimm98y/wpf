@@ -65,6 +65,15 @@ namespace MS.Internal.Interop
         /// <summary>A window to the front, above the others (SetForegroundWindow).</summary>
         void BringToFront(IntPtr handle) { }
 
+        /// <summary>A child window's parent (WS_CHILD): its view lies just above the parent's and goes where
+        /// the parent goes in the z-order, under the windows above the parent, as Windows stacks a child
+        /// window with its parent.</summary>
+        void SetViewParent(IntPtr child, IntPtr parent) { }
+
+        /// <summary>The view's surface keeps what is drawn with alpha see-through (a translucent format):
+        /// a window drawing its own frame, whose resize margin outside the visible edge is.</summary>
+        void SetViewTranslucent(IntPtr handle) { }
+
         /// <summary>Move/resize a view created by <see cref="CreateView"/> (top-left device pixels).</summary>
         void SetViewFrame(IntPtr handle, int x, int y, int width, int height);
 
@@ -142,6 +151,22 @@ namespace MS.Internal.Interop
         {
             SetVisible(visible);
             if (visible && activate) Activate();
+        }
+
+        /// <summary>The window is a child of <paramref name="parent"/> (an AndroidWindow's handle; any other is
+        /// ignored): it is stacked with it (IAndroidHost.SetViewParent).</summary>
+        public void SetParentWindow(IntPtr parent)
+        {
+            if (_handle == IntPtr.Zero || parent == IntPtr.Zero || FromHandle(parent) == null) return;
+            Host?.SetViewParent(_handle, parent);
+        }
+
+        /// <summary>The window draws its own frame -- Windows' title bar, edges and the shadow in the
+        /// see-through margin round them (the WinForms host's WindowChrome) -- so its surface is translucent
+        /// there (UIKitWindow.SetOwnFrame).</summary>
+        public void SetOwnFrame()
+        {
+            if (_handle != IntPtr.Zero) Host?.SetViewTranslucent(_handle);
         }
 
         /// <summary>To the front, as SetForegroundWindow brings a window there.</summary>

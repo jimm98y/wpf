@@ -434,6 +434,9 @@ namespace System.Windows.Forms
 		private bool Mine (IntPtr view) => !_closed && _window != null && view == _window.Handle && _form.IsHandleCreated && !_form.IsDisposed;
 
 		/// <summary>A touch, as the left button: kind 0 move, 1 press, 2 release, 3 wheel.</summary>
+		// where a press was aimed, from where the finger is (TouchTarget), for the rest of its drag
+		private int _aimX, _aimY;
+
 		private void OnTouch (UIKitWindow.TouchMessage m)
 		{
 			// UIKit's touches come on the main thread; a form of another thread takes them on its own
@@ -459,10 +462,19 @@ namespace System.Windows.Forms
 			XplatUIWebGpu.InputRoot = _form.Handle;
 			try {
 				switch (m.Kind) {
-				case 0: _driver.InjectMouseMove (x, y, _leftDown); break;
-				case 1: _leftDown = true; _driver.InjectMouseDown (x, y); break;
+				case 0: _driver.InjectMouseMove (x + _aimX, y + _aimY, _leftDown); break;
+				case 1:
+					// a finger is wider than a splitter: the press goes where a resize cursor is within
+					// its reach (TouchTarget), and the drag keeps that offset
+					var aim = _driver.TouchTarget (x, y);
+					_aimX = aim.X - x; _aimY = aim.Y - y;
+					_leftDown = true;
+					_driver.InjectMouseDown (aim.X, aim.Y);
+					break;
 				case 2:
 					_leftDown = false;
+					x += _aimX; y += _aimY;
+					_aimX = _aimY = 0;
 					_driver.InjectMouseUp (x, y);
 					// a finger leaves no pointer behind (LiftPointer): the button tapped stayed lit
 					_driver.LiftPointer ();

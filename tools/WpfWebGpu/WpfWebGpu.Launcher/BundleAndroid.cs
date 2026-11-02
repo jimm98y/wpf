@@ -168,6 +168,10 @@ internal static partial class Bundle
                 ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
                                      | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
                                      | ConfigChanges.Density | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard)]
+            // where windows float (a headset's panel, a desktop's window), the size a desktop app's window
+            // starts at: landscape, as a monitor is -- without it the activity started as a narrow portrait
+            // panel; a full-screen phone or tablet ignores it
+            [Layout(DefaultWidth = "1280dp", DefaultHeight = "800dp", Gravity = "center")]
             public class WpfRunActivity : Activity
             {
                 private AndroidHost _host;

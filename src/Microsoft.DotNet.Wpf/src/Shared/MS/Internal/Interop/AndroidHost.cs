@@ -205,9 +205,9 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
         }
     }
 
-    public override bool OnTouchEvent(MotionEvent? e) => WpfInput.OnTouch(_wpfHandle, e) || base.OnTouchEvent(e);
+    public override bool OnTouchEvent(MotionEvent? e) => WpfInput.OnTouch(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnTouchEvent(e);
 
-    public override bool OnGenericMotionEvent(MotionEvent? e) => WpfInput.OnGenericMotion(_wpfHandle, e) || base.OnGenericMotionEvent(e);
+    public override bool OnGenericMotionEvent(MotionEvent? e) => WpfInput.OnGenericMotion(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnGenericMotionEvent(e);
 
     [DllImport("android")] private static extern IntPtr ANativeWindow_fromSurface(IntPtr env, IntPtr surface);
     [DllImport("android")] private static extern void ANativeWindow_release(IntPtr window);
@@ -229,6 +229,9 @@ internal sealed class WpfPopupView : View
 {
     private readonly IntPtr _wpfHandle;
 
+    /// <summary>The WPF window this is the touch target of.</summary>
+    public IntPtr Handle => _wpfHandle;
+
     public WpfPopupView(Context context, IntPtr wpfHandle) : base(context)
     {
         _wpfHandle = wpfHandle;
@@ -236,15 +239,29 @@ internal sealed class WpfPopupView : View
         Focusable = true;
     }
 
-    public override bool OnTouchEvent(MotionEvent? e) => WpfInput.OnTouch(_wpfHandle, e) || base.OnTouchEvent(e);
+    public override bool OnTouchEvent(MotionEvent? e) => WpfInput.OnTouch(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnTouchEvent(e);
 
-    public override bool OnGenericMotionEvent(MotionEvent? e) => WpfInput.OnGenericMotion(_wpfHandle, e) || base.OnGenericMotionEvent(e);
+    public override bool OnGenericMotionEvent(MotionEvent? e) => WpfInput.OnGenericMotion(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnGenericMotionEvent(e);
 }
 
 /// <summary>Translates Android motion events into the mouse messages WPF consumes. Shared by both
 /// view kinds, which differ only in whether they also carry a rendering surface.</summary>
 internal static class WpfInput
 {
+    /// <summary>The event in the coordinates of the window the view stands for: a move the window was
+    /// given reaches its view a layout pass later (SetViewFrame, on this thread), and Android measures a
+    /// touch from where the view is. Dragging a dialog by its caption, each touch was taken against the
+    /// position just asked for while measured from the one before it, so the dialog overshot, jumped
+    /// back and forth and was thrown off the screen.</summary>
+    public static MotionEvent? AtWindow(View view, IntPtr handle, MotionEvent? e)
+    {
+        if (e is null || view is WpfSurfaceView { FillsScreen: true } || AndroidWindow.FromHandle(handle) is not { } window) return e;
+        window.GetClientScreenOriginPixels(out int x, out int y);
+        float dx = view.Left - x, dy = view.Top - y;
+        if (dx != 0 || dy != 0) e.OffsetLocation(dx, dy);
+        return e;
+    }
+
     public static bool OnTouch(IntPtr handle, MotionEvent? e)
     {
         if (e is null) return false;
@@ -907,14 +924,77 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // a floating window's surface is composed above the app's own (SurfaceViews are layers of their
         // own, stacked by this rather than by the view order)
         if (view is WpfSurfaceView surface && !surface.FillsScreen) surface.SetZOrderMediaOverlay(true);
+        // its child windows come with it, just above it (SetViewParent)...
+        RaiseChildren(handle);
         // ...and the popups stay above it, as they are drawn: a popup's pixels are composed over every
         // window (WpfPopupView), so its touch target must lie over them too -- under a window brought to
-        // the front, a menu or a floating tool window showed and could not be touched
+        // the front, a menu or a floating tool window showed and could not be touched. Not a child window
+        // (an ElementHost's WPF content), which is a touch target of the same kind: raised over every
+        // window, it lay over a dialog shown above its form and took the dialog's touches.
         var popups = new List<View>();
         for (int i = 0; i < _root.ChildCount; i++)
-            if (_root.GetChildAt(i) is WpfPopupView popup) popups.Add(popup);
+            if (_root.GetChildAt(i) is WpfPopupView popup && !_parents.ContainsKey(popup.Handle)) popups.Add(popup);
         foreach (View popup in popups) popup.BringToFront();
     });
+
+    public void SetViewTranslucent(IntPtr handle) => OnMain(() =>
+    {
+        // a SurfaceView's surface is opaque unless its format says otherwise; composed in the media-overlay
+        // layer (a floating window's, BringToFront), what it leaves transparent shows the windows under it
+        if (_views.TryGetValue(handle, out View? view) && view is WpfSurfaceView surface)
+            surface.Holder?.SetFormat(Android.Graphics.Format.Translucent);
+    });
+
+    // child window -> parent window (SetViewParent)
+    private readonly Dictionary<IntPtr, IntPtr> _parents = new();
+
+    public void SetViewParent(IntPtr child, IntPtr parent) => OnMain(() =>
+    {
+        if (child == parent || !_views.ContainsKey(child) || !_views.ContainsKey(parent)) return;
+        _parents[child] = parent;
+        PlaceChildren(parent);
+    });
+
+    /// <summary>The child windows of <paramref name="parent"/> (and theirs) to the front, in turn: run
+    /// right after the parent itself came to the front, they end up just above it.</summary>
+    private void RaiseChildren(IntPtr parent)
+    {
+        foreach (IntPtr child in ChildrenOf(parent))
+        {
+            if (_views.TryGetValue(child, out View? view) && view is not null) view.BringToFront();
+            RaiseChildren(child);
+        }
+    }
+
+    /// <summary>The child windows of <paramref name="parent"/> (and theirs) just above it in the view order,
+    /// wherever it is: a child given its parent after windows were stacked over the parent.</summary>
+    private void PlaceChildren(IntPtr parent)
+    {
+        if (!_views.TryGetValue(parent, out View? parentView) || parentView is null) return;
+        int index = _root.IndexOfChild(parentView);
+        foreach (IntPtr child in ChildrenOf(parent))
+        {
+            if (!_views.TryGetValue(child, out View? view) || view is null) continue;
+            // a child is a touch target with no surface of its own (WpfPopupView): moving it in the
+            // order costs nothing
+            if (_root.IndexOfChild(view) != index + 1)
+            {
+                var lp = view.LayoutParameters;
+                _root.RemoveView(view);
+                index = _root.IndexOfChild(parentView);
+                _root.AddView(view, index + 1, lp);
+            }
+            PlaceChildren(child);
+            index = _root.IndexOfChild(view);
+        }
+    }
+
+    private List<IntPtr> ChildrenOf(IntPtr parent)
+    {
+        var children = new List<IntPtr>();
+        foreach (var (child, p) in _parents) if (p == parent) children.Add(child);
+        return children;
+    }
 
     private bool CreateViewCore(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface)
     {
@@ -1035,6 +1115,8 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     private void DestroyViewCore(IntPtr handle)
     {
         if (!_views.Remove(handle, out View? view)) return;
+        _parents.Remove(handle);
+        foreach (IntPtr child in ChildrenOf(handle)) _parents.Remove(child);
         _root.RemoveView(view);
         view.Dispose();
     }

@@ -53,6 +53,8 @@ namespace MS.Internal.Interop
         public static bool HasMainWindow { get { throw null; } }
         public void Create(string title, int x, int y, int width, int height, bool borderless, bool ownSurface) { }
         public void SetVisible(bool visible, bool activate) { }
+        public void SetOwnFrame() { }
+        public void SetParentWindow(System.IntPtr parent) { }
         public void Activate() { }
         public static void RunLoop(int timeoutMilliseconds, System.Threading.WaitHandle posted) { }
         public bool TakesKeyboardOnPress { get { throw null; } set { } }
@@ -435,6 +437,8 @@ namespace MS.Internal.Interop
         double RefreshRateHz { get { throw null; } }
         bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface);
         void BringToFront(System.IntPtr handle) { }
+        void SetViewParent(System.IntPtr child, System.IntPtr parent) { }
+        void SetViewTranslucent(System.IntPtr handle) { }
         void HideSoftKeyboard(System.IntPtr handle);
         void SetImeCursorRect(System.IntPtr handle, int x, int y, int width, int height);
         void ShowSoftKeyboard(System.IntPtr handle, bool multiline, bool password);

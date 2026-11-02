@@ -242,6 +242,8 @@ namespace MS.Win32
                         android.Resized += OnCocoaResized;
                         // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
                         android.QueryMaximizedRect = QueryMaximizedRect;
+                        // ...and lies on its parent, under the windows above that (z-order).
+                        if ((style & WS_CHILD) != 0) android.SetParentWindow(parent);
                         // ...and activation is WM_ACTIVATE, as AppKit's key window is.
                         android.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = android;

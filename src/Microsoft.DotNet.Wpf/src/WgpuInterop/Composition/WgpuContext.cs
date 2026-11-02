@@ -52,6 +52,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public bool IsVirgl => AdapterDescription?.Contains("virgl", StringComparison.OrdinalIgnoreCase) == true;
 
+        /// <summary>Qualcomm's Adreno (a Meta Quest's, many Android phones'), whose Vulkan driver mis-runs the
+        /// GPU coverage rasterizer (see WgpuSceneRenderer near IsAdreno).</summary>
+        public bool IsAdreno => AdapterDescription?.Contains("Adreno", StringComparison.OrdinalIgnoreCase) == true;
+
         /// <summary>Optional sink for wgpu-native's own log messages (backend selection diagnostics).</summary>
         public static Action<string>? LogSink;
         public IntPtr Device { get; private set; }

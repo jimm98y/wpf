@@ -974,6 +974,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 s_gpuRaster = false;
             }
 
+            // Qualcomm's Adreno Vulkan driver (Meta Quest 3, Adreno 740) gets fs_coverage wrong for any mask
+            // larger than a glyph's: with the usual 32-row bands only the first band was covered -- a tiled
+            // image fill over a whole view came out as its top strip -- and with the mask as one band its
+            // left part was missing. The same SPIR-V is right on every other Vulkan seen (the Android
+            // emulator, MoltenVK, desktop drivers), and the CPU rasterizer is right on the device, so the
+            // fault is the driver's, and the fallback keys on the adapter as virgl's does.
+            if (ctx.IsAdreno && !s_cpuRasterExplicit)
+            {
+                s_gpuRaster = false;
+            }
+
             _font = font ?? new Text.BuiltinBitmapFont();
             _shaper = shaper ?? new Text.SimpleTextShaper();
             _outlineFont = _font as Text.IGlyphOutlineFont;

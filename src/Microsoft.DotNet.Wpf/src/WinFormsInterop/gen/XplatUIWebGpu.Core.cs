@@ -983,6 +983,35 @@ namespace System.Windows.Forms
 
 		internal void InjectMouseMove(int screenX, int screenY, bool leftDown)
 			=> InjectMouse(screenX, screenY, Msg.WM_MOUSEMOVE, leftDown ? MK_LBUTTON : 0);
+
+		/// <summary>How far round a finger's press a resize cursor is looked for, in the screen's points.</summary>
+		private const int TouchReach = 8;
+
+		/// <summary>Where a finger's press at (<paramref name="screenX"/>, <paramref name="screenY"/>) goes: the
+		/// point itself, or, when the cursor there is no resize cursor, the nearest point within
+		/// <see cref="TouchReach"/> where the window under it shows one -- a splitter, a dock edge, a column
+		/// divider, a few pixels wide and meant for a mouse. Windows widens what a finger can hit in the same
+		/// spirit (touch hit-testing); the window decides where its edge is, so it is asked, by moving the
+		/// pointer there as a mouse would be (the cursor a control sets on WM_MOUSEMOVE / WM_SETCURSOR).
+		/// The pointer is left where the press goes.</summary>
+		internal (int X, int Y) TouchTarget(int screenX, int screenY)
+		{
+			InjectMouseMove(screenX, screenY, false);
+			if (_grabHandle != IntPtr.Zero || IsResizeCursor(GetActiveCursor())) return (screenX, screenY);
+			for (int d = 2; d <= TouchReach; d += 2)
+			{
+				foreach ((int dx, int dy) in new[] { (-d, 0), (d, 0), (0, -d), (0, d) })
+				{
+					InjectMouseMove(screenX + dx, screenY + dy, false);
+					if (IsResizeCursor(GetActiveCursor())) return (screenX + dx, screenY + dy);
+				}
+			}
+			InjectMouseMove(screenX, screenY, false);
+			return (screenX, screenY);
+		}
+
+		private static bool IsResizeCursor(int id) => (StdCursor)id is StdCursor.SizeWE or StdCursor.SizeNS
+			or StdCursor.VSplit or StdCursor.HSplit or StdCursor.SizeNESW or StdCursor.SizeNWSE;
 		internal void InjectMouseDown(int screenX, int screenY)
 			=> InjectMouse(screenX, screenY, Msg.WM_LBUTTONDOWN, MK_LBUTTON);
 		internal void InjectMouseUp(int screenX, int screenY)
