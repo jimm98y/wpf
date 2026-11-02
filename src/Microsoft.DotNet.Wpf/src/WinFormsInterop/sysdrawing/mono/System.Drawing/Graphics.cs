@@ -3564,7 +3564,7 @@ namespace System.Drawing
 			int bw = (int) Math.Ceiling (dx1) - bx + 1, bh = (int) Math.Ceiling (dy1) - by + 1;
 			var runs = new System.Collections.Generic.List<(Microsoft.Wpf.Interop.WebGpu.Composition.Text.GdiPlusText.Levels Lv, int Mode, int Contrast)> ();
 			using (var bmp = new Bitmap (bw, bh, PixelFormat.Format32bppArgb)) {
-				using (var g = FromImage (bmp)) {
+				using (var g = FromImageEngine (bmp)) {
 					if (g.gp == null || g.image_target == null)
 						return false;
 					// The window's page and world, then the scratch surface's offset (in page units).
@@ -4733,7 +4733,16 @@ namespace System.Drawing
 			return FromHwnd (hwnd);
 		}
 
-		public static Graphics FromImage (Image image)
+		public static Graphics FromImage (Image image) => FromImage (image, engine: false);
+
+		/// <summary>FromImage for this port's own scratch bitmaps, which are drawn into by GDI+'s engine
+		/// and read back (text realized as GDI+ realizes it, a print band's spans): never deferred
+		/// (Bitmap.DeferDrawing), which leaves a bitmap's Graphics without the engine. With deferring on
+		/// by default, every one of them gave up -- DotNetBar's trimmed tab captions fell to the recorder's
+		/// approximation, untrimmed and over each other.</summary>
+		internal static Graphics FromImageEngine (Image image) => FromImage (image, engine: true);
+
+		static Graphics FromImage (Image image, bool engine)
 		{
 			if (image == null)
 				throw new ArgumentNullException ("image");
@@ -4757,7 +4766,7 @@ namespace System.Drawing
 				Graphics g = WebGpuBackend.GpuRaster.NewRecording ();
 				g.image_target = bitmap;
 				GdipFrame frame = bitmap.managed.Frame;
-				if (WebGpuBackend.Gdip.GpScan.Supports (frame.Format) && !Bitmap.DeferDrawing)
+				if (WebGpuBackend.Gdip.GpScan.Supports (frame.Format) && (engine || !Bitmap.DeferDrawing))
 					g.gp = new GpGraphics (frame);
 				bitmap.AttachGraphics (g);
 				return g;

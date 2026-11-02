@@ -174,6 +174,10 @@ namespace MS.Internal.Interop.Wayland
             return true;
         }
 
+        /// <summary><see cref="CanPresent"/>, for a presenter of this window outside WPF's compositor (the
+        /// WinForms host's): asked once for each frame it is about to present.</summary>
+        public bool ReadyToPresent() => CanPresent();
+
         private int _outputsEntered;   // outputs the surface is on (wl_surface.enter less leave)
         private bool _framePending;    // a frame went to the surface while it was on none
 

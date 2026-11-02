@@ -279,12 +279,50 @@ namespace MS.Internal.Interop
             SendVoidPtr(RootView, Sel("bringSubviewToFront:"), _view);
             s_zOrder.Remove(this);
             s_zOrder.Add(this);
+            // its child windows come with it, just above it (SetParentWindow)...
+            RaiseChildren(this);
+            // ...and the popups stay above it. Not a child window (an ElementHost's WPF content), which is
+            // a borderless view too: raised over every window, it lay over a dialog shown above its form
+            // and took the dialog's touches.
             foreach (UIKitWindow popup in s_zOrder.ToArray())
             {
-                if (!popup.IsBorderless || popup._ownSurface || popup._view == IntPtr.Zero) continue;
+                if (!popup.IsBorderless || popup._ownSurface || popup._view == IntPtr.Zero || popup._parentWindow != null) continue;
                 SendVoidPtr(RootView, Sel("bringSubviewToFront:"), popup._view);
                 s_zOrder.Remove(popup);
                 s_zOrder.Add(popup);
+            }
+        }
+
+        private UIKitWindow _parentWindow;   // a child window's parent (SetParentWindow)
+
+        /// <summary>The window is a child of <paramref name="parent"/> (a UIKitWindow's handle; any other is
+        /// ignored): its view lies just above the parent's and goes where the parent goes in the z-order,
+        /// under the windows above the parent, as Windows stacks a child window with its parent.</summary>
+        public void SetParentWindow(IntPtr parent)
+        {
+            UIKitWindow p = FromHandle(parent);
+            if (_view == IntPtr.Zero || p == null || p == this || p._view == IntPtr.Zero || RootView == IntPtr.Zero) return;
+            _parentWindow = p;
+            PlaceAbove(this, p);
+            RaiseChildren(this);
+        }
+
+        private static void PlaceAbove(UIKitWindow child, UIKitWindow parent)
+        {
+            SendVoidPtrPtr(RootView, Sel("insertSubview:aboveSubview:"), child._view, parent._view);
+            s_zOrder.Remove(child);
+            int at = s_zOrder.IndexOf(parent);
+            s_zOrder.Insert(at < 0 ? s_zOrder.Count : at + 1, child);
+        }
+
+        /// <summary>The child windows of <paramref name="parent"/> (and theirs), just above it.</summary>
+        private static void RaiseChildren(UIKitWindow parent)
+        {
+            foreach (UIKitWindow child in s_zOrder.ToArray())
+            {
+                if (child._parentWindow != parent || child._view == IntPtr.Zero) continue;
+                PlaceAbove(child, parent);
+                RaiseChildren(child);
             }
         }
 
@@ -468,6 +506,8 @@ namespace MS.Internal.Interop
 
             PassActivation();
             if (ReferenceEquals(s_active, this)) s_active = null;
+            foreach (UIKitWindow child in s_zOrder) if (child._parentWindow == this) child._parentWindow = null;
+            _parentWindow = null;
             Send(_view, Sel("removeFromSuperview"));
             s_byView.Remove(_view);
             s_byHandle.Remove(_handle);
@@ -1559,6 +1599,7 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr receiver, IntPtr selector, IntPtr arg1, IntPtr arg2);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr receiver, IntPtr selector, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector);

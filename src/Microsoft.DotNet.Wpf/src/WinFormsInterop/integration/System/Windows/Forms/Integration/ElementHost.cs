@@ -498,13 +498,17 @@ namespace System.Windows.Forms.Integration
             // Android its place among the views follows the window its form is presented in, as a
             // child window's does (AndroidWindow.SetParentWindow): raised with the popups instead, it lay
             // over a dialog shown above the form and took the dialog's touches.
-            if (OperatingSystem.IsAndroid())
+            if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
             {
                 if (_source != null && AppContext.GetData("WinFormsWebGpu.HostWindowOf") is Func<IntPtr, IntPtr> hostWindowOf)
-                    MS.Internal.Interop.AndroidWindow.FromHandle(_source.Handle)?.SetParentWindow(hostWindowOf(parent));
+                {
+                    IntPtr host = hostWindowOf(parent);
+                    if (OperatingSystem.IsAndroid()) MS.Internal.Interop.AndroidWindow.FromHandle(_source.Handle)?.SetParentWindow(host);
+                    else MS.Internal.Interop.UIKitWindow.FromHandle(_source.Handle)?.SetParentWindow(host);
+                }
                 return true;
             }
-            if (OperatingSystem.IsIOS() || OperatingSystem.IsLinux()) return true;
+            if (OperatingSystem.IsLinux()) return true;
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {

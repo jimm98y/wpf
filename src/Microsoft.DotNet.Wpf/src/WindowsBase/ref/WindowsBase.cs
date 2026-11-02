@@ -556,6 +556,7 @@ namespace MS.Internal.Interop
         public void SetOwnFrame() { }
         public void SetVisible(bool visible) { }
         public void SetVisible(bool visible, bool activate) { }
+        public void SetParentWindow(System.IntPtr parent) { }
         public void Activate() { }
         public void BeginMoveDrag() { }
         public bool ResizesFromEdges { get { throw null; } }
@@ -642,6 +643,7 @@ namespace MS.Internal.Interop.Wayland
         public static void AfterDispatch() { }
         public void Create(string title, int x, int y, int width, int height, bool borderless) { }
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
+        public bool ReadyToPresent() { throw null; }
         public void SetVisible(bool visible) { }
         public void BeginMoveDrag() { }
         public void Destroy() { }

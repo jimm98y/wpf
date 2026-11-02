@@ -1149,7 +1149,7 @@ namespace System.Drawing
 		byte [] ShapeAlpha (Brush brush, PointF [] pts, byte [] types, FillMode fillMode, float [] toBand, int W, int H, Point origin, float [] spanDevice = null, Point spanAt = default)
 		{
 			using (var bmp = new Bitmap (W, H, Imaging.PixelFormat.Format32bppArgb))
-			using (Graphics g = FromImage (bmp)) {
+			using (Graphics g = FromImageEngine (bmp)) {
 				if (g.gp == null) return null;
 				SetSpanDevice (g, spanDevice, spanAt);
 				g.SmoothingMode = gpu_smoothing;
@@ -1397,7 +1397,7 @@ namespace System.Drawing
 		byte [] FillWithBrush (Brush brush, int W, int H, float [] toBitmap, Point origin, bool scan = false, float [] spanDevice = null, Point spanAt = default)
 		{
 			using (var bmp = new Bitmap (W, H, scan ? Imaging.PixelFormat.Format32bppPArgb : Imaging.PixelFormat.Format32bppArgb))
-			using (Graphics g = FromImage (bmp)) {
+			using (Graphics g = FromImageEngine (bmp)) {
 				if (g.gp == null) return null;
 				SetSpanDevice (g, spanDevice, spanAt);
 				g.InterpolationMode = _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;
@@ -1627,7 +1627,7 @@ namespace System.Drawing
 			(WebGpuBackend.Gdip.GpMatrix, PointF [], int, int)? imageDevice = null)
 		{
 			using (var dib = new Bitmap (W, H, Imaging.PixelFormat.Format32bppPArgb))
-			using (Graphics g = FromImage (dib)) {
+			using (Graphics g = FromImageEngine (dib)) {
 				if (g.gp == null) return null;
 				g.gp.ImageSpanDevice = imageDevice;
 				g.InterpolationMode = nearest ? InterpolationMode.NearestNeighbor : _interpolation == InterpolationMode.Invalid ? InterpolationMode.Bilinear : _interpolation;

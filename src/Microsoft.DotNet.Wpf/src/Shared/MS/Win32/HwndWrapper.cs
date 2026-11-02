@@ -222,6 +222,8 @@ namespace MS.Win32
                         uikit.Resized += OnCocoaResized;
                         // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
                         uikit.QueryMaximizedRect = QueryMaximizedRect;
+                        // ...and lies on its parent, under the windows above that (z-order).
+                        if ((style & WS_CHILD) != 0) uikit.SetParentWindow(parent);
                         // ...and activation is WM_ACTIVATE, as AppKit's key window is.
                         uikit.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = uikit;

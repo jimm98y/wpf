@@ -598,6 +598,14 @@ namespace System.Windows.Forms
 			bool caretOn = CaretOn ();
 			if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk)
 				return;
+			// A swap waits for the frame callback of the frame before, which comes only from a surface the
+			// compositor shows: a drop-down moved before the compositor had placed it never was, and the
+			// next frame for it waited for good inside the property grid's drop-down loop. Not now; again
+			// once it is on screen (WaylandWindow.CanPresent, as WPF's windows are asked).
+			if (!_window.ReadyToPresent ()) {
+				_lastPresentOk = false;
+				return;
+			}
 			Rectangle client = ClientScreen;
 			var popups = s_popupLayer && WaylandWindow.IsUiThread ? new List<(object, int, int)> () : null;
 			var scenes = GetScenes (client.X, client.Y, popups, out Rectangle popupBounds);
@@ -673,8 +681,8 @@ namespace System.Windows.Forms
 				_layerRect = bounds;
 				_layerX = vx;
 				_layerY = vy;
-				if (!_layer.IsMapped) {
-					_lastPresentOk = false;   // again on the next frame
+				if (!_layer.IsMapped || !_layer.ReadyToPresent ()) {
+					_lastPresentOk = false;   // again on the next frame (the form's own, above)
 					return;
 				}
 				if (_layerWgpu == null) {
