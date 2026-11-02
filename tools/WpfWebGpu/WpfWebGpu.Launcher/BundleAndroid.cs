@@ -25,11 +25,11 @@ internal static partial class Bundle
 {
     private const string AndroidRid = "android-arm64";
 
-    private static int RunAndroid(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose)
+    private static int RunAndroid(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose, bool xr = false)
     {
         string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name + "-android");
         Directory.CreateDirectory(project);
-        WriteAndroidProject(project, app, assemblies, files, folders, feed);
+        WriteAndroidProject(project, app, assemblies, files, folders, feed, xr ? OpenXrLoader() : null);
 
         string csproj = Path.Combine(project, "Bundle.csproj");
         Console.WriteLine($"wpfrun bundle: building {project}");
@@ -47,6 +47,28 @@ internal static partial class Bundle
         return 0;
     }
 
+    // Khronos's OpenXR loader for Android (Apache-2.0 OR MIT): the native loader and the manifest entries it
+    // needs (its permissions, the runtime broker it asks), from Maven Central, once, checked.
+    private const string OpenXrLoaderVersion = "1.1.65";
+    private const string OpenXrLoaderSha256 = "a298c326085b09181c85235fb04d37510939bd30938ed4322c093c09780e8643";
+
+    private static string OpenXrLoader()
+    {
+        string path = Path.Combine(Locations.CacheRoot, "openxr", $"openxr_loader_for_android-{OpenXrLoaderVersion}.aar");
+        if (!File.Exists(path))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            string url = $"https://repo1.maven.org/maven2/org/khronos/openxr/openxr_loader_for_android/{OpenXrLoaderVersion}/openxr_loader_for_android-{OpenXrLoaderVersion}.aar";
+            Console.WriteLine($"wpfrun bundle: fetching the OpenXR loader {OpenXrLoaderVersion}");
+            using var http = new System.Net.Http.HttpClient();
+            byte[] bytes = http.GetByteArrayAsync(url).GetAwaiter().GetResult();
+            string sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+            if (sha != OpenXrLoaderSha256) throw new UserError($"the OpenXR loader from {url} is not the one expected (sha256 {sha}).");
+            File.WriteAllBytes(path, bytes);
+        }
+        return path;
+    }
+
     private static string AndroidPackageId(AppFiles app)
     {
         var id = new StringBuilder("com.wpfrun.");
@@ -54,7 +76,7 @@ internal static partial class Bundle
         return id.ToString();
     }
 
-    private static void WriteAndroidProject(string dir, AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed)
+    private static void WriteAndroidProject(string dir, AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string openXrLoader = null)
     {
         var refs = new StringBuilder();
         foreach (string a in assemblies)
@@ -126,7 +148,12 @@ internal static partial class Bundle
                 <!-- the app's binaries were built against .NET's WindowsDesktop assemblies, which the stack replaces -->
                 <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277;MSB3243;MSB3245;XA0141;XA1036</MSBuildWarningsAsMessages>
                 <NoWarn>$(NoWarn);CA1416;CS0618;XA0141</NoWarn>
-              </PropertyGroup>
+            {(openXrLoader == null ? "" : $"""
+                <!-- the immersive activity for an OpenXR headset (AndroidXrHost), with Khronos's loader -->
+                <WpfWebGpuAndroidXr>true</WpfWebGpuAndroidXr>
+                <WpfWebGpuOpenXrLoader>{Xml(openXrLoader)}</WpfWebGpuOpenXrLoader>
+                <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+            """)}  </PropertyGroup>
 
               <ItemGroup>
             {refs}  </ItemGroup>
@@ -141,6 +168,72 @@ internal static partial class Bundle
         string id = AndroidPackageId(app);
         // what this build's assets are, so a new install unpacks them again and a relaunch does not
         string stamp = Guid.NewGuid().ToString("N");
+        // --xr: the immersive activity an OpenXR headset runs the app in, each window a panel in space
+        // (AndroidXrHost). Started by intent (adb shell am start -n <id>/<id>.WpfRunXrActivity) beside the flat
+        // activity, which stays the launcher's; one of the two per process.
+        string xrAssembly = openXrLoader == null ? "" : """
+            [assembly: UsesFeature("android.hardware.vr.headtracking", Required = false)]
+            [assembly: MetaData("com.oculus.supportedDevices", Value = "quest2|questpro|quest3|quest3s")]
+            """;
+        string xrActivity = openXrLoader == null ? "" : $$"""
+            [Activity(
+                Name = "{{id}}.WpfRunXrActivity",
+                Label = "{{app.Name}} (VR)",
+                Exported = true,
+                LaunchMode = LaunchMode.SingleTask,
+                ScreenOrientation = ScreenOrientation.Landscape,
+                Theme = "@android:style/Theme.Black.NoTitleBar.Fullscreen",
+                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
+                                     | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
+                                     | ConfigChanges.Density | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard)]
+            [IntentFilter(new[] { Android.Content.Intent.ActionMain },
+                Categories = new[] { "com.oculus.intent.category.VR", "org.khronos.openxr.intent.category.IMMERSIVE_HMD" })]
+            [MetaData("com.oculus.vr.focusaware", Value = "true")]
+            public class WpfRunXrActivity : Activity
+            {
+                private AndroidHost _flat;
+                private AndroidXrHost _xr;
+                private static bool s_started;
+
+                public override bool DispatchKeyEvent(Android.Views.KeyEvent e)
+                    => _flat?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
+
+                protected override void OnDestroy()
+                {
+                    _xr?.Stop();
+                    _flat?.CancelPendingDialogs();
+                    base.OnDestroy();
+                }
+
+                protected override void OnCreate(Bundle savedInstanceState)
+                {
+                    base.OnCreate(savedInstanceState);
+                    AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", Path.Combine(FilesDir.AbsolutePath, "app") + "/");
+                    AndroidFonts.ExtractBundled(this);
+                    // the activity keeps a view hierarchy for what is not a window (the soft keyboard, the
+                    // system's dialogs); the windows are the session's panels
+                    var root = new FrameLayout(this);
+                    SetContentView(root);
+                    var flat = new AndroidHost(this, root);
+                    var xr = new AndroidXrHost(this, flat);
+                    AndroidWindow.Host = xr;
+                    AndroidAccessibility.Host = flat;
+                    AndroidPrint.Host = flat;
+                    AndroidClipboard.Host = flat;
+                    AndroidDialogs.Host = flat;
+                    AndroidDragDrop.Host = flat;
+                    _flat = flat;
+                    _xr = xr;
+                    if (s_started) return;
+                    s_started = true;
+                    xr.Start();
+                    string files = FilesDir.AbsolutePath;
+                    var assets = Assets;
+                    root.Post(() => flat.RunApp(() => WpfRunBundleHost.RunApp(assets, files)));
+                }
+            }
+
+            """;
         File.WriteAllText(Path.Combine(dir, "WpfRunActivity.cs"), $$"""
             // Generated by wpfrun bundle (Android): the window layer installed, then the app's own Main on a
             // UI thread of its own (AndroidHost.RunApp).
@@ -156,6 +249,7 @@ internal static partial class Bundle
             // the network, which every Windows program has
             [assembly: UsesPermission(Android.Manifest.Permission.Internet)]
             [assembly: UsesPermission(Android.Manifest.Permission.AccessNetworkState)]
+            {{xrAssembly}}
 
             namespace {{id}};
 
@@ -219,6 +313,7 @@ internal static partial class Bundle
                 }
             }
 
+            {{xrActivity}}
             internal static class WpfRunBundleHost
             {
                 /// <summary>The app's Main, on the app's UI thread; the process ends when it returns.</summary>

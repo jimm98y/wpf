@@ -12,7 +12,7 @@ internal static class Program
                        [--size <w>x<h>] [--title-prefix <text>] [--close] <App.dll|App.exe|folder> [-- app args]
                                                     Windows: the stock .exe and the WebGPU run side by side
           wpfrun prepare <App.dll|App.exe|folder>   write the generated files, print the command, do not run
-          wpfrun bundle [--out <dir>] [--feed <dir>] [--aot] [--ios|--android] <App.dll|App.exe|folder>
+          wpfrun bundle [--out <dir>] [--feed <dir>] [--aot] [--ios|--visionos|--android [--xr]] <App.dll|App.exe|folder>
                                                     the app as a page for the browser (WpfWebGpu.Sdk's browser head),
                                                     or an iOS simulator .app / an Android APK
           wpfrun serve [--port <n>] <dir>           serve a bundle's page, cross-origin isolated (its threads need it)

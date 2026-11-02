@@ -74,6 +74,8 @@
     <!-- The Android head's activity-side half (views on the main Looper, the app's own UI thread):
          compiled into every Android app, which is the one kind of assembly that can see Mono.Android. -->
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/AndroidHost.cs" Pack="true" PackagePath="android/" />
+    <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/AndroidXr.cs" Pack="true" PackagePath="android/" />
+    <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/AndroidXrHost.cs" Pack="true" PackagePath="android/" />
     <None Include="$(WgpuInteropDir)Browser/wgpu-interop.js" Pack="true" PackagePath="web/" Condition="Exists('$(WgpuInteropDir)Browser/wgpu-interop.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js')" />

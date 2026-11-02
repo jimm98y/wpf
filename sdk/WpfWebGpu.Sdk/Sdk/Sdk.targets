@@ -1083,6 +1083,15 @@
     <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidHost.cs" Link="WpfWebGpu/AndroidHost.cs" Visible="false" />
   </ItemGroup>
 
+  <!-- ...and, for an app with an immersive activity (WpfWebGpuAndroidXr=true), the same for an OpenXR headset
+       (AndroidXrHost: each window a panel in space), against Khronos's loader, which the app carries
+       (WpfWebGpuOpenXrLoader: the openxr_loader_for_android .aar, Apache-2.0 OR MIT). -->
+  <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuAndroidHost)' != 'false' and '$(WpfWebGpuAndroidXr)' == 'true'">
+    <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXr.cs" Link="WpfWebGpu/AndroidXr.cs" Visible="false" />
+    <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXrHost.cs" Link="WpfWebGpu/AndroidXrHost.cs" Visible="false" />
+    <AndroidLibrary Include="$(WpfWebGpuOpenXrLoader)" Condition="'$(WpfWebGpuOpenXrLoader)' != ''" />
+  </ItemGroup>
+
   <!-- iOS: the frameworks the app is linked against are the ones its P/Invokes name, and the stack's
        macOS paths name two that iOS does not have (AppKit, and System, the macOS home of libSystem's
        headers): the link failed with "framework 'AppKit' not found". Nothing on an iOS path calls them. -->

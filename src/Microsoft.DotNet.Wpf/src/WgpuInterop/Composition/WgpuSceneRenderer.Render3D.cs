@@ -151,10 +151,44 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
 }
 ";
 
+        // ---- stereo -------------------------------------------------------------------------------
+        //
+        // A Viewport3D seen with two eyes: each eye renders the viewport's scene from its own place, the
+        // app's camera moved sideways along its own right axis. WPF_WEBGPU_STEREO=sbs shows the two side by
+        // side inside the viewport (left eye on the left) -- the check that the per-eye path is right before a
+        // headset is there to give each eye its own view; a headset's host gives the eyes and targets instead.
+
+        /// <summary>WPF_WEBGPU_STEREO: "sbs" renders every Viewport3D as a side-by-side stereo pair.</summary>
+        internal static readonly string? StereoMode = Environment.GetEnvironmentVariable("WPF_WEBGPU_STEREO");
+
+        /// <summary>One eye of a stereo pair: the part of the viewport it fills (fractions of its width) and
+        /// how far to the camera's right it sits, in the scene's units.</summary>
+        private readonly record struct Eye3D(float From, float To, float Offset);
+
+        private static readonly Eye3D[] s_monoEye = { new Eye3D(0f, 1f, 0f) };
+
+        /// <summary>The eyes a viewport is rendered for: one, or a side-by-side pair a stereo base apart --
+        /// the camera's focus distance (its LookDirection's length, which WPF scenes point at what they look
+        /// at) over 30, the base a comfortable stereo photograph takes.</summary>
+        private static Eye3D[] EyesFor(Viewport3DDraw viewport)
+        {
+            if (!string.Equals(StereoMode, "sbs", StringComparison.OrdinalIgnoreCase)) return s_monoEye;
+            float focus = viewport.Camera.HasMatrix ? 0f : viewport.Camera.LookDirection.Length();
+            float baseLine = (focus > 0f ? focus : 1f) / 30f;
+            return new[] { new Eye3D(0f, 0.5f, -baseLine / 2f), new Eye3D(0.5f, 1f, baseLine / 2f) };
+        }
+
         // Builds a 3D pass for the viewport's models and composites its offscreen
-        // colour into the 2D draw data as a layer at the current opacity.
+        // colour into the 2D draw data as a layer at the current opacity -- for each eye it is seen with.
         private void Emit3DViewport(Viewport3DDraw viewport, Matrix3x2 world, double opacity, Scissor clip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
+        {
+            foreach (Eye3D eye in EyesFor(viewport))
+                Emit3DViewportEye(viewport, world, opacity, clip, outData, plan, width, height, outFormat, eye);
+        }
+
+        private void Emit3DViewportEye(Viewport3DDraw viewport, Matrix3x2 world, double opacity, Scissor clip,
+            DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat, Eye3D eye)
         {
             if (clip.IsEmpty) return;
 
@@ -174,6 +208,13 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             // An empty viewport means "fill the target" -- in ABSOLUTE device coords, because the
             // target of a nested layer starts at (_devOX,_devOY) rather than at the origin.
             else { dx0 = _devOX; dy0 = _devOY; dx1 = _devOX + width; dy1 = _devOY + height; }
+            // this eye's part of it
+            if (eye.From != 0f || eye.To != 1f)
+            {
+                float full = dx1 - dx0;
+                dx1 = dx0 + full * eye.To;
+                dx0 = dx0 + full * eye.From;
+            }
             float dw = MathF.Max(1f, dx1 - dx0), dh = MathF.Max(1f, dy1 - dy0);
 
             // Keep the 3D inside its rect: scissor-intersect the clip with the device rect.
@@ -230,6 +271,9 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                     proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
                 }
             }
+            // This eye's place: the camera moved along its own right axis, which in view space is the x axis
+            // (a point the camera sees moves the other way); the same for a MatrixCamera's matrices.
+            if (eye.Offset != 0f) view *= Matrix4x4.CreateTranslation(-eye.Offset, 0f, 0f);
             // Map full NDC [-1,1] onto the device rect AS IT SITS INSIDE THE REGION TEXTURE (y flipped:
             // device y grows down). Since the region is that same rect rounded out, this is within a
             // pixel of the identity -- but it must be computed rather than assumed, both to absorb that

@@ -37,7 +37,7 @@ internal static partial class Bundle
     public static int Run(string[] args)
     {
         string? target = null, outDir = null, feed = null;
-        bool aot = false, verbose = false, ios = false, android = false;
+        bool aot = false, verbose = false, ios = false, android = false, visionOs = false, xr = false;
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -46,7 +46,9 @@ internal static partial class Bundle
                 case "--feed": feed = args[++i]; break;
                 case "--aot": aot = true; break;
                 case "--ios": ios = true; break;
+                case "--visionos": ios = visionOs = true; break;
                 case "--android": android = true; break;
+                case "--xr": xr = true; break;
                 case "-v" or "--verbose": verbose = true; break;
                 default:
                     if (args[i].StartsWith('-')) throw new UserError($"unknown option '{args[i]}'.");
@@ -56,7 +58,7 @@ internal static partial class Bundle
         }
         if (target == null) throw new UserError("which app? Pass its .dll, .exe or folder.");
         AppFiles app = AppFiles.Resolve(target);
-        outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, app.Name + (ios ? "-ios" : android ? "-android" : "-browser")));
+        outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, app.Name + (visionOs ? "-visionos" : ios ? "-ios" : android ? "-android" : "-browser")));
         feed = Path.GetFullPath(feed ?? FindFeed() ?? throw new UserError("no package feed with WpfWebGpu.Sdk found beside wpfrun; pass --feed <folder>."));
 
         var stack = StackAssemblies(feed);
@@ -65,8 +67,9 @@ internal static partial class Bundle
         Console.WriteLine($"wpfrun bundle: {app.Name}: {assemblies.Count} app assemblies" + (left.Count > 0 ? $" ({left.Count} left out: {string.Join(", ", left.Take(8))}{(left.Count > 8 ? ", ..." : "")})" : ""));
         var (files, folders) = Payload(app);
         Console.WriteLine($"wpfrun bundle: data: {files.Count} files and {folders.Count} folders ({string.Join(", ", folders)})");
-        if (ios) return RunIos(app, assemblies, files, folders, feed, outDir, verbose, aot);
-        if (android) return RunAndroid(app, assemblies, files, folders, feed, outDir, verbose);
+        if (ios) return RunIos(app, assemblies, files, folders, feed, outDir, verbose, aot, visionOs);
+        if (xr && !android) throw new UserError("--xr is for --android (an OpenXR headset's immersive activity).");
+        if (android) return RunAndroid(app, assemblies, files, folders, feed, outDir, verbose, xr);
 
         // One project per mode: an AOT publish strips the IL of what it compiled (WasmStripILAfterAOT) and
         // leaves those assemblies in obj, newer than their inputs, and an interpreted publish in the same

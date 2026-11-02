@@ -584,6 +584,8 @@ export function drainEvents() {
 // tab is hidden and rAF stops firing.
 export function nextFrame() {
     return new Promise((resolve) => {
+        // in a headset the page's own frames stop: the session's pace the app (xrFrame)
+        if (xr) { xr.waiters.push(resolve); return; }
         const t = setTimeout(() => resolve(1), 250);
         requestAnimationFrame(() => { clearTimeout(t); resolve(0); });
     });
@@ -936,6 +938,7 @@ function installListeners() {
     window.addEventListener("keyup", (e) => pushKey(false, e));
 
     watchDpr();
+    xrOfferButton();
 
     window.addEventListener("resize", () => {
         for (const [handle, w] of windows) {
@@ -1548,4 +1551,259 @@ export function scriptInvoke(target, name, args) {
     if (typeof member !== 'function') throw new TypeError(`${name} is not a function`);
     const result = member.apply(target, args || []);
     return result === undefined ? null : result;
+}
+
+// ---- WebXR: the page's windows as panels in a headset (immersive-vr) ---------------------------
+//
+// A browser on a headset (Quest Browser, Safari on Vision Pro, Chrome on Android XR) runs the page as a
+// flat panel; with WebXR it can take the whole view. The page is the desktop: every window's canvas is a
+// quad on a plane in front of the user, where it is on the page and over what it is above there, and the
+// controller's ray is the mouse -- where it meets the plane, turned back into the page's coordinates, goes
+// through pushMouse as a mouse's does, so the routing, the capture and the popups are the page's own.
+// Entering needs a press (the "Enter VR" button, offered only where immersive-vr is supported).
+//
+// The quads are drawn with WebGL (XRWebGLLayer), each window's canvas its texture, taken afresh each frame.
+
+const XR_DISTANCE = 1.5;          // metres in front of where the head started
+const XR_METRES_PER_PX = 0.001;   // a CSS pixel is a millimetre: a 1920-wide page is 1.92 m across
+const XR_CENTRE_Y = -0.1;         // a little below eye level
+const XR_LAYER_STEP = 0.0005;     // a window this much in front of each one under it
+let xr = null;
+
+function xrOfferButton() {
+    if (!navigator.xr || document.getElementById("wpf-xr-enter")) return;
+    navigator.xr.isSessionSupported("immersive-vr").then((supported) => {
+        if (!supported || document.getElementById("wpf-xr-enter")) return;
+        const b = document.createElement("button");
+        b.id = "wpf-xr-enter";
+        b.textContent = "Enter VR";
+        b.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:2147483647;padding:8px 14px;" +
+            "font:600 13px system-ui,sans-serif;border:0;border-radius:6px;background:#1f6feb;color:#fff;cursor:pointer;";
+        // the button's own press is not the app's
+        for (const type of ["mousedown", "mouseup", "pointerdown", "pointerup", "click"])
+            b.addEventListener(type, (e) => e.stopPropagation());
+        b.addEventListener("click", () => { xrEnter().catch((err) => console.warn("WebXR: " + err)); });
+        document.body.appendChild(b);
+    }).catch(() => {});
+}
+
+async function xrEnter() {
+    if (xr) return;
+    const session = await navigator.xr.requestSession("immersive-vr");
+    const glCanvas = document.createElement("canvas");
+    const gl = glCanvas.getContext("webgl2", { xrCompatible: true, alpha: false, antialias: true });
+    if (gl.makeXRCompatible) await gl.makeXRCompatible();
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    const space = await session.requestReferenceSpace("local");
+    xr = {
+        session, gl, space, program: xrProgram(gl), quad: xrQuad(gl),
+        textures: new Map(), waiters: [], hits: new Map(),
+        active: null, down: false, rightDown: false, wheel: 0, last: null,
+    };
+    const button = document.getElementById("wpf-xr-enter");
+    if (button) button.style.display = "none";
+    session.addEventListener("end", () => {
+        const ended = xr;
+        xr = null;
+        if (ended) {
+            for (const tex of ended.textures.values()) ended.gl.deleteTexture(tex);
+            for (const resolve of ended.waiters) resolve(0);
+        }
+        if (button) button.style.display = "";
+    });
+    session.addEventListener("selectstart", (e) => xrButton(e.inputSource, 0, true));
+    session.addEventListener("selectend", (e) => xrButton(e.inputSource, 0, false));
+    session.addEventListener("squeezestart", (e) => xrButton(e.inputSource, 2, true));
+    session.addEventListener("squeezeend", (e) => xrButton(e.inputSource, 2, false));
+    session.requestAnimationFrame(xrFrame);
+}
+
+function xrProgram(gl) {
+    const vs = `#version 300 es
+        in vec2 a_pos;
+        uniform mat4 u_proj, u_view, u_model;
+        out vec2 v_uv;
+        void main() { v_uv = vec2(a_pos.x + 0.5, 0.5 - a_pos.y); gl_Position = u_proj * u_view * u_model * vec4(a_pos, 0.0, 1.0); }`;
+    const fs = `#version 300 es
+        precision mediump float;
+        in vec2 v_uv;
+        uniform sampler2D u_tex;
+        uniform vec4 u_solid;
+        out vec4 o;
+        void main() {
+            if (u_solid.a > 0.0) {
+                float d = length(v_uv - 0.5) * 2.0;
+                if (d > 1.0) discard;
+                o = d > 0.6 ? vec4(0.15, 0.15, 0.15, 0.9) : u_solid;
+            } else o = texture(u_tex, v_uv);
+        }`;
+    const compile = (type, src) => {
+        const sh = gl.createShader(type);
+        gl.shaderSource(sh, src);
+        gl.compileShader(sh);
+        if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+        return sh;
+    };
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    return {
+        prog, pos: gl.getAttribLocation(prog, "a_pos"),
+        proj: gl.getUniformLocation(prog, "u_proj"), view: gl.getUniformLocation(prog, "u_view"),
+        model: gl.getUniformLocation(prog, "u_model"), tex: gl.getUniformLocation(prog, "u_tex"),
+        solid: gl.getUniformLocation(prog, "u_solid"),
+    };
+}
+
+function xrQuad(gl) {
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.5, 0.5, 0.5]), gl.STATIC_DRAW);
+    return buf;
+}
+
+// a model matrix (column-major) that scales the unit quad to w x h metres and puts its centre at (x, y, z)
+function xrModel(x, y, z, w, h) {
+    return new Float32Array([w, 0, 0, 0, 0, h, 0, 0, 0, 0, 1, 0, x, y, z, 1]);
+}
+
+// what of the page each window shows, from the back to the front
+function xrPanels() {
+    const panels = [];
+    for (const [handle, w] of windows) {
+        if (w.canvas.style.display === "none") continue;
+        const r = w.canvas.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1 || w.canvas.width < 1 || w.canvas.height < 1) continue;
+        panels.push({ handle, canvas: w.canvas, r, z: parseInt(w.canvas.style.zIndex || "0", 10) });
+    }
+    panels.sort((a, b) => a.z - b.z);
+    return panels;
+}
+
+// the page point (CSS pixels) a pose's ray meets the plane at, or null
+function xrHit(pose) {
+    const p = pose.transform.position, q = pose.transform.orientation;
+    // the ray is the pose's -Z axis: rotate (0, 0, -1) by q
+    const x = q.x, y = q.y, z = q.z, w = q.w;
+    const dx = -2 * (x * z + w * y), dy = -2 * (y * z - w * x), dz = -(1 - 2 * (x * x + y * y));
+    if (dz > -1e-4) return null;
+    const t = (-XR_DISTANCE - p.z) / dz;
+    const hx = p.x + dx * t, hy = p.y + dy * t;
+    return {
+        world: [hx, hy, -XR_DISTANCE],
+        clientX: hx / XR_METRES_PER_PX + window.innerWidth / 2,
+        clientY: (XR_CENTRE_Y - hy) / XR_METRES_PER_PX + window.innerHeight / 2,
+    };
+}
+
+function xrEvent(hit, button) {
+    return { clientX: hit.clientX, clientY: hit.clientY, button, timeStamp: performance.now(),
+             ctrlKey: false, shiftKey: false, altKey: false, metaKey: false };
+}
+
+function xrButton(source, button, down) {
+    if (!xr) return;
+    const hit = xr.hits.get(source);
+    if (down) xr.active = source;   // the hand that presses is the pointer from then on
+    if (!hit) return;
+    if (button === 0) xr.down = down; else xr.rightDown = down;
+    pushMouse(down ? 1 : 2, xrEvent(hit, button));
+}
+
+function xrFrame(time, frame) {
+    if (!xr) return;
+    const { session, gl, space, program } = xr;
+    session.requestAnimationFrame(xrFrame);
+
+    // the app's frame: its dispatcher ticks with the headset's
+    for (const resolve of xr.waiters.splice(0)) resolve(0);
+
+    // where each hand points; the active one moves the mouse
+    xr.hits.clear();
+    for (const source of session.inputSources) {
+        if (!source.targetRaySpace) continue;
+        const pose = frame.getPose(source.targetRaySpace, space);
+        const hit = pose && xrHit(pose);
+        if (hit) xr.hits.set(source, hit);
+        if (!xr.active && hit && source.handedness === "right") xr.active = source;
+    }
+    if (!xr.active && session.inputSources.length > 0) xr.active = session.inputSources[0];
+    const hit = xr.active && xr.hits.get(xr.active);
+    if (hit) {
+        if (!xr.last || Math.abs(hit.clientX - xr.last.clientX) >= 0.5 || Math.abs(hit.clientY - xr.last.clientY) >= 0.5)
+            pushMouse(0, xrEvent(hit, 0));
+        xr.last = hit;
+        // the thumbstick is the wheel
+        const axes = xr.active.gamepad?.axes;
+        const stick = axes && axes.length >= 4 ? axes[3] : 0;
+        if (Math.abs(stick) > 0.2) {
+            xr.wheel += -stick * 12;        // notches' worth (120 each) a frame, at full tilt
+            if (Math.abs(xr.wheel) >= 120) {
+                const notches = Math.trunc(xr.wheel / 120) * 120;
+                pushMouse(3, xrEvent(hit, 0), notches);
+                xr.wheel -= notches;
+            }
+        } else xr.wheel = 0;
+    }
+
+    const viewerPose = frame.getViewerPose(space);
+    if (!viewerPose) return;
+    const layer = session.renderState.baseLayer;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
+    gl.clearColor(0.08, 0.08, 0.1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(program.prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, xr.quad);
+    gl.enableVertexAttribArray(program.pos);
+    gl.vertexAttribPointer(program.pos, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform1i(program.tex, 0);
+    gl.activeTexture(gl.TEXTURE0);
+
+    // each window's canvas, as it is now
+    const panels = xrPanels();
+    const seen = new Set();
+    for (const panel of panels) {
+        let tex = xr.textures.get(panel.handle);
+        if (!tex) {
+            tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            xr.textures.set(panel.handle, tex);
+        }
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, panel.canvas); } catch { }
+        seen.add(panel.handle);
+    }
+    for (const [handle, tex] of xr.textures)
+        if (!seen.has(handle)) { gl.deleteTexture(tex); xr.textures.delete(handle); }
+
+    const W = window.innerWidth, H = window.innerHeight;
+    for (const view of viewerPose.views) {
+        const vp = layer.getViewport(view);
+        gl.viewport(vp.x, vp.y, vp.width, vp.height);
+        gl.uniformMatrix4fv(program.proj, false, view.projectionMatrix);
+        gl.uniformMatrix4fv(program.view, false, view.transform.inverse.matrix);
+        gl.uniform4f(program.solid, 0, 0, 0, 0);
+        panels.forEach((panel, i) => {
+            const r = panel.r;
+            const cx = (r.left + r.width / 2 - W / 2) * XR_METRES_PER_PX;
+            const cy = XR_CENTRE_Y - (r.top + r.height / 2 - H / 2) * XR_METRES_PER_PX;
+            gl.bindTexture(gl.TEXTURE_2D, xr.textures.get(panel.handle));
+            gl.uniformMatrix4fv(program.model, false, xrModel(cx, cy, -XR_DISTANCE + i * XR_LAYER_STEP, r.width * XR_METRES_PER_PX, r.height * XR_METRES_PER_PX));
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        });
+        if (hit) {
+            gl.uniform4f(program.solid, 1, 1, 1, 1);
+            gl.uniformMatrix4fv(program.model, false, xrModel(hit.world[0], hit.world[1], -XR_DISTANCE + (panels.length + 2) * XR_LAYER_STEP, 0.012, 0.012));
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        }
+    }
 }

@@ -1021,6 +1021,13 @@ namespace MS.Internal.Interop
             }
         }
 
+        /// <summary>A pointer that is a mouse, not a finger (an XR controller's ray, AndroidXrHost): kind 0 move,
+        /// 1 press, 2 release, RightPress / RightRelease the right button, at device pixels of the window --
+        /// straight to the window, with no press and hold (a button held still is a button held, not a right
+        /// click).</summary>
+        public static void NotifyPointer(IntPtr handle, int kind, int xPixels, int yPixels)
+            => OnUi(() => EmitHeld(handle, kind, xPixels, yPixels));
+
         public static void NotifyTouch(IntPtr handle, int kind, int xPixels, int yPixels)
             => OnUi(() => s_hold.Touch(handle, kind, xPixels, yPixels, s_byHandle.TryGetValue(handle, out AndroidWindow w) ? w.GetBackingScale() : 1.0));
 

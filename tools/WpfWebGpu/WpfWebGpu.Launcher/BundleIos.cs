@@ -32,7 +32,7 @@ internal static partial class Bundle
         "Mono.System.Drawing", "System.Drawing.Common", "WpfWebGpu.Win32",
     };
 
-    private static int RunIos(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose, bool aot)
+    private static int RunIos(AppFiles app, List<string> assemblies, List<string> files, List<string> folders, string feed, string outDir, bool verbose, bool aot, bool visionOs = false)
     {
         // one project per mode, as for the browser (an AOT build's objects are not an interpreted one's)
         string project = Path.Combine(Locations.CacheRoot, "bundles", app.Name + (aot ? "-ios-aot" : "-ios"));
@@ -59,6 +59,11 @@ internal static partial class Bundle
         {
             p.WaitForExit();
             if (p.ExitCode != 0) return p.ExitCode;
+        }
+        if (visionOs)
+        {
+            int retag = RetagForVisionOs(target);
+            if (retag != 0) return retag;
         }
         Console.WriteLine($"wpfrun bundle: done: {target}");
         Console.WriteLine($"  xcrun simctl install booted \"{target}\" && xcrun simctl launch --console booted {IosBundleId(app)}");
@@ -197,7 +202,14 @@ internal static partial class Bundle
 
             internal static class WpfRunBundleHost
             {
-                private static void Main(string[] args) => UIApplication.Main(args, null, typeof(WpfRunAppDelegate));
+                private static void Main(string[] args)
+                {
+                    // the app's own command line: a launch passes no arguments to an iOS app, but an environment
+                    // (WPFRUN_ARGS, '|' between arguments; SIMCTL_CHILD_WPFRUN_ARGS on a simulator launch)
+                    if (Environment.GetEnvironmentVariable("WPFRUN_ARGS") is { Length: > 0 } passed)
+                        Args = passed.Split('|');
+                    UIApplication.Main(args, null, typeof(WpfRunAppDelegate));
+                }
 
                 internal static string[] Args = Array.Empty<string>();
 
