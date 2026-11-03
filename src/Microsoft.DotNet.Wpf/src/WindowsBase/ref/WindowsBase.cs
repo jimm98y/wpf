@@ -59,6 +59,7 @@ namespace MS.Internal.Interop
         public static void RunLoop(int timeoutMilliseconds, System.Threading.WaitHandle posted) { }
         public bool TakesKeyboardOnPress { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.AndroidWindow.KeyMessage> KeyInput { add { } remove { } }
+        public static bool NotifyKey(System.IntPtr window, bool down, int keyCode, int unicodeChar, int metaState) { throw null; }
         public static bool NotifyKey(bool down, int keyCode, int unicodeChar, int metaState) { throw null; }
         public static T InvokeOnUi<T>(System.Func<T> work) { throw null; }
         public static void WaitServingMain(System.Threading.WaitHandle done) { }

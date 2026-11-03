@@ -613,6 +613,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     if (st.Kind == 3) sl = sz;
                     if (dt.Kind == 3) dl = whole ? 0 : dz;
                     var size = new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = st.Kind == 3 ? Math.Max(1, depth) : 1 };
+                    // D3D11 drops a copy whose box is empty or does not fit the source or the destination (the
+                    // debug layer says so; nothing is copied); WebGPU's validation ends the process instead
+                    if (box is { } eb && (eb.right <= eb.left || eb.bottom <= eb.top)) continue;
+                    if (!Formats.IsBlockCompressed(st.Desc.Format))
+                    {
+                        uint srcW = Math.Max(1, st.Desc.Width >> (int)sm), srcH = st.PlaneRows(Math.Max(1, st.Desc.Height >> (int)sm));
+                        uint dstW = Math.Max(1, dt.Desc.Width >> (int)dm), dstH = dt.PlaneRows(Math.Max(1, dt.Desc.Height >> (int)dm));
+                        if ((ulong)sx + w > srcW || (ulong)sy + h > srcH || (ulong)dx + w > dstW || (ulong)dy + h > dstH)
+                        {
+                            D3DLog.Once("copy-oob", $"a region copy that does not fit is dropped, as D3D11 drops it: {w}x{h} from ({sx},{sy}) of {srcW}x{srcH} to ({dx},{dy}) of {dstW}x{dstH}");
+                            continue;
+                        }
+                    }
                     if (dt.IsStaging && !st.IsStaging)
                     {
                         if (st.SampleCount > 1) { D3DLog.Once("copy-ms", "copy from a multisampled texture"); return; }

@@ -173,6 +173,9 @@ internal static partial class Bundle
         // activity, which stays the launcher's; one of the two per process.
         string xrAssembly = openXrLoader == null ? "" : """
             [assembly: UsesFeature("android.hardware.vr.headtracking", Required = false)]
+            // the room behind the windows (AndroidXrHost's passthrough layer): Meta's runtime shows it only to an
+            // app that says it uses it
+            [assembly: UsesFeature("com.oculus.feature.PASSTHROUGH", Required = false)]
             [assembly: MetaData("com.oculus.supportedDevices", Value = "quest2|questpro|quest3|quest3s")]
             """;
         string xrActivity = openXrLoader == null ? "" : $$"""

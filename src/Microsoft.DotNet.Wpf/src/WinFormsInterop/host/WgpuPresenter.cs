@@ -247,6 +247,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
         IntPtr view = wgpuTextureCreateView(st.texture, IntPtr.Zero);
         _renderer.BeginFrame();
+        SceneVisual drawn = root;
         try
         {
             if (_stereo)
@@ -258,6 +259,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
                 right.Children.Add(root);
                 pair.Children.Add(left);
                 pair.Children.Add(right);
+                drawn = pair;
                 _renderer.RenderSceneToView(pair, view, _format, 2 * DeviceWidth, DeviceHeight, ClearColor);
             }
             else
@@ -267,7 +269,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         if (AppContext.GetData(CaptureRequest) is string capture)
         {
             AppContext.SetData(CaptureRequest, null);
-            Capture(root, capture);
+            Capture(drawn, _stereo ? 2 * DeviceWidth : DeviceWidth, capture);   // a stereo pair: both eyes
         }
         long p3 = System.Diagnostics.Stopwatch.GetTimestamp();
         WGPUStatus presented = PresentAndRelease(_surface, st.texture);   // releases the texture
@@ -289,9 +291,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     /// written there (a test driver's screenshot where the screen cannot be read: a headset's panels).</summary>
     internal const string CaptureRequest = "WpfWebGpu.CaptureRequest";
 
-    private void Capture(SceneVisual root, string path)
+    private void Capture(SceneVisual root, int w, string path)
     {
-        int w = DeviceWidth, h = DeviceHeight;
+        int h = DeviceHeight;
         var desc = new WGPUTextureDescriptor
         {
             usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.CopySrc, dimension = WGPUTextureDimension._2D,

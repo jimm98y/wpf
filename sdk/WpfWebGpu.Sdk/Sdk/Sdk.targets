@@ -1089,6 +1089,7 @@
   <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuAndroidHost)' != 'false' and '$(WpfWebGpuAndroidXr)' == 'true'">
     <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXr.cs" Link="WpfWebGpu/AndroidXr.cs" Visible="false" />
     <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXrHost.cs" Link="WpfWebGpu/AndroidXrHost.cs" Visible="false" />
+    <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXrStereo3D.cs" Link="WpfWebGpu/AndroidXrStereo3D.cs" Visible="false" />
     <AndroidLibrary Include="$(WpfWebGpuOpenXrLoader)" Condition="'$(WpfWebGpuOpenXrLoader)' != ''" />
   </ItemGroup>
 

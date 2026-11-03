@@ -38,7 +38,12 @@ namespace MS.Internal.Interop
             TypeSessionActionSetsAttachInfo = 60, TypeActionsSyncInfo = 61,
             TypeInstanceCreateInfoAndroid = 1000008000, TypeGraphicsBindingOpenGlesAndroid = 1000024001,
             TypeGraphicsRequirementsOpenGles = 1000024003, TypeLoaderInitInfoAndroid = 1000089000,
-            TypeExtensionProperties = 2, TypeCompositionLayerImageLayout = 1000040000;
+            TypeExtensionProperties = 2, TypeCompositionLayerImageLayout = 1000040000,
+            TypeViewLocateInfo = 6, TypeView = 7, TypeViewState = 11,
+            TypePassthroughCreateInfo = 1000118001, TypePassthroughLayerCreateInfo = 1000118002, TypeCompositionLayerPassthrough = 1000118003;
+
+        public const ulong PassthroughIsRunningAtCreation = 1;
+        public const int PassthroughLayerPurposeReconstruction = 0;
 
         public const ulong ImageLayoutVerticalFlip = 1;
 
@@ -142,6 +147,49 @@ namespace MS.Internal.Interop
             public int Type; public void* Next; public fixed byte ExtensionName[128]; public uint ExtensionVersion;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct ViewLocateInfo
+        {
+            public int Type; public void* Next; public int ViewConfigurationType; public long DisplayTime; public ulong Space;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct ViewState
+        {
+            public int Type; public void* Next; public ulong ViewStateFlags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct Fov { public float AngleLeft, AngleRight, AngleUp, AngleDown; }
+
+        /// <summary>XrView: where an eye is and what it sees.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct View
+        {
+            public int Type; public void* Next; public Pose Pose; public Fov Fov;
+        }
+
+        /// <summary>XrPassthroughCreateInfoFB (XR_FB_passthrough).</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PassthroughCreateInfo
+        {
+            public int Type; public void* Next; public ulong Flags;
+        }
+
+        /// <summary>XrPassthroughLayerCreateInfoFB.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PassthroughLayerCreateInfo
+        {
+            public int Type; public void* Next; public ulong Passthrough; public ulong Flags; public int Purpose;
+        }
+
+        /// <summary>XrCompositionLayerPassthroughFB: the cameras' view of the room, as a layer.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CompositionLayerPassthrough
+        {
+            public int Type; public void* Next; public ulong Flags; public ulong Space; public ulong LayerHandle;
+        }
+
         /// <summary>XrCompositionLayerImageLayoutFB (XR_FB_composition_layer_image_layout), chained to a layer.</summary>
         [StructLayout(LayoutKind.Sequential)]
         public struct CompositionLayerImageLayout
@@ -216,6 +264,7 @@ namespace MS.Internal.Interop
         [DllImport(Loader)] public static extern int xrEndFrame(ulong session, FrameEndInfo* info);
         [DllImport(Loader)] public static extern int xrCreateReferenceSpace(ulong session, ReferenceSpaceCreateInfo* info, ulong* space);
         [DllImport(Loader)] public static extern int xrLocateSpace(ulong space, ulong baseSpace, long time, SpaceLocation* location);
+        [DllImport(Loader)] public static extern int xrLocateViews(ulong session, ViewLocateInfo* info, ViewState* state, uint capacity, uint* count, View* views);
         [DllImport(Loader)] public static extern int xrDestroySpace(ulong space);
         [DllImport(Loader)] public static extern int xrDestroySwapchain(ulong swapchain);
         [DllImport(Loader)] public static extern int xrEnumerateSwapchainFormats(ulong session, uint capacity, uint* count, long* formats);

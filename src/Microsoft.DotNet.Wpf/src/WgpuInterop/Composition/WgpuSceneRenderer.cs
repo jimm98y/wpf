@@ -417,7 +417,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
 
         /// <summary>Begin a logical composition frame (drives coverage-cache eviction).</summary>
-        public void BeginFrame() { _frameId++; BeginFrame3D(); }
+        public void BeginFrame()
+        {
+            _frameId++;
+            _sideBySideExternal = AppContext.GetData(SideBySideExternalSwitch) is true;
+            _sideBySideConvergence = AppContext.GetData(SideBySideConvergenceData) is double c ? (float)Math.Clamp(c, 0.0, 0.2) : 0f;
+            BeginFrame3D();
+        }
+
+        /// <summary>Set (to true) when the D3DImages hold left|right stereo pairs: a headset's, whose host has put
+        /// the app's 3D engine in its side-by-side stereo mode.</summary>
+        internal const string SideBySideExternalSwitch = "WpfWebGpu.Xr.SideBySideD3DImages";
+        private bool _sideBySideExternal;
+
+        /// <summary>How far (a fraction of the width) each eye's half is moved toward the middle: the focus point's
+        /// disparity under parallel cameras (AndroidXrStereo3D).</summary>
+        internal const string SideBySideConvergenceData = "WpfWebGpu.Xr.SideBySideConvergence";
+        private float _sideBySideConvergence;
 
         /// <summary>End the frame: return pooled layers and evict stale coverage-cache entries.</summary>
         public void EndFrame()
@@ -3976,6 +3992,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         if (!_contentTexFrame.TryGetValue(img.SourceId, out view) || view == IntPtr.Zero)
                             return;   // source texture not rendered (unexpected) -> skip rather than sample garbage
                         u0 = img.U0; v0 = img.V0; uSpan = img.U1 - img.U0; vSpan = img.V1 - img.V0;
+                    }
+                    else if (img.External != null && _sideBySideExternal)
+                    {
+                        // a D3DImage holding a stereo pair, left eye's | right eye's (a headset's: the app's 3D
+                        // engine put in its own stereo mode, AndroidXrStereo3D): each eye its half, a window
+                        // drawn once the left. The engine's cameras look parallel, which puts everything in
+                        // front of the window; each half is moved toward the middle by the focus point's
+                        // disparity (_sideBySideConvergence of the width), cropping the edge that goes, so
+                        // the focus point is at the window's depth and the scene around it.
+                        float c = _sideBySideConvergence;
+                        uSpan = 0.5f * (1f - 2f * c);
+                        u0 = _eye == 2 ? 0.5f : c;
                     }
                     // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
                     IntPtr sampler = _nearestScaling ? NearestSampler() : LinearSampler();

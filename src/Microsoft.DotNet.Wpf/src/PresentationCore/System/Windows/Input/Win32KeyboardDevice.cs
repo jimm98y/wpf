@@ -51,6 +51,32 @@ namespace System.Windows.Input
             {
                 s_macKeyStates[virtualKey] &= ~KeyStates.Down;
             }
+            TrackModifierSides(virtualKey, down);
+        }
+
+        // A modifier as GetKeyState has it: the generic key (VK_SHIFT, VK_CONTROL, VK_MENU) down while either
+        // side is, and a side down with it. A head that reports the generic key (Android's key codes, a
+        // headset controller's Alt) left Keyboard.Modifiers -- which asks for LeftAlt/RightAlt -- without it.
+        private static void TrackModifierSides(int virtualKey, bool down)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                int generic = 0x10 + i, left = 0xA0 + 2 * i, right = left + 1;
+                if (virtualKey == generic)
+                {
+                    // the generic key names no side: the left one, as a single modifier key is
+                    if (down) s_macKeyStates[left] |= KeyStates.Down;
+                    else { s_macKeyStates[left] &= ~KeyStates.Down; s_macKeyStates[right] &= ~KeyStates.Down; }
+                    return;
+                }
+                if (virtualKey == left || virtualKey == right)
+                {
+                    bool either = ((s_macKeyStates[left] | s_macKeyStates[right]) & KeyStates.Down) != 0;
+                    if (either) s_macKeyStates[generic] |= KeyStates.Down;
+                    else s_macKeyStates[generic] &= ~KeyStates.Down;
+                    return;
+                }
+            }
         }
 
         /// <summary>

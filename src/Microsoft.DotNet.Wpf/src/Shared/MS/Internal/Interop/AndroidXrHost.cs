@@ -15,7 +15,9 @@
 // The windows lie on one plane in front of the user, a desktop of GetScreenPixels' size, each at its
 // position on it -- so what the app knows of where its windows are holds -- and a little in front of the
 // windows under it. The controller's aim ray is met with that plane, and the point is the pointer: over a
-// window it moves the mouse, the trigger is the left button, A the right, the thumbstick the wheel.
+// window it moves the mouse, the trigger is the left button, A the right, the right thumbstick the wheel,
+// the left one an orbit (Alt and a left drag, what turns a 3D view). Behind the windows is the room, where
+// the runtime can show it (XR_FB_passthrough; WPF_XR_PASSTHROUGH=0 for black).
 //
 // A window is a stereo pair (WPF_XR_STEREO, on unless "0"): its surface twice its width, the compositor
 // drawing the window into each half, the left half seen with the left eye and the right with the right
@@ -70,8 +72,10 @@ namespace MS.Internal.Interop
         private int _activeHand = 1;                      // the right hand until the left one presses
 
         private ulong _cursorSwapchain;
-        private bool _cursorVisible;
-        private Xr.Vector3 _cursorAt;
+        // each hand's ray where it meets the desktop: a cursor for each (the mouse is the active hand's)
+        private readonly bool[] _handAims = new bool[2], _handCursors = new bool[2];
+        private readonly Xr.Vector3[] _handHits = new Xr.Vector3[2];
+        private readonly int[] _handX = new int[2], _handY = new int[2];
 
         // the pointer
         private bool _pressed, _secondaryPressed;
@@ -100,6 +104,8 @@ namespace MS.Internal.Interop
         {
             _thread = new Thread(Run) { Name = "OpenXR", IsBackground = true };
             _thread.Start();
+            // the app's own 3D (DXEngine behind a D3DImage) in its stereo mode, for the windows' stereo pairs
+            if (s_stereo) AndroidXrStereo3D.Enable();
             if (int.TryParse(Environment.GetEnvironmentVariable("WPF_XR_COMMANDS"), out int port))
                 new Thread(() => Commands(port)) { Name = "XR commands", IsBackground = true }.Start();
         }
@@ -165,6 +171,92 @@ namespace MS.Internal.Interop
                     return Command($"up {x} {y}");
             }
             return "error: unknown " + a[0];
+        }
+
+        // ---- the left thumbstick: an orbit, Alt + a left drag -----------------------------------------
+        //
+        // What turns a 3D view with a mouse where Alt and a left drag orbit it (DXEngine's Orbit3D navigation,
+        // as apps set it up). The stick pushed is Alt down and the left button pressed where the ray is; held,
+        // a pointer of its own moves from there as fast as the stick is pushed; let go, the button and Alt
+        // are released. The ray's own pointer is left where it was.
+
+        private const int KeyAltLeft = 57;                  // android.view.KeyEvent.KEYCODE_ALT_LEFT
+        private const int MetaAltLeftOn = 0x2 | 0x10;      // META_ALT_ON | META_ALT_LEFT_ON
+        private const float OrbitPixelsPerSecond = 500f;    // at full tilt
+        private bool _orbiting;
+        private long _stickLogged, _sticksRawLogged;
+
+        private string RawStick(ulong hand)
+        {
+            var get = new Xr.ActionStateGetInfo { Type = Xr.TypeActionStateGetInfo, Action = _scrollAction, SubactionPath = hand };
+            var state = new Xr.ActionStateVector2f { Type = Xr.TypeActionStateVector2f };
+            int result = Xr.xrGetActionStateVector2f(_session, &get, &state);
+            return $"r{result} active {state.IsActive} ({state.CurrentState.X:0.00},{state.CurrentState.Y:0.00})";
+        }
+        private static readonly bool s_traceSticks = Environment.GetEnvironmentVariable("WPF_XR_TRACE_STICKS") == "1";
+        private IntPtr _orbitTarget;
+        private float _orbitX, _orbitY;
+        private long _orbitIdleSince;
+
+        private void Orbit(Xr.Vector2 stick, long period, int px, int py)
+        {
+            bool tilted = MathF.Abs(stick.X) > 0.25f || MathF.Abs(stick.Y) > 0.25f;
+            if (_orbiting)
+            {
+                // held a little below where it started (0.1, not 0.25), and let go of for a quarter of a second
+                // before the drag ends: a stick turned the other way passes the middle, a thumb eases off
+                bool held = MathF.Abs(stick.X) > 0.1f || MathF.Abs(stick.Y) > 0.1f;
+                if (held) _orbitIdleSince = 0;
+                else if (_orbitIdleSince == 0) _orbitIdleSince = Environment.TickCount64;
+                if (_pressed || (!held && Environment.TickCount64 - _orbitIdleSince > 250))
+                {
+                    _orbitIdleSince = 0;
+                    AndroidWindow.NotifyPointer(_orbitTarget, 2, (int)_orbitX, (int)_orbitY);
+                    AndroidWindow.NotifyKey(_orbitTarget, false, KeyAltLeft, 0, 0);
+                    _orbiting = false;
+                    Log($"orbit ends at ({(int)_orbitX},{(int)_orbitY})");
+                    return;
+                }
+                float seconds = period / 1e9f;
+                _orbitX += stick.X * OrbitPixelsPerSecond * seconds;
+                _orbitY -= stick.Y * OrbitPixelsPerSecond * seconds;    // pushed up, dragged up
+                AndroidWindow.NotifyPointer(_orbitTarget, 0, (int)_orbitX, (int)_orbitY);
+                return;
+            }
+            if (!tilted || _pressed) return;
+            IntPtr target = Under(px, py);
+            if (target == IntPtr.Zero) return;
+            _orbitTarget = target;
+            _orbitX = px;
+            _orbitY = py;
+            AndroidWindow.NotifyKey(target, true, KeyAltLeft, 0, MetaAltLeftOn);
+            AndroidWindow.NotifyPointer(target, 0, px, py);
+            AndroidWindow.NotifyPointer(target, 1, px, py);
+            _orbiting = true;
+            Log($"orbit from ({px},{py}) in 0x{target:x}");
+        }
+
+        /// <summary>Where hand <paramref name="i"/>'s ray meets the desktop (_handHits, _handX/Y) and whether its
+        /// cursor shows; false when the hand is not tracked or points away.</summary>
+        private bool Aim(int i, long time)
+        {
+            _handCursors[i] = false;
+            var location = new Xr.SpaceLocation { Type = Xr.TypeSpaceLocation };
+            if (Xr.xrLocateSpace(_aimSpaces[i], _local, time, &location) < 0
+                || (location.LocationFlags & (Xr.LocationOrientationValid | Xr.LocationPositionValid)) != (Xr.LocationOrientationValid | Xr.LocationPositionValid))
+                return false;
+            Xr.Vector3 origin = location.Pose.Position;
+            Xr.Vector3 dir = Xr.Rotate(location.Pose.Orientation, new Xr.Vector3 { Z = -1 });
+            if (dir.Z > -1e-4f) return false;    // pointing away from the desktop
+            float t = (-Distance - origin.Z) / dir.Z;
+            var hit = new Xr.Vector3 { X = origin.X + dir.X * t, Y = origin.Y + dir.Y * t, Z = -Distance };
+            int px = (int)MathF.Round(hit.X / MetresPerPixel + DesktopWidth / 2f);
+            int py = (int)MathF.Round((CentreHeight - hit.Y) / MetresPerPixel + DesktopHeight / 2f);
+            _handHits[i] = hit;
+            _handX[i] = px;
+            _handY[i] = py;
+            _handCursors[i] = px >= -50 && py >= -50 && px < DesktopWidth + 50 && py < DesktopHeight + 50;
+            return true;
         }
 
         /// <summary>The window the pointer is over at a desktop point, as the controller's ray finds it.</summary>
@@ -357,6 +449,9 @@ namespace MS.Internal.Interop
             _flipLayers = InstanceExtensions().Contains(FlipExtension);
             if (_flipLayers) extensions.Add(FlipExtension);
             Log(_flipLayers ? "quads flipped vertically" : "the runtime has no " + FlipExtension);
+            // the room behind the windows (WPF_XR_PASSTHROUGH, on unless "0"), where the runtime can show it
+            _passthroughExtension = s_passthrough && InstanceExtensions().Contains(PassthroughExtension);
+            if (_passthroughExtension) extensions.Add(PassthroughExtension);
             var names = new IntPtr[extensions.Count];
             try
             {
@@ -407,6 +502,7 @@ namespace MS.Internal.Interop
 
             CreateActions();
             CreateCursor();
+            if (_passthroughExtension) CreatePassthrough();
             Log("session created");
             return true;
         }
@@ -595,19 +691,30 @@ namespace MS.Internal.Interop
             Check(Xr.xrBeginFrame(_session, &beginInfo), "xrBeginFrame");
 
             if (_sessionState == Xr.StateFocused) Pointer(state.PredictedDisplayTime, state.PredictedDisplayPeriod);
+            if (s_traceSticks && Environment.TickCount64 - _sticksRawLogged > 2000)
+            {
+                _sticksRawLogged = Environment.TickCount64;
+                Log($"sticks raw: session {_sessionState}, left {RawStick(_leftHand)}, right {RawStick(_rightHand)}");
+            }
+            LocateEyes(state.PredictedDisplayTime);
 
             List<Panel> shown;
             lock (_lock) shown = _panels.FindAll(p => p.Visible && p.HasSurface && p.Swapchain != 0);
             int quadsForPanels = 0;
             foreach (Panel p in shown) quadsForPanels += p.Stereo ? 2 : 1;
-            int count = state.ShouldRender != 0 ? quadsForPanels + (_cursorVisible && _cursorSwapchain != 0 ? 1 : 0) : 0;
+            int cursors = _cursorSwapchain == 0 ? 0 : (_handCursors[0] ? 1 : 0) + (_handCursors[1] ? 1 : 0);
+            int count = state.ShouldRender != 0 ? quadsForPanels + cursors : 0;
             Xr.CompositionLayerQuad* quads = stackalloc Xr.CompositionLayerQuad[Math.Max(1, count)];
             var flip = new Xr.CompositionLayerImageLayout { Type = Xr.TypeCompositionLayerImageLayout, Flags = Xr.ImageLayoutVerticalFlip };
             _flip = _flipLayers ? &flip : null;
-            void** layers = stackalloc void*[Math.Max(1, count)];
+            void** layers = stackalloc void*[count + 1];
             int n = 0;
+            // the room first, under everything
+            var room = new Xr.CompositionLayerPassthrough { Type = Xr.TypeCompositionLayerPassthrough, LayerHandle = _passthroughLayer };
+            if (_passthroughLayer != 0 && state.ShouldRender != 0) layers[n++] = &room;
             if (count > 0)
             {
+                int q = 0;      // the quads' own index: the layers' may start past the room's
                 for (int i = 0; i < shown.Count; i++)
                 {
                     Panel p = shown[i];
@@ -616,25 +723,23 @@ namespace MS.Internal.Interop
                     if (p.Stereo)
                     {
                         // the left half to the left eye, the right half to the right, in the same place
-                        quads[n] = Quad(p.Swapchain, 0, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeLeft);
-                        layers[n] = &quads[n];
-                        n++;
-                        quads[n] = Quad(p.Swapchain, p.Width, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeRight);
+                        quads[q] = Quad(p.Swapchain, 0, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeLeft);
+                        layers[n++] = &quads[q++];
+                        quads[q] = Quad(p.Swapchain, p.Width, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeRight);
                     }
                     else
                     {
-                        quads[n] = Quad(p.Swapchain, 0, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeBoth);
+                        quads[q] = Quad(p.Swapchain, 0, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeBoth);
                     }
-                    layers[n] = &quads[n];
-                    n++;
+                    layers[n++] = &quads[q++];
                 }
-                if (_cursorVisible && _cursorSwapchain != 0)
+                for (int h = 0; h < 2 && cursors > 0; h++)
                 {
-                    Xr.Vector3 at = _cursorAt;
+                    if (!_handCursors[h]) continue;
+                    Xr.Vector3 at = _handHits[h];
                     at.Z = -Distance + (shown.Count + 2) * LayerStep;
-                    quads[n] = Quad(_cursorSwapchain, 0, CursorPixels, CursorPixels, at, CursorMetres, CursorMetres, translucent: true, Xr.EyeBoth);
-                    layers[n] = &quads[n];
-                    n++;
+                    quads[q] = Quad(_cursorSwapchain, 0, CursorPixels, CursorPixels, at, CursorMetres, CursorMetres, translucent: true, Xr.EyeBoth);
+                    layers[n++] = &quads[q++];
                 }
             }
             var endInfo = new Xr.FrameEndInfo
@@ -644,6 +749,75 @@ namespace MS.Internal.Interop
             };
             Check(Xr.xrEndFrame(_session, &endInfo), "xrEndFrame");
             _flip = null;
+        }
+
+        // ---- where the eyes are (for 3D drawn from them: AndroidXrStereo3D) --------------------------
+
+        private static readonly object s_eyesLock = new object();
+        private static System.Numerics.Vector3 s_leftEye, s_rightEye;
+        private static bool s_eyesKnown;
+
+        private void LocateEyes(long time)
+        {
+            var info = new Xr.ViewLocateInfo { Type = Xr.TypeViewLocateInfo, ViewConfigurationType = Xr.ViewConfigurationPrimaryStereo, DisplayTime = time, Space = _local };
+            var viewState = new Xr.ViewState { Type = Xr.TypeViewState };
+            Xr.View* views = stackalloc Xr.View[2];
+            views[0] = new Xr.View { Type = Xr.TypeView };
+            views[1] = new Xr.View { Type = Xr.TypeView };
+            uint count;
+            bool known = Xr.xrLocateViews(_session, &info, &viewState, 2, &count, views) >= 0 && count == 2
+                && (viewState.ViewStateFlags & Xr.LocationPositionValid) != 0;
+            lock (s_eyesLock)
+            {
+                s_eyesKnown = known;
+                if (!known) return;
+                s_leftEye = new System.Numerics.Vector3(views[0].Pose.Position.X, views[0].Pose.Position.Y, views[0].Pose.Position.Z);
+                s_rightEye = new System.Numerics.Vector3(views[1].Pose.Position.X, views[1].Pose.Position.Y, views[1].Pose.Position.Z);
+            }
+        }
+
+        /// <summary>Where the eyes are now (metres, the session's local space, the desktop in front at -z), false
+        /// when the headset does not know.</summary>
+        internal static bool TryGetEyes(out System.Numerics.Vector3 left, out System.Numerics.Vector3 right)
+        {
+            lock (s_eyesLock)
+            {
+                left = s_leftEye;
+                right = s_rightEye;
+                return s_eyesKnown;
+            }
+        }
+
+        /// <summary>A desktop point (device pixels) where the windows lie in the local space (metres).</summary>
+        internal static System.Numerics.Vector3 DesktopToSpace(double x, double y) => new System.Numerics.Vector3(
+            (float)((x - DesktopWidth / 2.0) * MetresPerPixel), (float)(CentreHeight - (y - DesktopHeight / 2.0) * MetresPerPixel), -Distance);
+
+        // ---- passthrough: the room around the windows (XR_FB_passthrough) ---------------------------
+
+        private const string PassthroughExtension = "XR_FB_passthrough";
+        private static readonly bool s_passthrough = Environment.GetEnvironmentVariable("WPF_XR_PASSTHROUGH") != "0";
+        private bool _passthroughExtension;
+        private ulong _passthrough, _passthroughLayer;
+
+        private void CreatePassthrough()
+        {
+            IntPtr create = Xr.Proc(_instance, "xrCreatePassthroughFB"), createLayer = Xr.Proc(_instance, "xrCreatePassthroughLayerFB");
+            if (create == IntPtr.Zero || createLayer == IntPtr.Zero) { Log("no passthrough functions"); return; }
+            var info = new Xr.PassthroughCreateInfo { Type = Xr.TypePassthroughCreateInfo, Flags = Xr.PassthroughIsRunningAtCreation };
+            ulong passthrough;
+            int result = ((delegate* unmanaged<ulong, Xr.PassthroughCreateInfo*, ulong*, int>)create)(_session, &info, &passthrough);
+            if (result < 0) { Log($"no passthrough: XrResult {result}"); return; }
+            var layerInfo = new Xr.PassthroughLayerCreateInfo
+            {
+                Type = Xr.TypePassthroughLayerCreateInfo, Passthrough = passthrough, Flags = Xr.PassthroughIsRunningAtCreation,
+                Purpose = Xr.PassthroughLayerPurposeReconstruction,
+            };
+            ulong layer;
+            result = ((delegate* unmanaged<ulong, Xr.PassthroughLayerCreateInfo*, ulong*, int>)createLayer)(_session, &layerInfo, &layer);
+            if (result < 0) { Log($"no passthrough layer: XrResult {result}"); return; }
+            _passthrough = passthrough;
+            _passthroughLayer = layer;
+            Log("passthrough: the room behind the windows");
         }
 
         // the vertical flip chained to this frame's quads (on the stack of Frame), or null
@@ -776,23 +950,20 @@ namespace MS.Internal.Interop
             for (int i = 0; i < 2; i++) if (select[i] > 0.6f && !_pressed) _activeHand = i;
             ulong hand = hands[_activeHand];
 
-            var location = new Xr.SpaceLocation { Type = Xr.TypeSpaceLocation };
-            if (Xr.xrLocateSpace(_aimSpaces[_activeHand], _local, time, &location) < 0
-                || (location.LocationFlags & (Xr.LocationOrientationValid | Xr.LocationPositionValid)) != (Xr.LocationOrientationValid | Xr.LocationPositionValid))
-            {
-                _cursorVisible = false;
-                return;
-            }
+            for (int i = 0; i < 2; i++) _handAims[i] = Aim(i, time);
 
-            Xr.Vector3 origin = location.Pose.Position;
-            Xr.Vector3 dir = Xr.Rotate(location.Pose.Orientation, new Xr.Vector3 { Z = -1 });
-            if (dir.Z > -1e-4f) { _cursorVisible = false; return; }    // pointing away from the desktop
-            float t = (-Distance - origin.Z) / dir.Z;
-            var hit = new Xr.Vector3 { X = origin.X + dir.X * t, Y = origin.Y + dir.Y * t, Z = -Distance };
-            int px = (int)MathF.Round(hit.X / MetresPerPixel + DesktopWidth / 2f);
-            int py = (int)MathF.Round((CentreHeight - hit.Y) / MetresPerPixel + DesktopHeight / 2f);
-            _cursorAt = hit;
-            _cursorVisible = px >= -50 && py >= -50 && px < DesktopWidth + 50 && py < DesktopHeight + 50;
+            // the left thumbstick orbits where the left hand points (the right one may hold the mouse meanwhile)
+            Xr.Vector2 leftStick = Vector2State(_scrollAction, _leftHand);
+            int orbitHand = _handAims[0] ? 0 : _activeHand;
+            if (s_traceSticks && (MathF.Abs(leftStick.X) > 0.25f || MathF.Abs(leftStick.Y) > 0.25f) && Environment.TickCount64 - _stickLogged > 1000)
+            {
+                _stickLogged = Environment.TickCount64;
+                Log($"sticks: left ({leftStick.X:0.00},{leftStick.Y:0.00}), pressed {_pressed}, orbiting {_orbiting}, under 0x{Under(_handX[orbitHand], _handY[orbitHand]):x}");
+            }
+            if (_handAims[orbitHand] || _orbiting) Orbit(leftStick, period, _handX[orbitHand], _handY[orbitHand]);
+
+            if (!_handAims[_activeHand]) return;
+            int px = _handX[_activeHand], py = _handY[_activeHand];
 
             float trigger = select[_activeHand];
             bool down = _pressed ? trigger > 0.4f : trigger > 0.6f;   // a little hysteresis, as a button's travel has
@@ -820,7 +991,8 @@ namespace MS.Internal.Interop
                     IntPtr target = AndroidWindow.PointerTarget(px, py, out int left, out int top);
                     if (target == IntPtr.Zero) { target = under.Handle; left = under.X; top = under.Y; }
                     int lx = px - left, ly = py - top;
-                    if (px != _lastX || py != _lastY || target != _hoverTarget) AndroidWindow.NotifyPointer(target, 0, px, py);
+                    // (not while the left stick orbits: its own pointer is the mouse until it is let go)
+                    if (!_orbiting && (px != _lastX || py != _lastY || target != _hoverTarget)) AndroidWindow.NotifyPointer(target, 0, px, py);
                     _hoverTarget = target;
                     if (down)
                     {
@@ -833,8 +1005,8 @@ namespace MS.Internal.Interop
                         AndroidWindow.NotifyPointer(target, secondary ? AndroidWindow.RightPress : AndroidWindow.RightRelease, px, py);
                     }
 
-                    // the thumbstick is the wheel: a notch's worth of travel for every so much pushed and held
-                    Xr.Vector2 stick = Vector2State(_scrollAction, hand);
+                    // the right thumbstick is the wheel: a notch's worth of travel for every so much pushed and held
+                    Xr.Vector2 stick = Vector2State(_scrollAction, _rightHand);
                     if (MathF.Abs(stick.Y) > 0.2f)
                     {
                         float seconds = period / 1e9f;

@@ -941,6 +941,11 @@ namespace MS.Internal.Interop
         /// keeps (Back, Home, the volume).
         /// </summary>
         public static bool NotifyKey(bool down, int keyCode, int unicodeChar, int metaState)
+            => NotifyKey(IntPtr.Zero, down, keyCode, unicodeChar, metaState);
+
+        /// <summary>A key for <paramref name="window"/> (zero: the window that has the keys) -- a headset
+        /// controller's modifier for the window under its ray (AndroidXrHost's Alt for an orbit).</summary>
+        public static bool NotifyKey(IntPtr window, bool down, int keyCode, int unicodeChar, int metaState)
         {
             int vk = VirtualKeyOfKeyCode(keyCode);
             if (vk == 0) return false;
@@ -948,7 +953,7 @@ namespace MS.Internal.Interop
             var message = new KeyMessage(IntPtr.Zero, down, vk, chars,
                 (metaState & MetaShiftOn) != 0, (metaState & MetaCtrlOn) != 0, (metaState & MetaAltOn) != 0, (metaState & MetaMetaOn) != 0,
                 Environment.TickCount);
-            OnUi(() => KeyInput?.Invoke(message with { Window = s_keyWindow != IntPtr.Zero ? s_keyWindow : s_mainHandle }));
+            OnUi(() => KeyInput?.Invoke(message with { Window = window != IntPtr.Zero ? window : s_keyWindow != IntPtr.Zero ? s_keyWindow : s_mainHandle }));
             return true;
         }
 
