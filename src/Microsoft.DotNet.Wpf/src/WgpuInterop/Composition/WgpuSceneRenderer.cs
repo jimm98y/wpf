@@ -4908,6 +4908,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // Only the GPU path's target comes from the mask POOL; the CPU path uploads a
                     // sampling-only texture. See CachedMask.Pooled.
                     bool pooled = s_gpuRaster && !biLevel;
+                    bool cutMask = false;
                     if (biLevel)
                     {
                         CoverageMask m = BiLevelGlyphMask(TransformGeometry(normGeom, phased));
@@ -4923,7 +4924,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     }
                     else
                     {
-                        CoverageMask m = PathRasterizer.Rasterize(TransformGeometry(normGeom, phased));
+                        // past a texture's size, the part on the target only (at this offset: not cached)
+                        CoverageMask m = PathRasterizer.RasterizeVisible(TransformGeometry(normGeom, phased), -ox, -oy, width, height, out cutMask);
                         if (textBlend) ApplyTextBlend(m.Coverage);
                         if (m.IsEmpty) return;
                         if (_aliasedEdges) ApplyAliasedEdges(m.Coverage);
@@ -4934,6 +4936,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     IntPtr bg = CreateSampledBindGroup(format, FillKind.Text, view, NearestSampler());
                     cm = new CachedMask { Tex = tex, View = view, BindGroup = bg, Sampler = NearestSampler(), Format = format,
                         Ox = mox, Oy = moy, W = mw, H = mh, Pooled = pooled };
+                    if (cutMask)
+                    {
+                        // this offset's only: drawn once, let go after the frame
+                        EmitCachedSolidMask(cm, solid.Color, opacity, clip, width, height, data, ox, oy);
+                        DeferReleaseBindGroup(bg);
+                        DeferReleaseTexView(tex, view);
+                        return;
+                    }
                     _maskCache[key] = cm;   // cache owns these (NOT defer-released); evicted in EndFrame
                 }
                 cm.LastFrame = _frameId;

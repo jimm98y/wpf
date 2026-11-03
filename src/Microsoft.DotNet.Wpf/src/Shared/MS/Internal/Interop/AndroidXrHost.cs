@@ -16,7 +16,8 @@
 // position on it -- so what the app knows of where its windows are holds -- and a little in front of the
 // windows under it. The controller's aim ray is met with that plane, and the point is the pointer: over a
 // window it moves the mouse, the trigger is the left button, A the right, the right thumbstick the wheel,
-// the left one an orbit (Alt and a left drag, what turns a 3D view). Behind the windows is the room, where
+// the left one an orbit (Alt and a left drag, what turns a 3D view), B or Y a 3D view alone, big (the
+// fullscreen below). Behind the windows is the room, where
 // the runtime can show it (XR_FB_passthrough; WPF_XR_PASSTHROUGH=0 for black).
 //
 // A window is a stereo pair (WPF_XR_STEREO, on unless "0"): its surface twice its width, the compositor
@@ -32,6 +33,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Android.App;
@@ -144,6 +146,20 @@ namespace MS.Internal.Interop
         {
             string[] a = line.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
             if (a.Length == 0) return "ok";
+            if (a[0] == "windows")
+            {
+                lock (_lock) return "ok " + string.Join("; ", _panels.Select(p => $"0x{p.Handle:x} {p.X},{p.Y} {p.Width}x{p.Height}{(p.Visible ? "" : " hidden")}"));
+            }
+            if (a[0] == "enter") { Key(66, 0, '\r'); return "ok"; }
+            if (a[0] == "text" && a.Length == 2)
+            {
+                foreach (char ch in a[1])
+                {
+                    if (!KeyOf(ch, out int code, out bool shift)) return "error: no key for " + ch;
+                    Key(code, shift ? 1 : 0, ch);
+                }
+                return "ok";
+            }
             if (a[0] == "capture" && a.Length == 2)
             {
                 AppContext.SetData("WpfWebGpu.CaptureRequest", a[1]);
@@ -151,7 +167,7 @@ namespace MS.Internal.Interop
             }
             string[] xy = a.Length == 2 ? a[1].Split(' ') : Array.Empty<string>();
             if (xy.Length != 2 || !int.TryParse(xy[0], out int x) || !int.TryParse(xy[1], out int y))
-                return "error: move|down|up|click x y, capture <path>";
+                return "error: move|down|up|click|fullscreen x y, capture <path>, windows, text <s>, enter";
             switch (a[0])
             {
                 case "move":
@@ -169,6 +185,9 @@ namespace MS.Internal.Interop
                 case "click":
                     Command($"down {x} {y}");
                     return Command($"up {x} {y}");
+                case "fullscreen":      // as B or Y with the pointer there
+                    ToggleFullscreen(x, y);
+                    return s_full != null ? "ok on" : "ok off";
             }
             return "error: unknown " + a[0];
         }
@@ -248,15 +267,44 @@ namespace MS.Internal.Interop
             Xr.Vector3 origin = location.Pose.Position;
             Xr.Vector3 dir = Xr.Rotate(location.Pose.Orientation, new Xr.Vector3 { Z = -1 });
             if (dir.Z > -1e-4f) return false;    // pointing away from the desktop
-            float t = (-Distance - origin.Z) / dir.Z;
-            var hit = new Xr.Vector3 { X = origin.X + dir.X * t, Y = origin.Y + dir.Y * t, Z = -Distance };
-            int px = (int)MathF.Round(hit.X / MetresPerPixel + DesktopWidth / 2f);
-            int py = (int)MathF.Round((CentreHeight - hit.Y) / MetresPerPixel + DesktopHeight / 2f);
+            Fullscreen? full = s_full;
+            float plane = full != null ? -FullDistance : -Distance;
+            float t = (plane - origin.Z) / dir.Z;
+            var hit = new Xr.Vector3 { X = origin.X + dir.X * t, Y = origin.Y + dir.Y * t, Z = plane };
+            int px = full != null
+                ? (int)MathF.Round(hit.X / full.MetresPerPixel + full.X + full.W / 2f)
+                : (int)MathF.Round(hit.X / MetresPerPixel + DesktopWidth / 2f);
+            int py = full != null
+                ? (int)MathF.Round((FullCentreHeight - hit.Y) / full.MetresPerPixel + full.Y + full.H / 2f)
+                : (int)MathF.Round((CentreHeight - hit.Y) / MetresPerPixel + DesktopHeight / 2f);
             _handHits[i] = hit;
             _handX[i] = px;
             _handY[i] = py;
             _handCursors[i] = px >= -50 && py >= -50 && px < DesktopWidth + 50 && py < DesktopHeight + 50;
             return true;
+        }
+
+        // a key typed for the window that has the keys, as a hardware keyboard's (Android key codes)
+        private static void Key(int code, int meta, char ch)
+        {
+            AndroidWindow.NotifyKey(true, code, ch, meta);
+            AndroidWindow.NotifyKey(false, code, 0, meta);
+        }
+
+        private static bool KeyOf(char ch, out int code, out bool shift)
+        {
+            shift = char.IsUpper(ch);
+            char c = char.ToLowerInvariant(ch);
+            code = c switch
+            {
+                >= 'a' and <= 'z' => 29 + (c - 'a'),
+                >= '0' and <= '9' => 7 + (c - '0'),
+                '/' => 76, '.' => 56, '-' => 69, ',' => 55, ' ' => 62, '\\' => 73, ';' => 74, '=' => 70,
+                '_' => 69, ':' => 74,
+                _ => 0,
+            };
+            if (ch is '_' or ':') shift = true;
+            return code != 0;
         }
 
         /// <summary>The window the pointer is over at a desktop point, as the controller's ray finds it.</summary>
@@ -690,6 +738,7 @@ namespace MS.Internal.Interop
             var beginInfo = new Xr.FrameBeginInfo { Type = Xr.TypeFrameBeginInfo };
             Check(Xr.xrBeginFrame(_session, &beginInfo), "xrBeginFrame");
 
+
             if (_sessionState == Xr.StateFocused) Pointer(state.PredictedDisplayTime, state.PredictedDisplayPeriod);
             if (s_traceSticks && Environment.TickCount64 - _sticksRawLogged > 2000)
             {
@@ -707,7 +756,9 @@ namespace MS.Internal.Interop
             Xr.CompositionLayerQuad* quads = stackalloc Xr.CompositionLayerQuad[Math.Max(1, count)];
             var flip = new Xr.CompositionLayerImageLayout { Type = Xr.TypeCompositionLayerImageLayout, Flags = Xr.ImageLayoutVerticalFlip };
             _flip = _flipLayers ? &flip : null;
-            void** layers = stackalloc void*[count + 1];
+            void** layers = stackalloc void*[count + 2];
+            Xr.CompositionLayerProjectionView* projectionViews = stackalloc Xr.CompositionLayerProjectionView[2];
+            var projection = new Xr.CompositionLayerProjection();
             int n = 0;
             // the room first, under everything
             var room = new Xr.CompositionLayerPassthrough { Type = Xr.TypeCompositionLayerPassthrough, LayerHandle = _passthroughLayer };
@@ -715,9 +766,48 @@ namespace MS.Internal.Interop
             if (count > 0)
             {
                 int q = 0;      // the quads' own index: the layers' may start past the room's
+                Fullscreen? full = s_full;
                 for (int i = 0; i < shown.Count; i++)
                 {
                     Panel p = shown[i];
+                    if (full != null)
+                    {
+                        // the 3D view alone, big: its rectangle of the window's image, in front of the user
+                        if (full.X < p.X || full.Y < p.Y || full.X + full.W > p.X + p.Width || full.Y + full.H > p.Y + p.Height) continue;
+                        var at = new Xr.Vector3 { X = 0, Y = FullCentreHeight, Z = -FullDistance };
+                        float fw = full.W * full.MetresPerPixel, fh = full.H * full.MetresPerPixel;
+                        int fx = full.X - p.X, fy = full.Y - p.Y;
+                        bool panel = FullPanel(out int iw, out int ih) && AppContext.GetData("WpfWebGpu.Xr.SideBySideD3DImages") is true;
+                        // the latest image drawn into the panel now, by this frame (XrExternalPanel), and its views
+                        long number = panel ? (_externalDrawLatest ??= AppContext.GetData("WpfWebGpu.Xr.ExternalDrawLatest") as Func<Func<long, bool>, long>)
+                            ?.Invoke(k => AndroidXrStereo3D.TryGetDrawnViews(k, out _, out _)) ?? -1 : -1;
+                        // the view draws as the eyes see once the panel can show it (until then, through the rectangle)
+                        s_immersive = panel;
+                        if (number >= 0 && AndroidXrStereo3D.TryGetDrawnViews(number, out var drawnLeft, out var drawnRight))
+                        {
+                            // its own image, each eye's half filling that eye (drawn for the pose and field of view it
+                            // carries, which the runtime moves to where the eye is now), transparent where empty
+                            projectionViews[0] = ProjectionView(drawnLeft, 0, iw / 2, ih);
+                            projectionViews[1] = ProjectionView(drawnRight, iw / 2, iw / 2, ih);
+                            projection = new Xr.CompositionLayerProjection
+                            {
+                                // the flip is the layer's (XR_FB_composition_layer_image_layout chains to a layer, not a view)
+                                Type = Xr.TypeCompositionLayerProjection, Next = _flip, LayerFlags = Xr.LayerBlendTextureSourceAlpha, Space = _local,
+                                ViewCount = 2, Views = projectionViews,
+                            };
+                            layers[n++] = &projection;
+                            break;
+                        }
+                        if (p.Stereo)
+                        {
+                            quads[q] = Quad(p.Swapchain, fx, full.W, full.H, at, fw, fh, false, Xr.EyeLeft, fy);
+                            layers[n++] = &quads[q++];
+                            quads[q] = Quad(p.Swapchain, p.Width + fx, full.W, full.H, at, fw, fh, false, Xr.EyeRight, fy);
+                        }
+                        else quads[q] = Quad(p.Swapchain, fx, full.W, full.H, at, fw, fh, false, Xr.EyeBoth, fy);
+                        layers[n++] = &quads[q++];
+                        break;
+                    }
                     Xr.Vector3 centre = PanelCentre(p, i);
                     float wide = p.Width * MetresPerPixel, high = p.Height * MetresPerPixel;
                     if (p.Stereo)
@@ -737,7 +827,7 @@ namespace MS.Internal.Interop
                 {
                     if (!_handCursors[h]) continue;
                     Xr.Vector3 at = _handHits[h];
-                    at.Z = -Distance + (shown.Count + 2) * LayerStep;
+                    at.Z = (s_full != null ? -FullDistance : -Distance) + (shown.Count + 2) * LayerStep;
                     quads[q] = Quad(_cursorSwapchain, 0, CursorPixels, CursorPixels, at, CursorMetres, CursorMetres, translucent: true, Xr.EyeBoth);
                     layers[n++] = &quads[q++];
                 }
@@ -756,6 +846,7 @@ namespace MS.Internal.Interop
         private static readonly object s_eyesLock = new object();
         private static System.Numerics.Vector3 s_leftEye, s_rightEye;
         private static bool s_eyesKnown;
+        private static readonly Xr.View[] s_views = new Xr.View[2];
 
         private void LocateEyes(long time)
         {
@@ -773,6 +864,8 @@ namespace MS.Internal.Interop
                 if (!known) return;
                 s_leftEye = new System.Numerics.Vector3(views[0].Pose.Position.X, views[0].Pose.Position.Y, views[0].Pose.Position.Z);
                 s_rightEye = new System.Numerics.Vector3(views[1].Pose.Position.X, views[1].Pose.Position.Y, views[1].Pose.Position.Z);
+                s_views[0] = views[0];
+                s_views[1] = views[1];
             }
         }
 
@@ -788,9 +881,107 @@ namespace MS.Internal.Interop
             }
         }
 
+        /// <summary>An eye as the headset has it now: where (metres, the local space), which way (a rotation), and
+        /// its field of view (the tangents of its left, right, up and down angles).</summary>
+        internal static bool TryGetEyeView(bool left, out System.Numerics.Vector3 position, out System.Numerics.Quaternion orientation, out System.Numerics.Vector4 tangents)
+        {
+            lock (s_eyesLock)
+            {
+                Xr.View v = s_views[left ? 0 : 1];
+                position = new System.Numerics.Vector3(v.Pose.Position.X, v.Pose.Position.Y, v.Pose.Position.Z);
+                orientation = new System.Numerics.Quaternion(v.Pose.Orientation.X, v.Pose.Orientation.Y, v.Pose.Orientation.Z, v.Pose.Orientation.W);
+                tangents = new System.Numerics.Vector4(MathF.Tan(v.Fov.AngleLeft), MathF.Tan(v.Fov.AngleRight), MathF.Tan(v.Fov.AngleUp), MathF.Tan(v.Fov.AngleDown));
+                return s_eyesKnown;
+            }
+        }
+
+        /// <summary>Whether the headset shows a 3D view alone, filling the eyes (AndroidXrStereo3D draws it so).</summary>
+        internal static bool IsFullscreen => s_full != null && s_immersive;
+        private static volatile bool s_immersive;
+
         /// <summary>A desktop point (device pixels) where the windows lie in the local space (metres).</summary>
-        internal static System.Numerics.Vector3 DesktopToSpace(double x, double y) => new System.Numerics.Vector3(
-            (float)((x - DesktopWidth / 2.0) * MetresPerPixel), (float)(CentreHeight - (y - DesktopHeight / 2.0) * MetresPerPixel), -Distance);
+        internal static System.Numerics.Vector3 DesktopToSpace(double x, double y) => s_full is { } f
+            ? new System.Numerics.Vector3((float)((x - (f.X + f.W / 2.0)) * f.MetresPerPixel), (float)(FullCentreHeight - (y - (f.Y + f.H / 2.0)) * f.MetresPerPixel), -FullDistance)
+            : new System.Numerics.Vector3((float)((x - DesktopWidth / 2.0) * MetresPerPixel), (float)(CentreHeight - (y - DesktopHeight / 2.0) * MetresPerPixel), -Distance);
+
+        // ---- the 3D view alone, big (B or Y) ------------------------------------------------------
+        //
+        // B on the right controller or Y on the left: the 3D view under the pointer (AndroidXrStereo3D's views)
+        // shown alone, as large as about 80 degrees of the view 1.3 m away -- its rectangle of the window's
+        // image on a quad of its own, the rest hidden -- and back. The rays meet that quad and are its pixels of
+        // the desktop, so the view is pointed at, clicked and orbited as before; the eyes' cameras look
+        // through it (DesktopToSpace).
+
+        private sealed class Fullscreen
+        {
+            public int X, Y, W, H;
+            public float MetresPerPixel;
+        }
+
+        private static volatile Fullscreen? s_full;
+        private const float FullDistance = 1.3f, FullCentreHeight = -0.05f;
+        private ulong _fullscreenAction;
+        private bool _fullscreenHeld;
+
+        private void ToggleFullscreen(int px, int py)
+        {
+            if (s_full != null)
+            {
+                s_full = null;
+                s_immersive = false;
+                AppContext.SetData("WpfWebGpu.Xr.WindowsHidden", false);
+                AndroidXrStereo3D.EndFullscreen();
+                (_externalTarget ?? AppContext.GetData("WpfWebGpu.Xr.ExternalTarget") as Func<IntPtr, int, int, bool>)?.Invoke(IntPtr.Zero, 0, 0);
+                Log("fullscreen off");
+                return;
+            }
+            if (!AndroidXrStereo3D.TryGetViewRect(px, py, out System.Windows.Rect r) || r.Width < 8 || r.Height < 8) { Log("no 3D view for fullscreen"); return; }
+            int w = (int)Math.Round(r.Width), h = (int)Math.Round(r.Height);
+            float maxWide = 2 * FullDistance * MathF.Tan(40 * MathF.PI / 180), maxHigh = 2 * FullDistance * MathF.Tan(32 * MathF.PI / 180);
+            AppContext.SetData("WpfWebGpu.Xr.WindowsHidden", true);
+            s_full = new Fullscreen { X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = w, H = h, MetresPerPixel = MathF.Min(maxWide / w, maxHigh / h) };
+            Log($"fullscreen: the 3D view at ({s_full.X},{s_full.Y}) {w}x{h}, {w * s_full.MetresPerPixel:0.00} m wide");
+            AndroidXrStereo3D.BeginFullscreen(r);
+        }
+
+        // the fullscreen view's own image (DXEngine's D3DImage, rendered sharper): a swapchain of its size, drawn
+        // by the compositor (XrExternalPanel, through AppContext) each frame; until it has drawn, the crop
+        private ulong _fullSwapchain;
+        private IntPtr _fullWindow;
+        private int _fullWidth, _fullHeight;
+        private bool _fullDrawn;
+        private Func<IntPtr, int, int, bool>? _externalTarget;
+        private Func<Func<long, bool>, long>? _externalDrawLatest;
+
+        private bool FullPanel(out int width, out int height)
+        {
+            width = height = 0;
+            // the size of the image the view is published at now (the largest of the D3DImages: rendered so for this)
+            if (!AndroidXrStereo3D.TryGetFullscreenImage(out _, out _)) return false;
+            long largest = (AppContext.GetData("WpfWebGpu.Xr.LargestExternal") as Func<long>)?.Invoke() ?? 0;
+            int w = (int)(largest >> 32), h = (int)(largest & 0xFFFFFFFF);
+            // a still head draws nothing new: the panel keeps the size it has (the largest is only the last second's)
+            if ((w <= 0 || h <= 0) && _fullSwapchain != 0) { w = _fullWidth; h = _fullHeight; }
+            if (w <= 0 || h <= 0) return false;
+            if (_fullSwapchain == 0 || w != _fullWidth || h != _fullHeight)
+            {
+                if (_fullSwapchain != 0) Xr.xrDestroySwapchain(_fullSwapchain);
+                _fullSwapchain = 0;
+                _fullDrawn = false;
+                var info = new Xr.SwapchainCreateInfo { Type = Xr.TypeSwapchainCreateInfo, Width = (uint)w, Height = (uint)h, SampleCount = 1, FaceCount = 1, ArraySize = 1, MipCount = 1 };
+                if (CreateSurfaceSwapchain(info, out ulong swapchain, out IntPtr surface) < 0 || surface == IntPtr.Zero) return false;
+                _fullWindow = ANativeWindow_fromSurface(JNIEnv.Handle, surface);
+                _fullSwapchain = swapchain;
+                _fullWidth = w;
+                _fullHeight = h;
+                Log($"fullscreen panel {w}x{h}");
+            }
+            _externalTarget ??= AppContext.GetData("WpfWebGpu.Xr.ExternalTarget") as Func<IntPtr, int, int, bool>;
+            if (_externalTarget != null && _externalTarget(_fullWindow, w, h)) _fullDrawn = true;
+            width = w;
+            height = h;
+            return _fullDrawn;
+        }
 
         // ---- passthrough: the room around the windows (XR_FB_passthrough) ---------------------------
 
@@ -820,17 +1011,35 @@ namespace MS.Internal.Interop
             Log("passthrough: the room behind the windows");
         }
 
+        private Xr.CompositionLayerProjectionView ProjectionView((System.Numerics.Vector3 Position, System.Numerics.Quaternion Orientation, Xr.Fov Fov) view, int x, int width, int height) => new Xr.CompositionLayerProjectionView
+        {
+            Type = Xr.TypeCompositionLayerProjectionView,
+            Pose = new Xr.Pose
+            {
+                Orientation = new Xr.Quaternion { X = view.Orientation.X, Y = view.Orientation.Y, Z = view.Orientation.Z, W = view.Orientation.W },
+                Position = new Xr.Vector3 { X = view.Position.X, Y = view.Position.Y, Z = view.Position.Z },
+            },
+            Fov = view.Fov,
+            SubImage = new Xr.SwapchainSubImage { Swapchain = _fullSwapchain, ImageRect = new Xr.Rect2Di { X = x, Width = width, Height = height } },
+        };
+
+        /// <summary>An eye's field of view as the headset has it (radians), for what was drawn for it.</summary>
+        internal static Xr.Fov EyeFov(bool left)
+        {
+            lock (s_eyesLock) return s_views[left ? 0 : 1].Fov;
+        }
+
         // the vertical flip chained to this frame's quads (on the stack of Frame), or null
         private Xr.CompositionLayerImageLayout* _flip;
 
-        private Xr.CompositionLayerQuad Quad(ulong swapchain, int x, int width, int height, Xr.Vector3 centre, float metresWide, float metresHigh, bool translucent, int eye) => new Xr.CompositionLayerQuad
+        private Xr.CompositionLayerQuad Quad(ulong swapchain, int x, int width, int height, Xr.Vector3 centre, float metresWide, float metresHigh, bool translucent, int eye, int y = 0) => new Xr.CompositionLayerQuad
         {
             Type = Xr.TypeCompositionLayerQuad,
             Next = _flip,
             LayerFlags = translucent ? Xr.LayerBlendTextureSourceAlpha : 0,
             Space = _local,
             EyeVisibility = eye,
-            SubImage = new Xr.SwapchainSubImage { Swapchain = swapchain, ImageRect = new Xr.Rect2Di { X = x, Width = width, Height = height } },
+            SubImage = new Xr.SwapchainSubImage { Swapchain = swapchain, ImageRect = new Xr.Rect2Di { X = x, Y = y, Width = width, Height = height } },
             Pose = new Xr.Pose { Orientation = new Xr.Quaternion { W = 1 }, Position = centre },
             Size = new Xr.Extent2Df { Width = metresWide, Height = metresHigh },
         };
@@ -860,6 +1069,7 @@ namespace MS.Internal.Interop
             _selectAction = CreateAction("select", "Click", Xr.ActionFloat);
             _scrollAction = CreateAction("scroll", "Scroll", Xr.ActionVector2f);
             _secondaryAction = CreateAction("secondary", "Right click", Xr.ActionBoolean);
+            _fullscreenAction = CreateAction("fullscreen", "Fullscreen 3D", Xr.ActionBoolean);
 
             Suggest("/interaction_profiles/oculus/touch_controller", new[]
             {
@@ -867,6 +1077,7 @@ namespace MS.Internal.Interop
                 (_selectAction, "/user/hand/left/input/trigger/value"), (_selectAction, "/user/hand/right/input/trigger/value"),
                 (_scrollAction, "/user/hand/left/input/thumbstick"), (_scrollAction, "/user/hand/right/input/thumbstick"),
                 (_secondaryAction, "/user/hand/right/input/a/click"), (_secondaryAction, "/user/hand/left/input/x/click"),
+                (_fullscreenAction, "/user/hand/right/input/b/click"), (_fullscreenAction, "/user/hand/left/input/y/click"),
             });
             // hands, and any runtime without the Touch profile: point and pinch
             Suggest("/interaction_profiles/khr/simple_controller", new[]
@@ -951,6 +1162,15 @@ namespace MS.Internal.Interop
             ulong hand = hands[_activeHand];
 
             for (int i = 0; i < 2; i++) _handAims[i] = Aim(i, time);
+
+            bool fullscreen = BoolState(_fullscreenAction, _leftHand) || BoolState(_fullscreenAction, _rightHand);
+            if (fullscreen && !_fullscreenHeld && !_pressed && !_orbiting)
+            {
+                int h = _handAims[_activeHand] ? _activeHand : 1 - _activeHand;
+                ToggleFullscreen(_handX[h], _handY[h]);
+                for (int i = 0; i < 2; i++) _handAims[i] = Aim(i, time);     // the rays meet the other plane now
+            }
+            _fullscreenHeld = fullscreen;
 
             // the left thumbstick orbits where the left hand points (the right one may hold the mouse meanwhile)
             Xr.Vector2 leftStick = Vector2State(_scrollAction, _leftHand);

@@ -158,6 +158,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             var image = front.Image;
             image.Bump();
+            XrExternalPanel.Published(image);     // a headset's fullscreen 3D view draws it on its own
             uint[] handles;
             lock (_externalLock) { handles = new uint[front.Handles.Count]; front.Handles.CopyTo(handles); }
             if (s_trace && image.Version % 100 == 0) Log($"d3dimage: publish v{image.Version} to {handles.Length} resource(s), {_external.Count} front buffer(s), {_externalKey.Count} resource(s) known, {_externalOrphans.Count} orphan(s)");
@@ -187,17 +188,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             var image = front.Image;
             if (fresh) { dx = 0; dy = 0; dw = width; dh = height; }        // all of it, the first time
             Clip(ref dx, ref dy, ref dw, ref dh, width, height);
-            if (dw > 0 && dh > 0)
+            // the copy into the texture and the publishing together: a headset's fullscreen panel draws the
+            // latest image under the same lock (XrExternalPanel), never one half of the next frame
+            lock (XrExternalPanel.SyncRoot)
             {
-                // the app's Direct3D work first, on the same queue
-                var device = s.Gpu.Device;
-                lock (device.Sync) device.Immediate.FlushToGpu(wait: false);
-                try { CopyFromShim(ctx, s, image, premultiplied, dx, dy, dw, dh); }
-                catch (Exception e) { Log("zero-copy D3DImage present failed, falling back to the copy path: " + e.Message); return false; }
-                if (s_dumpDir != null) DumpPresent(ctx, s, image, premultiplied, dx, dy, dw, dh);
+                if (dw > 0 && dh > 0)
+                {
+                    // the app's Direct3D work first, on the same queue
+                    var device = s.Gpu.Device;
+                    lock (device.Sync) device.Immediate.FlushToGpu(wait: false);
+                    try { CopyFromShim(ctx, s, image, premultiplied, dx, dy, dw, dh); }
+                    catch (Exception e) { Log("zero-copy D3DImage present failed, falling back to the copy path: " + e.Message); return false; }
+                    if (s_dumpDir != null) DumpPresent(ctx, s, image, premultiplied, dx, dy, dw, dh);
+                }
+                ZeroCopyPresents++;
+                Publish(front);
             }
-            ZeroCopyPresents++;
-            Publish(front);
             return true;
         }
 

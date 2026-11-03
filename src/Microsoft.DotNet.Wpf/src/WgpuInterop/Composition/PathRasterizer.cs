@@ -4018,6 +4018,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             => RasterizeInto(path, width, height, 0, 0);
 
         /// <summary>
+        /// <see cref="Rasterize"/>, unless the mask would be past a texture's size (8192): then only the part in the
+        /// window (<paramref name="windowX"/>, <paramref name="windowY"/>, <paramref name="windowWidth"/> x
+        /// <paramref name="windowHeight"/>, the path's space), a pixel round it, and <paramref name="cut"/> says so --
+        /// that mask is the window's only. A stroke round a view rendered at a headset's scale (14618x9139) made a
+        /// texture cut to the limit, and the upload past it ended the process.
+        /// </summary>
+        public static CoverageMask RasterizeVisible(PathGeometry path, float windowX, float windowY, int windowWidth, int windowHeight, out bool cut)
+        {
+            cut = false;
+            List<List<Vector2>> contours = Flatten(path, 0f);
+            float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+            foreach (List<Vector2> c in contours)
+                foreach (Vector2 p in c)
+                {
+                    if (p.X < minX) minX = p.X;
+                    if (p.Y < minY) minY = p.Y;
+                    if (p.X > maxX) maxX = p.X;
+                    if (p.Y > maxY) maxY = p.Y;
+                }
+            if (minX > maxX || (maxX - minX < MaskLimit && maxY - minY < MaskLimit)) return Rasterize(path);
+            int x0 = (int)MathF.Floor(MathF.Max(minX, windowX)) - 1, y0 = (int)MathF.Floor(MathF.Max(minY, windowY)) - 1;
+            int x1 = (int)MathF.Ceiling(MathF.Min(maxX, windowX + windowWidth)) + 1, y1 = (int)MathF.Ceiling(MathF.Min(maxY, windowY + windowHeight)) + 1;
+            cut = true;
+            if (x1 <= x0 || y1 <= y0) return new CoverageMask(Array.Empty<byte>(), 0, 0, 0, 0);
+            int w = Math.Min(x1 - x0, MaskLimit), h = Math.Min(y1 - y0, MaskLimit);
+            return new CoverageMask(FillCoverage(contours, path.FillRule, x0, y0, w, h), w, h, x0, y0);
+        }
+
+        private const int MaskLimit = 8192;
+
+        /// <summary>
         /// Rasterizes the path into a fixed-size coverage buffer whose pixel (0,0)
         /// maps to device pixel (<paramref name="originX"/>, <paramref name="originY"/>).
         /// Used to build a region-sized clip/opacity mask aligned to a card-sized layer.

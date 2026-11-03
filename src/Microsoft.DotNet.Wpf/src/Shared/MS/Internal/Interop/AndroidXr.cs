@@ -40,6 +40,7 @@ namespace MS.Internal.Interop
             TypeGraphicsRequirementsOpenGles = 1000024003, TypeLoaderInitInfoAndroid = 1000089000,
             TypeExtensionProperties = 2, TypeCompositionLayerImageLayout = 1000040000,
             TypeViewLocateInfo = 6, TypeView = 7, TypeViewState = 11,
+            TypeCompositionLayerProjection = 35, TypeCompositionLayerProjectionView = 48,
             TypePassthroughCreateInfo = 1000118001, TypePassthroughLayerCreateInfo = 1000118002, TypeCompositionLayerPassthrough = 1000118003;
 
         public const ulong PassthroughIsRunningAtCreation = 1;
@@ -167,6 +168,20 @@ namespace MS.Internal.Interop
         public struct View
         {
             public int Type; public void* Next; public Pose Pose; public Fov Fov;
+        }
+
+        /// <summary>XrCompositionLayerProjectionView: an eye's image, with the pose and field of view it was drawn for.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CompositionLayerProjectionView
+        {
+            public int Type; public void* Next; public Pose Pose; public Fov Fov; public SwapchainSubImage SubImage;
+        }
+
+        /// <summary>XrCompositionLayerProjection: a view for each eye, filling it.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CompositionLayerProjection
+        {
+            public int Type; public void* Next; public ulong LayerFlags; public ulong Space; public uint ViewCount; public CompositionLayerProjectionView* Views;
         }
 
         /// <summary>XrPassthroughCreateInfoFB (XR_FB_passthrough).</summary>

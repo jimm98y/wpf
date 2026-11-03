@@ -228,6 +228,9 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     private bool PresentScenesCore(IReadOnlyList<(object Scene, int X, int Y)> scenes, Rectangle? caret,
                                 IReadOnlyList<(Rectangle Rect, int Width)> rubberBands, int surfaceW, int surfaceH)
     {
+        // a headset showing a 3D view alone hides the windows: what they would draw nobody sees (and each of the
+        // view's frames had the whole window composed again)
+        if (AppContext.GetData("WpfWebGpu.Xr.WindowsHidden") is true) return true;
         if (surfaceW != _width || surfaceH != _height) { _width = surfaceW; _height = surfaceH; ConfigureNow(); }
 
         long p0 = System.Diagnostics.Stopwatch.GetTimestamp();
