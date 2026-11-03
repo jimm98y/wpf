@@ -613,6 +613,8 @@ namespace System.Windows.Forms
 				? new Rectangle (cx - client.X, cy - client.Y, Math.Max (1, cw), ch) : null;
 			_surfaceW = client.Width;
 			_surfaceH = client.Height;
+			// a headset's window -- an XR host's, a WebXR session's -- shown to the two eyes apart (WgpuPresenter.Stereo)
+			_wgpu.Stereo = NativePlatform.IsStereoWindow (_window.Handle);
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, _surfaceW, _surfaceH);
 			if (s_trace && scenes.Count > 0 && ver != _lastVer)
 				Console.WriteLine ($"[wayland form] '{_form.Text}' form={_form.Bounds} client={client} scale={_scale} ok={_lastPresentOk} scenes={scenes.Count}");

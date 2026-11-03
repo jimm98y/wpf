@@ -65,6 +65,13 @@ namespace Microsoft.Wpf.Interop.WebGpu
             set => Composition.Platform.AndroidInterop.PopupQuery = value;
         }
 
+        /// <summary>See AndroidInterop.StereoQuery.</summary>
+        public static Func<IntPtr, bool>? StereoWindowQuery
+        {
+            get => Composition.Platform.AndroidInterop.StereoQuery;
+            set => Composition.Platform.AndroidInterop.StereoQuery = value;
+        }
+
         public static Func<IntPtr, bool>? WindowOpaqueQuery
         {
             get => Composition.Platform.AndroidInterop.OpaqueQuery;

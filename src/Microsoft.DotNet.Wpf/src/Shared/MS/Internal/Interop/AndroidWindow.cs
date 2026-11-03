@@ -155,9 +155,20 @@ namespace MS.Internal.Interop
 
         /// <summary>The window is a child of <paramref name="parent"/> (an AndroidWindow's handle; any other is
         /// ignored): it is stacked with it (IAndroidHost.SetViewParent).</summary>
+        private IntPtr _parentWindow;   // SetParentWindow's: a child is where a pointer reaches it (PointerTarget)
+
         public void SetParentWindow(IntPtr parent)
         {
-            if (_handle == IntPtr.Zero || parent == IntPtr.Zero || FromHandle(parent) == null) return;
+            if (_handle == IntPtr.Zero || parent == IntPtr.Zero || FromHandle(parent) == null)
+            {
+                // moved out of the parent it had (an ElementHost out of its parking window into a form whose
+                // window is not one yet): no longer that one's
+                if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} child of 0x{parent:x}, not a window (yet)");
+                _parentWindow = IntPtr.Zero;
+                return;
+            }
+            _parentWindow = parent;
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} child of 0x{parent:x}");
             Host?.SetViewParent(_handle, parent);
         }
 
@@ -587,6 +598,50 @@ namespace MS.Internal.Interop
             return IntPtr.Zero;
         }
 
+        /// <summary>
+        /// The window a pointer at the point (top-left device pixels) is over: the topmost shown one, a child
+        /// (an ElementHost's WPF tree) over its parent, as a finger reaches a child through its own view;
+        /// with where it is, for the pointer's coordinates in it.
+        /// </summary>
+        public static IntPtr PointerTarget(int x, int y, out int left, out int top)
+        {
+            AndroidWindow found = null;
+            lock (s_zOrder)
+            {
+                // the topmost window that is not a child, then down through its children under the point
+                for (int i = s_zOrder.Count - 1; i >= 0 && found == null; i--)
+                    if (s_zOrder[i]._parentWindow == IntPtr.Zero && s_zOrder[i].Contains(x, y)) found = s_zOrder[i];
+                for (bool deeper = found != null; deeper;)
+                {
+                    deeper = false;
+                    for (int i = s_zOrder.Count - 1; i >= 0; i--)
+                        if (s_zOrder[i] != found && s_zOrder[i].Contains(x, y) && s_zOrder[i].IsEmbeddedIn(found)) { found = s_zOrder[i]; deeper = true; break; }
+                }
+            }
+            left = found?._xPixels ?? 0;
+            top = found?._yPixels ?? 0;
+            return found?._handle ?? IntPtr.Zero;
+        }
+
+        // a child: SetParentWindow's, or (made before its parent, so the parent was not there to name) a
+        // borderless window drawn into the parent's surface, within it
+        private bool IsEmbeddedIn(AndroidWindow parent) => _parentWindow == parent._handle
+            || (_parentWindow == IntPtr.Zero && IsBorderless && !_ownSurface && !parent.IsBorderless
+                && _xPixels >= parent._xPixels && _yPixels >= parent._yPixels
+                && _xPixels + _widthPixels <= parent._xPixels + parent._widthPixels && _yPixels + _heightPixels <= parent._yPixels + parent._heightPixels);
+
+        private bool Contains(int x, int y) => _handle != IntPtr.Zero && _visible && _widthPixels > 1 && _heightPixels > 1
+            && x >= _xPixels && x < _xPixels + _widthPixels && y >= _yPixels && y < _yPixels + _heightPixels;
+
+        /// <summary>Where a window is (top-left device pixels), false when there is no such window.</summary>
+        public static bool GetOrigin(IntPtr handle, out int left, out int top)
+        {
+            AndroidWindow w = FromHandle(handle);
+            left = w?._xPixels ?? 0;
+            top = w?._yPixels ?? 0;
+            return w != null;
+        }
+
         /// <summary>The activity's content area in device pixels; Android has no work-area distinction
         /// (the system bars are already excluded).</summary>
         public static bool GetPrimaryScreenPixels(
@@ -739,6 +794,14 @@ namespace MS.Internal.Interop
         public static bool IsPopupWindow(IntPtr handle)
             => s_byHandle.TryGetValue(handle, out AndroidWindow w) && w.IsBorderless;
 
+        /// <summary>The window is shown to the two eyes apart -- a headset's window holding 3D (AndroidXrHost):
+        /// the compositor draws it twice into a surface twice its width, the left eye's picture beside the
+        /// right eye's.</summary>
+        public bool StereoPair { get; set; }
+
+        public static bool IsStereoWindow(IntPtr handle)
+            => s_byHandle.TryGetValue(handle, out AndroidWindow w) && w.StereoPair;
+
         /// <summary>
         /// Hand <see cref="GetNativeWindow"/> to the WebGPU engine. Loaded reflectively for the same
         /// reason DUCE loads the whole engine reflectively (Common/Graphics/exports.cs): WPF must keep
@@ -758,6 +821,7 @@ namespace MS.Internal.Interop
                 seam?.GetProperty("NativeWindowResolver", PublicStatic)?.SetValue(null, (Func<IntPtr, IntPtr>)GetNativeWindow);
                 seam?.GetProperty("WindowOpaqueQuery", PublicStatic)?.SetValue(null, (Func<IntPtr, bool>)IsWindowOpaque);
                 seam?.GetProperty("PopupWindowQuery", PublicStatic)?.SetValue(null, (Func<IntPtr, bool>)IsPopupWindow);
+                seam?.GetProperty("StereoWindowQuery", PublicStatic)?.SetValue(null, (Func<IntPtr, bool>)IsStereoWindow);
 
                 // WindowOriginCallback is declared by the engine (it has out parameters, so no Func
                 // shape fits); bind to it by the property's own delegate type.
@@ -923,7 +987,9 @@ namespace MS.Internal.Interop
 
         /// <param name="Kind">0 = move, 1 = press, 2 = release, 3 = wheel (synthesized from a drag).
         /// <paramref name="Wheel"/> is set only for kind 3.</param>
-        public readonly record struct TouchMessage(IntPtr Window, int Kind, int X, int Y, int TimestampMs, int Wheel = 0);
+        /// <param name="Pointer">A pointer's (a headset controller's ray), not a finger's: it stays where it is
+        /// after a release, as a mouse's does, instead of lifting off.</param>
+        public readonly record struct TouchMessage(IntPtr Window, int Kind, int X, int Y, int TimestampMs, int Wheel = 0, bool Pointer = false);
 
         /// <summary>Raised on the UI thread as Android delivers touches; consumed by HwndMouseInputProvider.</summary>
         public static event Action<TouchMessage> MouseInput;
@@ -1025,8 +1091,65 @@ namespace MS.Internal.Interop
         /// 1 press, 2 release, RightPress / RightRelease the right button, at device pixels of the window --
         /// straight to the window, with no press and hold (a button held still is a button held, not a right
         /// click).</summary>
-        public static void NotifyPointer(IntPtr handle, int kind, int xPixels, int yPixels)
-            => OnUi(() => EmitHeld(handle, kind, xPixels, yPixels));
+        // a pointer is a mouse, not a finger: what it drags it drags (a selection, a new control's
+        // rectangle), never scrolling the page as a finger's pan does. Where on the SCREEN (device pixels):
+        // made the window's own here, on the UI thread, where the window is now -- made on the pointer's
+        // thread, a window being dragged had moved on by the time it got there, and each move overshot by
+        // the last (the window flew off).
+        //
+        // A ray is never still, so it moves every frame it is shown: a move waiting for the UI thread is
+        // updated rather than another queued (each is a WM_MOUSEMOVE and the window drawn again; queued, a
+        // click waited seconds behind them). A press or a release goes in order, after the move before it.
+        public static void NotifyPointer(IntPtr handle, int kind, int screenX, int screenY)
+        {
+            if (kind == 0)
+            {
+                int generation;
+                lock (s_pointerLock)
+                {
+                    bool queued = s_pointerMove != null;
+                    s_pointerMove = (handle, screenX, screenY);
+                    if (queued) return;
+                    generation = s_pointerGeneration;
+                }
+                OnUi(() =>
+                {
+                    (IntPtr Handle, int X, int Y)? move;
+                    lock (s_pointerLock)
+                    {
+                        if (generation != s_pointerGeneration) return;   // a press or a release took it
+                        move = s_pointerMove;
+                        s_pointerMove = null;
+                    }
+                    if (move is { } m) Pointer(m.Handle, 0, m.X, m.Y);
+                });
+                return;
+            }
+            (IntPtr Handle, int X, int Y)? before;
+            lock (s_pointerLock)
+            {
+                before = s_pointerMove;
+                s_pointerMove = null;
+                s_pointerGeneration++;
+            }
+            OnUi(() =>
+            {
+                if (before is { } m) Pointer(m.Handle, 0, m.X, m.Y);
+                Pointer(handle, kind, screenX, screenY);
+            });
+        }
+
+        private static readonly object s_pointerLock = new object();
+        private static (IntPtr Handle, int X, int Y)? s_pointerMove;   // the move waiting for the UI thread
+        private static int s_pointerGeneration;                         // a press or a release since it was queued
+
+        private static void Pointer(IntPtr handle, int kind, int screenX, int screenY)
+        {
+            GetOrigin(handle, out int left, out int top);
+            int x = screenX - left, y = screenY - top;
+            if (kind is TouchHold.RightPress or TouchHold.RightRelease) EmitHeld(handle, kind, x, y);
+            else Touch(handle, kind, x, y, pans: false);
+        }
 
         public static void NotifyTouch(IntPtr handle, int kind, int xPixels, int yPixels)
             => OnUi(() => s_hold.Touch(handle, kind, xPixels, yPixels, s_byHandle.TryGetValue(handle, out AndroidWindow w) ? w.GetBackingScale() : 1.0));
@@ -1051,7 +1174,7 @@ namespace MS.Internal.Interop
         /// <summary>TouchMessage kinds of the right button (a press held still, TouchHold).</summary>
         public const int RightPress = TouchHold.RightPress, RightRelease = TouchHold.RightRelease;
 
-        private static void Touch(IntPtr handle, int kind, int xPixels, int yPixels)
+        private static void Touch(IntPtr handle, int kind, int xPixels, int yPixels, bool pans = true)
         {
             // Where on the screen, which a move or size loop follows: the view itself moves under the finger.
             AndroidWindow at = FromHandle(handle);
@@ -1080,7 +1203,8 @@ namespace MS.Internal.Interop
                 if (handler == null) return;
 
                 double scale = s_byHandle.TryGetValue(handle, out AndroidWindow w) ? w.GetBackingScale() : 1.0;
-                handler(new TouchMessage(handle, kind, xPixels, yPixels, Environment.TickCount));
+                handler(new TouchMessage(handle, kind, xPixels, yPixels, Environment.TickCount, Pointer: !pans));
+                if (!pans) return;
 
                 switch (kind)
                 {

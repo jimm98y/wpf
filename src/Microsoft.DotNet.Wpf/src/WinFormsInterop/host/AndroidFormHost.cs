@@ -300,6 +300,8 @@ namespace System.Windows.Forms
 			}
 			Rectangle? caret = caretOn && _driver.GetCaret (_form.Handle, out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;
+			// a headset's window -- an XR host's, a WebXR session's -- shown to the two eyes apart (WgpuPresenter.Stereo)
+			_wgpu.Stereo = NativePlatform.IsStereoWindow (_window.Handle);
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, needW, needH);
 			if (s_trace && scenes.Count > 0)
 				Console.WriteLine ($"[android form] '{_form.Text}' form={_form.Bounds} scale={_scale} surface={needW}x{needH} ok={_lastPresentOk} scenes={scenes.Count}");
@@ -400,8 +402,10 @@ namespace System.Windows.Forms
 					x += _aimX; y += _aimY;
 					_aimX = _aimY = 0;
 					_driver.InjectMouseUp (x, y);
-					// a finger leaves no pointer behind (LiftPointer): the button tapped stayed lit
-					_driver.LiftPointer ();
+					// a finger leaves no pointer behind (LiftPointer): the button tapped stayed lit; a
+					// controller's ray stays, as a mouse does -- lifted, the menu it opened closed at once
+					if (!m.Pointer)
+						_driver.LiftPointer ();
 					break;
 				case 3: _driver.InjectWheel (x, y, m.Wheel); break;
 				case AndroidWindow.RightPress: _driver.InjectRightDown (x, y); break;   // press and hold

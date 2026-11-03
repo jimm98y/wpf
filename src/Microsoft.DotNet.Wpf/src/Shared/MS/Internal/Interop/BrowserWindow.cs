@@ -503,8 +503,12 @@ namespace MS.Internal.Interop
         // reported it over any canvas, the WPF windows' included (x in the low half, y in the high;
         // long.MinValue before the first event). It heard of the pointer only over its own windows,
         // and a menu popped up at the cursor over a hosted WPF scene went where it had last been.
+        // a WebXR session is running: the windows are stereo pairs, shown to each eye apart
+        private static volatile bool s_xrActive;
+
         static BrowserWindow()
         {
+            AppContext.SetData("WpfWebGpu.Browser.StereoQuery", (Func<IntPtr, bool>)(handle => s_xrActive));
             AppContext.SetData("WpfWebGpu.BrowserWindow.Cursor",
                 (Func<long>)(() => s_cursorKnown ? ((long)s_cursorY << 32) | (uint)s_cursorX : long.MinValue));
         }
@@ -542,6 +546,12 @@ namespace MS.Internal.Interop
                 string type = e.GetProperty("t").GetString();
                 switch (type)
                 {
+                    case "xr":
+                        // a WebXR session began or ended (browser-window.js): while it runs, every window is
+                        // a stereo pair, the page's canvases twice their width (NativePlatform.IsStereoWindow)
+                        s_xrActive = e.GetProperty("on").GetInt32() != 0;
+                        break;
+
                     case "s":
                     {
                         // Display scale changed (window moved to a different-DPI screen, or the user

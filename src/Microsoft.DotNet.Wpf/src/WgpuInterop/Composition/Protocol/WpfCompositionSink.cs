@@ -861,7 +861,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // the drop-down closed -- a GL interaction between the two copies (with the copy submitted
             // apart and the GPU waited for, as the damage verifier does, it never happened). Popups
             // are small and short-lived; a whole frame each costs little.
-            if (ts.Transparent && IsGlBackend)
+            if (ts.Stereo)
+            {
+                // A stereo pair (a headset's window): the window twice side by side, the left half seen with
+                // the left eye and the right half with the right -- the same 2D, each Viewport3D from its own
+                // eye (SceneVisual.StereoEye). Drawn whole: partial redraw keeps one picture of the window.
+                SceneVisual scene = EmbeddedContent.Compose(root, ts.Hwnd);
+                var pair = new SceneVisual();
+                var left = new SceneVisual { StereoEye = 1, Clip = new Rect(0, 0, t.Width, t.Height) };
+                left.Children.Add(scene);
+                var right = new SceneVisual { StereoEye = 2, Offset = new System.Numerics.Vector2(t.Width, 0), Clip = new Rect(0, 0, t.Width, t.Height) };
+                right.Children.Add(scene);
+                pair.Children.Add(left);
+                pair.Children.Add(right);
+                _renderer!.RenderSceneToView(pair, view, ts.RenderFormat, 2 * t.Width, t.Height, clear, ts.Transparent);
+            }
+            else if (ts.Transparent && IsGlBackend)
             {
                 _renderer!.RenderSceneToView(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             }
@@ -1338,7 +1353,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // Layered popups (per-pixel alpha) OR a window made non-opaque for a translucent Mica
                 // backdrop both present through a transparent surface so the material behind shows through.
                 bool transparent = t.IsLayered || !Platform.NativePlatform.IsWindowOpaque((IntPtr)t.Hwnd);
-                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, NativeWindow = liveWindow, Format = format, RenderFormat = renderFormat, Width = t.Width, Height = t.Height, Transparent = transparent };
+                bool stereo = Platform.NativePlatform.IsStereoWindow((IntPtr)t.Hwnd);
+                ts = new TargetSurface { Surface = surface, Hwnd = (IntPtr)t.Hwnd, NativeWindow = liveWindow, Format = format, RenderFormat = renderFormat,
+                                         Width = stereo ? 2 * t.Width : t.Width, Height = t.Height, Transparent = transparent, Stereo = stereo };
                 _surfaces[targetHandle] = ts;
                 Configure(ts);
             }
@@ -1349,11 +1366,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // transparent (premultiplied-alpha) configuration once the backdrop turns on — otherwise the
                 // opaque swapchain keeps hiding the Mica. Reconfigure on either a size or a transparency change.
                 bool wantTransparent = t.IsLayered || !Platform.NativePlatform.IsWindowOpaque((IntPtr)t.Hwnd);
-                if (ts.Width != t.Width || ts.Height != t.Height || ts.Transparent != wantTransparent)
+                bool stereo = Platform.NativePlatform.IsStereoWindow((IntPtr)t.Hwnd);
+                int wantWidth = stereo ? 2 * t.Width : t.Width;
+                if (ts.Width != wantWidth || ts.Height != t.Height || ts.Transparent != wantTransparent || ts.Stereo != stereo)
                 {
-                    ts.Width = t.Width;
+                    ts.Width = wantWidth;
                     ts.Height = t.Height;
                     ts.Transparent = wantTransparent;
+                    ts.Stereo = stereo;
                     Configure(ts);
                 }
             }
@@ -1607,6 +1627,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public bool Transparent;
             /// <summary>The persistent frame partial redraw renders into (created on first present).</summary>
             public WgpuSceneRenderer.PartialTarget? Partial;
+            /// <summary>A stereo pair (NativePlatform.IsStereoWindow): configured twice the window's width,
+            /// the left eye's picture beside the right eye's.</summary>
+            public bool Stereo;
         }
     }
 }

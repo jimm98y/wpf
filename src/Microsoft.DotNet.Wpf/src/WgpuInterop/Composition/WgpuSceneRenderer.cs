@@ -294,6 +294,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bg;
         }
 
+        // An external image's (a D3DImage's), by the image: every renderer that draws it has its own, and only
+        // the sink's renderer hears of its retirement (RetireExternal) -- a view handle as the key, in a renderer
+        // that did not, found the bind group of a released view at the address of a new one (another texture
+        // sampled in a D3DImage's place). Let go of 60 frames after the last draw, as the image cache's are.
+        private readonly Dictionary<(long Image, WGPUTextureFormat Format, IntPtr Sampler, bool SourceCopy, FillKind Kind), (IntPtr BindGroup, long LastFrame)> _extBindGroups = new();
+
+        private IntPtr ExternalBindGroup(ExternalImage image, WGPUTextureFormat format, IntPtr sampler, bool sourceCopy, FillKind kind)
+        {
+            var key = (image.Id, format, sampler, sourceCopy, kind);
+            if (_extBindGroups.TryGetValue(key, out var e))
+            {
+                _extBindGroups[key] = (e.BindGroup, _frameId);
+                return e.BindGroup;
+            }
+            IntPtr bg = CreateSampledBindGroup(format, kind, image.View, sampler, sourceCopy);
+            _extBindGroups[key] = (bg, _frameId);
+            return bg;
+        }
+
         /// <summary>The bitmap textures' sRGB-ness (a D3DImage's texture is made to match, ExternalImage.cs).</summary>
         public bool SrgbOutput => _srgbOutput;
 
@@ -306,6 +325,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public void RetireExternal(ExternalImage image)
         {
             ReleaseImageBindGroups(image.View);
+            List<(long, WGPUTextureFormat, IntPtr, bool, FillKind)>? dead = null;
+            foreach (var kv in _extBindGroups)
+                if (kv.Key.Image == image.Id) (dead ??= new()).Add(kv.Key);
+            if (dead != null) foreach (var k in dead) { DeferReleaseBindGroup(_extBindGroups[k].BindGroup); _extBindGroups.Remove(k); }
             DeferReleaseTexView(image.Texture, image.View);
         }
 
@@ -515,6 +538,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     wgpuTextureRelease(kv.Value.Tex);
                 }
                 if (deadI != null) foreach ((byte[], bool) k in deadI) _imgCache.Remove(k);
+            }
+
+            if (_extBindGroups.Count > 0)
+            {
+                List<(long, WGPUTextureFormat, IntPtr, bool, FillKind)>? deadE = null;
+                foreach (var kv in _extBindGroups)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadE ??= new()).Add(kv.Key);
+                    DeferReleaseBindGroup(kv.Value.BindGroup);
+                }
+                if (deadE != null) foreach (var k in deadE) _extBindGroups.Remove(k);
             }
 
             if (_uniCache.Count > 0)
@@ -1610,7 +1645,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // opacity into its own texture, which is then composited at the group
         // opacity. This makes overlapping children inside a translucent group
         // blend once (as a unit) instead of double-blending.
+        // the eye the visual being collected is seen with (SceneVisual.StereoEye; 0: no stereo pair)
+        private byte _eye;
+
         private void CollectVisual(SceneVisual v, Matrix3x2 parentWorld, double inheritedOpacity, Scissor parentClip,
+            DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
+        {
+            if (v.StereoEye == 0)
+            {
+                CollectVisualCore(v, parentWorld, inheritedOpacity, parentClip, outData, plan, width, height, outFormat);
+                return;
+            }
+            byte outer = _eye;
+            _eye = v.StereoEye;
+            try { CollectVisualCore(v, parentWorld, inheritedOpacity, parentClip, outData, plan, width, height, outFormat); }
+            finally { _eye = outer; }
+        }
+
+        private void CollectVisualCore(SceneVisual v, Matrix3x2 parentWorld, double inheritedOpacity, Scissor parentClip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
         {
             Matrix3x2 world = v.LocalToParent * parentWorld;
@@ -3934,8 +3986,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     if (kind == FillKind.TexturedWpf) MilcoreFilterDraws++;
                     if (img.SourceVisual is null)
                     {
-                        view = ExternalView(img.External) ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
-                        bindGroup = ImageBindGroup(format, view, sampler, _srcCopy, kind);   // owned by the image cache
+                        if (ExternalView(img.External) is { } external)
+                        {
+                            view = external;
+                            bindGroup = ExternalBindGroup(img.External!, format, sampler, _srcCopy, kind);   // owned by _extBindGroups
+                        }
+                        else
+                        {
+                            view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                            bindGroup = ImageBindGroup(format, view, sampler, _srcCopy, kind);   // owned by the image cache
+                        }
                     }
                     else
                     {
@@ -7324,6 +7384,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             _bandCache.Clear();
             foreach (IntPtr bg in _imgBindGroups.Values) wgpuBindGroupRelease(bg);
             _imgBindGroups.Clear();
+            foreach (var e in _extBindGroups.Values) wgpuBindGroupRelease(e.BindGroup);
+            _extBindGroups.Clear();
             ReleaseDamagePipelines();
             ReleaseMaskAtlas();
             FlushFrameReleases();

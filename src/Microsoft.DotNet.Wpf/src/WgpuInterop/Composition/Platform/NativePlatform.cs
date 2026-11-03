@@ -192,6 +192,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// alpha, not capability: a GLES popup surface cannot be transparent (see
         /// PopupsShareOwnerSurface), which is why one must never be given its own swap chain.
         /// </remarks>
+        /// <summary>A window shown to the two eyes apart: its surface is twice its width, the left eye's
+        /// picture beside the right eye's (an OpenXR host's stereo pair, AndroidXrHost).</summary>
+        public static bool IsStereoWindow(IntPtr windowHandle) => s_stereoPairs || Current switch
+        {
+            PlatformKind.Android => AndroidInterop.StereoQuery?.Invoke(windowHandle) == true,
+            // a WebXR session (browser-window.js): published by the windowing layer, which hears of it first
+            PlatformKind.Browser => (s_browserStereo ??= AppContext.GetData("WpfWebGpu.Browser.StereoQuery") as Func<IntPtr, bool>)?.Invoke(windowHandle) == true,
+            _ => false,
+        };
+
+        private static Func<IntPtr, bool>? s_browserStereo;
+
+        /// <summary>WPF_WEBGPU_STEREO_PAIR=1: every window a stereo pair, on any head -- the check of the pair's
+        /// rendering where no headset is there to split it between the eyes (the window shows both halves).</summary>
+        private static readonly bool s_stereoPairs = Environment.GetEnvironmentVariable("WPF_WEBGPU_STEREO_PAIR") == "1";
+
         public static bool IsPopupWindow(IntPtr windowHandle) => Current switch
         {
             PlatformKind.Android => AndroidInterop.PopupQuery?.Invoke(windowHandle) == true,

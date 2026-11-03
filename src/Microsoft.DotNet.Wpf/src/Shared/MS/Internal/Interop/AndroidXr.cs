@@ -37,12 +37,16 @@ namespace MS.Internal.Interop
             TypeFrameBeginInfo = 46, TypeInteractionProfileSuggestedBinding = 51, TypeActionStateGetInfo = 58,
             TypeSessionActionSetsAttachInfo = 60, TypeActionsSyncInfo = 61,
             TypeInstanceCreateInfoAndroid = 1000008000, TypeGraphicsBindingOpenGlesAndroid = 1000024001,
-            TypeGraphicsRequirementsOpenGles = 1000024003, TypeLoaderInitInfoAndroid = 1000089000;
+            TypeGraphicsRequirementsOpenGles = 1000024003, TypeLoaderInitInfoAndroid = 1000089000,
+            TypeExtensionProperties = 2, TypeCompositionLayerImageLayout = 1000040000;
+
+        public const ulong ImageLayoutVerticalFlip = 1;
 
         public const int FormFactorHeadMountedDisplay = 1;
         public const int ViewConfigurationPrimaryStereo = 2;
         public const int BlendModeOpaque = 1;
         public const int ReferenceSpaceView = 1, ReferenceSpaceLocal = 2, ReferenceSpaceStage = 3;
+        public const int EyeBoth = 0, EyeLeft = 1, EyeRight = 2;
         public const int ActionBoolean = 1, ActionFloat = 2, ActionVector2f = 3, ActionPose = 4;
         public const int StateIdle = 1, StateReady = 2, StateSynchronized = 3, StateVisible = 4, StateFocused = 5,
             StateStopping = 6, StateLossPending = 7, StateExiting = 8;
@@ -133,6 +137,19 @@ namespace MS.Internal.Interop
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        public struct ExtensionProperties
+        {
+            public int Type; public void* Next; public fixed byte ExtensionName[128]; public uint ExtensionVersion;
+        }
+
+        /// <summary>XrCompositionLayerImageLayoutFB (XR_FB_composition_layer_image_layout), chained to a layer.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct CompositionLayerImageLayout
+        {
+            public int Type; public void* Next; public ulong Flags;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         public struct SwapchainCreateInfo
         {
             public int Type; public void* Next; public ulong CreateFlags; public ulong UsageFlags; public long Format;
@@ -184,6 +201,7 @@ namespace MS.Internal.Interop
 
         // ---- the loader's exports (core) ----
         [DllImport(Loader)] public static extern int xrGetInstanceProcAddr(ulong instance, byte* name, IntPtr* function);
+        [DllImport(Loader)] public static extern int xrEnumerateInstanceExtensionProperties(byte* layerName, uint capacity, uint* count, ExtensionProperties* properties);
         [DllImport(Loader)] public static extern int xrCreateInstance(InstanceCreateInfo* info, ulong* instance);
         [DllImport(Loader)] public static extern int xrDestroyInstance(ulong instance);
         [DllImport(Loader)] public static extern int xrGetSystem(ulong instance, SystemGetInfo* info, ulong* systemId);
@@ -200,6 +218,7 @@ namespace MS.Internal.Interop
         [DllImport(Loader)] public static extern int xrLocateSpace(ulong space, ulong baseSpace, long time, SpaceLocation* location);
         [DllImport(Loader)] public static extern int xrDestroySpace(ulong space);
         [DllImport(Loader)] public static extern int xrDestroySwapchain(ulong swapchain);
+        [DllImport(Loader)] public static extern int xrEnumerateSwapchainFormats(ulong session, uint capacity, uint* count, long* formats);
         [DllImport(Loader)] public static extern int xrStringToPath(ulong instance, byte* pathString, ulong* path);
         [DllImport(Loader)] public static extern int xrCreateActionSet(ulong instance, ActionSetCreateInfo* info, ulong* actionSet);
         [DllImport(Loader)] public static extern int xrCreateAction(ulong actionSet, ActionCreateInfo* info, ulong* action);

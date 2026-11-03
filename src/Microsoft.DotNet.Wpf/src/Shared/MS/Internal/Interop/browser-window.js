@@ -1602,7 +1602,10 @@ async function xrEnter() {
     };
     const button = document.getElementById("wpf-xr-enter");
     if (button) button.style.display = "none";
+    // the windows become stereo pairs: each canvas twice its width, the left eye's picture beside the right's
+    queue.push({ t: "xr", on: 1 });
     session.addEventListener("end", () => {
+        queue.push({ t: "xr", on: 0 });
         const ended = xr;
         xr = null;
         if (ended) {
@@ -1622,8 +1625,9 @@ function xrProgram(gl) {
     const vs = `#version 300 es
         in vec2 a_pos;
         uniform mat4 u_proj, u_view, u_model;
+        uniform vec2 u_half;   // which part of the texture across: (start, width) -- an eye's half of a stereo pair
         out vec2 v_uv;
-        void main() { v_uv = vec2(a_pos.x + 0.5, 0.5 - a_pos.y); gl_Position = u_proj * u_view * u_model * vec4(a_pos, 0.0, 1.0); }`;
+        void main() { v_uv = vec2(u_half.x + (a_pos.x + 0.5) * u_half.y, 0.5 - a_pos.y); gl_Position = u_proj * u_view * u_model * vec4(a_pos, 0.0, 1.0); }`;
     const fs = `#version 300 es
         precision mediump float;
         in vec2 v_uv;
@@ -1654,6 +1658,7 @@ function xrProgram(gl) {
         proj: gl.getUniformLocation(prog, "u_proj"), view: gl.getUniformLocation(prog, "u_view"),
         model: gl.getUniformLocation(prog, "u_model"), tex: gl.getUniformLocation(prog, "u_tex"),
         solid: gl.getUniformLocation(prog, "u_solid"),
+        half: gl.getUniformLocation(prog, "u_half"),
     };
 }
 
@@ -1676,7 +1681,9 @@ function xrPanels() {
         if (w.canvas.style.display === "none") continue;
         const r = w.canvas.getBoundingClientRect();
         if (r.width < 1 || r.height < 1 || w.canvas.width < 1 || w.canvas.height < 1) continue;
-        panels.push({ handle, canvas: w.canvas, r, z: parseInt(w.canvas.style.zIndex || "0", 10) });
+        // a stereo pair (the compositor made it twice its width): the left half is the left eye's picture
+        const stereo = w.canvas.width >= 2 * Math.round(r.width * dpr()) - 2;
+        panels.push({ handle, canvas: w.canvas, r, stereo, z: parseInt(w.canvas.style.zIndex || "0", 10) });
     }
     panels.sort((a, b) => a.z - b.z);
     return panels;
@@ -1793,6 +1800,8 @@ function xrFrame(time, frame) {
         gl.uniformMatrix4fv(program.view, false, view.transform.inverse.matrix);
         gl.uniform4f(program.solid, 0, 0, 0, 0);
         panels.forEach((panel, i) => {
+            if (panel.stereo) gl.uniform2f(program.half, view.eye === "right" ? 0.5 : 0.0, 0.5);
+            else gl.uniform2f(program.half, 0.0, 1.0);
             const r = panel.r;
             const cx = (r.left + r.width / 2 - W / 2) * XR_METRES_PER_PX;
             const cy = XR_CENTRE_Y - (r.top + r.height / 2 - H / 2) * XR_METRES_PER_PX;
@@ -1801,6 +1810,7 @@ function xrFrame(time, frame) {
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         });
         if (hit) {
+            gl.uniform2f(program.half, 0.0, 1.0);
             gl.uniform4f(program.solid, 1, 1, 1, 1);
             gl.uniformMatrix4fv(program.model, false, xrModel(hit.world[0], hit.world[1], -XR_DISTANCE + (panels.length + 2) * XR_LAYER_STEP, 0.012, 0.012));
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

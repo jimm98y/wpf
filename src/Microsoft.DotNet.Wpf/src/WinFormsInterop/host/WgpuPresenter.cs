@@ -64,6 +64,17 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     // and configuring a surface that size aborted the process inside wgpu.
     internal const int MaxDeviceDimension = 8192;
     internal int DeviceWidth => System.Math.Min(MaxDeviceDimension, (int)System.Math.Round(_width * _scale));
+
+    /// <summary>The window is a stereo pair (NativePlatform.IsStereoWindow: a headset's window, AndroidXrHost):
+    /// its surface twice the window's width, the window drawn into each half, the left seen with the left
+    /// eye and the right with the right -- the same 2D, each Viewport3D from its own eye
+    /// (SceneVisual.StereoEye). Drawn whole: partial redraw keeps one picture of the window.</summary>
+    internal bool Stereo
+    {
+        get => _stereo;
+        set { if (_stereo != value) { _stereo = value; Configure(); } }
+    }
+    private bool _stereo;
     internal int DeviceHeight => System.Math.Min(MaxDeviceDimension, (int)System.Math.Round(_height * _scale));
 
     /// <summary>The native window the surface was made on (an HWND on Windows): every configure and
@@ -238,7 +249,19 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         _renderer.BeginFrame();
         try
         {
-            _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
+            if (_stereo)
+            {
+                var pair = new SceneVisual();
+                var left = new SceneVisual { StereoEye = 1, Clip = new Rect(0, 0, DeviceWidth, DeviceHeight) };
+                left.Children.Add(root);
+                var right = new SceneVisual { StereoEye = 2, Offset = new Vector2(DeviceWidth, 0), Clip = new Rect(0, 0, DeviceWidth, DeviceHeight) };
+                right.Children.Add(root);
+                pair.Children.Add(left);
+                pair.Children.Add(right);
+                _renderer.RenderSceneToView(pair, view, _format, 2 * DeviceWidth, DeviceHeight, ClearColor);
+            }
+            else
+                _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
         }
         finally { _renderer.EndFrame(); }   // lets the caches let go (see the note at _renderer)
         long p3 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -511,7 +534,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             usage = WGPUTextureUsage.RenderAttachment,
             // Never zero: configuring a zero-area surface is fatal in wgpu-native, and a window can
             // be sized to nothing (a collapsed panel, a minimised form) at any time.
-            width = (uint)System.Math.Max(1, DeviceWidth),     // the CAMetalLayer drawable is device-pixel sized
+            width = (uint)System.Math.Max(1, _stereo ? 2 * DeviceWidth : DeviceWidth),     // the CAMetalLayer drawable is device-pixel sized
             height = (uint)System.Math.Max(1, DeviceHeight),
             alphaMode = _transparent ? TransparentAlphaMode() : WGPUCompositeAlphaMode.Auto,
             presentMode = _presentMode ??= ChoosePresentMode(),

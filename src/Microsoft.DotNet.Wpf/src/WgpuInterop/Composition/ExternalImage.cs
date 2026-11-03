@@ -35,6 +35,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public IntPtr Device { get; }
         private long _version;
         private byte[]? _placeholder;
+        private static long s_nextId;
+
+        /// <summary>This image's, never another's: what a renderer keys what it made for the image by -- not
+        /// the view's handle, which the next view made may get once this one is released.</summary>
+        public long Id { get; } = Interlocked.Increment(ref s_nextId);
 
         public ExternalImage(IntPtr device, IntPtr texture, IntPtr view, int width, int height, WGPUTextureFormat format)
         {

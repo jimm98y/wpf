@@ -356,6 +356,8 @@ namespace System.Windows.Forms
 			}
 			Rectangle? caret = caretOn && _driver.GetCaret(_form.Handle, out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;
+			// a headset's window -- an XR host's, a WebXR session's -- shown to the two eyes apart (WgpuPresenter.Stereo)
+			_wgpu.Stereo = NativePlatform.IsStereoWindow (_window.Handle);
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, needW, needH);
 			if (s_trace && (_traced++ < 6 || scenes.Count != _tracedScenes)) {
 				_tracedScenes = scenes.Count;

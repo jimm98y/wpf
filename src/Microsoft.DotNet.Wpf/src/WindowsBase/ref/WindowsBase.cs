@@ -64,7 +64,11 @@ namespace MS.Internal.Interop
         public static void WaitServingMain(System.Threading.WaitHandle done) { }
         public static void NotifySurfaceChanged(System.IntPtr handle, System.IntPtr nativeWindow, int widthPixels, int heightPixels) { }
         public static void NotifySurfaceDestroyed(System.IntPtr handle) { }
+        public bool StereoPair { get { throw null; } set { } }
+        public static bool IsStereoWindow(System.IntPtr handle) { throw null; }
         public static void NotifyPointer(System.IntPtr handle, int kind, int xPixels, int yPixels) { }
+        public static System.IntPtr PointerTarget(int x, int y, out int left, out int top) { throw null; }
+        public static bool GetOrigin(System.IntPtr handle, out int left, out int top) { throw null; }
         public static void NotifyTouch(System.IntPtr handle, int kind, int xPixels, int yPixels) { }
         public static void NotifyTouchContact(System.IntPtr handle, int kind, int contactId, int xPixels, int yPixels, double pressure, double tiltX, double tiltY, bool isEraser = false) { }
         public void SetContentSize(int width, int height) { }
@@ -95,14 +99,15 @@ namespace MS.Internal.Interop
         public readonly partial struct TouchMessage : System.IEquatable<MS.Internal.Interop.AndroidWindow.TouchMessage>
         {
             private readonly int _dummyPrimitive;
-            public TouchMessage(System.IntPtr Window, int Kind, int X, int Y, int TimestampMs, int Wheel = 0) { throw null; }
+            public TouchMessage(System.IntPtr Window, int Kind, int X, int Y, int TimestampMs, int Wheel = 0, bool Pointer = false) { throw null; }
+            public bool Pointer { get { throw null; } set { } }
             public int Kind { get { throw null; } set { } }
             public int TimestampMs { get { throw null; } set { } }
             public int Wheel { get { throw null; } set { } }
             public System.IntPtr Window { get { throw null; } set { } }
             public int X { get { throw null; } set { } }
             public int Y { get { throw null; } set { } }
-            public void Deconstruct(out System.IntPtr Window, out int Kind, out int X, out int Y, out int TimestampMs, out int Wheel) { throw null; }
+            public void Deconstruct(out System.IntPtr Window, out int Kind, out int X, out int Y, out int TimestampMs, out int Wheel, out bool Pointer) { throw null; }
             public bool Equals(MS.Internal.Interop.AndroidWindow.TouchMessage other) { throw null; }
             public override bool Equals(object obj) { throw null; }
             public override int GetHashCode() { throw null; }

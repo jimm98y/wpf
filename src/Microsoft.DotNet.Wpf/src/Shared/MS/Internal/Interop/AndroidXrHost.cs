@@ -17,6 +17,11 @@
 // windows under it. The controller's aim ray is met with that plane, and the point is the pointer: over a
 // window it moves the mouse, the trigger is the left button, A the right, the thumbstick the wheel.
 //
+// A window is a stereo pair (WPF_XR_STEREO, on unless "0"): its surface twice its width, the compositor
+// drawing the window into each half, the left half seen with the left eye and the right with the right
+// (AndroidWindow.StereoPair); it is shown as two quads in the same place, each to one eye. The 2D in the
+// two halves is the same; a Viewport3D in it is seen from each eye's place, so it has depth.
+//
 // What is not a window -- the soft keyboard, the clipboard, dialogs the system draws -- is the flat host's
 // (the activity still has its view hierarchy, which an immersive session does not show).
 //
@@ -43,6 +48,7 @@ namespace MS.Internal.Interop
         private const float CentreHeight = -0.1f;       // a little below eye level
         private const float LayerStep = 0.002f;         // each window this much in front of the one under it
         private const int CursorPixels = 64;
+        private static readonly bool s_stereo = Environment.GetEnvironmentVariable("WPF_XR_STEREO") != "0";
         private const float CursorMetres = 0.012f;
 
         private readonly Activity _activity;
@@ -78,7 +84,7 @@ namespace MS.Internal.Interop
         {
             public IntPtr Handle;
             public int X, Y, Width, Height;
-            public bool Visible = true, HasSurface, FillsScreen, Translucent;
+            public bool Visible = true, HasSurface, FillsScreen, Translucent, Stereo;
             public ulong Swapchain;
             public IntPtr NativeWindow;
         }
@@ -241,6 +247,24 @@ namespace MS.Internal.Interop
             if (result < 0) throw new InvalidOperationException($"{what} failed: XrResult {result}");
         }
 
+        private const string FlipExtension = "XR_FB_composition_layer_image_layout";
+        private bool _flipLayers;
+
+        private static HashSet<string> InstanceExtensions()
+        {
+            var names = new HashSet<string>();
+            uint count = 0;
+            if (Xr.xrEnumerateInstanceExtensionProperties(null, 0, &count, null) < 0 || count == 0) return names;
+            var properties = new Xr.ExtensionProperties[count];
+            for (int i = 0; i < properties.Length; i++) properties[i].Type = Xr.TypeExtensionProperties;
+            fixed (Xr.ExtensionProperties* p = properties)
+            {
+                if (Xr.xrEnumerateInstanceExtensionProperties(null, count, &count, p) < 0) return names;
+                for (int i = 0; i < count; i++) names.Add(Marshal.PtrToStringAnsi((IntPtr)p[i].ExtensionName) ?? "");
+            }
+            return names;
+        }
+
         private bool Initialize()
         {
             IntPtr vm = Java.Interop.JniEnvironment.Runtime.InvocationPointer;
@@ -254,11 +278,16 @@ namespace MS.Internal.Interop
                 Check(((delegate* unmanaged<Xr.LoaderInitInfoAndroid*, int>)init)(&loaderInfo), "xrInitializeLoaderKHR");
             }
 
-            string[] extensions = { "XR_KHR_android_create_instance", "XR_KHR_opengl_es_enable", "XR_KHR_android_surface_swapchain" };
-            var names = new IntPtr[extensions.Length];
+            var extensions = new List<string> { "XR_KHR_android_create_instance", "XR_KHR_opengl_es_enable", "XR_KHR_android_surface_swapchain" };
+            // a Surface's buffers are top row first, the compositor samples a swapchain bottom row first:
+            // where the runtime can, the quads say so (otherwise the windows show upside down)
+            _flipLayers = InstanceExtensions().Contains(FlipExtension);
+            if (_flipLayers) extensions.Add(FlipExtension);
+            Log(_flipLayers ? "quads flipped vertically" : "the runtime has no " + FlipExtension);
+            var names = new IntPtr[extensions.Count];
             try
             {
-                for (int i = 0; i < extensions.Length; i++) names[i] = Marshal.StringToHGlobalAnsi(extensions[i]);
+                for (int i = 0; i < extensions.Count; i++) names[i] = Marshal.StringToHGlobalAnsi(extensions[i]);
                 var android = new Xr.InstanceCreateInfoAndroid { Type = Xr.TypeInstanceCreateInfoAndroid, ApplicationVM = vm, ApplicationActivity = activity };
                 var info = new Xr.InstanceCreateInfo { Type = Xr.TypeInstanceCreateInfo, Next = &android, EnabledExtensionCount = (uint)names.Length };
                 Xr.Copy(_activity.PackageName ?? "wpfrun", info.ApplicationInfo.ApplicationName, 128);
@@ -370,17 +399,85 @@ namespace MS.Internal.Interop
 
         // ---- the windows' surfaces -------------------------------------------------------------
 
+        // the formats a swapchain may be made in, the runtime's own order (asked once); 0 first, the format an
+        // Android Surface's producer chooses for itself
+        private long[]? _formats;
+
+        private long[] SwapchainFormats()
+        {
+            if (_formats != null) return _formats;
+            uint count = 0;
+            Xr.xrEnumerateSwapchainFormats(_session, 0, &count, null);
+            var formats = new long[count];
+            if (count > 0) fixed (long* f = formats) Xr.xrEnumerateSwapchainFormats(_session, count, &count, f);
+            Log("swapchain formats: " + string.Join(", ", Array.ConvertAll(formats, f => "0x" + f.ToString("x"))));
+            var list = new List<long> { 0 };
+            list.AddRange(formats);
+            return _formats = list.ToArray();
+        }
+
+        /// <summary>A swapchain backed by an Android Surface, in the first format the runtime takes.</summary>
+        private int CreateSurfaceSwapchain(Xr.SwapchainCreateInfo info, out ulong swapchain, out IntPtr surface)
+        {
+            int result = -1;
+            swapchain = 0;
+            surface = IntPtr.Zero;
+            // what a runtime takes for a Surface's swapchain varies (the extension leaves the producer the
+            // format and the usage): the last that worked first, then every usage with every format
+            // the Surface's producer owns the format, the samples, the faces, the layers and the mips: the
+            // runtime wants them unset (as its compositor samples create them)
+            info.SampleCount = info.FaceCount = info.ArraySize = info.MipCount = 0;
+            if (_surfaceUsage is { } known)
+            {
+                info.UsageFlags = known.Usage;
+                info.Format = known.Format;
+                if (TryCreate(ref info, out swapchain, out surface, out result)) return result;
+            }
+            foreach (ulong usage in new ulong[] { 0, Xr.SwapchainUsageSampled, Xr.SwapchainUsageColorAttachment, Xr.SwapchainUsageColorAttachment | Xr.SwapchainUsageSampled })
+            {
+                foreach (long format in SwapchainFormats())
+                {
+                    info.UsageFlags = usage;
+                    info.Format = format;
+                    if (TryCreate(ref info, out swapchain, out surface, out result))
+                    {
+                        if (_surfaceUsage == null) Log($"surface swapchains: usage 0x{usage:x}, format 0x{format:x}");
+                        _surfaceUsage = (usage, format);
+                        return result;
+                    }
+                }
+            }
+            return result;
+        }
+
+        private (ulong Usage, long Format)? _surfaceUsage;
+
+        private bool TryCreate(ref Xr.SwapchainCreateInfo info, out ulong swapchain, out IntPtr surface, out int result)
+        {
+            ulong sc;
+            IntPtr sf;
+            fixed (Xr.SwapchainCreateInfo* p = &info)
+                result = ((delegate* unmanaged<ulong, Xr.SwapchainCreateInfo*, ulong*, IntPtr*, int>)_createSurfaceSwapchain)(_session, p, &sc, &sf);
+            swapchain = sc;
+            surface = sf;
+            return result >= 0 && sf != IntPtr.Zero;
+        }
+
         private void CreateSurface(Panel panel)
         {
             if (panel.Swapchain != 0) return;
+            // a stereo pair: the compositor makes the surface twice the window's width (AndroidWindow.StereoPair)
+            if (s_stereo && AndroidWindow.FromHandle(panel.Handle) is { } w)
+            {
+                w.StereoPair = true;
+                panel.Stereo = true;
+            }
             var info = new Xr.SwapchainCreateInfo
             {
                 Type = Xr.TypeSwapchainCreateInfo, UsageFlags = Xr.SwapchainUsageColorAttachment | Xr.SwapchainUsageSampled,
-                SampleCount = 1, Width = (uint)panel.Width, Height = (uint)panel.Height, FaceCount = 1, ArraySize = 1, MipCount = 1,
+                SampleCount = 1, Width = (uint)(panel.Stereo ? 2 * panel.Width : panel.Width), Height = (uint)panel.Height, FaceCount = 1, ArraySize = 1, MipCount = 1,
             };
-            ulong swapchain;
-            IntPtr surface;
-            int result = ((delegate* unmanaged<ulong, Xr.SwapchainCreateInfo*, ulong*, IntPtr*, int>)_createSurfaceSwapchain)(_session, &info, &swapchain, &surface);
+            int result = CreateSurfaceSwapchain(info, out ulong swapchain, out IntPtr surface);
             if (result < 0 || surface == IntPtr.Zero) { Log($"no surface for window 0x{panel.Handle:x}: XrResult {result}"); return; }
             IntPtr window = ANativeWindow_fromSurface(JNIEnv.Handle, surface);
             panel.Swapchain = swapchain;
@@ -396,10 +493,11 @@ namespace MS.Internal.Interop
                 Type = Xr.TypeSwapchainCreateInfo, UsageFlags = Xr.SwapchainUsageColorAttachment | Xr.SwapchainUsageSampled,
                 SampleCount = 1, Width = CursorPixels, Height = CursorPixels, FaceCount = 1, ArraySize = 1, MipCount = 1,
             };
-            ulong swapchain;
-            IntPtr surface;
-            if (((delegate* unmanaged<ulong, Xr.SwapchainCreateInfo*, ulong*, IntPtr*, int>)_createSurfaceSwapchain)(_session, &info, &swapchain, &surface) < 0 || surface == IntPtr.Zero)
+            if (CreateSurfaceSwapchain(info, out ulong swapchain, out IntPtr surface) < 0 || surface == IntPtr.Zero)
+            {
+                Log("no surface for the cursor");
                 return;
+            }
             _cursorSwapchain = swapchain;
             // a white dot ringed in dark grey, drawn once
             using var javaSurface = Java.Lang.Object.GetObject<Surface>(surface, JniHandleOwnership.DoNotTransfer)!;
@@ -427,8 +525,12 @@ namespace MS.Internal.Interop
 
             List<Panel> shown;
             lock (_lock) shown = _panels.FindAll(p => p.Visible && p.HasSurface && p.Swapchain != 0);
-            int count = state.ShouldRender != 0 ? shown.Count + (_cursorVisible && _cursorSwapchain != 0 ? 1 : 0) : 0;
+            int quadsForPanels = 0;
+            foreach (Panel p in shown) quadsForPanels += p.Stereo ? 2 : 1;
+            int count = state.ShouldRender != 0 ? quadsForPanels + (_cursorVisible && _cursorSwapchain != 0 ? 1 : 0) : 0;
             Xr.CompositionLayerQuad* quads = stackalloc Xr.CompositionLayerQuad[Math.Max(1, count)];
+            var flip = new Xr.CompositionLayerImageLayout { Type = Xr.TypeCompositionLayerImageLayout, Flags = Xr.ImageLayoutVerticalFlip };
+            _flip = _flipLayers ? &flip : null;
             void** layers = stackalloc void*[Math.Max(1, count)];
             int n = 0;
             if (count > 0)
@@ -436,7 +538,20 @@ namespace MS.Internal.Interop
                 for (int i = 0; i < shown.Count; i++)
                 {
                     Panel p = shown[i];
-                    quads[n] = Quad(p.Swapchain, p.Width, p.Height, PanelCentre(p, i), p.Width * MetresPerPixel, p.Height * MetresPerPixel, p.Translucent);
+                    Xr.Vector3 centre = PanelCentre(p, i);
+                    float wide = p.Width * MetresPerPixel, high = p.Height * MetresPerPixel;
+                    if (p.Stereo)
+                    {
+                        // the left half to the left eye, the right half to the right, in the same place
+                        quads[n] = Quad(p.Swapchain, 0, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeLeft);
+                        layers[n] = &quads[n];
+                        n++;
+                        quads[n] = Quad(p.Swapchain, p.Width, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeRight);
+                    }
+                    else
+                    {
+                        quads[n] = Quad(p.Swapchain, 0, p.Width, p.Height, centre, wide, high, p.Translucent, Xr.EyeBoth);
+                    }
                     layers[n] = &quads[n];
                     n++;
                 }
@@ -444,7 +559,7 @@ namespace MS.Internal.Interop
                 {
                     Xr.Vector3 at = _cursorAt;
                     at.Z = -Distance + (shown.Count + 2) * LayerStep;
-                    quads[n] = Quad(_cursorSwapchain, CursorPixels, CursorPixels, at, CursorMetres, CursorMetres, translucent: true);
+                    quads[n] = Quad(_cursorSwapchain, 0, CursorPixels, CursorPixels, at, CursorMetres, CursorMetres, translucent: true, Xr.EyeBoth);
                     layers[n] = &quads[n];
                     n++;
                 }
@@ -455,14 +570,20 @@ namespace MS.Internal.Interop
                 LayerCount = (uint)n, Layers = n > 0 ? layers : null,
             };
             Check(Xr.xrEndFrame(_session, &endInfo), "xrEndFrame");
+            _flip = null;
         }
 
-        private Xr.CompositionLayerQuad Quad(ulong swapchain, int width, int height, Xr.Vector3 centre, float metresWide, float metresHigh, bool translucent) => new Xr.CompositionLayerQuad
+        // the vertical flip chained to this frame's quads (on the stack of Frame), or null
+        private Xr.CompositionLayerImageLayout* _flip;
+
+        private Xr.CompositionLayerQuad Quad(ulong swapchain, int x, int width, int height, Xr.Vector3 centre, float metresWide, float metresHigh, bool translucent, int eye) => new Xr.CompositionLayerQuad
         {
             Type = Xr.TypeCompositionLayerQuad,
+            Next = _flip,
             LayerFlags = translucent ? Xr.LayerBlendTextureSourceAlpha : 0,
             Space = _local,
-            SubImage = new Xr.SwapchainSubImage { Swapchain = swapchain, ImageRect = new Xr.Rect2Di { Width = width, Height = height } },
+            EyeVisibility = eye,
+            SubImage = new Xr.SwapchainSubImage { Swapchain = swapchain, ImageRect = new Xr.Rect2Di { X = x, Width = width, Height = height } },
             Pose = new Xr.Pose { Orientation = new Xr.Quaternion { W = 1 }, Position = centre },
             Size = new Xr.Extent2Df { Width = metresWide, Height = metresHigh },
         };
@@ -606,16 +727,15 @@ namespace MS.Internal.Interop
 
             if (_pressed)
             {
-                Panel? target = Window(_pressTarget);
-                int lx = px - (target?.X ?? 0), ly = py - (target?.Y ?? 0);
+                // the window pressed has the pointer until the release, as a mouse's capture does
                 if (!down)
                 {
-                    AndroidWindow.NotifyPointer(_pressTarget, 2, lx, ly);
+                    AndroidWindow.NotifyPointer(_pressTarget, 2, px, py);
                     _pressed = false;
                 }
                 else if (px != _lastX || py != _lastY)
                 {
-                    AndroidWindow.NotifyPointer(_pressTarget, 0, lx, ly);
+                    AndroidWindow.NotifyPointer(_pressTarget, 0, px, py);
                 }
             }
             else
@@ -623,18 +743,21 @@ namespace MS.Internal.Interop
                 Panel? under = At(px, py);
                 if (under != null)
                 {
-                    int lx = px - under.X, ly = py - under.Y;
-                    if (px != _lastX || py != _lastY || under.Handle != _hoverTarget) AndroidWindow.NotifyPointer(under.Handle, 0, lx, ly);
-                    _hoverTarget = under.Handle;
+                    // the window under the pointer, a child (an ElementHost's WPF tree) over its parent's panel
+                    IntPtr target = AndroidWindow.PointerTarget(px, py, out int left, out int top);
+                    if (target == IntPtr.Zero) { target = under.Handle; left = under.X; top = under.Y; }
+                    int lx = px - left, ly = py - top;
+                    if (px != _lastX || py != _lastY || target != _hoverTarget) AndroidWindow.NotifyPointer(target, 0, px, py);
+                    _hoverTarget = target;
                     if (down)
                     {
                         _pressed = true;
-                        _pressTarget = under.Handle;
-                        AndroidWindow.NotifyPointer(under.Handle, 1, lx, ly);
+                        _pressTarget = target;
+                        AndroidWindow.NotifyPointer(target, 1, px, py);
                     }
                     else if (secondary != _secondaryPressed)
                     {
-                        AndroidWindow.NotifyPointer(under.Handle, secondary ? AndroidWindow.RightPress : AndroidWindow.RightRelease, lx, ly);
+                        AndroidWindow.NotifyPointer(target, secondary ? AndroidWindow.RightPress : AndroidWindow.RightRelease, px, py);
                     }
 
                     // the thumbstick is the wheel: a notch's worth of travel for every so much pushed and held
@@ -645,7 +768,7 @@ namespace MS.Internal.Interop
                         _scrollCarry += stick.Y * 600f * seconds;      // logical pixels a second, at full tilt
                         if (MathF.Abs(_scrollCarry) >= 16f)
                         {
-                            AndroidWindow.NotifyScroll(under.Handle, _scrollCarry, lx, ly);
+                            AndroidWindow.NotifyScroll(target, _scrollCarry, lx, ly);
                             _scrollCarry = 0f;
                         }
                     }
@@ -669,11 +792,6 @@ namespace MS.Internal.Interop
                 }
             }
             return null;
-        }
-
-        private Panel? Window(IntPtr handle)
-        {
-            lock (_lock) return Find(handle);
         }
 
         [DllImport("android")] private static extern IntPtr ANativeWindow_fromSurface(IntPtr env, IntPtr surface);

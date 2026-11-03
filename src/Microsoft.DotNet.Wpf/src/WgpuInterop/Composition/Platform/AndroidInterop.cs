@@ -58,6 +58,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </summary>
         public static Func<IntPtr, bool>? PopupQuery { get; set; }
 
+        /// <summary>
+        /// Whether a window is shown to the two eyes apart (an XR host's stereo pair): its surface is twice
+        /// its width, the left eye's picture beside the right eye's. Installed by the windowing backend.
+        /// </summary>
+        public static Func<IntPtr, bool>? StereoQuery { get; set; }
+
         /// <summary>See <see cref="OriginQuery"/>.</summary>
         public static void GetWindowOrigin(IntPtr handle, out int x, out int y)
         {

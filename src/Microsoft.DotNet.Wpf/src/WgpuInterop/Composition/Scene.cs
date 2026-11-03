@@ -838,6 +838,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Opacity in [0,1], multiplied with ancestors.</summary>
         public double Opacity { get; set; } = 1.0;
 
+        /// <summary>The eye the subtree is seen with (1 left, 2 right; 0: whichever its parent's is): a stereo
+        /// pair's two halves, which differ only in the Viewport3Ds inside them.</summary>
+        public byte StereoEye { get; set; }
+
         /// <summary>Optional axis-aligned clip in this visual's local space (fast scissor path).</summary>
         public Rect? Clip { get; set; }
 

@@ -170,11 +170,14 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
         /// <summary>The eyes a viewport is rendered for: one, or a side-by-side pair a stereo base apart --
         /// the camera's focus distance (its LookDirection's length, which WPF scenes point at what they look
         /// at) over 30, the base a comfortable stereo photograph takes.</summary>
-        private static Eye3D[] EyesFor(Viewport3DDraw viewport)
+        private Eye3D[] EyesFor(Viewport3DDraw viewport)
         {
-            if (!string.Equals(StereoMode, "sbs", StringComparison.OrdinalIgnoreCase)) return s_monoEye;
+            bool sideBySide = string.Equals(StereoMode, "sbs", StringComparison.OrdinalIgnoreCase);
+            if (_eye == 0 && !sideBySide) return s_monoEye;
             float focus = viewport.Camera.HasMatrix ? 0f : viewport.Camera.LookDirection.Length();
             float baseLine = (focus > 0f ? focus : 1f) / 30f;
+            // inside one half of a stereo pair (a headset's window): the whole viewport, that eye's place
+            if (_eye != 0) return new[] { new Eye3D(0f, 1f, _eye == 1 ? -baseLine / 2f : baseLine / 2f) };
             return new[] { new Eye3D(0f, 0.5f, -baseLine / 2f), new Eye3D(0.5f, 1f, baseLine / 2f) };
         }
 
