@@ -783,6 +783,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var att = new WGPURenderPassColorAttachment { view = sv, depthSlice = 0xFFFFFFFF, resolveTarget = dv, loadOp = WGPULoadOp.Load, storeOp = WGPUStoreOp.Store };
             var desc = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &att };
             IntPtr p = wgpuCommandEncoderBeginRenderPass(c.Encoder(), &desc);
+            Device.DrawNothing(p, fmt);      // a pass with no draw is not resolved on Adreno (D3DDevice.Resolve.cs)
             wgpuRenderPassEncoderEnd(p);
             wgpuRenderPassEncoderRelease(p);
             wgpuTextureViewRelease(sv);

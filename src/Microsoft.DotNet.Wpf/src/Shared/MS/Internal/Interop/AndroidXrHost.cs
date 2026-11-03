@@ -100,6 +100,79 @@ namespace MS.Internal.Interop
         {
             _thread = new Thread(Run) { Name = "OpenXR", IsBackground = true };
             _thread.Start();
+            if (int.TryParse(Environment.GetEnvironmentVariable("WPF_XR_COMMANDS"), out int port))
+                new Thread(() => Commands(port)) { Name = "XR commands", IsBackground = true }.Start();
+        }
+
+        // ---- a test driver's pointer (WPF_XR_COMMANDS=<port>, over adb forward) --------------------
+        //
+        // One command a line, on loopback: "move|down|up|click x y" (desktop pixels, as the ray's hit),
+        // "capture <png path>" (the next window presented, drawn offscreen: WgpuPresenter.Capture). The
+        // pointer goes where the controller's goes -- the window under it, the pressed one until the
+        // release -- so a scripted session takes the path a person in the headset does.
+
+        private IntPtr _commandPressTarget;
+
+        private void Commands(int port)
+        {
+            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+            try { listener.Start(); }
+            catch (Exception e) { Log($"commands: cannot listen on {port}: {e.Message}"); return; }
+            Log($"commands on 127.0.0.1:{port}");
+            while (!_quit)
+            {
+                try
+                {
+                    using var client = listener.AcceptTcpClient();
+                    using var stream = client.GetStream();
+                    using var reader = new System.IO.StreamReader(stream);
+                    using var writer = new System.IO.StreamWriter(stream) { AutoFlush = true };
+                    for (string? line; (line = reader.ReadLine()) != null;)
+                        writer.WriteLine(Command(line.Trim()));
+                }
+                catch (Exception e) { Log("commands: " + e.Message); }
+            }
+        }
+
+        private string Command(string line)
+        {
+            string[] a = line.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            if (a.Length == 0) return "ok";
+            if (a[0] == "capture" && a.Length == 2)
+            {
+                AppContext.SetData("WpfWebGpu.CaptureRequest", a[1]);
+                return "ok";
+            }
+            string[] xy = a.Length == 2 ? a[1].Split(' ') : Array.Empty<string>();
+            if (xy.Length != 2 || !int.TryParse(xy[0], out int x) || !int.TryParse(xy[1], out int y))
+                return "error: move|down|up|click x y, capture <path>";
+            switch (a[0])
+            {
+                case "move":
+                    AndroidWindow.NotifyPointer(_commandPressTarget != IntPtr.Zero ? _commandPressTarget : Under(x, y), 0, x, y);
+                    return "ok";
+                case "down":
+                    _commandPressTarget = Under(x, y);
+                    AndroidWindow.NotifyPointer(_commandPressTarget, 0, x, y);
+                    AndroidWindow.NotifyPointer(_commandPressTarget, 1, x, y);
+                    return $"ok 0x{_commandPressTarget:x}";
+                case "up":
+                    AndroidWindow.NotifyPointer(_commandPressTarget != IntPtr.Zero ? _commandPressTarget : Under(x, y), 2, x, y);
+                    _commandPressTarget = IntPtr.Zero;
+                    return "ok";
+                case "click":
+                    Command($"down {x} {y}");
+                    return Command($"up {x} {y}");
+            }
+            return "error: unknown " + a[0];
+        }
+
+        /// <summary>The window the pointer is over at a desktop point, as the controller's ray finds it.</summary>
+        private IntPtr Under(int x, int y)
+        {
+            IntPtr target = AndroidWindow.PointerTarget(x, y, out _, out _);
+            if (target != IntPtr.Zero) return target;
+            lock (_lock) return At(x, y)?.Handle ?? IntPtr.Zero;
         }
 
         public void Stop()

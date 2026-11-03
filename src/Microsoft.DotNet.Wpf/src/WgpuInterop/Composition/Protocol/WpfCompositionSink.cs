@@ -1310,6 +1310,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 #endif
                 Log($"WebGPU device created (0x{_ctx.Device:x}) {_ctx.AdapterDescription} " +
                     $"[UI thread {_ownerThreadId}, {System.Diagnostics.Stopwatch.GetElapsedTime(created0).TotalMilliseconds:0}ms, {LiveCount} live sink(s)]");
+                Direct3D.StorageProbe.RunOnce(_ctx);
             }
         }
 

@@ -194,6 +194,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 lock (device.Sync) device.Immediate.FlushToGpu(wait: false);
                 try { CopyFromShim(ctx, s, image, premultiplied, dx, dy, dw, dh); }
                 catch (Exception e) { Log("zero-copy D3DImage present failed, falling back to the copy path: " + e.Message); return false; }
+                if (s_dumpDir != null) DumpPresent(ctx, s, image, premultiplied, dx, dy, dw, dh);
             }
             ZeroCopyPresents++;
             Publish(front);
@@ -302,6 +303,60 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             wgpuQueueSubmit(ctx.Queue, 1, &cmd);
             wgpuCommandBufferRelease(cmd);
             if (srcView != IntPtr.Zero) wgpuTextureViewRelease(srcView);
+        }
+
+        // WPF_D3DIMAGE_DUMP=<folder>: a zero-copy present's surface as a PNG, at most every five seconds -- the
+        // shim's surface as the app's Direct3D work left it (d3d_src.png; the texture the compositor samples
+        // is no copy source) -- for a frame that comes out wrong on one GPU
+        private static readonly string? s_dumpDir = Environment.GetEnvironmentVariable("WPF_D3DIMAGE_DUMP");
+        private long _lastDumpTicks;
+
+        private void DumpPresent(WgpuContext ctx, Direct3DSurface9 s, ExternalImage image, bool premultiplied, int dx, int dy, int dw, int dh)
+        {
+            long now = Environment.TickCount64;
+            if (now - _lastDumpTicks < 5000) return;
+            _lastDumpTicks = now;
+            try
+            {
+                D3DTexture2D src = s.Gpu!;
+                string a = DumpTexture(ctx, src.Gpu, src.Format, (uint)s.Level, image.Width, image.Height, System.IO.Path.Combine(s_dumpDir!, "d3d_src.png"));
+                Console.WriteLine($"[d3dimage dump] v{image.Version} {image.Width}x{image.Height} premultiplied={premultiplied} dirty {dx},{dy} {dw}x{dh} src {src.Format} level {s.Level}: {a}");
+            }
+            catch (Exception e) { Console.WriteLine("[d3dimage dump] failed: " + e); }
+        }
+
+        /// <summary>A texture's level as a PNG (waited for); what it held, in a few words.</summary>
+        private static string DumpTexture(WgpuContext ctx, IntPtr texture, WGPUTextureFormat format, uint level, int width, int height, string path)
+        {
+            uint rowBytes = (uint)width * 4, aligned = (rowBytes + 255) & ~255u;
+            ulong size = (ulong)aligned * (uint)height;
+            IntPtr buf = ctx.CreateBuffer(size, WGPUBufferUsage.MapRead | WGPUBufferUsage.CopyDst);
+            try
+            {
+                IntPtr enc = wgpuDeviceCreateCommandEncoder(ctx.Device, IntPtr.Zero);
+                var from = new WGPUTexelCopyTextureInfo { texture = texture, mipLevel = level, aspect = WGPUTextureAspect.All };
+                var to = new WGPUTexelCopyBufferInfo { buffer = buf, layout = new WGPUTexelCopyBufferLayout { bytesPerRow = aligned, rowsPerImage = (uint)height } };
+                var extent = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &extent);
+                IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+                wgpuCommandEncoderRelease(enc);
+                wgpuQueueSubmit(ctx.Queue, 1, &cmd);
+                wgpuCommandBufferRelease(cmd);
+                byte[] px = ctx.MapRead(buf, size);
+                bool bgra = format is WGPUTextureFormat.BGRA8Unorm or WGPUTextureFormat.BGRA8UnormSrgb;
+                var rgba = new byte[width * height * 4];
+                long opaque = 0, transparent = 0;
+                for (int y = 0; y < height; y++)
+                    for (int x = 0; x < width; x++)
+                    {
+                        int i = (int)(y * aligned) + x * 4, o = (y * width + x) * 4;
+                        rgba[o] = px[i + (bgra ? 2 : 0)]; rgba[o + 1] = px[i + 1]; rgba[o + 2] = px[i + (bgra ? 0 : 2)]; rgba[o + 3] = 255;
+                        if (px[i + 3] == 255) opaque++; else if (px[i + 3] == 0) transparent++;
+                    }
+                PngWriter.Write(path, rgba, width, height, maxWidth: 4000);
+                return $"{opaque} opaque, {transparent} transparent of {(long)width * height}";
+            }
+            finally { wgpuBufferRelease(buf); }
         }
 
         private IntPtr Scratch(WgpuContext ctx, int w, int h)

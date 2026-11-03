@@ -264,6 +264,11 @@ internal sealed unsafe class WgpuPresenter : IDisposable
                 _partial.Render(root, view, _format, DeviceWidth, DeviceHeight, ClearColor, false);
         }
         finally { _renderer.EndFrame(); }   // lets the caches let go (see the note at _renderer)
+        if (AppContext.GetData(CaptureRequest) is string capture)
+        {
+            AppContext.SetData(CaptureRequest, null);
+            Capture(root, capture);
+        }
         long p3 = System.Diagnostics.Stopwatch.GetTimestamp();
         WGPUStatus presented = PresentAndRelease(_surface, st.texture);   // releases the texture
         long p4 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -278,6 +283,59 @@ internal sealed unsafe class WgpuPresenter : IDisposable
                               + $"{DeviceWidth}x{DeviceHeight} format={_format}");
         wgpuTextureViewRelease(view);
         return ok;
+    }
+
+    /// <summary>A PNG path in this AppContext slot: the next window presented is also drawn offscreen and
+    /// written there (a test driver's screenshot where the screen cannot be read: a headset's panels).</summary>
+    internal const string CaptureRequest = "WpfWebGpu.CaptureRequest";
+
+    private void Capture(SceneVisual root, string path)
+    {
+        int w = DeviceWidth, h = DeviceHeight;
+        var desc = new WGPUTextureDescriptor
+        {
+            usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.CopySrc, dimension = WGPUTextureDimension._2D,
+            size = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 },
+            format = _format, mipLevelCount = 1, sampleCount = 1,
+        };
+        IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &desc);
+        IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
+        uint aligned = ((uint)w * 4 + 255) & ~255u;
+        ulong size = (ulong)aligned * (uint)h;
+        IntPtr buf = _ctx.CreateBuffer(size, WGPUBufferUsage.MapRead | WGPUBufferUsage.CopyDst);
+        try
+        {
+            _renderer.BeginFrame();
+            try { _renderer.RenderSceneToView(root, view, _format, w, h, ClearColor); }
+            finally { _renderer.EndFrame(); }
+            IntPtr enc = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
+            var from = new WGPUTexelCopyTextureInfo { texture = tex, aspect = WGPUTextureAspect.All };
+            var to = new WGPUTexelCopyBufferInfo { buffer = buf, layout = new WGPUTexelCopyBufferLayout { bytesPerRow = aligned, rowsPerImage = (uint)h } };
+            var extent = new WGPUExtent3D { width = (uint)w, height = (uint)h, depthOrArrayLayers = 1 };
+            wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &extent);
+            IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+            wgpuCommandEncoderRelease(enc);
+            wgpuQueueSubmit(_ctx.Queue, 1, &cmd);
+            wgpuCommandBufferRelease(cmd);
+            byte[] px = _ctx.MapRead(buf, size);
+            bool bgra = _format is WGPUTextureFormat.BGRA8Unorm or WGPUTextureFormat.BGRA8UnormSrgb;
+            var rgba = new byte[w * h * 4];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                {
+                    int i = (int)(y * aligned) + x * 4, o = (y * w + x) * 4;
+                    rgba[o] = px[i + (bgra ? 2 : 0)]; rgba[o + 1] = px[i + 1]; rgba[o + 2] = px[i + (bgra ? 0 : 2)]; rgba[o + 3] = 255;
+                }
+            PngWriter.Write(path, rgba, w, h, maxWidth: 4000);
+            Console.WriteLine($"[capture] {w}x{h} {_format} -> {path}");
+        }
+        catch (Exception e) { Console.WriteLine("[capture] failed: " + e); }
+        finally
+        {
+            wgpuBufferRelease(buf);
+            wgpuTextureViewRelease(view);
+            wgpuTextureRelease(tex);
+        }
     }
 
     /// <summary>

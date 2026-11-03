@@ -208,6 +208,9 @@ internal static partial class Bundle
                 protected override void OnCreate(Bundle savedInstanceState)
                 {
                     base.OnCreate(savedInstanceState);
+                    // the diagnostics' variables before the session's host is made: it reads its own
+                    // (WPF_XR_STEREO, WPF_XR_COMMANDS) as it starts, before the app's thread would set them
+                    WpfRunBundleHost.ApplyEnvironment();
                     AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", Path.Combine(FilesDir.AbsolutePath, "app") + "/");
                     AndroidFonts.ExtractBundled(this);
                     // the activity keeps a view hierarchy for what is not a window (the soft keyboard, the
@@ -342,7 +345,7 @@ internal static partial class Bundle
 
                 /// <summary>Diagnostics' variables, from a system property: an Android app inherits no
                 /// environment from adb (adb shell setprop debug.wpfrun.env "A=1 B=2").</summary>
-                private static void ApplyEnvironment()
+                internal static void ApplyEnvironment()
                 {
                     string env = AndroidSystemProperties.Get("debug.wpfrun.env");
                     foreach (string pair in env.Split(' ', StringSplitOptions.RemoveEmptyEntries))
