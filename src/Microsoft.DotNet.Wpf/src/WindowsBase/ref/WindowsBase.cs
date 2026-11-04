@@ -50,6 +50,23 @@ namespace MS.Internal.Interop
         public static void NotifyScaleChanged() { }
         public static void NotifyScroll(System.IntPtr handle, double deltaLogical, int xPixels, int yPixels) { }
         public bool IsSecondary { get { throw null; } }
+        public bool FillsScreen { get { throw null; } }
+        public const int FrameCloseHot = 1;
+        public const int FrameClosePressed = 2;
+        public int FrameStyle { get { throw null; } set { } }
+        public bool HasFrame { get { throw null; } }
+        public bool FrameSizable { get { throw null; } }
+        public bool FrameHasCloseBox { get { throw null; } }
+        public string Title { get { throw null; } }
+        public bool IsActiveWindow { get { throw null; } }
+        public int FrameState { get { throw null; } }
+        public void GetFrameInsets(out int left, out int top, out int right, out int bottom) { throw null; }
+        public void GetFrameRect(out int x, out int y, out int width, out int height) { throw null; }
+        public event System.Action<System.IntPtr> Closed { add { } remove { } }
+        public static void SetTitle(System.IntPtr handle, string title) { }
+        public static void Rehost(MS.Internal.Interop.IAndroidHost host) { }
+        public static bool TryGetCursorPixels(out int x, out int y) { throw null; }
+        public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public static bool HasMainWindow { get { throw null; } }
         public void Create(string title, int x, int y, int width, int height, bool borderless, bool ownSurface) { }
         public void SetVisible(bool visible, bool activate) { }
@@ -442,6 +459,9 @@ namespace MS.Internal.Interop
     {
         double Density { get; }
         double RefreshRateHz { get { throw null; } }
+        bool DesktopWindows { get { throw null; } }
+        bool DrawsFrames { get { throw null; } }
+        void FrameChanged(System.IntPtr handle) { }
         bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface);
         void BringToFront(System.IntPtr handle) { }
         void SetViewParent(System.IntPtr child, System.IntPtr parent) { }

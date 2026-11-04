@@ -237,7 +237,12 @@ namespace MS.Win32
                         // Surface behind an Android view is destroyed and recreated across every
                         // activity stop/start while the WPF handle must stay put (see AndroidWindow).
                         var android = new MS.Internal.Interop.AndroidWindow();
+                        // A caption is a frame round the client where the host draws one (a headset's desktop):
+                        // the rectangle is the outer one, as CreateWindowEx's is.
+                        android.FrameStyle = style;
                         android.Create(name, cx, cy, cw, ch, borderless);
+                        // ...whose close button is WM_CLOSE, as the other heads' title bars are.
+                        android.Closed += OnCocoaClosed;
                         // A child window takes the keyboard when pressed, as SetFocus on one does there.
                         android.TakesKeyboardOnPress = (style & WS_CHILD) != 0 && (exStyle & WS_EX_NOACTIVATE) == 0;
                         // Same synthetic WM_SIZE routing as the other backends.

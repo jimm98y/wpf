@@ -87,6 +87,80 @@ namespace System.Windows.Forms
 		static AndroidFormHost ()
 		{
 			XplatUIWebGpu.CaptureChanged += OnCaptureChanged;
+			// a form that draws its own caption and edges (a ribbon's) leaves a press on them to DefWindowProc, whose
+			// move and size loops (SC_MOVE, SC_SIZE) and Form.WindowState come here, as WaylandFormHost has them
+			XplatUIWebGpu.BeginWindowMove ??= h => { if (s_trace) Console.WriteLine ($"[android form] move loop for 0x{h:x}: host {(HostOf (h) != null ? "found" : "none")}"); HostOf (h)?.BeginSystemMove (); };
+			XplatUIWebGpu.BeginWindowSize ??= (h, edge) => { if (s_trace) Console.WriteLine ($"[android form] size loop {edge} for 0x{h:x}: host {(HostOf (h) != null ? "found" : "none")}"); HostOf (h)?.BeginSystemSize (edge); };
+			XplatUIWebGpu.WindowStateRequested ??= (h, state) => HostOf (h)?.ApplyWindowState (state);
+		}
+
+		private static AndroidFormHost HostOf (IntPtr formHandle)
+		{
+			foreach (AndroidFormHost h in s_activation)
+				if (!h._closed && h._window != null && h._form.IsHandleCreated && h._form.Handle == formHandle)
+					return h;
+			return null;
+		}
+
+		// the last press and where the finger is, in the screen's points: a move or size loop begins from it
+		private Point _pointer;
+		private int _sizing;                    // WMSZ_LEFT (1) .. WMSZ_BOTTOMRIGHT (8) while sizing, else 0
+		private Rectangle _sizeOrigin;
+
+		/// <summary>SC_MOVE from the press in hand: the window follows the pointer (OnDrag), a maximized one
+		/// restored under it first, as on Windows.</summary>
+		private void BeginSystemMove ()
+		{
+			if (_window == null || IsScreenWindow)
+				return;
+			_dragging = true;
+			_dragFrom = _pointer;
+			_dragOrigin = _form.Location;
+			_restoreOnDrag = _form.WindowState == FormWindowState.Maximized;
+		}
+		private bool _restoreOnDrag;
+
+		/// <summary>SC_SIZE from the press in hand on an edge (WMSZ_*): the window's edges follow the pointer.</summary>
+		private void BeginSystemSize (int edge)
+		{
+			if (_window == null || IsScreenWindow || edge < 1 || edge > 8 || _form.WindowState == FormWindowState.Maximized)
+				return;
+			_sizing = edge;
+			_dragFrom = _pointer;
+			_sizeOrigin = _form.Bounds;
+		}
+
+		private bool OnSize (AndroidWindow.TouchMessage m)
+		{
+			if (m.Kind == 2) { _sizing = 0; return true; }
+			if (m.Kind != 0) return true;
+			AndroidWindow over = AndroidWindow.FromHandle (m.Window);
+			if (over == null) return true;
+			over.GetClientScreenOriginPixels (out int sx, out int sy);
+			int x = (int)Math.Floor ((m.X + sx) / _scale), y = (int)Math.Floor ((m.Y + sy) / _scale);
+			int dx = x - _dragFrom.X, dy = y - _dragFrom.Y;
+			bool left = _sizing is 1 or 4 or 7, right = _sizing is 2 or 5 or 8, top = _sizing is 3 or 4 or 5, bottom = _sizing is 6 or 7 or 8;
+			Rectangle r = _sizeOrigin;
+			Size min = _form.MinimumSize, max = _form.MaximumSize;
+			int w = r.Width + (right ? dx : left ? -dx : 0), h = r.Height + (bottom ? dy : top ? -dy : 0);
+			w = Math.Max (Math.Max (w, min.Width), 100); h = Math.Max (Math.Max (h, min.Height), 40);
+			if (max.Width > 0) w = Math.Min (w, max.Width);
+			if (max.Height > 0) h = Math.Min (h, max.Height);
+			int fx = left ? r.Right - w : r.Left, fy = top ? Math.Max (0, r.Bottom - h) : r.Top;
+			XplatUI.SetWindowPos (_form.Handle, fx, fy, w, h);
+			_window.SetFrameOrigin ((int)Math.Round (fx * _scale), (int)Math.Round (fy * _scale));
+			_window.SetContentSizePixels ((int)Math.Round (w * _scale), (int)Math.Round (h * _scale));
+			Present ();
+			return true;
+		}
+
+		/// <summary>Form.WindowState set (its own buttons, a caption's double-click): the window maximized to the
+		/// screen or restored to its frame (AndroidWindow.SetWindowState), and the form given its new bounds.</summary>
+		private void ApplyWindowState (FormWindowState state)
+		{
+			if (_window == null || IsScreenWindow)
+				return;
+			_window.SetWindowState (state switch { FormWindowState.Minimized => 6, FormWindowState.Maximized => 3, _ => 9 });
 		}
 
 		private static IntPtr s_capturedWindow;
@@ -218,11 +292,13 @@ namespace System.Windows.Forms
 				return;
 			_window.GetClientScreenOriginPixels (out int px, out int py);
 			int x = (int)Math.Round (px / _scale), y = (int)Math.Round (py / _scale);
-			int w = _form.Width, h = _form.Height;
-			if (IsScreenWindow) {
-				_window.GetPixelSize (out int pw, out int ph);
-				w = (int)Math.Round (pw / _scale);
-				h = (int)Math.Round (ph / _scale);
+			// the window's size, whoever changed it: the screen's (a pinned one), or maximized, restored, sized
+			_window.GetPixelSize (out int pw, out int ph);
+			int w = (int)Math.Round (pw / _scale), h = (int)Math.Round (ph / _scale);
+			if (!IsScreenWindow) {
+				FormWindowState state = _window.GetWindowState () == 3 ? FormWindowState.Maximized : FormWindowState.Normal;
+				if (_form.WindowState != FormWindowState.Minimized && _driver.GetWindowState (_form.Handle) != state)
+					_driver.HostWindowState (_form.Handle, state);
 			}
 			var bounds = new Rectangle (x, y, w, h);
 			if (bounds.Width > 0 && bounds.Height > 0 && _form.Bounds != bounds)
@@ -241,7 +317,8 @@ namespace System.Windows.Forms
 			_lastVer = -1;
 		}
 
-		private bool IsScreenWindow => _window != null && !_window.IsSecondary && !_window.IsBorderless;
+		// the app's own window, pinned to the screen it fills (not on a headset's desktop: AndroidWindow.FillsScreen)
+		private bool IsScreenWindow => _window != null && _window.FillsScreen;
 
 		private void OnVisibleChanged (object sender, EventArgs e)
 		{
@@ -372,6 +449,8 @@ namespace System.Windows.Forms
 			}
 			if (_dragging && !_closed && OnDrag (m))
 				return;
+			if (_sizing != 0 && !_closed && OnSize (m))
+				return;
 			if (s_trace && m.Kind != 0)
 				Console.WriteLine ($"[android form] touch {m.Kind} at ({m.X},{m.Y}) view=0x{m.Window:x} mine={Mine (m.Window)} '{_form.Text}'");
 			if (!Mine (m.Window))
@@ -380,10 +459,15 @@ namespace System.Windows.Forms
 			// whose origin is the form's Location)
 			int x = (int)Math.Floor (m.X / _scale) + _form.Left;
 			int y = (int)Math.Floor (m.Y / _scale) + _form.Top;
+			_pointer = new Point (x, y);
 			if (m.Kind == 1 && _form.Enabled)
 				Activate ();
 			if (_chrome.HasFrame && OnFrame (m, x, y))
 				return;
+			if (!IsScreenWindow && OnNonClient (m, x, y)) {
+				Present ();
+				return;
+			}
 			IntPtr outerRoot = XplatUIWebGpu.InputRoot;
 			XplatUIWebGpu.InputRoot = _form.Handle;
 			try {
@@ -415,6 +499,58 @@ namespace System.Windows.Forms
 				XplatUIWebGpu.InputRoot = outerRoot;
 			}
 			Present ();
+		}
+
+		// ---- a frame the form draws itself (a ribbon's): its WM_NCHITTEST, as WaylandFormHost asks it ----
+
+		private const int HTCLIENT = 1;
+		private int _ncHit;                  // the frame part the pointer was last over, 0 when the client
+		private long _ncPressTime;
+		private Point _ncPressAt;
+
+		/// <summary>A press, move or release over the form's own frame (x, y: the screen's points): sent to the
+		/// form as Windows sends it (WM_NCLBUTTONDOWN and the rest, with its hit), which leaves a caption or an
+		/// edge to DefWindowProc -- whose move and size come back here (BeginSystemMove/Size); false when the
+		/// point is the client's.</summary>
+		private bool OnNonClient (AndroidWindow.TouchMessage m, int x, int y)
+		{
+			// a window holding the mouse (a control that captured it) gets everything as its client's
+			if (_driver.GrabHandle != IntPtr.Zero || m.Kind > 2)
+				return false;
+			IntPtr lp = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
+			// The sizing border is the form's, whatever lies under it: on Windows the frame is outside the
+			// children (a ribbon form keeps a 5-pixel border there). The rest the deepest window answers first
+			// (a ribbon's caption buttons are its client, though the form calls the strip around them
+			// caption); only a caption or an edge is the frame's.
+			int hit = _form.WindowState == FormWindowState.Normal && _form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow
+				? (int)(long)XplatUI.SendMessage (_form.Handle, Msg.WM_NCHITTEST, IntPtr.Zero, lp) : 0;
+			if (hit < 10 || hit > 17)
+				hit = _driver.HostHitTest (x, y);
+			if (hit == 0) hit = HTCLIENT;
+			const int WM_NCMOUSEMOVE = 0xA0, WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2, WM_NCLBUTTONDBLCLK = 0xA3, WM_NCMOUSELEAVE = 0x2A2;
+			if (hit == HTCLIENT || hit <= 0) {
+				if (_ncHit != 0) {
+					_ncHit = 0;
+					XplatUI.SendMessage (_form.Handle, (Msg)WM_NCMOUSELEAVE, IntPtr.Zero, IntPtr.Zero);
+				}
+				return false;
+			}
+			_ncHit = hit;
+			int message = WM_NCMOUSEMOVE;
+			if (m.Kind == 1) {
+				long now = Environment.TickCount64;
+				bool second = now - _ncPressTime <= SystemInformation.DoubleClickTime
+					&& Math.Abs (x - _ncPressAt.X) <= SystemInformation.DoubleClickSize.Width / 2
+					&& Math.Abs (y - _ncPressAt.Y) <= SystemInformation.DoubleClickSize.Height / 2;
+				_ncPressTime = second ? 0 : now;
+				_ncPressAt = new Point (x, y);
+				message = second ? WM_NCLBUTTONDBLCLK : WM_NCLBUTTONDOWN;
+			} else if (m.Kind == 2) {
+				message = WM_NCLBUTTONUP;
+			}
+			if (s_trace && m.Kind != 0) Console.WriteLine ($"[android form] '{_form.Text}' 0x{message:x} hit {hit} at ({x},{y})");
+			XplatUI.SendMessage (_form.Handle, (Msg)message, (IntPtr)hit, lp);
+			return true;
 		}
 
 		// ---- the frame (WindowChrome): DefWindowProc's part (BrowserFormHost.OnFrame) -------------
@@ -467,6 +603,17 @@ namespace System.Windows.Forms
 				return true;
 			over.GetClientScreenOriginPixels (out int sx, out int sy);
 			int x = (int)Math.Floor ((m.X + sx) / _scale), y = (int)Math.Floor ((m.Y + sy) / _scale);
+			if (_restoreOnDrag && (Math.Abs (x - _dragFrom.X) > 4 || Math.Abs (y - _dragFrom.Y) > 4)) {
+				// a maximized window taken by its caption: restored under the pointer as it moves, as on Windows --
+				// the same fraction of its width under the pointer, the caption where it is held
+				_restoreOnDrag = false;
+				Rectangle was = _form.Bounds;
+				double across = was.Width > 0 ? (double)(_dragFrom.X - was.Left) / was.Width : 0.5;
+				int down = _dragFrom.Y - was.Top;
+				_window.SetWindowState (9);
+				SyncFromWindow ();
+				_dragOrigin = new Point (_dragFrom.X - (int)Math.Round (across * _form.Width), _dragFrom.Y - Math.Min (down, Math.Max (0, _form.Height - 1)));
+			}
 			var to = new Point (_dragOrigin.X + x - _dragFrom.X, _dragOrigin.Y + y - _dragFrom.Y);
 			to.Y = Math.Max (0, to.Y);
 			int fx = (int)Math.Round (to.X * _scale), fy = (int)Math.Round (to.Y * _scale);

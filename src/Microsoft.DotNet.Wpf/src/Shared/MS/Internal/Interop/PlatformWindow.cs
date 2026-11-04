@@ -435,7 +435,12 @@ namespace MS.Internal.Interop
                 BrowserWindow.TitleOf(handle, title);   // the page's title, for the frontmost window
                 return;
             }
-            if (OperatingSystem.IsIOS() || OperatingSystem.IsAndroid())
+            if (OperatingSystem.IsAndroid())
+            {
+                AndroidWindow.SetTitle(handle, title);   // the caption of a frame the host draws
+                return;
+            }
+            if (OperatingSystem.IsIOS())
                 return;   // no window chrome to put a title in
             if (OperatingSystem.IsMacOS())
                 CocoaWindow.SetTitle(handle, title);

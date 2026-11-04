@@ -2,17 +2,16 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// A D3DImage's frames drawn into a surface of their own: a headset's fullscreen 3D view (AndroidXrHost).
-// Drawn as each frame is published, on the thread that publishes it -- not by the headset's frame loop,
-// whose wait for the surface's next buffer (taken only as the loop's own frames go to the compositor)
-// held every frame for the acquire's time out: one frame a second.
-// Shown as a crop of its window's image, a 3D view had the window's resolution and whatever lay behind it
-// (the app's white canvas); drawn from its own texture it has the resolution the app renders it at and
-// its transparency, so the room shows round what it draws. The XR host, which is the app's code and not
-// this assembly's, names the target through AppContext ("WpfWebGpu.Xr.ExternalTarget": the native window
-// of an Android Surface and the image's pixel size, or zero for none; it answers whether a frame has been
-// drawn there). An image of that size the sinks publish (WpfCompositionSink.Publish) is drawn; its colour
-// is straight (ExternalImage.cs), drawn premultiplied, as a layer that blends by source alpha takes it.
+// A headset's fullscreen 3D view (XrStereo3D): its pictures -- a D3DImage's frames (a 3D engine's), or a WPF
+// Viewport3D's drawn for the eyes (WgpuSceneRenderer.Headset.cs) -- published here, numbered, and shown in a
+// surface of their own, at the resolution they are drawn at and transparent where nothing is drawn, so that the
+// room shows round the view. The headset's host takes the latest as it builds a frame: an OpenXR host on its
+// frame loop (AndroidXrHost, an Android Surface), a browser on the app's frame (a canvas the page's XR layer
+// draws from), each moved to where the eyes are by its depth (XrExternalPanel.Reproject.cs); or, for a compositor
+// that takes it from memory and moves it itself (visionOS's), read back (ReadLatest). The hosts are the app's
+// code, not this assembly's, and name what they need through AppContext ("WpfWebGpu.Xr.ExternalTarget": the
+// surface's window and the pictures' size; ExternalDrawLatest, ExternalReadLatest, LargestExternal). Colour is
+// straight (ExternalImage.cs), drawn premultiplied, as a layer that blends by source alpha takes it.
 //
 
 using System;
@@ -77,12 +76,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AppContext.SetData("WpfWebGpu.Xr.ExternalTarget", (Func<IntPtr, int, int, bool>)Target);
             AppContext.SetData("WpfWebGpu.Xr.LargestExternal", (Func<long>)Largest);
             AppContext.SetData("WpfWebGpu.Xr.ExternalDrawLatest", (Func<Func<long, float[]?>, long>)DrawLatest);
+            AppContext.SetData("WpfWebGpu.Xr.ExternalReadLatest", (Func<Action<IntPtr, int, int, int, long>, long>)ReadLatest);
         }
+
+        /// <summary>Its entry points offered (the static constructor's): before a host asks for them, which may be before
+        /// any image is published.</summary>
+        public static void Offer() { }
 
         /// <summary>A D3DImage's new frame (the sink's present): the latest, numbered; its views are kept by the number.</summary>
         public static void Published(ExternalImage image)
         {
-            if (!OperatingSystem.IsAndroid()) return;
             lock (s_lock)
             {
                 s_images[(image.Width, image.Height)] = new WeakReference<ExternalImage>(image);
@@ -145,7 +148,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 long now = Environment.TickCount64;
                 if (now - s_framesSince >= 1000)
                 {
-                    if (s_framesSince != 0) Console.WriteLine($"[xr panel] {s_frames * 1000.0 / (now - s_framesSince):0.0} frames a second, the latest {s_latestNumber}");
+                    if (s_framesSince != 0) Console.WriteLine($"[xr panel] {s_frames * 1000.0 / (now - s_framesSince):0.0} frames a second, the latest {s_latestNumber}, {(s_latestHasDepth ? "moved by its depth" : "no depth: turned only")}");
                     s_frames = 0;
                     s_framesSince = now;
                 }
@@ -182,11 +185,54 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        private static long s_readNumber = -1;
+        private static IntPtr s_readBuffer;
+        private static ulong s_readSize;
+
+        /// <summary>For a headset whose compositor takes the picture from memory and moves it itself (visionOS's: by
+        /// the head's pose it was drawn for, VisionXrHost): the latest published image, if it is new since the
+        /// last, read back -- RGBA rows, straight colour -- and handed to <paramref name="use"/> while it is mapped
+        /// (its memory, width, height, bytes a row, number); the number, or -1 for none new.</summary>
+        private static long ReadLatest(Action<IntPtr, int, int, int, long> use)
+        {
+            lock (s_lock)
+            {
+                if (s_latest is not { } image || s_latestNumber == s_readNumber) return -1;
+                WgpuContext? ctx = ProcessGpu.Peek();
+                if (ctx == null || image.Device != ctx.Device) return -1;
+                int row = (image.Width * 4 + 255) & ~255;
+                ulong size = (ulong)row * (ulong)image.Height;
+                if (s_readBuffer == IntPtr.Zero || s_readSize != size)
+                {
+                    if (s_readBuffer != IntPtr.Zero) wgpuBufferRelease(s_readBuffer);
+                    s_readBuffer = ctx.CreateBuffer(size, WGPUBufferUsage.MapRead | WGPUBufferUsage.CopyDst);
+                    s_readSize = size;
+                }
+                IntPtr enc = wgpuDeviceCreateCommandEncoder(ctx.Device, IntPtr.Zero);
+                var from = new WGPUTexelCopyTextureInfo { texture = image.Texture, aspect = WGPUTextureAspect.All };
+                var to = new WGPUTexelCopyBufferInfo { layout = new WGPUTexelCopyBufferLayout { bytesPerRow = (uint)row, rowsPerImage = (uint)image.Height }, buffer = s_readBuffer };
+                var extent = new WGPUExtent3D { width = (uint)image.Width, height = (uint)image.Height, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &extent);
+                IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+                wgpuCommandEncoderRelease(enc);
+                wgpuQueueSubmit(ctx.Queue, 1, &cmd);
+                wgpuCommandBufferRelease(cmd);
+                long number = s_latestNumber;
+                if (!ctx.MapReadInPlace(s_readBuffer, size, p => use(p, image.Width, image.Height, row, number))) return -1;
+                s_readNumber = number;
+                return number;
+            }
+        }
+
         private static bool Surface(WgpuContext ctx, IntPtr nativeWindow, int width, int height, WGPUTextureFormat imageFormat)
         {
             if (nativeWindow != s_window)
             {
                 if (s_surface != IntPtr.Zero) wgpuSurfaceRelease(s_surface);
+#if WGPU_BROWSER
+                // the browser's: a canvas the page's XR layer is drawn from (browser-window.js, xrPanelCanvas)
+                s_surface = Platform.BrowserInterop.CreateSurface(ctx.Instance, nativeWindow);
+#else
                 var source = new WGPUSurfaceSourceAndroidNativeWindow
                 {
                     chain = new WGPUChainedStruct { next = null, sType = WGPUSType_SurfaceSourceAndroidNativeWindow },
@@ -194,6 +240,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 };
                 var desc = new WGPUSurfaceDescriptor { nextInChain = (WGPUChainedStruct*)&source };
                 s_surface = wgpuInstanceCreateSurface(ctx.Instance, &desc);
+#endif
                 s_window = nativeWindow;
                 s_width = 0;
             }

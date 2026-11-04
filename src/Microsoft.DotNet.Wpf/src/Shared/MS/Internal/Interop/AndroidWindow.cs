@@ -111,6 +111,19 @@ namespace MS.Internal.Interop
         /// </summary>
         double RefreshRateHz => 0;
 
+        /// <summary>The screen is a desktop (a headset's: AndroidXrHost), not a phone's or a tablet's: the app's own
+        /// window is a window on it as any other is -- moved by its caption, sized from its edges, maximized and
+        /// restored -- rather than the screen itself.</summary>
+        bool DesktopWindows => false;
+
+        /// <summary>The host draws Windows' frame -- the caption with the title and the close button, the edge and
+        /// its shadow -- round a window that has one (AndroidWindow.HasFrame, GetFrameRect), as Windows' DWM draws
+        /// it round the client, and draws it again when told (FrameChanged). The headset's does.</summary>
+        bool DrawsFrames => false;
+
+        /// <summary>A window's frame is to be drawn again: its title, its activation or its close button changed.</summary>
+        void FrameChanged(IntPtr handle) { }
+
         /// <summary>The activity's content area in device pixels — the whole screen minus system bars.</summary>
         void GetScreenPixels(out int width, out int height);
 
@@ -140,6 +153,294 @@ namespace MS.Internal.Interop
         private static IntPtr s_mainHandle;
         private bool _ownSurface;
         private bool IsMain => _handle != IntPtr.Zero && _handle == s_mainHandle;
+
+        /// <summary>The app's own window, pinned to the activity it fills -- not on a desktop (IAndroidHost.DesktopWindows),
+        /// where it is a window as the others are.</summary>
+        private bool Pinned => IsMain && Host?.DesktopWindows != true;
+
+        /// <summary>The window is the screen (the app's own, pinned): its size is the activity's.</summary>
+        public bool FillsScreen => Pinned;
+
+        // ---- the frame: Windows' non-client area, where the host draws it ---------------------------------
+        //
+        // A WPF window with a caption (WS_CAPTION: a dialog, a tool window, a MessageBox's) has Windows' frame round
+        // its client, which on Windows the DWM draws and DefWindowProc answers for. Where the host draws frames
+        // (IAndroidHost.DrawsFrames) this layer answers for it: the rectangle WPF moves and sizes is the outer one
+        // (Window.Left, Width: GetWindowRect), the view is the client inside it (GetClientRect, WM_SIZE), and a press
+        // on the frame moves the window (the caption), sizes it (the edges) or closes it (the close button), as
+        // DefWindowProc's loops do. Without it a MessageBox came up as a bare client, neither movable nor closable.
+        // The view's fields (_xPixels.. _heightPixels) stay the client's; the frame is the insets round it.
+
+        private int _frameLeft, _frameTop, _frameRight, _frameBottom;   // device pixels; all 0 without a frame
+        private bool _frameSizable, _frameCloseBox, _closeHover, _closeHeld;
+        private string _title = "";
+        private long _captionClickTime;
+        private int _captionClickX, _captionClickY;
+        private static AndroidWindow s_framePress;   // the window whose frame the button went down on, until it comes up
+
+        private const int HTNOWHERE = 0, HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13,
+            HTTOPRIGHT = 14, HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17, HTBORDER = 18, HTCLOSE = 20;
+
+        /// <summary>The window's style (WS_*), set before <see cref="Create(string, int, int, int, int, bool)"/>: a
+        /// top-level window with a caption gets a frame, where the host draws them.</summary>
+        public int FrameStyle { get; set; }
+
+        /// <summary>The window has Windows' frame round its client, which the host draws.</summary>
+        public bool HasFrame => _frameTop > 0;
+
+        /// <summary>The frame has sizing edges (WS_THICKFRAME).</summary>
+        public bool FrameSizable => _frameSizable;
+
+        /// <summary>The caption has a close button (WS_SYSMENU).</summary>
+        public bool FrameHasCloseBox => _frameCloseBox;
+
+        /// <summary>The window's title (SetWindowText), which its caption shows.</summary>
+        public string Title => _title;
+
+        /// <summary>The window is the active one, whose caption is drawn so.</summary>
+        public bool IsActiveWindow => ReferenceEquals(s_active, this);
+
+        /// <summary>The close button's look: 0, the pointer over it (FrameCloseHot), or held down on it (FrameClosePressed).</summary>
+        public int FrameState => _closeHover ? (_closeHeld ? FrameClosePressed : FrameCloseHot) : 0;
+        public const int FrameCloseHot = 1, FrameClosePressed = 2;
+
+        /// <summary>The frame round the client, device pixels: the sides and the foot (the resize margin outside the
+        /// visible edge, and the edge), and the top (the caption).</summary>
+        public void GetFrameInsets(out int left, out int top, out int right, out int bottom)
+        {
+            left = _frameLeft; top = _frameTop; right = _frameRight; bottom = _frameBottom;
+        }
+
+        /// <summary>The window's outer rectangle, top-left device pixels: the client and its frame.</summary>
+        public void GetFrameRect(out int x, out int y, out int width, out int height)
+        {
+            x = _xPixels - _frameLeft;
+            y = _yPixels - _frameTop;
+            width = _widthPixels + _frameLeft + _frameRight;
+            height = _heightPixels + _frameTop + _frameBottom;
+        }
+
+        /// <summary>The close button was clicked: WM_CLOSE for the window.</summary>
+        public event Action<IntPtr> Closed;
+
+        /// <summary>SetWindowText: the title its caption shows.</summary>
+        public static void SetTitle(IntPtr handle, string title)
+        {
+            if (FromHandle(handle) is not { } w || w._title == (title ?? "")) return;
+            w._title = title ?? "";
+            w.OnFrameChanged();
+        }
+
+        private void OnFrameChanged()
+        {
+            if (HasFrame && _handle != IntPtr.Zero) Host?.FrameChanged(_handle);
+        }
+
+        // Create's rectangle, the outer one, made the client's by the frame: AdjustWindowRectExForDpi's on
+        // Windows 11 -- a caption, with or without a sizing frame, 8 pixels on three sides and 31 on top at 96 dpi
+        // (XplatUIWebGpu.Windows11Frame: a dialog frame of 3 that does not scale, a border and the padded border
+        // of 4 that do, and the caption of 22 and a pixel).
+        private bool _translucent;
+        private int _desktopX, _desktopY, _desktopWidth, _desktopHeight;   // the app's own window on a desktop, while pinned
+        private bool _desktopKnown;
+
+        // ---- moving to another host: a headset's panel app going immersive, and back ----------------------
+        //
+        // One process, two activities (a 2D panel's and an immersive one's), each with a host of its own: the
+        // windows go across as they are -- their handles, their stacking, their state -- each given a view in
+        // the new host (whose surface reaches the renderer as an activity's restart's does, NotifySurfaceChanged).
+        // The app's own window fills a panel; on a headset's desktop it is a window as the others are, where it
+        // was there last (or at the panel's size in the corner); a window with a caption gains or loses its frame
+        // there, keeping its outer rectangle, as a window does when a theme changes its frame.
+
+        /// <summary>Every window into <paramref name="host"/>'s views, out of the host it was in (on the app's UI thread).</summary>
+        public static void Rehost(IAndroidHost host)
+        {
+            OnUi(() =>
+            {
+                IAndroidHost old = Host;
+                if (ReferenceEquals(old, host) || host == null) return;
+                List<AndroidWindow> windows;
+                lock (s_zOrder) windows = new List<AndroidWindow>(s_zOrder);
+                if (s_trace) Console.WriteLine($"[android] rehost {windows.Count} windows: {old?.GetType().Name} -> {host.GetType().Name}");
+                foreach (AndroidWindow w in windows)
+                {
+                    if (w._handle == IntPtr.Zero) continue;
+                    old?.DestroyView(w._handle);
+                    lock (w) w.ReleaseNativeWindow();
+                }
+                Host = host;
+                s_drag = null;
+                s_framePress = null;
+                foreach (AndroidWindow w in windows)
+                    if (w._handle != IntPtr.Zero) w.MoveTo(host);
+                // the children once their parents have views (a host ignores a parent it has none for: an ElementHost's
+                // tree made before its form's window, left a window of its own, lay over a dialog and took its touches),
+                // then the stacking as it was, bottom up
+                foreach (AndroidWindow w in windows)
+                {
+                    if (w._handle == IntPtr.Zero) continue;
+                    IntPtr parent = w._parentWindow;
+                    // a child of another toolkit's window (an ElementHost's tree in a form) names none of ours: the
+                    // window it lies in, as the pointer finds it (IsEmbeddedIn)
+                    // -- or, laid out for the host it came from and not yet for this one (past its window's edge by
+                    // then), the largest window that holds its corner
+                    if (parent == IntPtr.Zero && w.IsBorderless && !w._ownSurface)
+                    {
+                        AndroidWindow holder = null;
+                        foreach (AndroidWindow p in windows)
+                        {
+                            if (p == w || p._handle == IntPtr.Zero || p.IsBorderless) continue;
+                            if (w.IsEmbeddedIn(p)) { holder = p; break; }
+                            bool corner = w._xPixels >= p._xPixels && w._yPixels >= p._yPixels
+                                && w._xPixels < p._xPixels + p._widthPixels && w._yPixels < p._yPixels + p._heightPixels;
+                            if (corner && (holder == null || (long)p._widthPixels * p._heightPixels > (long)holder._widthPixels * holder._heightPixels)) holder = p;
+                        }
+                        if (holder != null) parent = holder._handle;
+                    }
+                    if (parent == IntPtr.Zero) continue;
+                    if (s_trace) Console.WriteLine($"[android] 0x{w._handle:x} stacked with 0x{parent:x}");
+                    host.SetViewParent(w._handle, parent);
+                }
+                foreach (AndroidWindow w in windows)
+                    if (w._handle != IntPtr.Zero && w._parentWindow == IntPtr.Zero && w.CanBeActive && w._visible) host.BringToFront(w._handle);
+            });
+        }
+
+        private void MoveTo(IAndroidHost host)
+        {
+            bool desktop = host.DesktopWindows;
+            StereoPair = false;
+            // the outer rectangle, which stays (the frame comes and goes round it)
+            int ox = _xPixels - _frameLeft, oy = _yPixels - _frameTop;
+            int ow = _widthPixels + _frameLeft + _frameRight, oh = _heightPixels + _frameTop + _frameBottom;
+            bool fills = IsMain && !desktop;
+            if (IsMain)
+            {
+                if (fills)
+                {
+                    if (!_wasFilling) { _desktopX = ox; _desktopY = oy; _desktopWidth = ow; _desktopHeight = oh; _desktopKnown = true; }
+                    host.GetScreenPixels(out ow, out oh);
+                    ox = oy = 0;
+                }
+                else if (_wasFilling && _desktopKnown)
+                {
+                    ox = _desktopX; oy = _desktopY; ow = _desktopWidth; oh = _desktopHeight;
+                }
+                _wasFilling = fills;
+                _maximized = false;
+            }
+            _frameLeft = _frameTop = _frameRight = _frameBottom = 0;
+            _xPixels = ox; _yPixels = oy; _widthPixels = Math.Max(1, ow); _heightPixels = Math.Max(1, oh);
+            if (!IsBorderless && !fills) ApplyFrame();
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} into {host.GetType().Name} at ({_xPixels},{_yPixels}) {_widthPixels}x{_heightPixels}px{(HasFrame ? " framed" : "")}{(fills ? " filling" : "")}");
+            host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, IsBorderless, fills, _ownSurface);
+            if (_translucent) host.SetViewTranslucent(_handle);
+            if (!_visible || _minimized) host.SetViewVisible(_handle, false);
+            RaiseResized();
+            OnFrameChanged();
+        }
+
+        private bool _wasFilling;
+
+        private void ApplyFrame()
+        {
+            const int WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_CHILD = 0x40000000;
+            if ((FrameStyle & WS_CAPTION) != WS_CAPTION || (FrameStyle & WS_CHILD) != 0 || Host?.DrawsFrames != true) return;
+            double scale = GetBackingScale();
+            int M(int v) => (int)Math.Floor(v * scale + 0.5);
+            int edge = 3 + M(1) + M(4);
+            _frameLeft = _frameRight = _frameBottom = edge;
+            _frameTop = edge + M(22) + 1;
+            _frameSizable = (FrameStyle & WS_THICKFRAME) != 0;
+            _frameCloseBox = (FrameStyle & WS_SYSMENU) != 0;
+            _xPixels += _frameLeft;
+            _yPixels += _frameTop;
+            _widthPixels = Math.Max(1, _widthPixels - _frameLeft - _frameRight);
+            _heightPixels = Math.Max(1, _heightPixels - _frameTop - _frameBottom);
+        }
+
+        /// <summary>WM_NCHITTEST for a point relative to the client's origin (device pixels), as Windows 11 answers it.</summary>
+        private int FrameHit(int x, int y)
+        {
+            if (x >= 0 && y >= 0 && x < _widthPixels && y < _heightPixels) return HTCLIENT;
+            int ox = x + _frameLeft, oy = y + _frameTop;
+            int ow = _widthPixels + _frameLeft + _frameRight, oh = _heightPixels + _frameTop + _frameBottom;
+            if (ox < 0 || oy < 0 || ox >= ow || oy >= oh) return HTNOWHERE;
+            double scale = GetBackingScale();
+            int margin = Math.Max(0, _frameLeft - 1);                       // the resize margin outside the visible edge
+            int closeWidth = (int)Math.Round(46 * scale);
+            if (_frameCloseBox && oy >= 1 && oy < _frameTop && ox < ow - margin - 1 && ox >= ow - margin - 1 - closeWidth) return HTCLOSE;
+            if (_frameSizable)
+            {
+                bool left = ox < _frameLeft, right = ox >= ow - _frameRight;
+                bool top = oy < (int)Math.Round(4 * scale), bottom = oy >= oh - _frameBottom;
+                if (top && left) return HTTOPLEFT;
+                if (top && right) return HTTOPRIGHT;
+                if (bottom && left) return HTBOTTOMLEFT;
+                if (bottom && right) return HTBOTTOMRIGHT;
+                if (left) return HTLEFT;
+                if (right) return HTRIGHT;
+                if (top) return HTTOP;
+                if (bottom) return HTBOTTOM;
+            }
+            if (oy < _frameTop && ox >= margin && ox < ow - margin) return HTCAPTION;
+            return HTBORDER;
+        }
+
+        private void SetCloseLook(bool hover, bool held)
+        {
+            if (_closeHover == hover && _closeHeld == held) return;
+            _closeHover = hover;
+            _closeHeld = held;
+            OnFrameChanged();
+        }
+
+        /// <summary>A touch on the window (relative to its client) that is its frame's, as DefWindowProc takes a press on
+        /// the non-client area: true when it was. A move over the frame goes on to the client as well -- the pointer
+        /// leaving its elements -- unless the button went down on the frame.</summary>
+        private bool OnFrame(int kind, int x, int y)
+        {
+            int hit = FrameHit(x, y);
+            bool pressedHere = ReferenceEquals(s_framePress, this);
+            switch (kind)
+            {
+                case 0:
+                    SetCloseLook(hit == HTCLOSE && _frameCloseBox && (pressedHere ? _closeHeld : !s_pressed), _closeHeld);
+                    return pressedHere;
+                case 1:
+                    if (hit == HTCLIENT) return false;
+                    if (hit == HTNOWHERE) return true;
+                    s_framePress = this;
+                    Activate();
+                    if (hit == HTCLOSE) { SetCloseLook(true, true); return true; }
+                    if (hit == HTCAPTION)
+                    {
+                        // a second click on the caption maximizes the window, or restores it (SM_CXDOUBLECLK's square)
+                        long now = Environment.TickCount64;
+                        int slop = (int)Math.Round(2 * GetBackingScale());
+                        bool second = now - _captionClickTime <= 500 && Math.Abs(x - _captionClickX) <= slop && Math.Abs(y - _captionClickY) <= slop;
+                        _captionClickTime = second ? 0 : now;
+                        _captionClickX = x;
+                        _captionClickY = y;
+                        if (second && _frameSizable) SetWindowState(IsMaximizedNow ? 9 : 3);
+                        else BeginMoveDrag();
+                        return true;
+                    }
+                    if (hit >= HTLEFT && hit <= HTBOTTOMRIGHT && _frameSizable && !IsMaximizedNow)
+                        BeginResizeDrag(hit, 0, 0, 0, 0);
+                    return true;
+                case 2:
+                    if (!pressedHere) return false;
+                    s_framePress = null;
+                    bool close = _closeHeld && hit == HTCLOSE;
+                    SetCloseLook(hit == HTCLOSE && _frameCloseBox, false);
+                    if (close) Closed?.Invoke(_handle);
+                    return true;
+                default:
+                    return hit != HTCLIENT;
+            }
+        }
 
         /// <summary>A top-level window over the app's own: a dialog, a tool window.</summary>
         public bool IsSecondary => !IsBorderless && !IsMain;
@@ -177,6 +478,7 @@ namespace MS.Internal.Interop
         /// there (UIKitWindow.SetOwnFrame).</summary>
         public void SetOwnFrame()
         {
+            _translucent = true;
             if (_handle != IntPtr.Zero) Host?.SetViewTranslucent(_handle);
         }
 
@@ -220,6 +522,8 @@ namespace MS.Internal.Interop
             if (s_trace) Console.WriteLine($"[android] active 0x{old?._handle ?? IntPtr.Zero:x} -> 0x{window?._handle ?? IntPtr.Zero:x}");
             old?.ActiveChanged?.Invoke(false);
             window?.ActiveChanged?.Invoke(true);
+            old?.OnFrameChanged();
+            window?.OnFrameChanged();
         }
 
         /// <summary>The active window goes away (hidden, destroyed): the activation passes to the app's
@@ -278,18 +582,33 @@ namespace MS.Internal.Interop
             // rectangle in a corner. The others -- a dialog, a tool window, a popup -- keep the frame
             // they ask for and float over it, as the browser and iOS heads have them.
             bool main = !borderless && (s_mainHandle == IntPtr.Zero || !s_byHandle.ContainsKey(s_mainHandle));
-            if (main)
+            bool desktop = Host?.DesktopWindows == true;
+            if (main && !desktop)
             {
                 Host?.GetScreenPixels(out _widthPixels, out _heightPixels);
                 _xPixels = _yPixels = 0;
             }
+            else if (main)
+            {
+                // on a desktop: where it asks to be, as much of it as the screen holds
+                int sw = _widthPixels, sh = _heightPixels;
+                Host?.GetScreenPixels(out sw, out sh);
+                _widthPixels = Math.Min(_widthPixels, sw);
+                _heightPixels = Math.Min(_heightPixels, sh);
+                _xPixels = Math.Clamp(_xPixels, 0, Math.Max(0, sw - _widthPixels));
+                _yPixels = Math.Clamp(_yPixels, 0, Math.Max(0, sh - _heightPixels));
+            }
 
-            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} created '{title}' {(main ? "main" : borderless ? (_ownSurface ? "borderless, own surface" : "borderless") : "floating")} at ({_xPixels},{_yPixels}) {_widthPixels}x{_heightPixels}px");
+            _title = title ?? "";
+            _wasFilling = main && !desktop;
+            if (!borderless && !(main && !desktop)) ApplyFrame();
+
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} created '{title}' {(main ? "main" : borderless ? (_ownSurface ? "borderless, own surface" : "borderless") : "floating")} at ({_xPixels},{_yPixels}) {_widthPixels}x{_heightPixels}px{(HasFrame ? $", frame {_frameLeft},{_frameTop},{_frameRight},{_frameBottom}" : "")}");
             lock (s_byHandle) s_byHandle[_handle] = this;
             lock (s_zOrder) s_zOrder.Add(this);
             if (main) s_mainHandle = _handle;
 
-            if (Host is null || !Host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, borderless, main, _ownSurface))
+            if (Host is null || !Host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, borderless, main && !desktop, _ownSurface))
             {
                 // No activity to host the view. Keep the handle registered so WPF's teardown path
                 // still finds this window, but it will never present anything.
@@ -342,7 +661,7 @@ namespace MS.Internal.Interop
             switch (state)
             {
                 case 2: case 6: case 7: case 11:   // SW_SHOWMINIMIZED, SW_MINIMIZE, SW_SHOWMINNOACTIVE, SW_FORCEMINIMIZE
-                    if (IsMain || _minimized) return;
+                    if (Pinned || _minimized) return;
                     _minimized = true;
                     Host?.SetViewVisible(_handle, false);
                     RaiseResized();
@@ -350,17 +669,27 @@ namespace MS.Internal.Interop
 
                 case 3:   // SW_SHOWMAXIMIZED / SW_MAXIMIZE
                     Unminimize();
-                    if (IsMain) return;
+                    if (Pinned) return;
                     if (!IsMaximizedNow)
                     {
                         _restoreX = _xPixels; _restoreY = _yPixels; _restoreWidth = _widthPixels; _restoreHeight = _heightPixels;
                         // the screen, which is all the work area there is -- unless the window says otherwise
                         int width = _widthPixels, height = _heightPixels;
                         Host?.GetScreenPixels(out width, out height);
+                        int screenWidth = width, screenHeight = height;
                         int x = 0, y = 0;
-                        if (QueryMaximizedRect?.Invoke(new[] { 0, 0, width, height, 0, 0, width, height }) is int[] r && r.Length >= 4 && r[2] > 0 && r[3] > 0)
+                        // a framed window's outer rectangle hangs its border off the screen, as Windows maximizes
+                        // it: the caption on the screen's top edge, the client to the screen's sides and foot
+                        if (HasFrame) { x = y = -_frameLeft; width += _frameLeft + _frameRight; height += _frameLeft + _frameBottom; }
+                        if (QueryMaximizedRect?.Invoke(new[] { 0, 0, screenWidth, screenHeight, x, y, width, height }) is int[] r && r.Length >= 4 && r[2] > 0 && r[3] > 0)
                         {
                             x = r[0]; y = r[1]; width = r[2]; height = r[3];
+                        }
+                        if (HasFrame)
+                        {
+                            x += _frameLeft; y += _frameTop;
+                            width = Math.Max(1, width - _frameLeft - _frameRight);
+                            height = Math.Max(1, height - _frameTop - _frameBottom);
                         }
                         _maxX = _xPixels = x;
                         _maxY = _yPixels = y;
@@ -374,7 +703,7 @@ namespace MS.Internal.Interop
 
                 case 1: case 9:   // SW_SHOWNORMAL, SW_RESTORE
                     bool wasMinimized = Unminimize();
-                    if (IsMaximizedNow && !IsMain)
+                    if (IsMaximizedNow && !Pinned)
                     {
                         _maximized = false;
                         _xPixels = _restoreX; _yPixels = _restoreY; _widthPixels = _restoreWidth; _heightPixels = _restoreHeight;
@@ -404,7 +733,7 @@ namespace MS.Internal.Interop
         {
             get
             {
-                if (!_maximized || IsMain) return false;
+                if (!_maximized || Pinned) return false;
                 if (_xPixels == _maxX && _yPixels == _maxY && _widthPixels == _maxWidth && _heightPixels == _maxHeight) return true;
                 _maximized = false;
                 return false;
@@ -435,7 +764,7 @@ namespace MS.Internal.Interop
         private static bool s_cursorKnown;
 
         /// <summary>GetCursorPos: where the finger (or the mouse) last was, in screen device pixels.</summary>
-        internal static bool TryGetCursorPixels(out int x, out int y)
+        public static bool TryGetCursorPixels(out int x, out int y)
         {
             x = s_cursorX;
             y = s_cursorY;
@@ -445,13 +774,13 @@ namespace MS.Internal.Interop
 
         public void BeginMoveDrag()
         {
-            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} move loop{(_handle == IntPtr.Zero || IsMain || !s_pressed ? " refused" : "")}");
-            if (_handle == IntPtr.Zero || IsMain || !s_pressed) return;
+            if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} move loop{(_handle == IntPtr.Zero || Pinned || !s_pressed ? " refused" : "")}");
+            if (_handle == IntPtr.Zero || Pinned || !s_pressed) return;
             s_drag = new Drag { Window = this, X0 = s_pressX, Y0 = s_pressY, Left0 = _xPixels, Top0 = _yPixels, Width0 = _widthPixels, Height0 = _heightPixels };
         }
 
         /// <summary>A floating window has no frame of its own to be resized by: this layer does it.</summary>
-        public bool ResizesFromEdges => !IsBorderless && !IsMain;
+        public bool ResizesFromEdges => !IsBorderless && !Pinned;
 
         public bool BeginResizeDrag(int hitTest, int minWidth, int minHeight, int maxWidth, int maxHeight)
         {
@@ -461,8 +790,8 @@ namespace MS.Internal.Interop
             {
                 Window = this, HitTest = hitTest, X0 = s_pressX, Y0 = s_pressY,
                 Left0 = _xPixels, Top0 = _yPixels, Width0 = _widthPixels, Height0 = _heightPixels,
-                MinW = Math.Max(minWidth, 1), MinH = Math.Max(minHeight, 1),
-                MaxW = maxWidth > 0 ? maxWidth : int.MaxValue, MaxH = maxHeight > 0 ? maxHeight : int.MaxValue,
+                MinW = Math.Max(minWidth - _frameLeft - _frameRight, 1), MinH = Math.Max(minHeight - _frameTop - _frameBottom, 1),
+                MaxW = maxWidth > 0 ? maxWidth - _frameLeft - _frameRight : int.MaxValue, MaxH = maxHeight > 0 ? maxHeight - _frameTop - _frameBottom : int.MaxValue,
             };
             return true;
         }
@@ -475,8 +804,18 @@ namespace MS.Internal.Interop
             int dx = x - d.X0, dy = y - d.Y0;
             if (d.HitTest == 0)
             {
+                // a maximized window taken by its caption is restored under the pointer once it moves (SM_CXDRAG), as
+                // on Windows: the same fraction of its width under the pointer, the caption where it is held
+                if (w.IsMaximizedNow && (Math.Abs(dx) > 4 || Math.Abs(dy) > 4))
+                {
+                    double across = w._widthPixels > 0 ? (double)(d.X0 - w._xPixels) / w._widthPixels : 0.5;
+                    int down = d.Y0 - w._yPixels;
+                    w.SetWindowState(9);
+                    d.Left0 = d.X0 - (int)Math.Round(across * w._widthPixels);
+                    d.Top0 = d.Y0 - Math.Min(down, Math.Max(0, w._heightPixels - 1));
+                }
                 // the top edge stays on the screen, so that the caption can be taken hold of again
-                w.SetFrameOrigin(d.Left0 + dx, Math.Max(0, d.Top0 + dy));
+                w.SetClientOrigin(d.Left0 + dx, Math.Max(w._frameTop, d.Top0 + dy));
                 return;
             }
             int ht = d.HitTest;
@@ -489,10 +828,10 @@ namespace MS.Internal.Interop
             height = Math.Min(Math.Max(height, d.MinH), d.MaxH);
             int fx = left ? d.Left0 + d.Width0 - width : d.Left0;
             int fy = top ? d.Top0 + d.Height0 - height : d.Top0;
-            if (fy < 0) { if (top) height += fy; fy = 0; }
+            if (fy < w._frameTop) { if (top) height += fy - w._frameTop; fy = w._frameTop; }
             w._xPixels = fx;
             w._yPixels = fy;
-            w.SetContentSizePixels(width, height);
+            w.SetClientSizePixels(width, height);
         }
 
         public void Destroy()
@@ -517,8 +856,18 @@ namespace MS.Internal.Interop
             SetContentSizePixels((int)Math.Round(width * scale), (int)Math.Round(height * scale));
         }
 
-        /// <summary>Resize from DEVICE PIXELS, as WPF's SetWindowPos supplies.</summary>
+        /// <summary>Resize from DEVICE PIXELS, as WPF's SetWindowPos supplies: the outer size (the client's with its frame).</summary>
         public void SetContentSizePixels(int cx, int cy)
+        {
+            if (HasFrame)
+            {
+                cx = Math.Max(1, cx - _frameLeft - _frameRight);
+                cy = Math.Max(1, cy - _frameTop - _frameBottom);
+            }
+            SetClientSizePixels(cx, cy);
+        }
+
+        private void SetClientSizePixels(int cx, int cy)
         {
             if (_handle == IntPtr.Zero) return;
 
@@ -536,7 +885,15 @@ namespace MS.Internal.Interop
             RaiseResized();
         }
 
+        /// <summary>Move to the outer rectangle's top-left (SetWindowPos), device pixels.</summary>
         public void SetFrameOrigin(int xPixels, int yPixels)
+        {
+            const int CW_USEDEFAULT = unchecked((int)0x80000000);
+            if (HasFrame && xPixels != CW_USEDEFAULT && yPixels != CW_USEDEFAULT) { xPixels += _frameLeft; yPixels += _frameTop; }
+            SetClientOrigin(xPixels, yPixels);
+        }
+
+        private void SetClientOrigin(int xPixels, int yPixels)
         {
             if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} origin -> ({xPixels},{yPixels})px{(IsFullScreenTopLevel ? " (ignored: the app's own window)" : "")}");
             if (_handle == IntPtr.Zero || IsFullScreenTopLevel) return;
@@ -558,9 +915,19 @@ namespace MS.Internal.Interop
             height = _heightPixels;
         }
 
-        /// <summary>Android has no window caption, so the outer window size equals the content size
-        /// (same as the browser and iOS heads).</summary>
-        public void GetWindowPixelSize(out int width, out int height) => GetPixelSize(out width, out height);
+        /// <summary>The outer window size: the client's, with the frame round it where there is one.</summary>
+        public void GetWindowPixelSize(out int width, out int height)
+        {
+            width = _widthPixels + _frameLeft + _frameRight;
+            height = _heightPixels + _frameTop + _frameBottom;
+        }
+
+        /// <summary>The outer window's top-left (GetWindowRect), device pixels.</summary>
+        public void GetWindowScreenOriginPixels(out int x, out int y)
+        {
+            x = _xPixels - _frameLeft;
+            y = _yPixels - _frameTop;
+        }
 
         public void GetClientScreenOriginPixels(out int sx, out int sy)
         {
@@ -573,7 +940,7 @@ namespace MS.Internal.Interop
         /// WPF's SetWindowPos calls for it are ignored — GetPixelSize keeps reporting the real size
         /// and layout follows that. Popups keep their requested geometry.
         /// </summary>
-        private bool IsFullScreenTopLevel => IsMain && Host != null;
+        private bool IsFullScreenTopLevel => Pinned && Host != null;
 
         public double GetRefreshRateHz() => Host?.RefreshRateHz ?? 0;
 
@@ -591,8 +958,8 @@ namespace MS.Internal.Interop
                 AndroidWindow w = s_zOrder[i];
                 if (w._handle == IntPtr.Zero) continue;
 
-                if (x >= w._xPixels && x < w._xPixels + w._widthPixels &&
-                    y >= w._yPixels && y < w._yPixels + w._heightPixels)
+                if (x >= w._xPixels - w._frameLeft && x < w._xPixels + w._widthPixels + w._frameRight &&
+                    y >= w._yPixels - w._frameTop && y < w._yPixels + w._heightPixels + w._frameBottom)
                     return w._handle;
             }
             return IntPtr.Zero;
@@ -631,7 +998,7 @@ namespace MS.Internal.Interop
                 && _xPixels + _widthPixels <= parent._xPixels + parent._widthPixels && _yPixels + _heightPixels <= parent._yPixels + parent._heightPixels);
 
         private bool Contains(int x, int y) => _handle != IntPtr.Zero && _visible && _widthPixels > 1 && _heightPixels > 1
-            && x >= _xPixels && x < _xPixels + _widthPixels && y >= _yPixels && y < _yPixels + _heightPixels;
+            && x >= _xPixels - _frameLeft && x < _xPixels + _widthPixels + _frameRight && y >= _yPixels - _frameTop && y < _yPixels + _heightPixels + _frameBottom;
 
         /// <summary>Where a window is (top-left device pixels), false when there is no such window.</summary>
         public static bool GetOrigin(IntPtr handle, out int left, out int top)
@@ -1188,7 +1555,7 @@ namespace MS.Internal.Interop
             if (s_drag != null)
             {
                 if (kind == 0) DragTo(sx, sy);
-                else if (kind == 2) { DragTo(sx, sy); s_drag = null; s_pressed = false; }
+                else if (kind == 2) { DragTo(sx, sy); s_drag = null; s_pressed = false; s_framePress = null; }
                 return;
             }
             s_cursorX = sx; s_cursorY = sy; s_cursorKnown = true;
@@ -1201,6 +1568,8 @@ namespace MS.Internal.Interop
                 if (!pressed.IsBorderless || pressed._ownSurface || pressed.TakesKeyboardOnPress) s_keyWindow = handle;
                 SetActive(pressed);   // a popup or a child leaves it (SetActive)
             }
+            // the frame's: a press on the caption, an edge or the close button (DefWindowProc's)
+            if (at != null && at.HasFrame && at.OnFrame(kind, xPixels, yPixels)) return;
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
             {

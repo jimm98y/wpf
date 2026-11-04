@@ -1569,10 +1569,14 @@ const XR_METRES_PER_PX = 0.001;   // a CSS pixel is a millimetre: a 1920-wide pa
 const XR_CENTRE_Y = -0.1;         // a little below eye level
 const XR_LAYER_STEP = 0.0005;     // a window this much in front of each one under it
 let xr = null;
+let xrMode = "immersive-vr";
+let xrPanel = null;            // { canvas, handle }: the fullscreen 3D view's picture, the app's drawing
 
 function xrOfferButton() {
     if (!navigator.xr || document.getElementById("wpf-xr-enter")) return;
-    navigator.xr.isSessionSupported("immersive-vr").then((supported) => {
+    Promise.all([navigator.xr.isSessionSupported("immersive-ar").catch(() => false), navigator.xr.isSessionSupported("immersive-vr").catch(() => false)]).then(([ar, vr]) => {
+        xrMode = ar ? "immersive-ar" : "immersive-vr";
+        const supported = ar || vr;
         if (!supported || document.getElementById("wpf-xr-enter")) return;
         const b = document.createElement("button");
         b.id = "wpf-xr-enter";
@@ -1589,16 +1593,24 @@ function xrOfferButton() {
 
 async function xrEnter() {
     if (xr) return;
-    const session = await navigator.xr.requestSession("immersive-vr");
+    // the room behind the windows where the headset can show it (a passthrough session), as the headsets' own apps do
+    const session = await navigator.xr.requestSession(xrMode);
     const glCanvas = document.createElement("canvas");
-    const gl = glCanvas.getContext("webgl2", { xrCompatible: true, alpha: false, antialias: true });
+    const passthrough = session.environmentBlendMode && session.environmentBlendMode !== "opaque";
+    const gl = glCanvas.getContext("webgl2", { xrCompatible: true, alpha: passthrough, antialias: true });
     if (gl.makeXRCompatible) await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { alpha: passthrough }) });
     const space = await session.requestReferenceSpace("local");
     xr = {
         session, gl, space, program: xrProgram(gl), quad: xrQuad(gl),
         textures: new Map(), waiters: [], hits: new Map(),
-        active: null, down: false, rightDown: false, wheel: 0, last: null,
+        active: null, down: false, rightDown: false, wheel: 0, last: null, passthrough,
+        // the eyes as this frame has them, for the app's 3D views (BrowserXrHost, XrHeadset): position, turn,
+        // the angles of the field of view (left, right, up, down)
+        views: [null, null], frame: 0,
+        // a 3D view filling the eyes (B or Y): the app draws it into a canvas of its own (xrPanelCanvas), shown
+        // to each eye its half; the sticks and grips handle it meanwhile, not the mouse
+        full: false, panelShown: -1, fullHeld: false, grips: [null, null], panelTex: null,
     };
     const button = document.getElementById("wpf-xr-enter");
     if (button) button.style.display = "none";
@@ -1606,6 +1618,7 @@ async function xrEnter() {
     queue.push({ t: "xr", on: 1 });
     session.addEventListener("end", () => {
         queue.push({ t: "xr", on: 0 });
+        globalThis.__wpfCanvasPresented = null;
         const ended = xr;
         xr = null;
         if (ended) {
@@ -1616,9 +1629,39 @@ async function xrEnter() {
     });
     session.addEventListener("selectstart", (e) => xrButton(e.inputSource, 0, true));
     session.addEventListener("selectend", (e) => xrButton(e.inputSource, 0, false));
-    session.addEventListener("squeezestart", (e) => xrButton(e.inputSource, 2, true));
-    session.addEventListener("squeezeend", (e) => xrButton(e.inputSource, 2, false));
+    session.addEventListener("squeezestart", (e) => { if (!xr?.full) xrButton(e.inputSource, 2, true); });
+    session.addEventListener("squeezeend", (e) => { if (!xr?.full) xrButton(e.inputSource, 2, false); });
+    // a WebGPU canvas reads as transparent once its frame is presented: each is taken into its texture as it is
+    // (wgpu-interop.js surfacePresent), not when the headset's frame comes
+    globalThis.__wpfCanvasPresented = xrTake;
     session.requestAnimationFrame(xrFrame);
+}
+
+function xrTexture(gl) {
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+}
+
+// a canvas just presented: its picture into the texture it is drawn from (a window's, or the fullscreen panel's)
+function xrTake(canvas) {
+    if (!xr) return;
+    const gl = xr.gl;
+    let tex;
+    if (xrPanel && canvas === xrPanel.canvas) tex = xr.panelTex ??= xrTexture(gl);
+    else {
+        let handle = 0;
+        for (const [h, w] of windows) if (w.canvas === canvas) { handle = h; break; }
+        if (!handle) return;
+        tex = xr.textures.get(handle);
+        if (!tex) { tex = xrTexture(gl); xr.textures.set(handle, tex); }
+    }
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas); } catch { }
 }
 
 function xrProgram(gl) {
@@ -1727,6 +1770,19 @@ function xrFrame(time, frame) {
     // the app's frame: its dispatcher ticks with the headset's
     for (const resolve of xr.waiters.splice(0)) resolve(0);
 
+    // the eyes, for the app's 3D views
+    const eyesPose = frame.getViewerPose(space);
+    if (eyesPose) {
+        xr.frame++;
+        for (const view of eyesPose.views) {
+            const i = view.eye === "right" ? 1 : 0;
+            const m = view.projectionMatrix, p = view.transform.position, q = view.transform.orientation;
+            // the frustum's sides from the projection (column-major): tangents, as angles
+            const l = (m[8] - 1) / m[0], r = (m[8] + 1) / m[0], b = (m[9] - 1) / m[5], t = (m[9] + 1) / m[5];
+            xr.views[i] = [p.x, p.y, p.z, q.x, q.y, q.z, q.w, Math.atan(l), Math.atan(r), Math.atan(t), Math.atan(b)];
+        }
+    }
+
     // where each hand points; the active one moves the mouse
     xr.hits.clear();
     for (const source of session.inputSources) {
@@ -1738,7 +1794,8 @@ function xrFrame(time, frame) {
     }
     if (!xr.active && session.inputSources.length > 0) xr.active = session.inputSources[0];
     const hit = xr.active && xr.hits.get(xr.active);
-    if (hit) {
+    xrFullscreenInput(frame, hit);
+    if (hit && !xr.full) {
         if (!xr.last || Math.abs(hit.clientX - xr.last.clientX) >= 0.5 || Math.abs(hit.clientY - xr.last.clientY) >= 0.5)
             pushMouse(0, xrEvent(hit, 0));
         xr.last = hit;
@@ -1755,11 +1812,12 @@ function xrFrame(time, frame) {
         } else xr.wheel = 0;
     }
 
-    const viewerPose = frame.getViewerPose(space);
+    const viewerPose = eyesPose;
     if (!viewerPose) return;
     const layer = session.renderState.baseLayer;
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
-    gl.clearColor(0.08, 0.08, 0.1, 1);
+    if (xr.passthrough) gl.clearColor(0, 0, 0, 0); else gl.clearColor(0.08, 0.08, 0.1, 1);
+    if (xr.full && xr.panelShown >= 0 && xrPanel) { xrDrawPanel(gl, program, layer, viewerPose); return; }
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
@@ -1775,18 +1833,8 @@ function xrFrame(time, frame) {
     const panels = xrPanels();
     const seen = new Set();
     for (const panel of panels) {
-        let tex = xr.textures.get(panel.handle);
-        if (!tex) {
-            tex = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, tex);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            xr.textures.set(panel.handle, tex);
-        }
-        gl.bindTexture(gl.TEXTURE_2D, tex);
-        try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, panel.canvas); } catch { }
+        // the picture taken as the canvas was presented (xrTake); one not presented since the session began, now
+        if (!xr.textures.has(panel.handle)) xrTake(panel.canvas);
         seen.add(panel.handle);
     }
     for (const [handle, tex] of xr.textures)
@@ -1816,4 +1864,103 @@ function xrFrame(time, frame) {
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
     }
+}
+
+// ---- a 3D view filling the eyes (B on the right controller, Y on the left) -------------------------------
+//
+// As the headsets' own apps have it (AndroidXrHost): the app draws the view for the eyes into a canvas of its
+// own, side by side, and each eye is shown its half; the left stick turns the model, the right one scales it, a
+// grip held moves it with the hand (the app's XrStereo3D does all of it: BrowserXrHost hands it on).
+
+const XR_PANEL_HANDLE = 0x7ffe0001;
+
+function xrFullscreenInput(frame, hit) {
+    let fullscreen = false;
+    let turn = 0, scale = 1;
+    const move = [0, 0, 0];
+    for (const source of xr.session.inputSources) {
+        const pad = source.gamepad;
+        if (!pad) continue;
+        if (pad.buttons.length > 5 && pad.buttons[5].pressed) fullscreen = true;     // xr-standard: B / Y
+        if (!xr.full) continue;
+        const axes = pad.axes;
+        const dt = 1 / 72;
+        if (source.handedness === "left" && axes.length >= 4 && Math.abs(axes[2]) > 0.2) turn += axes[2] * Math.PI / 2 * dt;
+        if (source.handedness === "right" && axes.length >= 4 && Math.abs(axes[3]) > 0.2) scale *= Math.pow(2, -axes[3] * dt);
+        const i = source.handedness === "left" ? 0 : 1;
+        const grip = pad.buttons.length > 1 ? pad.buttons[1].value : 0;
+        const pose = source.gripSpace && frame.getPose(source.gripSpace, xr.space);
+        const held = xr.grips[i] ? grip > 0.4 : grip > 0.6;
+        if (held && pose && xr.grips[i]) {
+            const p = pose.transform.position;
+            move[0] += p.x - xr.grips[i][0]; move[1] += p.y - xr.grips[i][1]; move[2] += p.z - xr.grips[i][2];
+        }
+        xr.grips[i] = held && pose ? [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z] : null;
+    }
+    if (fullscreen && !xr.fullHeld) {
+        const at = hit || xr.last;
+        const d = dpr();
+        queue.push({ t: "xrb", x: at ? Math.round(at.clientX * d) : -1, y: at ? Math.round(at.clientY * d) : -1 });
+    }
+    xr.fullHeld = fullscreen;
+    if (xr.full && (turn !== 0 || scale !== 1 || move[0] !== 0 || move[1] !== 0 || move[2] !== 0))
+        queue.push({ t: "xrm", r: turn, s: scale, x: move[0], y: move[1], z: move[2] });
+}
+
+function xrDrawPanel(gl, program, layer, viewerPose) {
+    if (!xr.panelTex) return;     // nothing presented into the panel yet (xrTake)
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);     // the app's picture is premultiplied
+    gl.useProgram(program.prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, xr.quad);
+    gl.enableVertexAttribArray(program.pos);
+    gl.vertexAttribPointer(program.pos, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform1i(program.tex, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, xr.panelTex);
+    const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    gl.uniform4f(program.solid, 0, 0, 0, 0);
+    for (const view of viewerPose.views) {
+        const vp = layer.getViewport(view);
+        gl.viewport(vp.x, vp.y, vp.width, vp.height);
+        // the eye's whole view: drawn for this eye's field of view, its half of the picture
+        gl.uniformMatrix4fv(program.proj, false, identity);
+        gl.uniformMatrix4fv(program.view, false, identity);
+        gl.uniformMatrix4fv(program.model, false, xrModel(0, 0, 0, 2, 2));
+        gl.uniform2f(program.half, view.eye === "right" ? 0.5 : 0.0, 0.5);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    }
+}
+
+/** An eye as the latest frame has it (0 left, 1 right): x y z, turn x y z w, angles left right up down; or null. */
+export function xrEyeView(eye) { return xr && xr.views[eye] ? xr.views[eye] : null; }
+
+/** The headset frames so far (the eyes' time). */
+export function xrEyesTime() { return xr ? xr.frame : 0; }
+
+/** A desktop point (device pixels) in the room: the plane the windows lie on. */
+export function xrDesktopToSpace(x, y) {
+    const d = dpr();
+    return [(x / d - window.innerWidth / 2) * XR_METRES_PER_PX, XR_CENTRE_Y - (y / d - window.innerHeight / 2) * XR_METRES_PER_PX, -XR_DISTANCE];
+}
+
+/** The fullscreen view's canvas, the size the app draws it at; its handle (for a WebGPU surface). */
+export function xrPanelCanvas(width, height) {
+    if (!xrPanel) {
+        const canvas = document.createElement("canvas");
+        xrPanel = { canvas, handle: XR_PANEL_HANDLE };
+        canvases().set(XR_PANEL_HANDLE, canvas);
+    }
+    if (xrPanel.canvas.width !== width) xrPanel.canvas.width = width;
+    if (xrPanel.canvas.height !== height) xrPanel.canvas.height = height;
+    return XR_PANEL_HANDLE;
+}
+
+/** Whether a 3D view fills the eyes; the picture last drawn into its canvas (-1: none yet). */
+export function xrFullscreen(on, shown) {
+    if (!xr) return;
+    xr.full = on;
+    xr.panelShown = on ? shown : -1;
 }

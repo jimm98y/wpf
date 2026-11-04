@@ -490,6 +490,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bytes;
         }
 
+        /// <summary>Maps a MapRead buffer (driving the device queue) and hands its memory to <paramref name="use"/> while it
+        /// is mapped -- no copy of its own: a frame's picture each frame (a headset's, XrExternalPanel) is not
+        /// a garbage collection's worth each frame. False when the map failed.</summary>
+        public bool MapReadInPlace(IntPtr buffer, ulong size, Action<IntPtr> use)
+        {
+            var state = new MapReadState();
+            var h = GCHandle.Alloc(state);
+            try
+            {
+                var info = new WGPUBufferMapCallbackInfo
+                {
+                    mode = WGPUCallbackMode.AllowProcessEvents,
+                    callback = MapCallback(&OnMapRead, MapReadDone),
+                    userdata1 = GCHandle.ToIntPtr(h),
+                };
+                wgpuBufferMapAsync(buffer, WGPUMapMode.Read, 0, (nuint)size, info);
+                for (int i = 0; i < 2000 && !state.Done; i++) wgpuDevicePoll(Device, WGPU_TRUE, null);
+            }
+            finally { h.Free(); }
+            if (!state.Ok) return false;
+            void* mapped = wgpuBufferGetConstMappedRange(buffer, 0, (nuint)size);
+            try { if (mapped != null) use((IntPtr)mapped); }
+            finally { wgpuBufferUnmap(buffer); }
+            return mapped != null;
+        }
+
         /// <summary>GL backend: work that wrote storage buffers was submitted on this device (the Direct3D
         /// shim's, Composition/ProcessGpu.cs), so wgpu-hal may have left a storage buffer bound to
         /// GL_PIXEL_UNPACK_BUFFER, and a queue.writeTexture would then read it instead of its data

@@ -85,7 +85,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 var format = renderer.SrgbOutput ? WGPUTextureFormat.BGRA8UnormSrgb : WGPUTextureFormat.BGRA8Unorm;
                 var d = new WGPUTextureDescriptor
                 {
-                    usage = WGPUTextureUsage.TextureBinding | WGPUTextureUsage.CopyDst,
+                    // CopySrc: read back for a headset whose compositor takes pictures from memory (XrExternalPanel)
+                    usage = WGPUTextureUsage.TextureBinding | WGPUTextureUsage.CopyDst | WGPUTextureUsage.CopySrc,
                     dimension = WGPUTextureDimension._2D,
                     size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
                     format = format, mipLevelCount = 1, sampleCount = 1,

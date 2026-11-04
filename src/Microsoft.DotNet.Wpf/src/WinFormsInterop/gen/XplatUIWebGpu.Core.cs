@@ -2243,6 +2243,8 @@ namespace System.Windows.Forms
 			if ((msg.Msg == 0x00A1 || msg.Msg == 0x00A3) && Control.FromHandle(msg.HWnd) is Form ncForm && ncForm.TopLevel)
 			{
 				int ht = (int)msg.WParam.ToInt64();
+				if (s_traceSysCommand)
+					Console.WriteLine($"[ncbutton] '{ncForm.Text}' 0x{msg.Msg:x} hit {ht} state={ncForm.WindowState} move={(BeginWindowMove != null)}");
 				if (msg.Msg == 0x00A3 && ht == HTCAPTION && ncForm.MaximizeBox)
 				{
 					ncForm.WindowState = ncForm.WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;

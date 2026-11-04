@@ -313,8 +313,11 @@ internal static partial class Bundle
             {
                 public override bool FinishedLaunching(UIApplication application, NSDictionary launchOptions) => true;
 
+                // the window's scene is the app's; another (visionOS's immersive space, a SwiftUI scene) keeps its own
                 public override UISceneConfiguration GetConfiguration(UIApplication application, UISceneSession connectingSceneSession, UISceneConnectionOptions options)
-                    => new UISceneConfiguration("Default Configuration", connectingSceneSession.Role);
+                    => connectingSceneSession.Role == UIWindowSceneSessionRole.Application
+                        ? new UISceneConfiguration("Default Configuration", connectingSceneSession.Role)
+                        : connectingSceneSession.Configuration;
             }
 
             /// <summary>The screen the app's windows are on: all of it, as a desktop is -- no status bar over

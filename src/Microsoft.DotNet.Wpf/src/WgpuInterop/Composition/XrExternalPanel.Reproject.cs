@@ -12,7 +12,9 @@
 // moved: the 72 a second the headset shows of the 44 the app draws.
 //
 // The texels with nothing drawn (the room shows through) have the far depth; a vertex takes the nearest depth
-// round it, so that a model's edge moves with the model, not stretched to the far plane behind it.
+// of the cells it is a corner of, so that a model's edge moves with the model, not stretched to the far plane
+// behind it. Of every texel of them: each cell's nearest is found once a drawing (the cells' own texture) -- nine
+// samples round a vertex missed an edge or a railing between them, and the edges wobbled as they crossed the grid.
 //
 
 using System;
@@ -28,6 +30,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static int s_depthWidth, s_depthHeight;
         private static bool s_latestHasDepth;
         private static IntPtr s_copyModule, s_copyPipeline, s_copyPipelineMs;
+        private static IntPtr s_cells, s_cellsView, s_cellsPipeline, s_cellsLayout;   // each cell's nearest depth
+        private static int s_cellsWidth, s_cellsHeight;
         private static IntPtr s_moveModule, s_moveLayout, s_movePipeline, s_moveSampler, s_moveUniforms;
         private static WGPUTextureFormat s_movePipelineFormat;
         private static IntPtr s_moveDepth, s_moveDepthView;   // the moved mesh folds over itself: the nearest kept
@@ -40,11 +44,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// (<paramref name="depth"/>, null for none), copied for the image about to be published.</summary>
         public static void CopyDepth(WgpuContext ctx, D3DTexture2D? depth, int width, int height)
         {
-            if (!OperatingSystem.IsAndroid()) return;
             s_latestHasDepth = false;
-            if (s_targetWindow == IntPtr.Zero || width != s_targetWidth || height != s_targetHeight) return;
             if (depth?.Gpu is not { } source || source == IntPtr.Zero || depth.Desc.Width != width || depth.Desc.Height != height) return;
             if ((depth.GpuUsage & WGPUTextureUsage.TextureBinding) == 0) return;
+            CopyDepth(ctx, source, depth.Format, depth.SampleCount, width, height);
+        }
+
+        /// <summary>The same for a depth texture of the compositor's own (a WPF Viewport3D's, WgpuSceneRenderer.Headset.cs):
+        /// <paramref name="format"/> and <paramref name="samples"/> its own, sampleable.</summary>
+        public static void CopyDepth(WgpuContext ctx, IntPtr source, WGPUTextureFormat format, uint samples, int width, int height)
+        {
+            s_latestHasDepth = false;
+            if (source == IntPtr.Zero || s_targetWindow == IntPtr.Zero || width != s_targetWidth || height != s_targetHeight) return;
             if (s_depth == IntPtr.Zero || s_depthWidth != width || s_depthHeight != height)
             {
                 if (s_depthView != IntPtr.Zero) wgpuTextureViewRelease(s_depthView);
@@ -60,10 +71,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 s_depthWidth = width;
                 s_depthHeight = height;
             }
-            bool ms = depth.SampleCount > 1;
+            bool ms = samples > 1;
             IntPtr pipeline = CopyPipeline(ctx, ms);
             if (pipeline == IntPtr.Zero) return;
-            IntPtr from = D3DView.CreateTextureView(source, depth.Format, WGPUTextureViewDimension._2D, 0, 1, 0, 1, WGPUTextureAspect.DepthOnly);
+            IntPtr from = D3DView.CreateTextureView(source, format, WGPUTextureViewDimension._2D, 0, 1, 0, 1, WGPUTextureAspect.DepthOnly);
             IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(pipeline, 0);
             var entry = new WGPUBindGroupEntry { binding = 0, textureView = from };
             var bgd = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = &entry };
@@ -77,6 +88,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
             wgpuRenderPassEncoderEnd(pass);
             wgpuRenderPassEncoderRelease(pass);
+            Cells(ctx, enc, width, height);
             IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
             wgpuCommandEncoderRelease(enc);
             wgpuQueueSubmit(ctx.Queue, 1, &cmd);
@@ -86,6 +98,67 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             wgpuTextureViewRelease(from);
             s_latestHasDepth = true;
         }
+
+        /// <summary>Each eye's cells (<see cref="Cell"/> texels each way, from the eye's left edge) and the nearest depth
+        /// of each: a texel a cell, the left eye's cells then the right's.</summary>
+        private static void Cells(WgpuContext ctx, IntPtr enc, int width, int height)
+        {
+            int across = (width / 2 + Cell - 1) / Cell, down = (height + Cell - 1) / Cell;
+            if (s_cells == IntPtr.Zero || s_cellsWidth != 2 * across || s_cellsHeight != down)
+            {
+                if (s_cellsView != IntPtr.Zero) wgpuTextureViewRelease(s_cellsView);
+                if (s_cells != IntPtr.Zero) wgpuTextureRelease(s_cells);
+                var td = new WGPUTextureDescriptor
+                {
+                    usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding, dimension = WGPUTextureDimension._2D,
+                    size = new WGPUExtent3D { width = (uint)(2 * across), height = (uint)down, depthOrArrayLayers = 1 },
+                    format = TexFmt.R32Float, mipLevelCount = 1, sampleCount = 1,
+                };
+                s_cells = wgpuDeviceCreateTexture(ctx.Device, &td);
+                s_cellsView = wgpuTextureCreateView(s_cells, IntPtr.Zero);
+                s_cellsWidth = 2 * across;
+                s_cellsHeight = down;
+            }
+            if (s_cellsPipeline == IntPtr.Zero)
+            {
+                var e = new WGPUBindGroupLayoutEntry { binding = 0, visibility = WGPUShaderStage_Fragment, texture = new WGPUTextureBindingLayout { sampleType = WGPUTextureSampleType.UnfilterableFloat, viewDimension = WGPUTextureViewDimension._2D } };
+                var ld = new WGPUBindGroupLayoutDescriptor { entryCount = 1, entries = &e };
+                s_cellsLayout = wgpuDeviceCreateBindGroupLayout(ctx.Device, &ld);
+                IntPtr l = s_cellsLayout;
+                var pld = new WGPUPipelineLayoutDescriptor { bindGroupLayoutCount = 1, bindGroupLayouts = &l };
+                s_cellsPipeline = CreatePipeline(ctx, Module(ctx, CopyWgsl + CellsFs.Replace("CELL", Cell.ToString())), wgpuDeviceCreatePipelineLayout(ctx.Device, &pld), TexFmt.R32Float);
+            }
+            var entry = new WGPUBindGroupEntry { binding = 0, textureView = s_depthView };
+            var bgd = new WGPUBindGroupDescriptor { layout = s_cellsLayout, entryCount = 1, entries = &entry };
+            IntPtr group = wgpuDeviceCreateBindGroup(ctx.Device, &bgd);
+            var att = new WGPURenderPassColorAttachment { view = s_cellsView, depthSlice = 0xFFFFFFFF, loadOp = WGPULoadOp.Clear, storeOp = WGPUStoreOp.Store, clearValue = new WGPUColor { r = 1 } };
+            var rp = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &att };
+            IntPtr pass = wgpuCommandEncoderBeginRenderPass(enc, &rp);
+            wgpuRenderPassEncoderSetPipeline(pass, s_cellsPipeline);
+            wgpuRenderPassEncoderSetBindGroup(pass, 0, group, 0, null);
+            wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+            wgpuRenderPassEncoderEnd(pass);
+            wgpuRenderPassEncoderRelease(pass);
+            wgpuBindGroupRelease(group);
+        }
+
+        private const string CellsFs = @"
+@group(0) @binding(0) var src: texture_2d<f32>;
+@fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+    let dims = vec2<i32>(textureDimensions(src));
+    let half = dims.x / 2;
+    let across = (half + CELL - 1) / CELL;
+    let cell = vec2<i32>(pos.xy);
+    let eye = cell.x / across;
+    let x0 = eye * half + (cell.x - eye * across) * CELL;
+    let x1 = min(x0 + CELL, (eye + 1) * half);
+    let y0 = cell.y * CELL;
+    let y1 = min(y0 + CELL, dims.y);
+    var d = 1.0;
+    for (var y = y0; y < y1; y++) { for (var x = x0; x < x1; x++) { d = min(d, textureLoad(src, vec2<i32>(x, y), 0).r); } }
+    return vec4<f32>(d, 0.0, 0.0, 1.0);
+}
+";
 
         private const string CopyWgsl = @"
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -120,10 +193,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             IntPtr pipeline = MovePipeline(ctx, s_format);
             if (pipeline == IntPtr.Zero) return;
             int eyeWidth = image.Width / 2, height = image.Height;
-            int cols = Math.Max(2, eyeWidth / Cell + 1), rows = Math.Max(2, height / Cell + 1);
+            int cols = (eyeWidth + Cell - 1) / Cell + 1, rows = (height + Cell - 1) / Cell + 1;
             float* u = stackalloc float[52];
             for (int i = 0; i < 48; i++) u[i] = views[i];
-            u[48] = cols; u[49] = rows; u[50] = s_latestHasDepth ? 1f : 0f; u[51] = Cell / 2f;
+            u[48] = cols; u[49] = rows; u[50] = s_latestHasDepth ? 1f : 0f; u[51] = Cell;
             if (s_moveUniforms == IntPtr.Zero)
             {
                 var bd = new WGPUBufferDescriptor { usage = WGPUBufferUsage.Uniform | WGPUBufferUsage.CopyDst, size = 52 * 4 };
@@ -133,7 +206,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var entries = stackalloc WGPUBindGroupEntry[4];
             entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = s_moveUniforms, size = 52 * 4 };
             entries[1] = new WGPUBindGroupEntry { binding = 1, textureView = image.View };
-            entries[2] = new WGPUBindGroupEntry { binding = 2, textureView = s_latestHasDepth ? s_depthView : image.View };
+            entries[2] = new WGPUBindGroupEntry { binding = 2, textureView = s_latestHasDepth ? s_cellsView : image.View };
             entries[3] = new WGPUBindGroupEntry { binding = 3, sampler = s_moveSampler };
             var bgd = new WGPUBindGroupDescriptor { layout = s_moveLayout, entryCount = 4, entries = entries };
             IntPtr group = wgpuDeviceCreateBindGroup(ctx.Device, &bgd);
@@ -185,20 +258,21 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
     let cell = vi / 6u;
     let k = vi % 6u;
     var corner = array<vec2<u32>, 6>(vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(0u, 1u), vec2<u32>(1u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u));
-    let g = vec2<u32>(cell % (cols - 1u), cell / (cols - 1u)) + corner[k];
-    let uv = vec2<f32>(g) / vec2<f32>(f32(cols - 1u), f32(rows - 1u));
+    let g = vec2<i32>(vec2<u32>(cell % (cols - 1u), cell / (cols - 1u)) + corner[k]);
     let dims = vec2<i32>(textureDimensions(color));
     let half = dims.x / 2;
-    let x0 = i32(eye) * half;
-    let c = vec2<i32>(x0 + i32(uv.x * f32(half - 1)), i32(uv.y * f32(dims.y - 1)));
-    // the nearest depth round the vertex: a model's edge moves with it
+    // a cell's corner: at its texels' edge, the eye's half from 0 to 1
+    let size = i32(p.grid.w);
+    let uv = vec2<f32>(min(g * size, vec2<i32>(half, dims.y))) / vec2<f32>(f32(half), f32(dims.y));
+    // the nearest depth of the cells it is a corner of: a model's edge moves with it
     var d = 1.0;
     if (p.grid.z > 0.5) {
-        let r = i32(p.grid.w);
-        for (var j = -1; j <= 1; j++) {
-            for (var i = -1; i <= 1; i++) {
-                let q = clamp(c + vec2<i32>(i * r, j * r), vec2<i32>(x0, 0), vec2<i32>(x0 + half - 1, dims.y - 1));
-                d = min(d, textureLoad(depth, q, 0).r);
+        let across = i32(cols) - 1;
+        let downs = i32(rows) - 1;
+        for (var j = -1; j <= 0; j++) {
+            for (var i = -1; i <= 0; i++) {
+                let q = clamp(g + vec2<i32>(i, j), vec2<i32>(0, 0), vec2<i32>(across - 1, downs - 1));
+                d = min(d, textureLoad(depth, vec2<i32>(i32(eye) * across + q.x, q.y), 0).r);
             }
         }
     }

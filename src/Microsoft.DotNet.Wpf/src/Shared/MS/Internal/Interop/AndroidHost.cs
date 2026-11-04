@@ -124,6 +124,10 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
 {
     private readonly IntPtr _wpfHandle;
 
+    /// <summary>Taken out of the activity (DestroyView): what its surface still reports is no longer the window's,
+    /// which may have a view in another host by now (AndroidWindow.Rehost: the panel app gone immersive).</summary>
+    public bool Detached { get; set; }
+
     /// <summary>The app's own window, which fills the activity; the others float.</summary>
     public bool FillsScreen { get; init; }
 
@@ -176,10 +180,13 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
         => Report(holder, width, height);
 
     public void SurfaceDestroyed(ISurfaceHolder holder)
-        => AndroidWindow.NotifySurfaceDestroyed(_wpfHandle);
+    {
+        if (!Detached) AndroidWindow.NotifySurfaceDestroyed(_wpfHandle);
+    }
 
     private void Report(ISurfaceHolder holder, int width, int height)
     {
+        if (Detached) return;
         Surface? surface = holder.Surface;
         if (surface is null || !surface.IsValid) return;
 
@@ -1115,6 +1122,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     private void DestroyViewCore(IntPtr handle)
     {
         if (!_views.Remove(handle, out View? view)) return;
+        if (view is WpfSurfaceView surfaceView) surfaceView.Detached = true;
         _parents.Remove(handle);
         foreach (IntPtr child in ChildrenOf(handle)) _parents.Remove(child);
         _root.RemoveView(view);

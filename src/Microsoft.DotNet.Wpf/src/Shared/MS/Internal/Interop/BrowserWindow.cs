@@ -550,6 +550,18 @@ namespace MS.Internal.Interop
                         // a WebXR session began or ended (browser-window.js): while it runs, every window is
                         // a stereo pair, the page's canvases twice their width (NativePlatform.IsStereoWindow)
                         s_xrActive = e.GetProperty("on").GetInt32() != 0;
+                        if (s_xrActive) BrowserXrHost.Started(); else BrowserXrHost.Ended();
+                        break;
+
+                    case "xrb":
+                        // B or Y: the 3D view under the ray fills the eyes, or goes back (BrowserXrHost)
+                        BrowserXrHost.Toggle(e.GetProperty("x").GetInt32(), e.GetProperty("y").GetInt32());
+                        break;
+
+                    case "xrm":
+                        // the sticks and grips while a 3D view fills the eyes
+                        BrowserXrHost.Manipulate(e.GetProperty("r").GetDouble(), e.GetProperty("s").GetDouble(),
+                            e.GetProperty("x").GetDouble(), e.GetProperty("y").GetDouble(), e.GetProperty("z").GetDouble());
                         break;
 
                     case "s":

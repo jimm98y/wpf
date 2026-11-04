@@ -199,12 +199,17 @@ function relayedRuntime() {
 
 export function surfacePresent(surfaceId) {
     const s = get(surfaceId);
-    if (!s?.back) return;     // the canvas's own texture, presented when this task ends
-    const tex = s.context.getCurrentTexture();
-    const enc = s.device.createCommandEncoder();
-    enc.copyTextureToTexture({ texture: s.back }, { texture: tex },
-        { width: s.back.width, height: s.back.height, depthOrArrayLayers: 1 });
-    s.device.queue.submit([enc.finish()]);
+    if (!s) return;
+    if (s.back) {
+        const tex = s.context.getCurrentTexture();
+        const enc = s.device.createCommandEncoder();
+        enc.copyTextureToTexture({ texture: s.back }, { texture: tex },
+            { width: s.back.width, height: s.back.height, depthOrArrayLayers: 1 });
+        s.device.queue.submit([enc.finish()]);
+    }
+    // what draws the canvases elsewhere (a headset's layer, browser-window.js) takes the picture now: once
+    // this task ends the canvas reads as transparent
+    globalThis.__wpfCanvasPresented?.(s.canvas);
 }
 
 // What a canvas shows, read back -- the screen's pixels an eye dropper samples (ScreenPixels, through

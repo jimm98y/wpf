@@ -1089,8 +1089,17 @@
   <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuAndroidHost)' != 'false' and '$(WpfWebGpuAndroidXr)' == 'true'">
     <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXr.cs" Link="WpfWebGpu/AndroidXr.cs" Visible="false" />
     <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXrHost.cs" Link="WpfWebGpu/AndroidXrHost.cs" Visible="false" />
-    <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidXrStereo3D.cs" Link="WpfWebGpu/AndroidXrStereo3D.cs" Visible="false" />
+    <Compile Include="$(WpfWebGpuSdkRoot)xr/XrStereo3D.cs" Link="WpfWebGpu/XrStereo3D.cs" Visible="false" />
+    <Compile Include="$(WpfWebGpuSdkRoot)xr/XrHeadset.cs" Link="WpfWebGpu/XrHeadset.cs" Visible="false" />
     <AndroidLibrary Include="$(WpfWebGpuOpenXrLoader)" Condition="'$(WpfWebGpuOpenXrLoader)' != ''" />
+  </ItemGroup>
+
+  <!-- The browser and iOS (visionOS too): a headset's 3D views (XrStereo3D over XrHeadset), compiled into the app as
+       on Android; the headset itself is the head's window layer's (WebXR: BrowserXrHost; visionOS: its immersive
+       space), which offers it through AppContext. Inert with no headset. -->
+  <ItemGroup Condition="('$(_WpfWebGpuBrowser)' == 'true' or '$(_WpfWebGpuIos)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuXr)' != 'false'">
+    <Compile Include="$(WpfWebGpuSdkRoot)xr/XrStereo3D.cs" Link="WpfWebGpu/XrStereo3D.cs" Visible="false" />
+    <Compile Include="$(WpfWebGpuSdkRoot)xr/XrHeadset.cs" Link="WpfWebGpu/XrHeadset.cs" Visible="false" />
   </ItemGroup>
 
   <!-- iOS: the frameworks the app is linked against are the ones its P/Invokes name, and the stack's

@@ -178,6 +178,30 @@ internal static partial class Bundle
             [assembly: UsesFeature("com.oculus.feature.PASSTHROUGH", Required = false)]
             [assembly: MetaData("com.oculus.supportedDevices", Value = "quest2|questpro|quest3|quest3s")]
             """;
+        // the flat activity's way into the immersive one (B or Y on a controller, the 3D view under the pointer
+        // filling the eyes if there is one there), and its windows back from it when it returns
+        string flatToXr = openXrLoader == null ? "" : $$"""
+                    // B or Y: the app immersive, a 3D view under the pointer filling the eyes (a hybrid app's way in).
+                    // A headset's system gives a panel app B as Back (from its pointer, "source Mouse"); a Windows
+                    // program has no Back of its own to lose to it
+                    bool immersiveKey = e.KeyCode is Android.Views.Keycode.ButtonB or Android.Views.Keycode.ButtonY
+                        || (e.KeyCode == Android.Views.Keycode.Back && IsHeadset);
+                    // a press of this panel's own: not the release of the B that brought it back (the session
+                    // acts on the press; its release lands here), nor one in the moment it comes back
+                    if (immersiveKey && e.Action == Android.Views.KeyEventActions.Down && e.RepeatCount == 0)
+                        _immersivePressed = Android.OS.SystemClock.UptimeMillis() - _resumedAt > 800;
+                    if (immersiveKey && e.Action == Android.Views.KeyEventActions.Up && _immersivePressed)
+                    {
+                        _immersivePressed = false;
+                        AndroidWindow.TryGetCursorPixels(out int x, out int y);
+                        var intent = new Android.Content.Intent(this, typeof(WpfRunXrActivity));
+                        intent.PutExtra("x", x);
+                        intent.PutExtra("y", y);
+                        StartActivity(intent);
+                        return true;
+                    }
+                    if (immersiveKey) return true;
+            """;
         string xrActivity = openXrLoader == null ? "" : $$"""
             [Activity(
                 Name = "{{id}}.WpfRunXrActivity",
@@ -196,10 +220,10 @@ internal static partial class Bundle
             {
                 private AndroidHost _flat;
                 private AndroidXrHost _xr;
-                private static bool s_started;
 
+                // B or Y are the session's own (AndroidXrHost); the system's Back from them must not end the activity
                 public override bool DispatchKeyEvent(Android.Views.KeyEvent e)
-                    => _flat?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
+                    => e.KeyCode == Android.Views.Keycode.Back || _flat?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
 
                 protected override void OnDestroy()
                 {
@@ -222,7 +246,8 @@ internal static partial class Bundle
                     SetContentView(root);
                     var flat = new AndroidHost(this, root);
                     var xr = new AndroidXrHost(this, flat);
-                    AndroidWindow.Host = xr;
+                    // (the panel's windows, if the app runs already, are moved across below: Rehost)
+                    if (!WpfRunBundleHost.Started) AndroidWindow.Host = xr;
                     AndroidAccessibility.Host = flat;
                     AndroidPrint.Host = flat;
                     AndroidClipboard.Host = flat;
@@ -230,8 +255,23 @@ internal static partial class Bundle
                     AndroidDragDrop.Host = flat;
                     _flat = flat;
                     _xr = xr;
-                    if (s_started) return;
-                    s_started = true;
+                    // B or Y away from a 3D view: back to the 2D panel, with the windows
+                    xr.LeaveRequested += () => RunOnUiThread(() =>
+                    {
+                        var back = new Android.Content.Intent(this, typeof(WpfRunActivity));
+                        back.AddFlags(Android.Content.ActivityFlags.ReorderToFront);
+                        StartActivity(back);
+                        Finish();
+                    });
+                    if (Intent?.HasExtra("x") == true) xr.FullscreenWhenShown(Intent.GetIntExtra("x", 0), Intent.GetIntExtra("y", 0));
+                    if (WpfRunBundleHost.Started)
+                    {
+                        // the panel's app come here: its windows the session's panels now
+                        xr.Start();
+                        AndroidWindow.Rehost(xr);
+                        return;
+                    }
+                    WpfRunBundleHost.Started = true;
                     xr.Start();
                     string files = FilesDir.AbsolutePath;
                     var assets = Assets;
@@ -263,6 +303,8 @@ internal static partial class Bundle
                 Name = "{{id}}.WpfRunActivity",
                 Label = "{{app.Name}}",
                 MainLauncher = true,
+                // one panel: coming back from the immersive activity is this one again, not another beside it
+                LaunchMode = LaunchMode.SingleTask,
                 Theme = "@android:style/Theme.Material.Light.NoActionBar.Fullscreen",
                 // one app, as on Windows: not torn down and rebuilt per rotation
                 ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
@@ -275,7 +317,6 @@ internal static partial class Bundle
             public class WpfRunActivity : Activity
             {
                 private AndroidHost _host;
-                private static bool s_started;
 
                 protected override void OnActivityResult(int requestCode, Result resultCode, Android.Content.Intent data)
                 {
@@ -285,7 +326,39 @@ internal static partial class Bundle
 
                 // the hardware keyboard's keys go to the app before any view (AndroidHost.DispatchKey)
                 public override bool DispatchKeyEvent(Android.Views.KeyEvent e)
-                    => _host?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
+                {
+                    if (System.Environment.GetEnvironmentVariable("WPF_TRACE_ANDROID") == "1")
+                        Console.WriteLine($"[android] activity key {e.Action} {e.KeyCode} source {e.Source}");
+            {{flatToXr}}
+                    return _host?.DispatchKey(e) == true || base.DispatchKeyEvent(e);
+                }
+
+                // a headset's (Meta's declares its own feature, not Android's VR one; Android XR its OpenXR)
+                private bool IsHeadset => PackageManager is { } pm && (pm.HasSystemFeature("oculus.hardware.standalone_vr")
+                    || pm.HasSystemFeature("android.hardware.vr.headtracking") || pm.HasSystemFeature("android.software.xr.api.openxr"));
+
+                private bool _immersivePressed;
+                private long _resumedAt;
+
+                // back from the immersive activity: the windows are this one's again
+                protected override void OnResume()
+                {
+                    base.OnResume();
+                    _resumedAt = Android.OS.SystemClock.UptimeMillis();
+                    _immersivePressed = false;
+                    if (_host != null && WpfRunBundleHost.Started && !ReferenceEquals(AndroidWindow.Host, _host)) Install(_host);
+                }
+
+                private static void Install(AndroidHost host)
+                {
+                    AndroidAccessibility.Host = host;
+                    AndroidPrint.Host = host;
+                    AndroidClipboard.Host = host;
+                    AndroidDialogs.Host = host;
+                    AndroidDragDrop.Host = host;
+                    if (AndroidWindow.Host == null) AndroidWindow.Host = host;
+                    else AndroidWindow.Rehost(host);
+                }
 
                 protected override void OnDestroy()
                 {
@@ -303,15 +376,10 @@ internal static partial class Bundle
                     var root = new FrameLayout(this);
                     SetContentView(root);
                     var host = new AndroidHost(this, root);
-                    AndroidWindow.Host = host;
-                    AndroidAccessibility.Host = host;
-                    AndroidPrint.Host = host;
-                    AndroidClipboard.Host = host;
-                    AndroidDialogs.Host = host;
-                    AndroidDragDrop.Host = host;
+                    Install(host);
                     _host = host;
-                    if (s_started) return;
-                    s_started = true;
+                    if (WpfRunBundleHost.Started) return;
+                    WpfRunBundleHost.Started = true;
                     string files = FilesDir.AbsolutePath;
                     var assets = Assets;
                     // after the first layout pass, so the app's window is given the activity's real size
@@ -322,6 +390,9 @@ internal static partial class Bundle
             {{xrActivity}}
             internal static class WpfRunBundleHost
             {
+                /// <summary>The app's Main has been started: one per process, whichever activity came first.</summary>
+                internal static bool Started;
+
                 /// <summary>The app's Main, on the app's UI thread; the process ends when it returns.</summary>
                 internal static void RunApp(Android.Content.Res.AssetManager assets, string files)
                 {

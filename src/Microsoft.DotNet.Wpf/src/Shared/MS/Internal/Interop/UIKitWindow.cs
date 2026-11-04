@@ -161,7 +161,17 @@ namespace MS.Internal.Interop
         /// The app head's root UIView (the UIWindow's rootViewController.view) that WPF windows are
         /// added into. The iOS head sets this before running the dispatcher.
         /// </summary>
-        public static IntPtr RootView { get; set; }
+        public static IntPtr RootView
+        {
+            get => s_rootView;
+            set
+            {
+                s_rootView = value;
+                // on a Vision, the immersive space a 3D view can fill the eyes in (VisionXrHost)
+                if (value != IntPtr.Zero && OperatingSystem.IsIOS()) VisionXrHost.Attach(value);
+            }
+        }
+        private static IntPtr s_rootView;
 
         /// <summary>The window of a handle -- or of its view, which UIKit's callbacks name.</summary>
         public static UIKitWindow FromHandle(IntPtr handle)
