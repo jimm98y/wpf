@@ -199,6 +199,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     lock (device.Sync) device.Immediate.FlushToGpu(wait: false);
                     try { CopyFromShim(ctx, s, image, premultiplied, dx, dy, dw, dh); }
                     catch (Exception e) { Log("zero-copy D3DImage present failed, falling back to the copy path: " + e.Message); return false; }
+                    // and the depth it was drawn with, for a headset that moves it to where the eyes are
+                    XrExternalPanel.CopyDepth(ctx, s.Gpu.DepthWith, width, height);
                     if (s_dumpDir != null) DumpPresent(ctx, s, image, premultiplied, dx, dy, dw, dh);
                 }
                 ZeroCopyPresents++;

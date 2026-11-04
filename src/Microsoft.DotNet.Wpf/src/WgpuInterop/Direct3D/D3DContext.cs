@@ -324,6 +324,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 for (int i = 0; i < MaxTargets; i++) Bind(ref c._rtv[i], i < rtvs.Length ? rtvs[i] : null);
                 Bind(ref c._dsv, dsv);
+                // the depth a picture is drawn with goes with it (to a resolve's target, and from there to a
+                // headset that moves the picture to where the eyes are by it: XrExternalPanel)
+                if (c._rtv[0] != null && dsv != null && dsv.Texture.SampleCount == c._rtv[0]!.Texture.SampleCount) c._rtv[0]!.Texture.DepthWith = dsv.Texture;
             }, refs);
         }
 
@@ -810,7 +813,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 wgpuTextureRelease(temp);      // the encoder keeps it until the copy is done
             }
             dst.Version++;
+            dst.DepthWith = src.DepthWith;
         }, dst, src);
+
+        /// <summary>The view's lower mip levels drawn from its most detailed (D3DDevice.Mips.cs).</summary>
+        public void GenerateMips(D3DShaderResourceView view) => Run(c =>
+        {
+            c.ResolvePendingClears();
+            c.Device.GenerateMips(c.Encoder(), view);
+        }, view, view.Resource);
 
         public void Map(D3DResource r, uint sub, D3D11_MAP type, uint flags, D3D11_MAPPED_SUBRESOURCE* mapped, out int hr)
         {

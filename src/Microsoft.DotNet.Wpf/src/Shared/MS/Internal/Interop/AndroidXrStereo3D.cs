@@ -165,7 +165,7 @@ namespace MS.Internal.Interop
                 long now = Environment.TickCount64;
                 if (s_fullView != null && now - s_ratesSince >= 2000)
                 {
-                    if (s_ratesSince != 0) Log($"rates: {s_ticks * 1000.0 / (now - s_ratesSince):0.0} frames, {s_redraws * 1000.0 / (now - s_ratesSince):0.0} redraws, {s_eyeRuns * 1000.0 / (now - s_ratesSince):0.0} eye cameras a second; a panel frame {(s_lagCount > 0 ? s_lagSum / s_lagCount : 0):0.0} ms after its render's start, {(s_lagCount > 0 ? (double)s_rendersPerDraw / s_lagCount : 0):0.00} renders a panel frame");
+                    if (s_ratesSince != 0) Log($"rates: {s_ticks * 1000.0 / (now - s_ratesSince):0.0} frames, {s_redraws * 1000.0 / (now - s_ratesSince):0.0} redraws, {s_eyeRuns * 1000.0 / (now - s_ratesSince):0.0} eye cameras a second; a panel frame {(s_lagCount > 0 ? s_lagSum / s_lagCount : 0):0.0} ms after its render's start, {(s_lagCount > 0 ? (double)s_rendersPerDraw / s_lagCount : 0):0.00} renders a panel frame{CameraNote()}");
                     s_ticks = s_redraws = s_eyeRuns = 0;
                     s_lagSum = 0; s_lagCount = s_rendersPerDraw = 0;
                     s_ratesSince = now;
@@ -251,7 +251,12 @@ namespace MS.Internal.Interop
 
         private static void Published(long number)
         {
-            lock (s_drawnLock) s_published[number & 7] = (number, s_drawn[0], s_drawn[1]);
+            lock (s_drawnLock)
+            {
+                s_published[number & 7] = (number, s_drawn[0], s_drawn[1]);
+                s_publishedTime[number & 7] = s_drawnTime;
+                s_publishedClip[number & 7] = (s_drawnClip[0], s_drawnClip[1]);
+            }
             // how long after its render a frame reaches the panel (the render a frame behind would pair views wrong)
             long since = System.Diagnostics.Stopwatch.GetTimestamp() - s_renderStarted;
             s_lagSum += since * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -263,6 +268,27 @@ namespace MS.Internal.Interop
         private static long s_renderStarted;
         private static double s_lagSum;
         private static int s_lagCount, s_rendersSinceDraw, s_rendersPerDraw;
+
+        // the display time of the headset frame whose eyes a drawing was made for (AndroidXrHost.EyesTime), by its number
+        private static long s_drawnTime;
+        private static readonly long[] s_publishedTime = new long[8];
+        // each eye's near and far planes (metres), by the number: the depth read back to distances (XrExternalPanel)
+        private static readonly System.Numerics.Vector2[] s_drawnClip = new System.Numerics.Vector2[2];
+        private static readonly (System.Numerics.Vector2 Left, System.Numerics.Vector2 Right)[] s_publishedClip = new (System.Numerics.Vector2, System.Numerics.Vector2)[8];
+
+        internal static bool TryGetDrawnClip(long number, out System.Numerics.Vector2 left, out System.Numerics.Vector2 right)
+        {
+            lock (s_drawnLock)
+            {
+                (left, right) = s_publishedClip[number & 7];
+                return s_published[number & 7].Number == number && left.X > 0 && right.X > 0;
+            }
+        }
+
+        internal static long DrawnTime(long number)
+        {
+            lock (s_drawnLock) return s_published[number & 7].Number == number ? s_publishedTime[number & 7] : 0;
+        }
 
         internal static bool TryGetDrawnViews(long number, out (System.Numerics.Vector3 Position, System.Numerics.Quaternion Orientation, Xr.Fov Fov) left,
                                               out (System.Numerics.Vector3 Position, System.Numerics.Quaternion Orientation, Xr.Fov Fov) right)
@@ -281,18 +307,35 @@ namespace MS.Internal.Interop
         private static readonly object s_rectsLock = new object();
         private static System.Collections.Generic.List<Rect> s_viewRects = new();
 
-        // the view the headset shows alone (AndroidXrHost's fullscreen): rendered at FullScale times its pixels,
-        // its own image drawn on a panel of its own (XrExternalPanel)
+        // the view the headset shows alone (AndroidXrHost's fullscreen): rendered FullHeight pixels high whatever
+        // its size, its own image drawn on a panel of its own (XrExternalPanel)
         private static WeakReference? s_fullView;
         private static double s_fullDpiX, s_fullDpiY;
         private static int s_fullWidth, s_fullHeight;
-        // about the headset's own pixels (a Quest 3's 2064x2208 an eye) from a 720x600 view; the memory killer
-        // stopped the app at 2.5 while the windows were composed too (they are not, in fullscreen)
-        private const double FullScale = 3.6;
+        // about the headset's own pixels (a Quest 3's 2064x2208 an eye). Not a multiple of the view's: a 1000 high
+        // view made an 8000x4325 image, multisampled more than the GPU's memory, and no frame of it was drawn
+        private const double FullHeight = 2160;
 
         /// <summary>The view at <paramref name="rect"/> (desktop pixels) rendered sharper, for a fullscreen of it.</summary>
+        // the model in fullscreen as the controllers have it: turned about its upright (radians), scaled, moved
+        // (metres, the room's), from where the view's rectangle put it; from scratch each time fullscreen begins
+        private static float s_turn, s_scale = 1f;
+        private static System.Numerics.Vector3 s_move;
+
+        /// <summary>From the headset's frame loop: the model turned, scaled and moved by so much more.</summary>
+        internal static void Manipulate(float turn, float scale, System.Numerics.Vector3 move)
+        {
+            lock (s_drawnLock)
+            {
+                s_turn += turn;
+                s_scale = Math.Clamp(s_scale * scale, 0.05f, 20f);
+                s_move += move;
+            }
+        }
+
         internal static void BeginFullscreen(Rect rect)
         {
+            lock (s_drawnLock) { s_turn = 0f; s_scale = 1f; s_move = default; }
             AppContext.SetData("WpfWebGpu.Xr.ExternalPublished", (Action<long>)Published);
             lock (s_drawnLock) Array.Clear(s_published);
             lock (s_rectsLock) { s_fullWidth = s_fullHeight = 0; }
@@ -310,7 +353,8 @@ namespace MS.Internal.Interop
                 s_fullDpiY = (double)dy.GetValue(view)!;
                 // each eye's half shaped as its field of view (tangent width against height), within the GPU's limit
                 double aspect = AndroidXrHost.TryGetEyeView(true, out _, out _, out var tan) && tan.Z - tan.W > 0 ? (tan.Y - tan.X) / (tan.Z - tan.W) : 1;
-                double sy = double.TryParse(Environment.GetEnvironmentVariable("WPF_XR_FULL_SCALE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double scale) && scale > 0 ? scale : FullScale, sx = 2 * view.ActualHeight * s_fullDpiY * sy * aspect / Math.Max(1, view.ActualWidth * s_fullDpiX);
+                double high = double.TryParse(Environment.GetEnvironmentVariable("WPF_XR_FULL_HEIGHT"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double h) && h > 0 ? h : FullHeight;
+                double sy = high / Math.Max(1, view.ActualHeight * s_fullDpiY), sx = 2 * view.ActualHeight * s_fullDpiY * sy * aspect / Math.Max(1, view.ActualWidth * s_fullDpiX);
                 double over = Math.Max(view.ActualWidth * s_fullDpiX * sx / 8000, view.ActualHeight * s_fullDpiY * sy / 8000);
                 if (over > 1) { sx /= over; sy /= over; }
                 dx.SetValue(view, s_fullDpiX * sx);
@@ -320,6 +364,14 @@ namespace MS.Internal.Interop
                 Redraw(view);      // at its new size now, not when the head next moves
                 Log($"fullscreen view rendered at {dx.GetValue(view):0.##} x {dy.GetValue(view):0.##} its scale");
             });
+        }
+
+        // the fullscreen view's WPF camera, for the rates line: whether the app's orbit and zoom reach it
+        private static string CameraNote()
+        {
+            if (s_fullView?.Target is not FrameworkElement view || view.GetType().GetProperty("Viewport3D")?.GetValue(view) is not Viewport3D v3 || v3.Camera is not ProjectionCamera c) return "";
+            var l = c.LookDirection;
+            return FormattableString.Invariant($"; camera at {c.Position.X:0.#},{c.Position.Y:0.#},{c.Position.Z:0.#} looking {l.X:0.##},{l.Y:0.##},{l.Z:0.##} ({l.Length:0.#} long)");
         }
 
         internal static void EndFullscreen()
@@ -516,20 +568,31 @@ namespace MS.Internal.Interop
                         // the camera's handedness whatever the WPF up's convention
                         worldUp = System.Numerics.Vector3.Dot(worldUp, upAxis) < 0 ? -worldUp : worldUp;
                         System.Numerics.Vector3 Scene(System.Numerics.Vector3 local) => levelRight * local.X + worldUp * local.Y - ahead * local.Z;
-                        var lookLocal = System.Numerics.Vector3.Transform(-System.Numerics.Vector3.UnitZ, eyeTurn);
-                        var upLocal = System.Numerics.Vector3.Transform(System.Numerics.Vector3.UnitY, eyeTurn);
-                        var from = eyePosition - rectCentre;
+                        // the model as the controllers turned, scaled and moved it (Manipulate): the eye taken the other
+                        // way about the model's anchor, the scale its units a metre
+                        float turned, scaled; System.Numerics.Vector3 moved;
+                        lock (s_drawnLock) { turned = s_turn; scaled = s_scale; moved = s_move; }
+                        var undo = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitY, -turned);
+                        s /= scaled;
+                        var lookLocal = System.Numerics.Vector3.Transform(System.Numerics.Vector3.Transform(-System.Numerics.Vector3.UnitZ, eyeTurn), undo);
+                        var upLocal = System.Numerics.Vector3.Transform(System.Numerics.Vector3.Transform(System.Numerics.Vector3.UnitY, eyeTurn), undo);
+                        var from = System.Numerics.Vector3.Transform(eyePosition - (rectCentre + moved), undo);
                         eye = centre + Scene(from) * s;
                         eyeView = rightHanded ? System.Numerics.Matrix4x4.CreateLookAt(eye, eye + Scene(lookLocal), Scene(upLocal)) : System.Numerics.Matrix4x4.CreateLookAtLeftHanded(eye, eye + Scene(lookLocal), Scene(upLocal));
                         // the app camera's far plane is fitted to its own distance (the engine's near/far optimization);
                         // an eye farther off than the camera, the scene crossed it as the head moved
                         f = (far + from.Length() * s + halfWide * 2) * 4;
                         // and its near plane to the camera's nearest object: an eye leaning in came nearer than that.
-                        // Five centimetres from the eye instead.
-                        n = 0.05f * s;
+                        // A centimetre from the eye instead (a table model looked at closely came within five).
+                        n = 0.01f * s;
                         float fl = n * tan.X, fr = n * tan.Y, fu = n * tan.Z, fd = n * tan.W;
                         eyeProjection = rightHanded ? System.Numerics.Matrix4x4.CreatePerspectiveOffCenter(fl, fr, fd, fu, n, f) : System.Numerics.Matrix4x4.CreatePerspectiveOffCenterLeftHanded(fl, fr, fd, fu, n, f);
-                        lock (s_drawnLock) s_drawn[left ? 0 : 1] = (eyePosition, eyeTurn, AndroidXrHost.EyeFov(left));
+                        lock (s_drawnLock)
+                        {
+                            s_drawn[left ? 0 : 1] = (eyePosition, eyeTurn, AndroidXrHost.EyeFov(left));
+                            s_drawnClip[left ? 0 : 1] = new System.Numerics.Vector2(n / s, f / s);     // metres
+                            s_drawnTime = AndroidXrHost.EyesTime;
+                        }
                     }
                     else
                     {

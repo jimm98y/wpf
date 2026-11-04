@@ -22,15 +22,13 @@ using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition
 {
-    internal static unsafe class XrExternalPanel
+    internal static unsafe partial class XrExternalPanel
     {
         private static readonly object s_lock = new();
         private static readonly Dictionary<(int, int), WeakReference<ExternalImage>> s_images = new();
         private static IntPtr s_window, s_surface;
         private static int s_width, s_height;
         private static WGPUTextureFormat s_format;
-        private static IntPtr s_module, s_layout, s_pipeline;
-        private static WGPUTextureFormat s_pipelineFormat;
 
         private static int s_frames;
         private static long s_framesSince;
@@ -48,6 +46,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static int s_largestWidth, s_largestHeight;
         private static long s_largestAt;
         private static bool s_failLogged;
+        private static long s_whyAt;
+
+        /// <summary>Why the headset's frame drew nothing (once a second, while it doesn't): no image yet, no
+        /// target, or no views for the latest number.</summary>
+        private static void Why(string what)
+        {
+            long now = Environment.TickCount64;
+            if (now - s_whyAt < 1000) return;
+            s_whyAt = now;
+            Console.WriteLine($"[xr panel] nothing drawn: {what}");
+        }
 
         /// <summary>The largest D3DImage published in the last second (width in the high 32 bits): the
         /// fullscreen view's, which is rendered the larger for it.</summary>
@@ -67,7 +76,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         {
             AppContext.SetData("WpfWebGpu.Xr.ExternalTarget", (Func<IntPtr, int, int, bool>)Target);
             AppContext.SetData("WpfWebGpu.Xr.LargestExternal", (Func<long>)Largest);
-            AppContext.SetData("WpfWebGpu.Xr.ExternalDrawLatest", (Func<Func<long, bool>, long>)DrawLatest);
+            AppContext.SetData("WpfWebGpu.Xr.ExternalDrawLatest", (Func<Func<long, float[]?>, long>)DrawLatest);
         }
 
         /// <summary>A D3DImage's new frame (the sink's present): the latest, numbered; its views are kept by the number.</summary>
@@ -84,7 +93,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     s_largestHeight = image.Height;
                     s_largestAt = now;
                 }
-                if (s_targetWindow == IntPtr.Zero || image.Width != s_targetWidth || image.Height != s_targetHeight) return;
+                if (s_targetWindow == IntPtr.Zero || image.Width != s_targetWidth || image.Height != s_targetHeight)
+                {
+                    if (s_targetWindow != IntPtr.Zero) Why($"a {image.Width}x{image.Height} image published, the panel is {s_targetWidth}x{s_targetHeight}");
+                    return;
+                }
                 s_latest = image;
                 s_latestNumber++;
                 (AppContext.GetData("WpfWebGpu.Xr.ExternalPublished") as Action<long>)?.Invoke(s_latestNumber);
@@ -109,15 +122,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
-        /// <summary>The headset's frame: the latest published image drawn into the target, if <paramref name="shown"/>
-        /// says the headset can show that number (its views are known) -- a frame drawn and not shown keeps a
-        /// buffer the next acquire then waits for, under this lock, which the app's present needs; its number, or -1.</summary>
-        private static long DrawLatest(Func<long, bool> shown)
+        /// <summary>The headset's frame: the latest published image drawn into the target, moved to where the eyes
+        /// are (XrExternalPanel.Reproject.cs) by <paramref name="views"/>' answer for its number (the views it was
+        /// drawn for and the frame's, null when the headset cannot show it yet) -- a frame drawn and not shown keeps
+        /// a buffer the next acquire then waits for, under this lock, which the app's present needs; its number, or -1.</summary>
+        private static long DrawLatest(Func<long, float[]?> views)
         {
             lock (s_lock)
             {
-                if (s_latest is not { } image || s_targetWindow == IntPtr.Zero || !shown(s_latestNumber)) return -1;
-                if (!Draw(image, s_targetWindow))
+                float[]? moved = s_latest != null && s_targetWindow != IntPtr.Zero ? views(s_latestNumber) : null;
+                if (s_latest is not { } image || s_targetWindow == IntPtr.Zero || moved == null)
+                {
+                    Why(s_targetWindow == IntPtr.Zero ? "no panel" : s_latest == null ? $"no {s_targetWidth}x{s_targetHeight} image since the panel was made" : $"no views for frame {s_latestNumber}");
+                    return -1;
+                }
+                if (!Draw(image, s_targetWindow, moved))
                 {
                     if (!s_failLogged) { s_failLogged = true; Console.WriteLine($"[xr panel] a {image.Width}x{image.Height} frame could not be drawn"); }
                     return -1;
@@ -134,7 +153,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
-        private static bool Draw(ExternalImage image, IntPtr nativeWindow)
+        private static bool Draw(ExternalImage image, IntPtr nativeWindow, float[] moved)
         {
             int width = image.Width, height = image.Height;
             {
@@ -152,24 +171,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     return false;
                 }
                 IntPtr target = wgpuTextureCreateView(st.texture, IntPtr.Zero);
-                IntPtr pipeline = Pipeline(ctx, s_format);
-                var entry = new WGPUBindGroupEntry { binding = 0, textureView = image.View };
-                var bgd = new WGPUBindGroupDescriptor { layout = s_layout, entryCount = 1, entries = &entry };
-                IntPtr group = wgpuDeviceCreateBindGroup(ctx.Device, &bgd);
                 IntPtr enc = wgpuDeviceCreateCommandEncoder(ctx.Device, IntPtr.Zero);
-                var att = new WGPURenderPassColorAttachment { view = target, depthSlice = 0xFFFFFFFF, loadOp = WGPULoadOp.Clear, storeOp = WGPUStoreOp.Store };
-                var rp = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &att };
-                IntPtr pass = wgpuCommandEncoderBeginRenderPass(enc, &rp);
-                wgpuRenderPassEncoderSetPipeline(pass, pipeline);
-                wgpuRenderPassEncoderSetBindGroup(pass, 0, group, 0, null);
-                wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
-                wgpuRenderPassEncoderEnd(pass);
-                wgpuRenderPassEncoderRelease(pass);
+                DrawMoved(ctx, enc, target, image, moved);
                 IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
                 wgpuCommandEncoderRelease(enc);
                 wgpuQueueSubmit(ctx.Queue, 1, &cmd);
                 wgpuCommandBufferRelease(cmd);
-                wgpuBindGroupRelease(group);
                 wgpuTextureViewRelease(target);
                 return PresentAndRelease(s_surface, st.texture) == WGPUStatus.Success;
             }
@@ -222,62 +229,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             wgpuSurfaceCapabilitiesFreeMembers(caps);
             return chosen;
-        }
-
-        private const string Wgsl = @"
-@group(0) @binding(0) var src: texture_2d<f32>;
-@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
-    let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
-    return vec4<f32>(xy * 2.0 - 1.0, 0.0, 1.0);
-}
-// the surface is the image's size: a texel each, straight to premultiplied
-@fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-    let c = textureLoad(src, vec2<i32>(pos.xy), 0);
-    return vec4<f32>(c.rgb * c.a, c.a);
-}
-";
-
-        private static IntPtr Pipeline(WgpuContext ctx, WGPUTextureFormat format)
-        {
-            if (s_pipeline != IntPtr.Zero && s_pipelineFormat == format) return s_pipeline;
-            if (s_module == IntPtr.Zero)
-            {
-                byte[] code = Encoding.UTF8.GetBytes(Wgsl);
-                fixed (byte* c = code)
-                {
-                    var src = new WGPUShaderSourceWGSL { chain = new WGPUChainedStruct { next = null, sType = WGPUSType_ShaderSourceWGSL }, code = new WGPUStringView { data = c, length = (nuint)code.Length } };
-                    var md = new WGPUShaderModuleDescriptor { nextInChain = (WGPUChainedStruct*)&src };
-                    s_module = wgpuDeviceCreateShaderModule(ctx.Device, &md);
-                }
-                var entry = new WGPUBindGroupLayoutEntry
-                {
-                    binding = 0, visibility = WGPUShaderStage_Fragment,
-                    texture = new WGPUTextureBindingLayout { sampleType = WGPUTextureSampleType.Float, viewDimension = WGPUTextureViewDimension._2D },
-                };
-                var ld = new WGPUBindGroupLayoutDescriptor { entryCount = 1, entries = &entry };
-                s_layout = wgpuDeviceCreateBindGroupLayout(ctx.Device, &ld);
-            }
-            IntPtr layout = s_layout;
-            var pld = new WGPUPipelineLayoutDescriptor { bindGroupLayoutCount = 1, bindGroupLayouts = &layout };
-            IntPtr pl = wgpuDeviceCreatePipelineLayout(ctx.Device, &pld);
-            byte[] vsName = Encoding.UTF8.GetBytes("vs"), fsName = Encoding.UTF8.GetBytes("fs");
-            fixed (byte* vn = vsName)
-            fixed (byte* fn = fsName)
-            {
-                var target = new WGPUColorTargetState { format = format, writeMask = 0xF };
-                var frag = new WGPUFragmentState { module = s_module, entryPoint = new WGPUStringView { data = fn, length = 2 }, targetCount = 1, targets = &target };
-                var desc = new WGPURenderPipelineDescriptor
-                {
-                    layout = pl,
-                    vertex = new WGPUVertexState { module = s_module, entryPoint = new WGPUStringView { data = vn, length = 2 } },
-                    primitive = new WGPUPrimitiveState { topology = WGPUPrimitiveTopology.TriangleList, frontFace = WGPUFrontFace.CCW, cullMode = WGPUCullMode.None },
-                    multisample = new WGPUMultisampleState { count = 1, mask = 0xFFFFFFFF },
-                    fragment = &frag,
-                };
-                s_pipeline = wgpuDeviceCreateRenderPipeline(ctx.Device, &desc);
-            }
-            s_pipelineFormat = format;
-            return s_pipeline;
         }
     }
 }

@@ -228,6 +228,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public readonly uint[] SubresourceRowPitch;
         public readonly uint[] SubresourceRows;
         public IntPtr SharedHandle;
+        public D3DTexture2D? DepthWith;      // the depth texture it was last drawn with (D3DContext.SetTargets), or a resolve's source's
         private bool _mapped;
 
         private static readonly Vtable s_vt = Build();
@@ -368,6 +369,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             // empty -- one that cannot is a renderbuffer, which resolves (D3DMultisampleTests).
             if (SampleCount > 1)
                 usage = WGPUTextureUsage.RenderAttachment | ((desc.BindFlags & D3D11_BIND.SHADER_RESOURCE) != 0 ? WGPUTextureUsage.TextureBinding : 0);
+            // a depth buffer is read for the picture it was drawn with (XrExternalPanel), multisampled or not --
+            // not on GL, where a multisampled texture that can be sampled does not resolve
+            if (Formats.IsDepth(Format) && !Device.Gpu.IsOpenGL) usage |= WGPUTextureUsage.TextureBinding;
             // GL: drawn as a renderbuffer, read through its resolved copy (D3DDevice.MsReadsResolved)
             MsShadowed = SampleCount > 1 && (desc.BindFlags & D3D11_BIND.SHADER_RESOURCE) != 0 && Device.Gpu.IsOpenGL && !Formats.IsDepth(Format) && desc.ArraySize == 1;
             if (MsShadowed) usage = WGPUTextureUsage.RenderAttachment;

@@ -81,6 +81,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.ID3D11DeviceContext.ClearRenderTargetView, (delegate* unmanaged<IntPtr, IntPtr, float*, void>)&ClearRenderTargetView);
             vt.Set(Vtbl.ID3D11DeviceContext.ClearDepthStencilView, (delegate* unmanaged<IntPtr, IntPtr, uint, float, byte, void>)&ClearDepthStencilView);
             vt.Set(Vtbl.ID3D11DeviceContext.ResolveSubresource, (delegate* unmanaged<IntPtr, IntPtr, uint, IntPtr, uint, DXGI_FORMAT, void>)&ResolveSubresourceSlot);
+            vt.Set(Vtbl.ID3D11DeviceContext.GenerateMips, (delegate* unmanaged<IntPtr, IntPtr, void>)&GenerateMipsSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.ExecuteCommandList, (delegate* unmanaged<IntPtr, IntPtr, int, void>)&ExecuteCommandList);
             vt.Set(Vtbl.ID3D11DeviceContext.ClearState, (delegate* unmanaged<IntPtr, void>)&ClearStateSlot);
             vt.Set(Vtbl.ID3D11DeviceContext.Flush, (delegate* unmanaged<IntPtr, void>)&FlushSlot);
@@ -407,6 +408,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var c = C(self);
             if (c != null && From<D3DTexture2D>(dst) is { } d && From<D3DTexture2D>(src) is { } s)
                 Guard("ResolveSubresource", () => c.ResolveSubresource(d, dstSub, s, srcSub, format));
+        }
+
+        [UnmanagedCallersOnly]
+        private static void GenerateMipsSlot(IntPtr self, IntPtr view)
+        {
+            var c = C(self);
+            if (c != null && From<D3DShaderResourceView>(view) is { } v)
+                Guard("GenerateMips", () => c.GenerateMips(v));
         }
 
         [UnmanagedCallersOnly]
