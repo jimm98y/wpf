@@ -116,6 +116,127 @@ export function createWindow(handle, title, x, y, width, height, borderless) {
     installListeners();
 }
 
+
+// ---- Windows' frame round a window over the page's own (a WPF dialog with a caption) ----------------------
+//
+// What the DWM draws round a window on Windows, and DefWindowProc answers for: the caption with the title and
+// the close button, the edge, and the resize margin outside it under a soft shadow. A dialog came up as a bare
+// canvas, neither movable nor closable. The frame is an element of the page just under the window's canvas,
+// kept round it as the canvas moves, sizes, restacks, shows and hides; a press on the caption moves the window
+// (the move loop), on an edge sizes it (the size loop), on the close button closes it (WM_CLOSE, "close"). The
+// metrics are Windows 11's (WindowFrame), in CSS pixels; the canvas is the client.
+export function setWindowFrame(handle, edge, top, sizable, closeBox, closeWidth) {
+    const w = windows.get(handle);
+    if (!w || w.frame) return;
+    const el = document.createElement("div");
+    el.style.cssText = "position:fixed;box-sizing:border-box;user-select:none;-webkit-user-select:none;";
+    const visible = document.createElement("div");
+    const margin = Math.max(0, edge - 1 / dpr());
+    visible.style.cssText = `position:absolute;left:${margin}px;right:${margin}px;top:0;bottom:${margin}px;box-sizing:border-box;` +
+        "background:#fff;border:1px solid #787878;box-shadow:0 4px 16px rgba(0,0,0,.28);";
+    const title = document.createElement("div");
+    title.style.cssText = `position:absolute;left:11px;top:0;height:${Math.max(0, top - 1)}px;right:${closeBox ? closeWidth + 4 : 4}px;` +
+        `font:12px "Segoe UI",system-ui,sans-serif;line-height:${Math.max(0, top - 1)}px;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;`;
+    title.textContent = w.title;
+    visible.appendChild(title);
+    let close = null;
+    if (closeBox) {
+        close = document.createElement("div");
+        close.style.cssText = `position:absolute;right:0;top:0;width:${closeWidth}px;height:${Math.max(0, top - 1)}px;` +
+            `display:flex;align-items:center;justify-content:center;font:10px system-ui,sans-serif;color:#000;`;
+        close.textContent = "✕";
+        visible.appendChild(close);
+    }
+    el.appendChild(visible);
+    host().appendChild(el);
+    // the canvas is the client inside the outer rectangle it was made at
+    const r = w.canvas.getBoundingClientRect();
+    w.canvas.style.position = "fixed";
+    w.canvas.style.left = `${r.left + edge}px`;
+    w.canvas.style.top = `${r.top + top}px`;
+    w.canvas.style.boxShadow = "none";
+    w.frame = { el, visible, title, close, edge, top, sizable, closeBox, closeWidth, active: true, closeHeld: false };
+    syncFrame(w);
+    const hitAt = (e) => frameHit(w, e.clientX, e.clientY);
+    el.addEventListener("mousemove", (e) => {
+        if (moveDrag || resizeDrag) return;
+        const ht = hitAt(e);
+        el.style.cursor = ({ 10: "ew-resize", 11: "ew-resize", 12: "ns-resize", 15: "ns-resize", 13: "nwse-resize", 17: "nwse-resize", 14: "nesw-resize", 16: "nesw-resize" })[ht] || "default";
+        if (close) {
+            const hot = ht === 20 && (!pressHeldOnFrame || w.frame.closeHeld);
+            close.style.background = hot ? (w.frame.closeHeld ? "#c8423a" : "#c42b1c") : "transparent";
+            close.style.color = hot ? "#fff" : "#000";
+        }
+        e.stopPropagation();
+    });
+    el.addEventListener("mouseleave", () => { if (close && !w.frame.closeHeld) { close.style.background = "transparent"; close.style.color = "#000"; } });
+    el.addEventListener("mousedown", (e) => {
+        if ((e.button ?? 0) !== 0) { e.stopPropagation(); return; }
+        const ht = hitAt(e);
+        press = { x: e.clientX, y: e.clientY };
+        pressHeldOnFrame = true;
+        if (!w.parent) raise(handle);
+        if (ht === 20) { w.frame.closeHeld = true; if (close) { close.style.background = "#c8423a"; close.style.color = "#fff"; } }
+        else if (ht === 2) beginMoveDrag(handle);
+        else if (ht >= 10 && ht <= 17 && sizable) beginResizeDrag(handle, ht, 1, 1, 0, 0);
+        e.stopPropagation();
+        e.preventDefault();
+    });
+    el.addEventListener("mouseup", (e) => {
+        if (moveDrag || resizeDrag) return;    // the loop's own release (pushMouse)
+        pressHeldOnFrame = false;
+        press = null;
+        const wasHeld = w.frame.closeHeld;
+        w.frame.closeHeld = false;
+        if (close) { close.style.background = "transparent"; close.style.color = "#000"; }
+        if (wasHeld && hitAt(e) === 20) queue.push({ t: "close", h: handle });
+        e.stopPropagation();
+    });
+}
+let pressHeldOnFrame = false;
+
+// WM_NCHITTEST of a point on the page over a window's frame, as Windows 11 answers it
+function frameHit(w, clientX, clientY) {
+    const f = w.frame;
+    const c = w.canvas.getBoundingClientRect();
+    if (clientX >= c.left && clientX < c.right && clientY >= c.top && clientY < c.bottom) return 1;
+    const ox = clientX - (c.left - f.edge), oy = clientY - (c.top - f.top);
+    const ow = c.width + 2 * f.edge, oh = c.height + f.top + f.edge;
+    if (ox < 0 || oy < 0 || ox >= ow || oy >= oh) return 0;
+    const margin = Math.max(0, f.edge - 1 / dpr());
+    if (f.closeBox && oy >= 1 && oy < f.top && ox < ow - margin - 1 && ox >= ow - margin - 1 - f.closeWidth) return 20;
+    if (f.sizable) {
+        const left = ox < f.edge, right = ox >= ow - f.edge, top = oy < 4, bottom = oy >= oh - f.edge;
+        if (top && left) return 13;
+        if (top && right) return 14;
+        if (bottom && left) return 16;
+        if (bottom && right) return 17;
+        if (left) return 10;
+        if (right) return 11;
+        if (top) return 12;
+        if (bottom) return 15;
+    }
+    if (oy < f.top && ox >= margin && ox < ow - margin) return 2;
+    return 18;
+}
+
+// the frame round its canvas, as the canvas is now (its place, its size, its stacking, whether it shows)
+function syncFrame(w) {
+    const f = w?.frame;
+    if (!f) return;
+    const c = w.canvas;
+    const left = parseFloat(c.style.left) || 0, top = parseFloat(c.style.top) || 0;
+    const width = parseFloat(c.style.width) || c.getBoundingClientRect().width;
+    const height = parseFloat(c.style.height) || c.getBoundingClientRect().height;
+    f.el.style.left = `${left - f.edge}px`;
+    f.el.style.top = `${top - f.top}px`;
+    f.el.style.width = `${width + 2 * f.edge}px`;
+    f.el.style.height = `${height + f.top + f.edge}px`;
+    f.el.style.zIndex = String((parseInt(c.style.zIndex || "0", 10) || 0) - 1);
+    f.el.style.display = c.style.display === "none" ? "none" : "block";
+    f.title.textContent = w.title;
+}
+
 // The page's title is the title bar the user would be looking at: the frontmost framed window's that
 // shows -- a dialog's while it is open, its owner's again once it closes. It was set as each window was
 // made and never again, so a closed dialog's title stayed on the page until the next one opened.
@@ -133,6 +254,7 @@ export function setWindowTitle(handle, title) {
     const w = windows.get(handle);
     if (!w) return;
     w.title = title || "";
+    syncFrame(w);
     updatePageTitle();
 }
 
@@ -215,6 +337,7 @@ export function setWindowVisible(handle, visible) {
     if (!w) return;
     const wasHidden = w.canvas.style.display === "none";
     w.canvas.style.display = visible ? "block" : "none";
+    syncFrame(w);
     // A popup or dialog shown again comes up over what was made since it was first shown: a menu
     // DotNetBar keeps and shows again opened under the WPF canvas of a view made after it, and every
     // click on it went to the view.
@@ -229,6 +352,7 @@ function raise(handle) {
     const w = windows.get(handle);
     if (!w) return;
     w.canvas.style.zIndex = String(zTop += 2);
+    syncFrame(w);
     restackChildren(handle);
 }
 
@@ -251,6 +375,7 @@ export function destroyWindow(handle) {
     const w = windows.get(handle);
     if (!w) return;
     w.canvas.remove();
+    w.frame?.el.remove();
     windows.delete(handle);
     if (keyWindow === handle) keyWindow = 0;
     canvases().delete(handle);
@@ -281,6 +406,7 @@ export function setContentSize(handle, width, height) {
         return;
     w.canvas.style.width = `${width}px`;
     w.canvas.style.height = `${height}px`;
+    syncFrame(w);
     // The backing-store (attribute) size is owned by the WebGPU surface configure;
     // set it here too so an unconfigured canvas still lays out correctly.
     w.canvas.width = Math.max(1, Math.round(width * dpr()));
@@ -301,6 +427,7 @@ export function setFrameOrigin(handle, xPixels, yPixels) {
     w.canvas.style.position = "fixed";
     w.canvas.style.left = `${xPixels / dpr()}px`;
     w.canvas.style.top = `${yPixels / dpr()}px`;
+    syncFrame(w);
 }
 
 export function getWidth(handle, devicePixels) {
@@ -629,7 +756,8 @@ function moveDragTo(e) {
     c.style.position = "fixed";
     c.style.left = `${e.clientX - moveDrag.dx}px`;
     // the top edge stays on the page, so that the caption can be taken hold of again
-    c.style.top = `${Math.max(0, e.clientY - moveDrag.dy)}px`;
+    c.style.top = `${Math.max(moveDrag.w.frame?.top ?? 0, e.clientY - moveDrag.dy)}px`;
+    syncFrame(moveDrag.w);
 }
 
 // ---- sizing a window (WM_SYSCOMMAND SC_SIZE: a press on a WindowChrome window's resize border) ------
@@ -667,7 +795,8 @@ function resizeDragTo(e) {
     let x = left ? d.l + d.cw - w : d.l;
     let y = top ? d.t + d.ch - h : d.t;
     // the top edge stays on the page, as for a move, so that the caption can be taken hold of again
-    if (y < 0) { if (top) h += y; y = 0; }
+    const topEdge = d.w.frame?.top ?? 0;
+    if (y < topEdge) { if (top) h += y - topEdge; y = topEdge; }
     const c = d.w.canvas;
     c.style.position = "fixed";
     c.style.left = `${x}px`;
@@ -724,12 +853,12 @@ function pushMouse(kind, e, wheel = 0) {
     else if (kind === 2 && (e.button ?? 0) === 0) press = null;
     if (moveDrag) {
         if (kind === 0) moveDragTo(e);
-        else if (kind === 2) { moveDragTo(e); moveDrag = null; }
+        else if (kind === 2) { moveDragTo(e); moveDrag = null; pressHeldOnFrame = false; }
         return;
     }
     if (resizeDrag) {
         if (kind === 0) resizeDragTo(e);
-        else if (kind === 2) { resizeDragTo(e); resizeDrag = null; }
+        else if (kind === 2) { resizeDragTo(e); resizeDrag = null; pressHeldOnFrame = false; }
         return;
     }
     // Route to the window under the pointer (popups float above the main canvas);

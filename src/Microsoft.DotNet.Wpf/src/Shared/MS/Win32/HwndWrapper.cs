@@ -190,7 +190,12 @@ namespace MS.Win32
                         // SetWindowPos move when the window is created where it already wants it
                         // (a reopened combo dropdown at the same spot), so creation must place it.
                         var browser = new MS.Internal.Interop.BrowserWindow();
+                        // A caption is a frame round the canvas, which the page draws for a window over its own:
+                        // the rectangle is the outer one, as CreateWindowEx's is.
+                        browser.FrameStyle = style;
                         browser.Create(name, cx, cy, cw, ch, borderless);
+                        // ...whose close button is WM_CLOSE, as the other heads' title bars are.
+                        browser.Closed += OnCocoaClosed;
                         // CreateWindowEx's size is in device pixels, as every later SetWindowPos's is; Create
                         // took it as CSS pixels (see the Cocoa branch).
                         if (width > 0 && height > 0) browser.SetContentSizePixels(cw, ch);

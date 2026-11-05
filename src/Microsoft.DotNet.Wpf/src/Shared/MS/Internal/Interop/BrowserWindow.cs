@@ -69,12 +69,34 @@ namespace MS.Internal.Interop
             IsBorderless = borderless;
             Js.CreateWindow((int)Handle, title ?? "", x, y, width, height, borderless);
             s_byHandle[Handle] = this;
+            // A window over the page's own with a caption has Windows' frame, which the page draws round its canvas
+            // (browser-window.js setWindowFrame): CreateWindowEx's rectangle was the outer one, the canvas is the client.
+            if (!borderless && Js.IsSecondaryWindow((int)Handle))
+            {
+                double dpr = Js.GetDevicePixelRatio();
+                if (!(dpr > 0)) dpr = 1;
+                if (WindowFrame.TryMetrics(FrameStyle, dpr, out int edge, out int top, out bool sizable, out bool closeBox))
+                {
+                    _frameEdge = edge;
+                    _frameTop = top;
+                    Js.SetWindowFrame((int)Handle, edge / dpr, top / dpr, sizable, closeBox, (int)System.Math.Round(46 * dpr) / dpr);
+                }
+            }
 
             // Start mirroring the accessibility tree for the first real window. Unlike every other
             // head this cannot wait to be asked: the web has no way to detect a screen reader, by
             // design. BrowserAccessibility declines if the page opted out.
             if (!borderless) BrowserAccessibility.Attach(Handle);
         }
+
+        /// <summary>The window's style (WS_*), set before Create: a window over the page's own with a caption gets a frame.</summary>
+        public int FrameStyle { get; set; }
+
+        /// <summary>The frame's close button was clicked: WM_CLOSE for the window.</summary>
+        public event Action<IntPtr> Closed;
+
+        // the frame round the canvas, device pixels: its sides and foot, and its top; 0 without one
+        private int _frameEdge, _frameTop;
 
         /// <summary>Show/hide the canvas (WPF's ShowWindow SW_HIDE/SW_SHOW), keeping it and this
         /// handle alive so the same window can be shown again.</summary>
@@ -116,12 +138,16 @@ namespace MS.Internal.Interop
         // the browser backend does not have the Retina odd-width issue the macOS path corrects for.
         public void SetContentSizePixels(int cx, int cy)
         {
+            // the outer size, as SetWindowPos gives it: the client's is that less the frame
+            cx = System.Math.Max(1, cx - 2 * _frameEdge);
+            cy = System.Math.Max(1, cy - _frameTop - _frameEdge);
             double scale = GetBackingScale();
             if (scale <= 0) scale = 1.0;
             SetContentSize((int)System.Math.Round(cx / scale), (int)System.Math.Round(cy / scale));
         }
 
-        public void SetFrameOrigin(int xPixels, int yPixels) { _originFrame = -1; Js.SetFrameOrigin((int)Handle, xPixels, yPixels); }
+        // the outer origin, as SetWindowPos gives it: the canvas is inside the frame
+        public void SetFrameOrigin(int xPixels, int yPixels) { _originFrame = -1; Js.SetFrameOrigin((int)Handle, xPixels + _frameEdge, yPixels + _frameTop); }
 
         /// <summary>Whether this is a window over the page's own (a dialog): the page's own fills the
         /// page and follows it; this one keeps the place and size it is given.</summary>
@@ -173,8 +199,21 @@ namespace MS.Internal.Interop
             height = Js.GetHeight((int)Handle, true);
         }
 
-        // The browser head has no window caption; the outer window size equals the content size.
-        public void GetWindowPixelSize(out int width, out int height) => GetPixelSize(out width, out height);
+        /// <summary>The outer window size: the canvas's, with the frame round it where there is one.</summary>
+        public void GetWindowPixelSize(out int width, out int height)
+        {
+            GetPixelSize(out width, out height);
+            width += 2 * _frameEdge;
+            height += _frameTop + _frameEdge;
+        }
+
+        /// <summary>The outer window's top-left (GetWindowRect), device pixels.</summary>
+        public void GetWindowScreenOriginPixels(out int x, out int y)
+        {
+            GetClientScreenOriginPixels(out x, out y);
+            x -= _frameEdge;
+            y -= _frameTop;
+        }
 
         /// <summary>
         ///  A queued drag event, handed to the WPF drop target.
@@ -688,6 +727,11 @@ namespace MS.Internal.Interop
                     // a window, so there is no handle to route on: the browser has one focused
                     // element at a time, and ImmComposition routes to whichever editor holds focus.
                     // A mirror element was activated or focused by the user or their screen reader.
+                    // the frame's close button (browser-window.js setWindowFrame): WM_CLOSE
+                    case "close":
+                        if (FromHandle((IntPtr)e.GetProperty("h").GetInt32()) is BrowserWindow closing) closing.Closed?.Invoke(closing.Handle);
+                        break;
+
                     case "a":
                         BrowserAccessibility.DispatchAction(
                             e.GetProperty("id").GetInt32(), e.GetProperty("k").GetInt32());
@@ -777,6 +821,9 @@ namespace MS.Internal.Interop
 
             [JSImport("setOwnFrame", Module)]
             internal static partial void SetOwnFrame(int handle);
+
+            [JSImport("setWindowFrame", Module)]
+            internal static partial void SetWindowFrame(int handle, double edge, double top, bool sizable, bool closeBox, double closeWidth);
 
             [JSImport("setTakesKeyboardOnPress", Module)]
             internal static partial void SetTakesKeyboardOnPress(int handle, bool takes);

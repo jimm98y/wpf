@@ -54,16 +54,28 @@ namespace MS.Internal.Interop
         /// border of 4 that do, the caption of 22 and a pixel).</summary>
         internal static WindowFrame? For(IWindowFrameOwner owner, int style, double scale)
         {
-            const int WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_CHILD = 0x40000000;
-            if ((style & WS_CAPTION) != WS_CAPTION || (style & WS_CHILD) != 0) return null;
-            int M(int v) => (int)Math.Floor(v * scale + 0.5);
-            int edge = 3 + M(1) + M(4);
+            if (!TryMetrics(style, scale, out int edge, out int top, out bool sizable, out bool closeBox)) return null;
             return new WindowFrame(owner)
             {
-                Left = edge, Right = edge, Bottom = edge, Top = edge + M(22) + 1,
-                Sizable = (style & WS_THICKFRAME) != 0,
-                HasCloseBox = (style & WS_SYSMENU) != 0,
+                Left = edge, Right = edge, Bottom = edge, Top = top,
+                Sizable = sizable,
+                HasCloseBox = closeBox,
             };
+        }
+
+        /// <summary>The frame's metrics alone, device pixels at <paramref name="scale"/> (a window layer that draws and
+        /// hit-tests its frame itself: the browser's page); false for a window with no caption.</summary>
+        internal static bool TryMetrics(int style, double scale, out int edge, out int top, out bool sizable, out bool closeBox)
+        {
+            const int WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_CHILD = 0x40000000;
+            edge = top = 0;
+            sizable = (style & WS_THICKFRAME) != 0;
+            closeBox = (style & WS_SYSMENU) != 0;
+            if ((style & WS_CAPTION) != WS_CAPTION || (style & WS_CHILD) != 0) return false;
+            int M(int v) => (int)Math.Floor(v * scale + 0.5);
+            edge = 3 + M(1) + M(4);
+            top = edge + M(22) + 1;
+            return true;
         }
 
         /// <summary>The frame round the client, device pixels.</summary>
