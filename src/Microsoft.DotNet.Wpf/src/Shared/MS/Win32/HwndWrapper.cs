@@ -210,7 +210,12 @@ namespace MS.Win32
                         // Its handle is a small value of its own, as Cocoa's is (UIKitWindow.Handle).
                         // Checked BEFORE the macOS branch below: both are Darwin.
                         var uikit = new MS.Internal.Interop.UIKitWindow();
+                        // A caption is a frame round the client, which this layer draws: the rectangle is the
+                        // outer one, as CreateWindowEx's is.
+                        uikit.FrameStyle = style;
                         uikit.Create(name, cx, cy, cw, ch, borderless);
+                        // ...whose close button is WM_CLOSE, as the other heads' title bars are.
+                        uikit.Closed += OnCocoaClosed;
                         // Not on screen until it is shown (ShowWindow), as a window made without WS_VISIBLE
                         // is not on Windows: the app's own window, filling the screen black and then white
                         // while the app loaded, hid the splash screen it shows meanwhile.

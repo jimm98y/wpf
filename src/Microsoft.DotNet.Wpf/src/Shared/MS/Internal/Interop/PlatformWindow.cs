@@ -441,7 +441,10 @@ namespace MS.Internal.Interop
                 return;
             }
             if (OperatingSystem.IsIOS())
-                return;   // no window chrome to put a title in
+            {
+                UIKitWindow.SetTitle(handle, title);   // the caption of the frame this layer draws
+                return;
+            }
             if (OperatingSystem.IsMacOS())
                 CocoaWindow.SetTitle(handle, title);
             else if (OperatingSystem.IsLinux())

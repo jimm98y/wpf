@@ -560,6 +560,10 @@ namespace MS.Internal.Interop
     }
     public sealed partial class UIKitWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public int FrameStyle { get { throw null; } set { } }
+        public event System.Action<System.IntPtr> Closed { add { } remove { } }
+        public static void SetTitle(System.IntPtr handle, string title) { }
+        public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public const int RightPress = 5;
         public const int RightRelease = 6;
         public UIKitWindow() { }

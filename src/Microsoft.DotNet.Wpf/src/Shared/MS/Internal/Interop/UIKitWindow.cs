@@ -39,7 +39,7 @@ namespace MS.Internal.Interop
     /// A single WPF window on iOS: a Metal-backed UIView inside the app's one UIWindow. Its HWND is a
     /// small value of its own (<see cref="Handle"/>), IntPtr.Zero until <see cref="Create"/>.
     /// </summary>
-    public sealed unsafe class UIKitWindow : IPlatformWindow
+    public sealed unsafe class UIKitWindow : IPlatformWindow, IWindowFrameOwner
     {
         private static readonly Dictionary<IntPtr, UIKitWindow> s_byView = new Dictionary<IntPtr, UIKitWindow>();
         private static readonly List<UIKitWindow> s_zOrder = new List<UIKitWindow>();   // last = topmost
@@ -76,6 +76,168 @@ namespace MS.Internal.Interop
         private static IntPtr s_mainView;
 
         private bool IsMain => _view != IntPtr.Zero && _view == s_mainView;
+
+        // ---- the frame: Windows' non-client area, which this layer draws (WindowFrame) -----------------------
+        //
+        // A floating WPF window with a caption has Windows' frame round its client, as the DWM draws it: a view of
+        // the outer rectangle just under the window's own (its layers: the shadow in the resize margin, the edge, the
+        // caption with the title and the close button), whose touches are the frame's -- the caption moves the
+        // window, the edges size it, the close button closes it (DefWindowProc's, through WindowFrame). The window's
+        // view stays the client; the rectangle WPF moves and sizes is the outer one (Window.Left, Width).
+
+        private WindowFrame _frame;
+        private IntPtr _frameView, _frameVisible, _frameTitle, _frameClose, _frameCross;
+        private string _title = "";
+        private static readonly Dictionary<IntPtr, UIKitWindow> s_frameViews = new();
+
+        /// <summary>The window's style (WS_*), set before Create: a floating window with a caption gets a frame.</summary>
+        public int FrameStyle { get; set; }
+
+        /// <summary>The close button was clicked: WM_CLOSE for the window.</summary>
+        public event Action<IntPtr> Closed;
+
+        private int FrameWidthPixels => _frame == null ? 0 : _frame.Left + _frame.Right;
+        private int FrameHeightPixels => _frame == null ? 0 : _frame.Top + _frame.Bottom;
+        private double FrameTopPoints => _frame == null ? 0 : _frame.Top / ScreenScale();
+
+        /// <summary>SetWindowText: the title its caption shows.</summary>
+        public static void SetTitle(IntPtr handle, string title)
+        {
+            if (FromHandle(handle) is not { } w || w._title == (title ?? "")) return;
+            w._title = title ?? "";
+            w.PaintFrame();
+        }
+
+        /// <summary>The client's frame (points), the frame's view round it.</summary>
+        private void SetClientFrame(CGRect f)
+        {
+            SendVoidRect(_view, Sel("setFrame:"), f);
+            if (_frameView == IntPtr.Zero) return;
+            double scale = ScreenScale();
+            var outer = new CGRect
+            {
+                x = f.x - _frame.Left / scale, y = f.y - _frame.Top / scale,
+                width = f.width + FrameWidthPixels / scale, height = f.height + FrameHeightPixels / scale,
+            };
+            SendVoidRect(_frameView, Sel("setFrame:"), outer);
+            PaintFrame();
+        }
+
+        /// <summary>The frame just under the window's view, wherever that went in the stacking.</summary>
+        private void PlaceFrame()
+        {
+            if (_frameView != IntPtr.Zero && RootView != IntPtr.Zero)
+                SendVoidPtrPtr(RootView, Sel("insertSubview:belowSubview:"), _frameView, _view);
+        }
+
+        private void CreateFrame(CGRect client)
+        {
+            double scale = ScreenScale();
+            _frameView = CreateTouchOnlyView(client);
+            if (_frameView == IntPtr.Zero) { _frame = null; return; }
+            s_frameViews[_frameView] = this;
+            IntPtr layer = Send(_frameView, Sel("layer"));
+            _frameVisible = NewLayer("CALayer");
+            _frameClose = NewLayer("CALayer");
+            _frameTitle = NewLayer("CATextLayer");
+            _frameCross = NewLayer("CATextLayer");
+            SendVoidPtr(layer, Sel("addSublayer:"), _frameVisible);
+            SendVoidPtr(_frameVisible, Sel("addSublayer:"), _frameClose);
+            SendVoidPtr(_frameVisible, Sel("addSublayer:"), _frameTitle);
+            SendVoidPtr(_frameClose, Sel("addSublayer:"), _frameCross);
+            foreach (IntPtr text in new[] { _frameTitle, _frameCross }) SendVoidDouble(text, Sel("setContentsScale:"), scale);
+            SendVoidPtr(_frameTitle, Sel("setTruncationMode:"), NSString("end"));
+            SendVoidPtr(_frameCross, Sel("setAlignmentMode:"), NSString("center"));
+            SendVoidPtr(_frameCross, Sel("setString:"), NSString("\u2715"));
+            // the shadow, Windows 11's, under the visible edge
+            SendVoidBool(_frameVisible, Sel("setMasksToBounds:"), false);
+            SendVoidPtr(_frameVisible, Sel("setShadowColor:"), Color(0, 0, 0, 1));
+            SendVoidFloat(_frameVisible, Sel("setShadowOpacity:"), 0.3f);
+            SendVoidDouble(_frameVisible, Sel("setShadowRadius:"), 10);
+            SendVoidSize(_frameVisible, Sel("setShadowOffset:"), new CGSize { width = 0, height = 4 });
+            if (RootView != IntPtr.Zero) SendVoidPtr(RootView, Sel("addSubview:"), _frameView);
+        }
+
+        /// <summary>The frame drawn as it is now: the visible window inside the resize margin (white, or grey for a
+        /// window that is not active), its edge, the title from the left of the caption to the close button, which
+        /// is red while it is held.</summary>
+        private void PaintFrame()
+        {
+            if (_frameView == IntPtr.Zero || _frame == null) return;
+            double scale = ScreenScale();
+            IntPtr transaction = objc_getClass("CATransaction");
+            Send(transaction, Sel("begin"));
+            SendVoidBool(transaction, Sel("setDisableActions:"), true);
+            CGRect outer = SendRect(_frameView, Sel("bounds"));
+            double margin = _frame.Margin / scale, top = _frame.Top / scale;
+            var visible = new CGRect { x = margin, y = 0, width = Math.Max(0, outer.width - 2 * margin), height = Math.Max(0, outer.height - margin) };
+            bool active = ReferenceEquals(s_active, this);
+            SendVoidRect(_frameVisible, Sel("setFrame:"), visible);
+            SendVoidPtr(_frameVisible, Sel("setBackgroundColor:"), active ? Color(1, 1, 1, 1) : Color(243 / 255.0, 243 / 255.0, 243 / 255.0, 1));
+            SendVoidDouble(_frameVisible, Sel("setBorderWidth:"), Math.Max(1, Math.Round(scale)) / scale);
+            SendVoidPtr(_frameVisible, Sel("setBorderColor:"), active ? Color(120 / 255.0, 120 / 255.0, 120 / 255.0, 1) : Color(170 / 255.0, 170 / 255.0, 170 / 255.0, 1));
+            double captionHeight = Math.Max(0, top - 1 / scale);
+            double closeWidth = _frame.HasCloseBox ? _frame.CloseWidth / scale : 0;
+            var close = new CGRect { x = visible.width - 1 / scale - closeWidth, y = 1 / scale, width = closeWidth, height = captionHeight };
+            int state = _frame.State;
+            SendVoidRect(_frameClose, Sel("setFrame:"), close);
+            SendVoidBool(_frameClose, Sel("setHidden:"), !_frame.HasCloseBox);
+            SendVoidPtr(_frameClose, Sel("setBackgroundColor:"), state == WindowFrame.ClosePressed ? Color(200 / 255.0, 66 / 255.0, 58 / 255.0, 1)
+                : state == WindowFrame.CloseHot ? Color(196 / 255.0, 43 / 255.0, 28 / 255.0, 1) : Color(0, 0, 0, 0));
+            double glyph = 10;
+            SendVoidDouble(_frameCross, Sel("setFontSize:"), glyph);
+            SendVoidRect(_frameCross, Sel("setFrame:"), new CGRect { x = 0, y = (captionHeight - glyph * 1.25) / 2, width = closeWidth, height = glyph * 1.25 });
+            SendVoidPtr(_frameCross, Sel("setForegroundColor:"), state != 0 ? Color(1, 1, 1, 1) : active ? Color(0, 0, 0, 1) : Color(150 / 255.0, 150 / 255.0, 150 / 255.0, 1));
+            // the title in the caption font's size (9 points: 12 pixels at 96 dpi)
+            double size = 12;
+            double left = 1 / scale + 11;
+            SendVoidDouble(_frameTitle, Sel("setFontSize:"), size);
+            SendVoidRect(_frameTitle, Sel("setFrame:"), new CGRect { x = left, y = (captionHeight - size * 1.25) / 2 + 1 / scale, width = Math.Max(0, close.x - left - 4), height = size * 1.25 });
+            SendVoidPtr(_frameTitle, Sel("setForegroundColor:"), active ? Color(0, 0, 0, 1) : Color(150 / 255.0, 150 / 255.0, 150 / 255.0, 1));
+            SendVoidPtr(_frameTitle, Sel("setString:"), NSString(_title));
+            Send(transaction, Sel("commit"));
+        }
+
+        /// <summary>A touch on a window's frame view (its points): the frame's, through the move or size loop it began.</summary>
+        private static void FrameTouch(UIKitWindow w, int kind, CGPoint p)
+        {
+            double scale = ScreenScale();
+            CGRect at = SendRect(w._frameView, Sel("frame"));
+            double rx = at.x + p.x, ry = at.y + p.y;
+            s_cursorX = (int)Math.Round(rx * scale); s_cursorY = (int)Math.Round(ry * scale); s_cursorKnown = true;
+            if (s_drag != null)
+            {
+                if (kind == 0) DragTo(rx, ry);
+                else if (kind == 2) { DragTo(rx, ry); s_drag = null; s_pressed = false; w._frame?.LoopEnded(); }
+                return;
+            }
+            if (kind == 1) { s_pressX = rx; s_pressY = ry; s_pressed = true; }
+            else if (kind == 2) s_pressed = false;
+            // relative to the client's origin, device pixels
+            w._frame?.Touch(kind, (int)Math.Round(p.x * scale) - w._frame.Left, (int)Math.Round(p.y * scale) - w._frame.Top);
+        }
+
+        void IWindowFrameOwner.GetClientPixelSize(out int width, out int height) => GetPixelSize(out width, out height);
+        double IWindowFrameOwner.FrameScale => ScreenScale();
+        bool IWindowFrameOwner.FrameMaximized => IsMaximizedNow;
+        void IWindowFrameOwner.FrameActivate() => Activate();
+        void IWindowFrameOwner.FrameBeginMove() => BeginMoveDrag();
+        void IWindowFrameOwner.FrameBeginSize(int hitTest) => BeginResizeDrag(hitTest, 0, 0, 0, 0);
+        void IWindowFrameOwner.FrameToggleMaximized() => SetWindowState(IsMaximizedNow ? 9 : 3);
+        void IWindowFrameOwner.FrameClose() => Closed?.Invoke(_handle);
+        void IWindowFrameOwner.FrameChanged() => PaintFrame();
+
+        private static IntPtr NewLayer(string cls) => Send(Send(objc_getClass(cls), Sel("alloc")), Sel("init"));
+
+        private static IntPtr NSString(string text)
+        {
+            IntPtr utf8 = Marshal.StringToCoTaskMemUTF8(text ?? "");
+            try { return SendPtrNInt(objc_getClass("NSString"), Sel("stringWithUTF8String:"), utf8); }
+            finally { Marshal.FreeCoTaskMem(utf8); }
+        }
+
+        private static IntPtr Color(double r, double g, double b, double a)
+            => Send(SendColor(objc_getClass("UIColor"), Sel("colorWithRed:green:blue:alpha:"), r, g, b, a), Sel("CGColor"));
 
         private bool _ownSurface;   // a borderless window with a surface of its own (Create)
 
@@ -139,6 +301,8 @@ namespace MS.Internal.Interop
             if (s_trace) Console.WriteLine($"[uikit] active 0x{old?._view ?? IntPtr.Zero:x} -> 0x{window?._view ?? IntPtr.Zero:x}");
             old?.ActiveChanged?.Invoke(false);
             window?.ActiveChanged?.Invoke(true);
+            old?.PaintFrame();
+            window?.PaintFrame();
         }
 
         /// <summary>The active window goes away (hidden, destroyed): the activation passes to the app's
@@ -232,15 +396,29 @@ namespace MS.Internal.Interop
 
             // A popup is drawn INTO its owner's surface (NativePlatform.PopupsShareOwnerSurface), so it
             // needs no Metal layer of its own -- only somewhere for UIKit to deliver its touches.
+            // a floating window with a caption: CreateWindowEx's rectangle is the outer one, the client inside its frame
+            _title = title ?? "";
+            if (!borderless && !main)
+            {
+                _frame = WindowFrame.For(this, FrameStyle, scale);
+                if (_frame != null)
+                {
+                    frame.x += _frame.Left / scale; frame.y += _frame.Top / scale;
+                    frame.width = Math.Max(1, frame.width - FrameWidthPixels / scale);
+                    frame.height = Math.Max(1, frame.height - FrameHeightPixels / scale);
+                }
+            }
             _view = borderless && !_ownSurface ? CreateTouchOnlyView(frame) : CreateMetalBackedView(frame, fillsSuperview: main);
             if (_view == IntPtr.Zero)
                 return;
             if (main) s_mainView = _view;
-            else if (!borderless) AddShadow(_view);
+            else if (!borderless && _frame == null) AddShadow(_view);
+            if (_frame != null) CreateFrame(frame);
 
             IntPtr root = RootView;
             if (root != IntPtr.Zero)
                 SendVoidPtr(root, Sel("addSubview:"), _view);
+            if (_frame != null) { PlaceFrame(); SetClientFrame(frame); }
 
             s_byView[_view] = this;
             _handle = (IntPtr)(s_nextHandle += 4);
@@ -269,6 +447,7 @@ namespace MS.Internal.Interop
             if (_view == IntPtr.Zero) return;
             if (!visible) _minimized = false;
             SendVoidBool(_view, Sel("setHidden:"), !visible);
+            if (_frameView != IntPtr.Zero) SendVoidBool(_frameView, Sel("setHidden:"), !visible);
             if (!visible) PassActivation();
         }
 
@@ -287,6 +466,7 @@ namespace MS.Internal.Interop
             TakeKeys();
             SetActive(this);
             SendVoidPtr(RootView, Sel("bringSubviewToFront:"), _view);
+            PlaceFrame();
             s_zOrder.Remove(this);
             s_zOrder.Add(this);
             // its child windows come with it, just above it (SetParentWindow)...
@@ -320,6 +500,7 @@ namespace MS.Internal.Interop
         private static void PlaceAbove(UIKitWindow child, UIKitWindow parent)
         {
             SendVoidPtrPtr(RootView, Sel("insertSubview:aboveSubview:"), child._view, parent._view);
+            child.PlaceFrame();
             s_zOrder.Remove(child);
             int at = s_zOrder.IndexOf(parent);
             s_zOrder.Insert(at < 0 ? s_zOrder.Count : at + 1, child);
@@ -368,6 +549,7 @@ namespace MS.Internal.Interop
                     if (_minimized) return;
                     _minimized = true;
                     SendVoidBool(_view, Sel("setHidden:"), true);
+                    if (_frameView != IntPtr.Zero) SendVoidBool(_frameView, Sel("setHidden:"), true);
                     RaiseResized();
                     break;
 
@@ -378,13 +560,21 @@ namespace MS.Internal.Interop
                         _restoreFrame = SendRect(_view, Sel("frame"));
                         GetPrimaryScreenPixels(out _, out _, out int width, out int height, out _, out _, out _, out _);
                         int x = 0, y = 0;
-                        if (QueryMaximizedRect?.Invoke(new[] { 0, 0, width, height, 0, 0, width, height }) is int[] r && r.Length >= 4 && r[2] > 0 && r[3] > 0)
+                        int[] r = QueryMaximizedRect?.Invoke(new[] { 0, 0, width, height, 0, 0, width, height });
+                        if (r != null && (r.Length < 4 || r[2] <= 0 || r[3] <= 0)) r = null;
+                        if (r != null) { x = r[0]; y = r[1]; width = r[2]; height = r[3]; }
+                        if (_frame != null)
                         {
-                            x = r[0]; y = r[1]; width = r[2]; height = r[3];
+                            // the outer rectangle hangs its border off the screen, as Windows maximizes a window: the
+                            // caption on the screen's top edge, the client to its sides and foot
+                            if (r == null) { x = y = -_frame.Left; width += _frame.Left + _frame.Right; height += _frame.Left + _frame.Bottom; }
+                            x += _frame.Left; y += _frame.Top;
+                            width = Math.Max(1, width - _frame.Left - _frame.Right);
+                            height = Math.Max(1, height - _frame.Top - _frame.Bottom);
                         }
                         double scale = ScreenScale();
                         _maximizedFrame = new CGRect { x = x / scale, y = y / scale, width = width / scale, height = height / scale };
-                        SendVoidRect(_view, Sel("setFrame:"), _maximizedFrame);
+                        SetClientFrame(_maximizedFrame);
                         _maximized = true;
                     }
                     RaiseResized();
@@ -395,7 +585,7 @@ namespace MS.Internal.Interop
                     if (IsMaximizedNow)
                     {
                         _maximized = false;
-                        SendVoidRect(_view, Sel("setFrame:"), _restoreFrame);
+                        SetClientFrame(_restoreFrame);
                         RaiseResized();
                     }
                     else
@@ -412,6 +602,7 @@ namespace MS.Internal.Interop
             if (!_minimized) return false;
             _minimized = false;
             SendVoidBool(_view, Sel("setHidden:"), false);
+            if (_frameView != IntPtr.Zero) SendVoidBool(_frameView, Sel("setHidden:"), false);
             return true;
         }
 
@@ -472,8 +663,8 @@ namespace MS.Internal.Interop
             s_drag = new Drag
             {
                 Window = this, HitTest = hitTest, X0 = s_pressX, Y0 = s_pressY, Frame0 = SendRect(_view, Sel("frame")),
-                MinW = Math.Max(minWidth / scale, 1), MinH = Math.Max(minHeight / scale, 1),
-                MaxW = maxWidth > 0 ? maxWidth / scale : double.MaxValue, MaxH = maxHeight > 0 ? maxHeight / scale : double.MaxValue,
+                MinW = Math.Max((minWidth - FrameWidthPixels) / scale, 1), MinH = Math.Max((minHeight - FrameHeightPixels) / scale, 1),
+                MaxW = maxWidth > 0 ? (maxWidth - FrameWidthPixels) / scale : double.MaxValue, MaxH = maxHeight > 0 ? (maxHeight - FrameHeightPixels) / scale : double.MaxValue,
             };
             return true;
         }
@@ -488,8 +679,8 @@ namespace MS.Internal.Interop
             {
                 f.x += dx;
                 // the top edge stays on the screen, so that the caption can be taken hold of again
-                f.y = Math.Max(0, f.y + dy);
-                SendVoidRect(d.Window._view, Sel("setFrame:"), f);
+                f.y = Math.Max(d.Window.FrameTopPoints, f.y + dy);
+                d.Window.SetClientFrame(f);
                 return;
             }
             int ht = d.HitTest;
@@ -502,10 +693,11 @@ namespace MS.Internal.Interop
             h = Math.Min(Math.Max(h, d.MinH), d.MaxH);
             f.x = left ? d.Frame0.x + d.Frame0.width - w : d.Frame0.x;
             f.y = top ? d.Frame0.y + d.Frame0.height - h : d.Frame0.y;
-            if (f.y < 0) { if (top) h += f.y; f.y = 0; }
+            double topEdge = d.Window.FrameTopPoints;
+            if (f.y < topEdge) { if (top) h += f.y - topEdge; f.y = topEdge; }
             f.width = w;
             f.height = h;
-            SendVoidRect(d.Window._view, Sel("setFrame:"), f);
+            d.Window.SetClientFrame(f);
             d.Window.RaiseResized();
         }
 
@@ -519,6 +711,13 @@ namespace MS.Internal.Interop
             foreach (UIKitWindow child in s_zOrder) if (child._parentWindow == this) child._parentWindow = null;
             _parentWindow = null;
             Send(_view, Sel("removeFromSuperview"));
+            if (_frameView != IntPtr.Zero)
+            {
+                Send(_frameView, Sel("removeFromSuperview"));
+                s_frameViews.Remove(_frameView);
+                Send(_frameView, Sel("release"));
+                _frameView = IntPtr.Zero;
+            }
             s_byView.Remove(_view);
             s_byHandle.Remove(_handle);
             s_zOrder.Remove(this);
@@ -541,7 +740,7 @@ namespace MS.Internal.Interop
             CGRect f = SendRect(_view, Sel("frame"));
             f.width = width;
             f.height = height;
-            SendVoidRect(_view, Sel("setFrame:"), f);
+            SetClientFrame(f);
             RaiseResized();
         }
 
@@ -554,9 +753,10 @@ namespace MS.Internal.Interop
             if (IsFullScreenTopLevel) { RaiseResized(); return; }   // see SetContentSize
             double scale = ScreenScale();
             CGRect f = SendRect(_view, Sel("frame"));
-            f.width = cx / scale;
-            f.height = cy / scale;
-            SendVoidRect(_view, Sel("setFrame:"), f);
+            // the outer size, as SetWindowPos gives it: the client's is that less the frame
+            f.width = Math.Max(1, cx - FrameWidthPixels) / scale;
+            f.height = Math.Max(1, cy - FrameHeightPixels) / scale;
+            SetClientFrame(f);
             RaiseResized();
         }
 
@@ -566,9 +766,10 @@ namespace MS.Internal.Interop
             if (_view == IntPtr.Zero || IsFullScreenTopLevel) return;
             double scale = ScreenScale();
             CGRect f = SendRect(_view, Sel("frame"));
-            f.x = xPixels / scale;
-            f.y = yPixels / scale;
-            SendVoidRect(_view, Sel("setFrame:"), f);
+            // the outer origin, as SetWindowPos gives it: the client is inside the frame
+            f.x = (xPixels + (_frame?.Left ?? 0)) / scale;
+            f.y = (yPixels + (_frame?.Top ?? 0)) / scale;
+            SetClientFrame(f);
         }
 
         public void GetContentSize(out int width, out int height)
@@ -586,9 +787,21 @@ namespace MS.Internal.Interop
             height = (int)Math.Round(f.height * scale);
         }
 
-        /// <summary>iOS has no window caption, so the outer window size equals the content size
-        /// (same as the browser head).</summary>
-        public void GetWindowPixelSize(out int width, out int height) => GetPixelSize(out width, out height);
+        /// <summary>The outer window size: the client's, with the frame round it where there is one.</summary>
+        public void GetWindowPixelSize(out int width, out int height)
+        {
+            GetPixelSize(out width, out height);
+            width += FrameWidthPixels;
+            height += FrameHeightPixels;
+        }
+
+        /// <summary>The outer window's top-left (GetWindowRect), device pixels.</summary>
+        public void GetWindowScreenOriginPixels(out int x, out int y)
+        {
+            GetClientScreenOriginPixels(out x, out y);
+            x -= _frame?.Left ?? 0;
+            y -= _frame?.Top ?? 0;
+        }
 
         public void GetClientScreenOriginPixels(out int sx, out int sy)
         {
@@ -1249,6 +1462,8 @@ namespace MS.Internal.Interop
                 int mouseKind = kind == 3 ? 2 : kind;
                 PostInput(() =>
                 {
+                    // the frame's own (a frame view's touches): the caption, the edges, the close button
+                    if (s_frameViews.TryGetValue(view, out UIKitWindow framed)) { FrameTouch(framed, mouseKind, p); return; }
                     // the window may have gone since (a tap on its close box): its view is released
                     if (!s_byView.ContainsKey(view)) return;
                     Gesture(view, mouseKind, p.x * scale, p.y * scale, scale);
@@ -1624,6 +1839,7 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGPoint SendPointPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr receiver, IntPtr selector, CGRect arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendColor(IntPtr receiver, IntPtr selector, double r, double g, double b, double a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendRectArg(IntPtr receiver, IntPtr selector, CGRect arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRectRectPtr(IntPtr receiver, IntPtr selector, CGRect r, IntPtr view);
     }
