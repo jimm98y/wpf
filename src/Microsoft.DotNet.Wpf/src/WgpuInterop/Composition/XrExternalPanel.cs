@@ -77,6 +77,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             AppContext.SetData("WpfWebGpu.Xr.LargestExternal", (Func<long>)Largest);
             AppContext.SetData("WpfWebGpu.Xr.ExternalDrawLatest", (Func<Func<long, float[]?>, long>)DrawLatest);
             AppContext.SetData("WpfWebGpu.Xr.ExternalReadLatest", (Func<Action<IntPtr, int, int, int, long>, long>)ReadLatest);
+            AppContext.SetData("WpfWebGpu.Xr.ExternalReadLatestDepth", (Func<Action<IntPtr, int, int, int, IntPtr, int, int, int, long>, long>)ReadLatestDepth);
         }
 
         /// <summary>Its entry points offered (the static constructor's): before a host asks for them, which may be before
@@ -219,6 +220,68 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 wgpuCommandBufferRelease(cmd);
                 long number = s_latestNumber;
                 if (!ctx.MapReadInPlace(s_readBuffer, size, p => use(p, image.Width, image.Height, row, number))) return -1;
+                s_readNumber = number;
+                return number;
+            }
+        }
+
+        private static IntPtr s_cellsReadBuffer;
+        private static ulong s_cellsReadSize;
+
+        /// <summary>As <see cref="ReadLatest"/>, with the depth the picture was drawn with, each eye's cells' nearest
+        /// (<see cref="Cell"/> texels each way, 0 near .. 1 far, the left eye's cells then the right's; zero and no
+        /// cells where it has none): for a compositor that moves the picture itself, by its depth (visionOS's).</summary>
+        private static long ReadLatestDepth(Action<IntPtr, int, int, int, IntPtr, int, int, int, long> use)
+        {
+            lock (s_lock)
+            {
+                if (s_latest is not { } image || s_latestNumber == s_readNumber) return -1;
+                WgpuContext? ctx = ProcessGpu.Peek();
+                if (ctx == null || image.Device != ctx.Device) return -1;
+                int row = (image.Width * 4 + 255) & ~255;
+                ulong size = (ulong)row * (ulong)image.Height;
+                if (s_readBuffer == IntPtr.Zero || s_readSize != size)
+                {
+                    if (s_readBuffer != IntPtr.Zero) wgpuBufferRelease(s_readBuffer);
+                    s_readBuffer = ctx.CreateBuffer(size, WGPUBufferUsage.MapRead | WGPUBufferUsage.CopyDst);
+                    s_readSize = size;
+                }
+                IntPtr enc = wgpuDeviceCreateCommandEncoder(ctx.Device, IntPtr.Zero);
+                var from = new WGPUTexelCopyTextureInfo { texture = image.Texture, aspect = WGPUTextureAspect.All };
+                var to = new WGPUTexelCopyBufferInfo { layout = new WGPUTexelCopyBufferLayout { bytesPerRow = (uint)row, rowsPerImage = (uint)image.Height }, buffer = s_readBuffer };
+                var extent = new WGPUExtent3D { width = (uint)image.Width, height = (uint)image.Height, depthOrArrayLayers = 1 };
+                wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &extent);
+                bool depth = s_latestHasDepth;
+                int cellsRow = 0;
+                ulong cellsSize = 0;
+                if (depth)
+                {
+                    Cells(ctx, enc, image.Width, image.Height);
+                    cellsRow = (s_cellsWidth * 4 + 255) & ~255;
+                    cellsSize = (ulong)cellsRow * (ulong)s_cellsHeight;
+                    if (s_cellsReadBuffer == IntPtr.Zero || s_cellsReadSize != cellsSize)
+                    {
+                        if (s_cellsReadBuffer != IntPtr.Zero) wgpuBufferRelease(s_cellsReadBuffer);
+                        s_cellsReadBuffer = ctx.CreateBuffer(cellsSize, WGPUBufferUsage.MapRead | WGPUBufferUsage.CopyDst);
+                        s_cellsReadSize = cellsSize;
+                    }
+                    var cellsFrom = new WGPUTexelCopyTextureInfo { texture = s_cells, aspect = WGPUTextureAspect.All };
+                    var cellsTo = new WGPUTexelCopyBufferInfo { layout = new WGPUTexelCopyBufferLayout { bytesPerRow = (uint)cellsRow, rowsPerImage = (uint)s_cellsHeight }, buffer = s_cellsReadBuffer };
+                    var cellsExtent = new WGPUExtent3D { width = (uint)s_cellsWidth, height = (uint)s_cellsHeight, depthOrArrayLayers = 1 };
+                    wgpuCommandEncoderCopyTextureToBuffer(enc, &cellsFrom, &cellsTo, &cellsExtent);
+                }
+                IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);
+                wgpuCommandEncoderRelease(enc);
+                wgpuQueueSubmit(ctx.Queue, 1, &cmd);
+                wgpuCommandBufferRelease(cmd);
+                long number = s_latestNumber;
+                int cw = s_cellsWidth, ch = s_cellsHeight;
+                bool read = ctx.MapReadInPlace(s_readBuffer, size, p =>
+                {
+                    if (!depth || !ctx.MapReadInPlace(s_cellsReadBuffer, cellsSize, c => use(p, image.Width, image.Height, row, c, cw, ch, cellsRow, number)))
+                        use(p, image.Width, image.Height, row, IntPtr.Zero, 0, 0, 0, number);
+                });
+                if (!read) return -1;
                 s_readNumber = number;
                 return number;
             }

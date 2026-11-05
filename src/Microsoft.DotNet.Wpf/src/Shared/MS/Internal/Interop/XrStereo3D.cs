@@ -558,6 +558,20 @@ namespace MS.Internal.Interop
             // (visionOS's): the latest picture as it is, and the eyes' number it was drawn for (DrawnTime)
             if (AppContext.GetData("WpfWebGpu.Xr.SubmitPicture") is Action<IntPtr, int, int, int, long> submit)
             {
+                // with its depth where the compositor takes it (WpfWebGpu.Xr.SubmitDepth: each eye's cells' nearest and
+                // the planes it was drawn with), which then moves the picture by it and puts it among what else is there
+                if (AppContext.GetData("WpfWebGpu.Xr.SubmitDepth") is Action<IntPtr, int, int, int, float[], long> submitDepth
+                    && AppContext.GetData("WpfWebGpu.Xr.ExternalReadLatestDepth") is Func<Action<IntPtr, int, int, int, IntPtr, int, int, int, long>, long> readDepth)
+                {
+                    readDepth((pixels, width, height, row, cells, cw, ch, cellsRow, number) =>
+                    {
+                        long eyes = DrawnTime(number);
+                        submit(pixels, width, height, row, eyes);
+                        if (cells != IntPtr.Zero && TryGetDrawnClip(number, out var left, out var right))
+                            submitDepth(cells, cw, ch, cellsRow, new[] { left.X, left.Y, right.X, right.Y }, eyes);
+                    });
+                    return;
+                }
                 (AppContext.GetData("WpfWebGpu.Xr.ExternalReadLatest") as Func<Action<IntPtr, int, int, int, long>, long>)?.Invoke(
                     (pixels, width, height, row, number) => submit(pixels, width, height, row, DrawnTime(number)));
                 return;

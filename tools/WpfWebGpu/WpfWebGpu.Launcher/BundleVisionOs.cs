@@ -147,6 +147,12 @@ internal static partial class Bundle
             private var picture: MTLTexture?
             private var pictureNumber: Int64 = -1
             private var frames = 0
+            // the depth it was drawn with: each eye's cells' nearest (0 near .. 1 far, side by side as the picture), the
+            // eyes' near and far planes, and the picture's number it is of
+            private var depthCells: MTLTexture?
+            private var depthNumber: Int64 = -1
+            private var clip = [Float](repeating: 0, count: 4)
+            private var depthPipeline: MTLRenderPipelineState?
 
             // the hands' pinches in the space (each its id, active or not, where the hand is), for the app to turn,
             // scale and move the view by (VisionXrHost)
@@ -167,6 +173,7 @@ internal static partial class Bundle
                 device = renderer.device
                 queue = device?.makeCommandQueue()
                 pipeline = makePipeline()
+                depthPipeline = makePipeline(depth: true)
                 Task { do { try await session.run([world]) } catch { print("[xr] world tracking: \\(error)") } }
                 let thread = Thread { self.loop(renderer) }
                 thread.name = "Immersive"
@@ -177,7 +184,7 @@ internal static partial class Bundle
                 while true {
                     switch renderer.state {
                     case .invalidated:
-                        lock.lock(); self.renderer = nil; picture = nil; pictureNumber = -1; anchors.removeAll(); lock.unlock()
+                        lock.lock(); self.renderer = nil; picture = nil; pictureNumber = -1; depthCells = nil; depthNumber = -1; anchors.removeAll(); lock.unlock()
                         closed?()
                         return
                     case .paused:
@@ -225,19 +232,24 @@ internal static partial class Bundle
                 }
                 let shown = picture
                 let drawnFor = anchors[pictureNumber]
+                let shownDepth = depthNumber == pictureNumber ? depthCells : nil
+                let planes = clip
                 lock.unlock()
                 // the picture with the anchor it was drawn for; with none yet, nothing, at this frame's
                 drawable.deviceAnchor = shown != nil ? (drawnFor ?? anchor) : anchor
                 // a texture an eye, its half of the picture (one, a simulator's single view: the left eye's)
                 for i in 0..<min(2, drawable.colorTextures.count) {
-                    draw(commands, picture: shown, eye: i, into: drawable.colorTextures[i], depth: i < drawable.depthTextures.count ? drawable.depthTextures[i] : nil)
+                    let projection = drawable.views.isEmpty ? matrix_identity_float4x4 : drawable.computeProjection(convention: .rightUpBack, viewIndex: min(i, drawable.views.count - 1))
+                    draw(commands, picture: shown, cells: shownDepth, near: planes[2 * i], far: planes[2 * i + 1], projection: projection,
+                         eye: i, into: drawable.colorTextures[i], depth: i < drawable.depthTextures.count ? drawable.depthTextures[i] : nil)
                 }
                 drawable.encodePresent(commandBuffer: commands)
                 commands.commit()
             }
 
             // an eye's half of the picture into its texture (premultiplied: the compositor blends it over the room)
-            private func draw(_ commands: MTLCommandBuffer, picture: MTLTexture?, eye: Int, into target: MTLTexture, depth: MTLTexture?) {
+            private func draw(_ commands: MTLCommandBuffer, picture: MTLTexture?, cells: MTLTexture?, near: Float, far: Float, projection: simd_float4x4,
+                              eye: Int, into target: MTLTexture, depth: MTLTexture?) {
                 let pass = MTLRenderPassDescriptor()
                 pass.colorAttachments[0].texture = target
                 pass.colorAttachments[0].loadAction = .clear
@@ -251,16 +263,31 @@ internal static partial class Bundle
                 }
                 guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return }
                 if let picture, let pipeline {
-                    encoder.setRenderPipelineState(pipeline)
                     var half: SIMD2<Float> = eye < 0 ? SIMD2(0, 1) : SIMD2(Float(eye) * 0.5, 0.5)
                     encoder.setFragmentBytes(&half, length: MemoryLayout<SIMD2<Float>>.size, index: 0)
                     encoder.setFragmentTexture(picture, index: 0)
+                    if let cells, let depthPipeline, depth != nil, far > near, near > 0 {
+                        // each texel at its distance, as the compositor's projection for this eye puts it (reverse depth):
+                        // moved by it to where the eyes are, and among what else is in the room
+                        encoder.setRenderPipelineState(depthPipeline)
+                        let depthState = MTLDepthStencilDescriptor()
+                        depthState.depthCompareFunction = .always
+                        depthState.isDepthWriteEnabled = true
+                        if let state = device?.makeDepthStencilState(descriptor: depthState) { encoder.setDepthStencilState(state) }
+                        var planes = SIMD2<Float>(near, far)
+                        var p = projection
+                        encoder.setFragmentBytes(&planes, length: MemoryLayout<SIMD2<Float>>.size, index: 1)
+                        encoder.setFragmentBytes(&p, length: MemoryLayout<simd_float4x4>.size, index: 2)
+                        encoder.setFragmentTexture(cells, index: 1)
+                    } else {
+                        encoder.setRenderPipelineState(pipeline)
+                    }
                     encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 }
                 encoder.endEncoding()
             }
 
-            private func makePipeline() -> MTLRenderPipelineState? {
+            private func makePipeline(depth: Bool = false) -> MTLRenderPipelineState? {
                 let source = """
                 #include <metal_stdlib>
                 using namespace metal;
@@ -274,11 +301,30 @@ internal static partial class Bundle
                     float4 c = picture.sample(s, float2(half_.x + v.uv.x * half_.y, v.uv.y));
                     return float4(c.rgb * c.a, c.a);
                 }
+                struct Out { float4 color [[color(0)]]; float depth [[depth(any)]]; };
+                // the picture with its depth: a cell's nearest (0 near .. 1 far between the planes it was drawn with) back
+                // to its distance, then through the compositor's projection for the eye (reverse: 0 is far)
+                fragment Out fsDepth(V v [[stage_in]], constant float2& half_ [[buffer(0)]], constant float2& planes [[buffer(1)]],
+                                     constant float4x4& projection [[buffer(2)]], texture2d<float> picture [[texture(0)]], texture2d<float> cells [[texture(1)]]) {
+                    constexpr sampler s(filter::linear, address::clamp_to_edge);
+                    constexpr sampler nearest(filter::nearest, address::clamp_to_edge);
+                    float2 uv = float2(half_.x + v.uv.x * half_.y, v.uv.y);
+                    float4 c = picture.sample(s, uv);
+                    float d = cells.sample(nearest, uv).r;
+                    Out o;
+                    o.color = float4(c.rgb * c.a, c.a);
+                    if (d >= 0.99999 || c.a <= 0.0) { o.depth = 0.0; return o; }
+                    float n = planes.x, f = planes.y;
+                    float z = n * f / (f - d * (f - n));
+                    float4 at = projection * float4(0.0, 0.0, -z, 1.0);
+                    o.depth = clamp(at.z / at.w, 0.0, 1.0);
+                    return o;
+                }
                 """
                 guard let device, let library = try? device.makeLibrary(source: source, options: nil) else { return nil }
                 let d = MTLRenderPipelineDescriptor()
                 d.vertexFunction = library.makeFunction(name: "vs")
-                d.fragmentFunction = library.makeFunction(name: "fs")
+                d.fragmentFunction = library.makeFunction(name: depth ? "fsDepth" : "fs")
                 d.colorAttachments[0].pixelFormat = .bgra8Unorm_srgb
                 d.depthAttachmentPixelFormat = .depth32Float
                 return try? device.makeRenderPipelineState(descriptor: d)
@@ -303,6 +349,21 @@ internal static partial class Bundle
                 }
                 picture?.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: pixels, bytesPerRow: bytesPerRow)
                 pictureNumber = number
+            }
+
+            func submitDepth(_ cells: UnsafeRawPointer, _ width: Int, _ height: Int, _ bytesPerRow: Int, _ planes: [Float], _ number: Int64) {
+                guard let device else { return }
+                lock.lock(); defer { lock.unlock() }
+                if depthCells == nil || depthCells!.width != width || depthCells!.height != height {
+                    let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r32Float, width: width, height: height, mipmapped: false)
+                    d.usage = .shaderRead
+                    d.storageMode = .shared
+                    depthCells = device.makeTexture(descriptor: d)
+                }
+                depthCells?.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: cells, bytesPerRow: bytesPerRow)
+                if depthNumber < 0 { NSLog("[xr] immersive: the picture's depth, \(width)x\(height) cells, planes \(planes[0])..\(planes[1]) m") }
+                clip = planes
+                depthNumber = number
             }
         }
 
@@ -343,6 +404,14 @@ internal static partial class Bundle
         @_cdecl("wpf_xr_submit")
         public func wpf_xr_submit(_ pixels: UnsafeRawPointer, _ width: Int32, _ height: Int32, _ bytesPerRow: Int32, _ number: Int64) {
             WpfXr.shared.submit(pixels, Int(width), Int(height), Int(bytesPerRow), number)
+        }
+
+        /// The depth the picture of `number` was drawn with: each eye's cells' nearest (R32F, 0 near .. 1 far), and each
+        /// eye's near and far planes (metres).
+        @_cdecl("wpf_xr_submit_depth")
+        public func wpf_xr_submit_depth(_ cells: UnsafeRawPointer, _ width: Int32, _ height: Int32, _ bytesPerRow: Int32,
+                                        _ nearLeft: Float, _ farLeft: Float, _ nearRight: Float, _ farRight: Float, _ number: Int64) {
+            WpfXr.shared.submitDepth(cells, Int(width), Int(height), Int(bytesPerRow), [nearLeft, farLeft, nearRight, farRight], number)
         }
         """";
 

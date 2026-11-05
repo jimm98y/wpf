@@ -33,6 +33,7 @@ namespace MS.Internal.Interop
         private static delegate* unmanaged<void> s_close;
         private static delegate* unmanaged<float*, long> s_eyes;
         private static delegate* unmanaged<IntPtr, int, int, int, long, void> s_submit;
+        private static delegate* unmanaged<IntPtr, int, int, int, float, float, float, float, long, void> s_submitDepth;
 
         // the desktop's frame: the head's place and heading when the view began to fill the eyes
         private static bool s_framed;
@@ -75,6 +76,16 @@ namespace MS.Internal.Interop
             {
                 if (s_full && number > 0) s_submit(pixels, w, h, row, number);
             }));
+            // ...with its depth: the compositor moves it to where the eyes are by it (a near model stays put as the head
+            // moves, not only as it turns) and puts it among what else is in the room
+            if (NativeLibrary.TryGetExport(lib, "wpf_xr_submit_depth", out IntPtr submitDepth))
+            {
+                s_submitDepth = (delegate* unmanaged<IntPtr, int, int, int, float, float, float, float, long, void>)submitDepth;
+                AppContext.SetData("WpfWebGpu.Xr.SubmitDepth", (Action<IntPtr, int, int, int, float[], long>)((cells, w, h, row, clip, number) =>
+                {
+                    if (s_full && number > 0 && clip.Length >= 4) s_submitDepth(cells, w, h, row, clip[0], clip[1], clip[2], clip[3], number);
+                }));
+            }
             AddPress(rootView);
             (AppContext.GetData("WpfWebGpu.Xr.Core.Enable") as Action)?.Invoke();
             // a check with no hands to pinch with (a simulator's, WPF_XR_AUTO_FULLSCREEN=<seconds>): the first 3D view

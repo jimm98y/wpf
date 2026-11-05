@@ -110,7 +110,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (s_cells != IntPtr.Zero) wgpuTextureRelease(s_cells);
                 var td = new WGPUTextureDescriptor
                 {
-                    usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding, dimension = WGPUTextureDimension._2D,
+                    usage = WGPUTextureUsage.RenderAttachment | WGPUTextureUsage.TextureBinding | WGPUTextureUsage.CopySrc, dimension = WGPUTextureDimension._2D,
                     size = new WGPUExtent3D { width = (uint)(2 * across), height = (uint)down, depthOrArrayLayers = 1 },
                     format = TexFmt.R32Float, mipLevelCount = 1, sampleCount = 1,
                 };
