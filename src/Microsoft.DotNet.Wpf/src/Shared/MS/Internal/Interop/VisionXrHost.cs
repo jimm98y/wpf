@@ -163,7 +163,13 @@ namespace MS.Internal.Interop
         [UnmanagedCallersOnly]
         private static void AutoOnMain(IntPtr context)
         {
-            try { Toggle(0, 0); }
+            try
+            {
+                // at the first 3D view's centre, as a pinch on it would be
+                if ((AppContext.GetData("WpfWebGpu.Xr.Core.FirstView") as Func<double[]?>)?.Invoke() is { Length: 4 } r)
+                    Toggle((int)(r[0] + r[2] / 2), (int)(r[1] + r[3] / 2));
+                else Console.WriteLine("[xr] fullscreen: no 3D view yet");
+            }
             catch (Exception e) { Console.WriteLine("[xr] fullscreen: " + e.Message); }
         }
 

@@ -39,7 +39,13 @@ namespace MS.Internal.AppModel
             get
             {
                 // Calling FixFileUri because BaseDirectory will be a c:\\ style path
-                Uri siteOfOrigin = BaseUriHelper.FixFileUri(new Uri(System.AppDomain.CurrentDomain.BaseDirectory));
+                // A folder, as Windows' BaseDirectory always ends: where it does not (an iOS app's bundle), the folder's
+                // own name was taken for a file and dropped from every site-of-origin path ("tower/wood.png" was looked
+                // for beside the app's bundle, not in it)
+                string baseDirectory = System.AppDomain.CurrentDomain.BaseDirectory;
+                if (baseDirectory.Length > 0 && baseDirectory[^1] != System.IO.Path.DirectorySeparatorChar && baseDirectory[^1] != System.IO.Path.AltDirectorySeparatorChar)
+                    baseDirectory += System.IO.Path.DirectorySeparatorChar;
+                Uri siteOfOrigin = BaseUriHelper.FixFileUri(new Uri(baseDirectory));
 #if DEBUG
             if (_traceSwitch.Enabled)
                 System.Diagnostics.Trace.TraceInformation(

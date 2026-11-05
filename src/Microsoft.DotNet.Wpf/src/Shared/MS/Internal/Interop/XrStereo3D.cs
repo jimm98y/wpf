@@ -422,6 +422,11 @@ namespace MS.Internal.Interop
             AppContext.SetData("WpfWebGpu.Xr.Core.EndFullscreen", (Action)EndFullscreen);
             AppContext.SetData("WpfWebGpu.Xr.Core.ViewAt", (Func<int, int, double[]?>)((x, y) =>
                 TryGetViewRect(x, y, out Rect r) ? new[] { r.X, r.Y, r.Width, r.Height } : null));
+            // the first 3D view there is (a check with nothing to point with: a simulator's WPF_XR_AUTO_FULLSCREEN)
+            AppContext.SetData("WpfWebGpu.Xr.Core.FirstView", (Func<double[]?>)(() =>
+            {
+                lock (s_rectsLock) return s_viewRects.Count > 0 ? new[] { s_viewRects[0].X, s_viewRects[0].Y, s_viewRects[0].Width, s_viewRects[0].Height } : null;
+            }));
             AppContext.SetData("WpfWebGpu.Xr.Core.Manipulate", (Action<float, float, float, float, float>)((turn, scale, mx, my, mz) =>
                 Manipulate(turn, scale, new System.Numerics.Vector3(mx, my, mz))));
             AppContext.SetData("WpfWebGpu.Xr.Core.MovedViews", (Func<long, float[], float[]?>)((number, now) => now.Length < 22 ? null : MovedViews(number,
