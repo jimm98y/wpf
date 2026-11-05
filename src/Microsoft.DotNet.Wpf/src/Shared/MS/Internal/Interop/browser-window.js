@@ -1588,7 +1588,32 @@ function xrOfferButton() {
             b.addEventListener(type, (e) => e.stopPropagation());
         b.addEventListener("click", () => { xrEnter().catch((err) => console.warn("WebXR: " + err)); });
         document.body.appendChild(b);
+        xrWatchForB();
     }).catch(() => {});
+}
+
+// B or Y on the page itself, the way in as on the headset's own app: where the browser hands the controllers to the
+// page (the Gamepad API) and lets a session start from them -- a browser may keep a session for a click or a key
+// (a "user activation"), and then the button stays the way in
+function xrWatchForB() {
+    let held = false;
+    const poll = () => {
+        if (!xr) {
+            let b = false;
+            for (const pad of navigator.getGamepads ? navigator.getGamepads() : [])
+            {
+                if (!pad) continue;
+                const pressed = pad.buttons.map((x, i) => x.pressed ? i : -1).filter(i => i >= 0).join(",");
+                if (pressed !== (xrWatchForB.last ??= {})[pad.index]) { xrWatchForB.last[pad.index] = pressed; if (pressed) console.log(`WebXR: ${pad.id} buttons ${pressed} on the page`); }
+                if (pad.buttons.length > 5 && (pad.buttons[5].pressed || pad.buttons[4]?.pressed)) b = true;
+            }
+            if (b && !held) xrEnter().catch((err) => console.warn("WebXR from B: " + err));
+            held = b;
+        }
+        requestAnimationFrame(poll);
+    };
+    requestAnimationFrame(poll);
+    addEventListener("gamepadconnected", (e) => console.log(`WebXR: controller ${e.gamepad.id}, ${e.gamepad.buttons.length} buttons, on the page`));
 }
 
 async function xrEnter() {
@@ -1599,7 +1624,9 @@ async function xrEnter() {
     const passthrough = session.environmentBlendMode && session.environmentBlendMode !== "opaque";
     const gl = glCanvas.getContext("webgl2", { xrCompatible: true, alpha: passthrough, antialias: true });
     if (gl.makeXRCompatible) await gl.makeXRCompatible();
-    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { alpha: passthrough }) });
+    // at the headset's own resolution, not the browser's default below it: the windows' text was illegible
+    const scale = XRWebGLLayer.getNativeFramebufferScaleFactor ? XRWebGLLayer.getNativeFramebufferScaleFactor(session) : 1;
+    session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl, { alpha: passthrough, framebufferScaleFactor: Math.max(1, scale) }) });
     const space = await session.requestReferenceSpace("local");
     xr = {
         session, gl, space, program: xrProgram(gl), quad: xrQuad(gl),
@@ -1640,7 +1667,11 @@ async function xrEnter() {
 function xrTexture(gl) {
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    // mipmapped, and sampled at a slant without blurring along it: a window's text is drawn smaller than its
+    // pixels, and sampled straight it broke up
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+    const aniso = gl.getExtension("EXT_texture_filter_anisotropic");
+    if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -1661,7 +1692,7 @@ function xrTake(canvas) {
         if (!tex) { tex = xrTexture(gl); xr.textures.set(handle, tex); }
     }
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas); } catch { }
+    try { gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas); gl.generateMipmap(gl.TEXTURE_2D); } catch { }
 }
 
 function xrProgram(gl) {
@@ -1956,6 +1987,11 @@ export function xrPanelCanvas(width, height) {
     if (xrPanel.canvas.width !== width) xrPanel.canvas.width = width;
     if (xrPanel.canvas.height !== height) xrPanel.canvas.height = height;
     return XR_PANEL_HANDLE;
+}
+
+/** The session ended: B or Y over the app away from a 3D view (BrowserXrHost), back to the page. */
+export function xrEnd() {
+    xr?.session.end().catch(() => {});
 }
 
 /** Whether a 3D view fills the eyes; the picture last drawn into its canvas (-1: none yet). */

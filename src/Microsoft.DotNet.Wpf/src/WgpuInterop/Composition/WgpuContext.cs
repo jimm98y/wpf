@@ -264,7 +264,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (wgpuAdapterGetInfo(ctx.Adapter, &info) == WGPUStatus.Success)
                 {
                     static string SVs(WGPUStringView v) => v.data == null ? "" : System.Text.Encoding.UTF8.GetString(v.data, (int)v.length);
-                    ctx.AdapterDescription = $"backend={info.backendType} type={info.adapterType} device='{SVs(info.device)}' desc='{SVs(info.description)}'";
+                    // a browser names the GPU by its vendor and architecture ("qualcomm", "adreno-7xx" in a Quest's
+                    // browser) and leaves the device and its description empty: without them the Adreno driver's
+                    // workarounds (IsAdreno) were not taken there, and its coverage rasterizer cut tiled brushes up
+                    ctx.AdapterDescription = $"backend={info.backendType} type={info.adapterType} vendor='{SVs(info.vendor)}' arch='{SVs(info.architecture)}' device='{SVs(info.device)}' desc='{SVs(info.description)}'";
                 }
                 // The device was made at boot (WebGPU's requestDevice is a Promise) with what the
                 // descriptor would ask for -- the Direct3D shim's features and the adapter's limits

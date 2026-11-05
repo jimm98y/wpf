@@ -72,7 +72,9 @@ namespace MS.Internal.Interop
             if ((AppContext.GetData("WpfWebGpu.Xr.Core.ViewAt") as Func<int, int, double[]?>)?.Invoke(x, y) is not { Length: 4 } r
                 || r[2] < 8 || r[3] < 8)
             {
-                Console.WriteLine($"[xr] no 3D view for fullscreen at ({x},{y})");
+                // the rest of the app: out of the session, back to the page (as the headset's own app goes back to its panel)
+                Console.WriteLine($"[xr] no 3D view at ({x},{y}): back to the page");
+                Js.XrEnd();
                 return;
             }
             Console.WriteLine($"[xr] fullscreen: the 3D view at ({r[0]:0},{r[1]:0}) {r[2]:0}x{r[3]:0}");
@@ -105,6 +107,9 @@ namespace MS.Internal.Interop
 
             [JSImport("xrPanelCanvas", Module)]
             internal static partial int XrPanelCanvas(int width, int height);
+
+            [JSImport("xrEnd", Module)]
+            internal static partial void XrEnd();
 
             [JSImport("xrFullscreen", Module)]
             internal static partial void XrFullscreen(bool on, double shown);
