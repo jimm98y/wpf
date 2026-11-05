@@ -133,7 +133,7 @@ namespace MS.Internal.Interop
     /// A single WPF window on Android: a view inside the app's one activity. The handle is synthetic
     /// and stable; the ANativeWindow behind it is not (see the file header).
     /// </summary>
-    public sealed class AndroidWindow : IPlatformWindow
+    public sealed class AndroidWindow : IPlatformWindow, IWindowFrameOwner
     {
         private static readonly Dictionary<IntPtr, AndroidWindow> s_byHandle = new Dictionary<IntPtr, AndroidWindow>();
         private static readonly List<AndroidWindow> s_zOrder = new List<AndroidWindow>();   // last = topmost
@@ -171,28 +171,26 @@ namespace MS.Internal.Interop
         // DefWindowProc's loops do. Without it a MessageBox came up as a bare client, neither movable nor closable.
         // The view's fields (_xPixels.. _heightPixels) stay the client's; the frame is the insets round it.
 
-        private int _frameLeft, _frameTop, _frameRight, _frameBottom;   // device pixels; all 0 without a frame
-        private bool _frameSizable, _frameCloseBox, _closeHover, _closeHeld;
+        // The frame's geometry and behaviour are WindowFrame's (Windows 11's metrics, WM_NCHITTEST, the press on it).
+        private WindowFrame _frame;
         private string _title = "";
-        private long _captionClickTime;
-        private int _captionClickX, _captionClickY;
-        private static AndroidWindow s_framePress;   // the window whose frame the button went down on, until it comes up
-
-        private const int HTNOWHERE = 0, HTCLIENT = 1, HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13,
-            HTTOPRIGHT = 14, HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17, HTBORDER = 18, HTCLOSE = 20;
+        private int _frameLeft => _frame?.Left ?? 0;      // device pixels; all 0 without a frame
+        private int _frameTop => _frame?.Top ?? 0;
+        private int _frameRight => _frame?.Right ?? 0;
+        private int _frameBottom => _frame?.Bottom ?? 0;
 
         /// <summary>The window's style (WS_*), set before <see cref="Create(string, int, int, int, int, bool)"/>: a
         /// top-level window with a caption gets a frame, where the host draws them.</summary>
         public int FrameStyle { get; set; }
 
         /// <summary>The window has Windows' frame round its client, which the host draws.</summary>
-        public bool HasFrame => _frameTop > 0;
+        public bool HasFrame => _frame != null;
 
         /// <summary>The frame has sizing edges (WS_THICKFRAME).</summary>
-        public bool FrameSizable => _frameSizable;
+        public bool FrameSizable => _frame?.Sizable == true;
 
         /// <summary>The caption has a close button (WS_SYSMENU).</summary>
-        public bool FrameHasCloseBox => _frameCloseBox;
+        public bool FrameHasCloseBox => _frame?.HasCloseBox == true;
 
         /// <summary>The window's title (SetWindowText), which its caption shows.</summary>
         public string Title => _title;
@@ -201,8 +199,8 @@ namespace MS.Internal.Interop
         public bool IsActiveWindow => ReferenceEquals(s_active, this);
 
         /// <summary>The close button's look: 0, the pointer over it (FrameCloseHot), or held down on it (FrameClosePressed).</summary>
-        public int FrameState => _closeHover ? (_closeHeld ? FrameClosePressed : FrameCloseHot) : 0;
-        public const int FrameCloseHot = 1, FrameClosePressed = 2;
+        public int FrameState => _frame?.State ?? 0;
+        public const int FrameCloseHot = WindowFrame.CloseHot, FrameClosePressed = WindowFrame.ClosePressed;
 
         /// <summary>The frame round the client, device pixels: the sides and the foot (the resize margin outside the
         /// visible edge, and the edge), and the top (the caption).</summary>
@@ -271,7 +269,6 @@ namespace MS.Internal.Interop
                 }
                 Host = host;
                 s_drag = null;
-                s_framePress = null;
                 foreach (AndroidWindow w in windows)
                     if (w._handle != IntPtr.Zero) w.MoveTo(host);
                 // the children once their parents have views (a host ignores a parent it has none for: an ElementHost's
@@ -330,7 +327,7 @@ namespace MS.Internal.Interop
                 _wasFilling = fills;
                 _maximized = false;
             }
-            _frameLeft = _frameTop = _frameRight = _frameBottom = 0;
+            _frame = null;
             _xPixels = ox; _yPixels = oy; _widthPixels = Math.Max(1, ow); _heightPixels = Math.Max(1, oh);
             if (!IsBorderless && !fills) ApplyFrame();
             if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} into {host.GetType().Name} at ({_xPixels},{_yPixels}) {_widthPixels}x{_heightPixels}px{(HasFrame ? " framed" : "")}{(fills ? " filling" : "")}");
@@ -345,102 +342,25 @@ namespace MS.Internal.Interop
 
         private void ApplyFrame()
         {
-            const int WS_CAPTION = 0x00C00000, WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_CHILD = 0x40000000;
-            if ((FrameStyle & WS_CAPTION) != WS_CAPTION || (FrameStyle & WS_CHILD) != 0 || Host?.DrawsFrames != true) return;
-            double scale = GetBackingScale();
-            int M(int v) => (int)Math.Floor(v * scale + 0.5);
-            int edge = 3 + M(1) + M(4);
-            _frameLeft = _frameRight = _frameBottom = edge;
-            _frameTop = edge + M(22) + 1;
-            _frameSizable = (FrameStyle & WS_THICKFRAME) != 0;
-            _frameCloseBox = (FrameStyle & WS_SYSMENU) != 0;
+            if (Host?.DrawsFrames != true) return;
+            _frame = WindowFrame.For(this, FrameStyle, GetBackingScale());
+            if (_frame == null) return;
             _xPixels += _frameLeft;
             _yPixels += _frameTop;
             _widthPixels = Math.Max(1, _widthPixels - _frameLeft - _frameRight);
             _heightPixels = Math.Max(1, _heightPixels - _frameTop - _frameBottom);
         }
 
-        /// <summary>WM_NCHITTEST for a point relative to the client's origin (device pixels), as Windows 11 answers it.</summary>
-        private int FrameHit(int x, int y)
-        {
-            if (x >= 0 && y >= 0 && x < _widthPixels && y < _heightPixels) return HTCLIENT;
-            int ox = x + _frameLeft, oy = y + _frameTop;
-            int ow = _widthPixels + _frameLeft + _frameRight, oh = _heightPixels + _frameTop + _frameBottom;
-            if (ox < 0 || oy < 0 || ox >= ow || oy >= oh) return HTNOWHERE;
-            double scale = GetBackingScale();
-            int margin = Math.Max(0, _frameLeft - 1);                       // the resize margin outside the visible edge
-            int closeWidth = (int)Math.Round(46 * scale);
-            if (_frameCloseBox && oy >= 1 && oy < _frameTop && ox < ow - margin - 1 && ox >= ow - margin - 1 - closeWidth) return HTCLOSE;
-            if (_frameSizable)
-            {
-                bool left = ox < _frameLeft, right = ox >= ow - _frameRight;
-                bool top = oy < (int)Math.Round(4 * scale), bottom = oy >= oh - _frameBottom;
-                if (top && left) return HTTOPLEFT;
-                if (top && right) return HTTOPRIGHT;
-                if (bottom && left) return HTBOTTOMLEFT;
-                if (bottom && right) return HTBOTTOMRIGHT;
-                if (left) return HTLEFT;
-                if (right) return HTRIGHT;
-                if (top) return HTTOP;
-                if (bottom) return HTBOTTOM;
-            }
-            if (oy < _frameTop && ox >= margin && ox < ow - margin) return HTCAPTION;
-            return HTBORDER;
-        }
+        void IWindowFrameOwner.GetClientPixelSize(out int width, out int height) { width = _widthPixels; height = _heightPixels; }
+        double IWindowFrameOwner.FrameScale => GetBackingScale();
+        bool IWindowFrameOwner.FrameMaximized => IsMaximizedNow;
+        void IWindowFrameOwner.FrameActivate() => Activate();
+        void IWindowFrameOwner.FrameBeginMove() => BeginMoveDrag();
+        void IWindowFrameOwner.FrameBeginSize(int hitTest) => BeginResizeDrag(hitTest, 0, 0, 0, 0);
+        void IWindowFrameOwner.FrameToggleMaximized() => SetWindowState(IsMaximizedNow ? 9 : 3);
+        void IWindowFrameOwner.FrameClose() => Closed?.Invoke(_handle);
+        void IWindowFrameOwner.FrameChanged() => OnFrameChanged();
 
-        private void SetCloseLook(bool hover, bool held)
-        {
-            if (_closeHover == hover && _closeHeld == held) return;
-            _closeHover = hover;
-            _closeHeld = held;
-            OnFrameChanged();
-        }
-
-        /// <summary>A touch on the window (relative to its client) that is its frame's, as DefWindowProc takes a press on
-        /// the non-client area: true when it was. A move over the frame goes on to the client as well -- the pointer
-        /// leaving its elements -- unless the button went down on the frame.</summary>
-        private bool OnFrame(int kind, int x, int y)
-        {
-            int hit = FrameHit(x, y);
-            bool pressedHere = ReferenceEquals(s_framePress, this);
-            switch (kind)
-            {
-                case 0:
-                    SetCloseLook(hit == HTCLOSE && _frameCloseBox && (pressedHere ? _closeHeld : !s_pressed), _closeHeld);
-                    return pressedHere;
-                case 1:
-                    if (hit == HTCLIENT) return false;
-                    if (hit == HTNOWHERE) return true;
-                    s_framePress = this;
-                    Activate();
-                    if (hit == HTCLOSE) { SetCloseLook(true, true); return true; }
-                    if (hit == HTCAPTION)
-                    {
-                        // a second click on the caption maximizes the window, or restores it (SM_CXDOUBLECLK's square)
-                        long now = Environment.TickCount64;
-                        int slop = (int)Math.Round(2 * GetBackingScale());
-                        bool second = now - _captionClickTime <= 500 && Math.Abs(x - _captionClickX) <= slop && Math.Abs(y - _captionClickY) <= slop;
-                        _captionClickTime = second ? 0 : now;
-                        _captionClickX = x;
-                        _captionClickY = y;
-                        if (second && _frameSizable) SetWindowState(IsMaximizedNow ? 9 : 3);
-                        else BeginMoveDrag();
-                        return true;
-                    }
-                    if (hit >= HTLEFT && hit <= HTBOTTOMRIGHT && _frameSizable && !IsMaximizedNow)
-                        BeginResizeDrag(hit, 0, 0, 0, 0);
-                    return true;
-                case 2:
-                    if (!pressedHere) return false;
-                    s_framePress = null;
-                    bool close = _closeHeld && hit == HTCLOSE;
-                    SetCloseLook(hit == HTCLOSE && _frameCloseBox, false);
-                    if (close) Closed?.Invoke(_handle);
-                    return true;
-                default:
-                    return hit != HTCLIENT;
-            }
-        }
 
         /// <summary>A top-level window over the app's own: a dialog, a tool window.</summary>
         public bool IsSecondary => !IsBorderless && !IsMain;
@@ -1055,10 +975,17 @@ namespace MS.Internal.Interop
                 }
             }
 
+            // the size the surface has is the window's own only where the window is the screen (the app's own, which
+            // follows the activity); a floating window's is the one it was given, which its surface follows. Taken from
+            // a surface made at the size a window was created at, a dialog sized to its content right after was grown
+            // back to its creation size by the surface's report arriving late.
             OnUi(() =>
             {
-                w._widthPixels = widthPixels;
-                w._heightPixels = heightPixels;
+                if (w.FillsScreen || w.IsBorderless)
+                {
+                    w._widthPixels = widthPixels;
+                    w._heightPixels = heightPixels;
+                }
                 w.RaiseResized();
             });
         }
@@ -1555,7 +1482,7 @@ namespace MS.Internal.Interop
             if (s_drag != null)
             {
                 if (kind == 0) DragTo(sx, sy);
-                else if (kind == 2) { DragTo(sx, sy); s_drag = null; s_pressed = false; s_framePress = null; }
+                else if (kind == 2) { AndroidWindow looped = s_drag.Window; DragTo(sx, sy); s_drag = null; s_pressed = false; looped._frame?.LoopEnded(); }
                 return;
             }
             s_cursorX = sx; s_cursorY = sy; s_cursorKnown = true;
@@ -1569,7 +1496,7 @@ namespace MS.Internal.Interop
                 SetActive(pressed);   // a popup or a child leaves it (SetActive)
             }
             // the frame's: a press on the caption, an edge or the close button (DefWindowProc's)
-            if (at != null && at.HasFrame && at.OnFrame(kind, xPixels, yPixels)) return;
+            if (at?._frame != null && at._frame.Touch(kind, xPixels, yPixels)) return;
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
             {

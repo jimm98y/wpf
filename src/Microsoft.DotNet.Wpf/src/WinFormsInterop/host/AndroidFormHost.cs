@@ -247,6 +247,22 @@ namespace System.Windows.Forms
 			_lastVer = -1;
 			return true;
 		}
+		/// <summary>A press on the form while a modal dialog has disabled it (EnableWindow -- WPF's dialog's, or this
+		/// toolkit's own modal loop's): Windows delivers nothing and activates the dialog instead, which stays over
+		/// the form. A press activated the disabled form and brought it over its own modal dialog.</summary>
+		private void PressOnDisabled ()
+		{
+			if (WindowsBase::MS.Internal.Interop.PlatformWindow.DisabledWindowPressed is { } dialog) {
+				dialog (_window?.Handle ?? IntPtr.Zero);
+				return;
+			}
+			foreach (var h in s_activation.ToArray ())
+				if (h != this && !h._closed && h._form.Modal && h._form.Visible) {
+					h.Activate ();
+					return;
+				}
+		}
+
 
 		private void Activate ()
 		{
@@ -460,6 +476,12 @@ namespace System.Windows.Forms
 			int x = (int)Math.Floor (m.X / _scale) + _form.Left;
 			int y = (int)Math.Floor (m.Y / _scale) + _form.Top;
 			_pointer = new Point (x, y);
+			// disabled by a modal dialog: the press is the dialog's (PressOnDisabled), nothing reaches the form
+			if (_form.IsHandleCreated && !XplatUI.IsEnabled (_form.Handle)) {
+				if (m.Kind == 1)
+					PressOnDisabled ();
+				return;
+			}
 			if (m.Kind == 1 && _form.Enabled)
 				Activate ();
 			if (_chrome.HasFrame && OnFrame (m, x, y))

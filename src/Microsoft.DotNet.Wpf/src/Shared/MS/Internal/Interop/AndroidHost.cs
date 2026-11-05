@@ -251,6 +251,103 @@ internal sealed class WpfPopupView : View
     public override bool OnGenericMotionEvent(MotionEvent? e) => WpfInput.OnGenericMotion(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnGenericMotionEvent(e);
 }
 
+/// <summary>Windows 11's frame round a window that has one (AndroidWindow.HasFrame), drawn into a canvas of the outer
+/// rectangle's size, as the DWM draws it: the shadow in the resize margin outside the visible edge, the edge, the
+/// caption with the title and the close button -- white, or grey for a window that is not active, the close button
+/// red under the pointer. The headset's host draws it into a surface of its own (AndroidXrHost), a flat activity's
+/// into a view under the window's (WpfFrameView).</summary>
+internal static class AndroidFramePainter
+{
+    public static void Draw(Canvas canvas, AndroidWindow w, int width, int height)
+    {
+        w.GetFrameInsets(out int left, out int top, out _, out _);
+        float scale = (float)w.GetBackingScale();
+        bool active = w.IsActiveWindow;
+        canvas.DrawColor(Color.Transparent, PorterDuff.Mode.Clear!);
+        using var paint = new Paint();
+        int margin = Math.Max(0, left - 1);
+        int vl = margin, vt = 0, vr = width - margin, vb = height - margin;      // the visible window
+        // the shadow: a ring a pixel wide per step out, each pixel in one ring only
+        for (int i = margin; i > 0; i--)
+        {
+            float k = (float)(margin - i + 1) / Math.Max(1, margin);
+            paint.Color = Color.Argb((int)(28 * k * k), 0, 0, 0);
+            int st = vt + Math.Min(i, 2), sb = vb + i - 1;
+            canvas.DrawRect(vl - i, st, vl - i + 1, sb + 1, paint);
+            canvas.DrawRect(vr + i - 1, st, vr + i, sb + 1, paint);
+            canvas.DrawRect(vl - i + 1, sb, vr + i - 1, sb + 1, paint);
+        }
+        paint.Color = active ? Color.White : Color.Rgb(243, 243, 243);
+        canvas.DrawRect(vl, vt, vr, vb, paint);
+        float line = Math.Max(1, MathF.Round(scale));
+        paint.SetStyle(Paint.Style.Stroke!);
+        paint.StrokeWidth = line;
+        paint.Color = active ? Color.Rgb(120, 120, 120) : Color.Rgb(170, 170, 170);
+        canvas.DrawRect(vl + line / 2, vt + line / 2, vr - line / 2, vb - line / 2, paint);
+        paint.SetStyle(Paint.Style.Fill!);
+
+        // the close button, 46 pixels at 96 dpi across the caption's right end
+        int closeRight = vr - 1, closeLeft = w.FrameHasCloseBox ? closeRight - (int)MathF.Round(46 * scale) : closeRight;
+        if (w.FrameHasCloseBox)
+        {
+            int state = w.FrameState;
+            if (state != 0)
+            {
+                paint.Color = state == AndroidWindow.FrameClosePressed ? Color.Rgb(200, 66, 58) : Color.Rgb(196, 43, 28);
+                canvas.DrawRect(closeLeft, vt + 1, closeRight, top, paint);
+            }
+            float cx = (closeLeft + closeRight) / 2f, cy = (vt + 1 + top) / 2f, arm = 5 * scale;
+            paint.AntiAlias = true;
+            paint.SetStyle(Paint.Style.Stroke!);
+            paint.StrokeWidth = scale;
+            paint.Color = state != 0 ? Color.White : active ? Color.Black : Color.Rgb(150, 150, 150);
+            canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, paint);
+            canvas.DrawLine(cx + arm, cy - arm, cx - arm, cy + arm, paint);
+            paint.SetStyle(Paint.Style.Fill!);
+        }
+
+        // the title: the caption font (9 points, 12 pixels at 96 dpi) from the left edge to the buttons
+        paint.AntiAlias = true;
+        paint.TextSize = 12 * scale;
+        paint.Color = active ? Color.Black : Color.Rgb(150, 150, 150);
+        float textLeft = vl + 1 + 11 * scale, room = closeLeft - 4 * scale - textLeft;
+        string title = w.Title;
+        if (room > 0 && paint.MeasureText(title) > room)
+        {
+            while (title.Length > 0 && paint.MeasureText(title + "\u2026") > room) title = title[..^1];
+            title += "\u2026";
+        }
+        Paint.FontMetrics metrics = paint.GetFontMetrics()!;
+        float baseline = (vt + 1 + top) / 2f - (metrics.Ascent + metrics.Descent) / 2f;
+        if (room > 0) canvas.DrawText(title, textLeft, baseline, paint);
+    }
+}
+
+/// <summary>A window's frame in a flat activity: a view of the outer rectangle just under the window's surface,
+/// drawn by AndroidFramePainter; its touches are the window's, measured from its client (WpfInput.AtWindow), which
+/// takes those on the frame as DefWindowProc does (AndroidWindow: the caption moves it, the edges size it, the close
+/// button closes it).</summary>
+internal sealed class WpfFrameView : View
+{
+    private readonly IntPtr _wpfHandle;
+
+    public WpfFrameView(Context context, IntPtr wpfHandle) : base(context)
+    {
+        _wpfHandle = wpfHandle;
+        SetBackgroundColor(Android.Graphics.Color.Transparent);
+    }
+
+    protected override void OnDraw(Canvas? canvas)
+    {
+        if (canvas == null || AndroidWindow.FromHandle(_wpfHandle) is not { HasFrame: true } w || Width <= 0 || Height <= 0) return;
+        AndroidFramePainter.Draw(canvas, w, Width, Height);
+    }
+
+    public override bool OnTouchEvent(MotionEvent? e) => WpfInput.OnTouch(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnTouchEvent(e);
+
+    public override bool OnGenericMotionEvent(MotionEvent? e) => WpfInput.OnGenericMotion(_wpfHandle, WpfInput.AtWindow(this, _wpfHandle, e)) || base.OnGenericMotionEvent(e);
+}
+
 /// <summary>Translates Android motion events into the mouse messages WPF consumes. Shared by both
 /// view kinds, which differ only in whether they also carry a rendering surface.</summary>
 internal static class WpfInput
@@ -927,7 +1024,12 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     public void BringToFront(IntPtr handle) => OnMain(() =>
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+        // the frame first, then the window over it: brought to the front, not taken out and put back -- a view taken
+        // out of the activity has its touch cancelled, and a dialog's caption pressed (which activates it) lost the
+        // drag it began, its release taken at the frame's corner
+        if (_frames.TryGetValue(handle, out View? frameView)) frameView.BringToFront();
         view.BringToFront();
+        PlaceFrame(handle);
         // a floating window's surface is composed above the app's own (SurfaceViews are layers of their
         // own, stacked by this rather than by the view order)
         if (view is WpfSurfaceView surface && !surface.FillsScreen) surface.SetZOrderMediaOverlay(true);
@@ -1035,8 +1137,44 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
 
         _root.AddView(view, lp);
         _views[handle] = view;
+        // Windows' frame round a window with a caption (AndroidWindow.HasFrame): a view of the outer rectangle just
+        // under the window's, which it draws and takes the frame's touches of
+        if (!fillsScreen && AndroidWindow.FromHandle(handle) is { HasFrame: true } framed)
+        {
+            framed.GetFrameRect(out int fx, out int fy, out int fw, out int fh);
+            var frame = new WpfFrameView(_activity, handle);
+            var flp = new FrameLayout.LayoutParams(fw, fh) { Gravity = GravityFlags.Top | GravityFlags.Left, LeftMargin = fx, TopMargin = fy };
+            _root.AddView(frame, _root.IndexOfChild(view), flp);
+            _frames[handle] = frame;
+        }
 
         return true;
+    }
+
+    // the frames of the windows that have one (WpfFrameView), by the window
+    private readonly Dictionary<IntPtr, View> _frames = new();
+
+    /// <summary>A flat activity's windows are framed as Windows frames them: a dialog's caption, edges and close button.</summary>
+    public bool DrawsFrames => true;
+
+    public void FrameChanged(IntPtr handle) => OnMain(() => { if (_frames.TryGetValue(handle, out View? frame)) frame.Invalidate(); });
+
+    /// <summary>A window's frame to its outer rectangle, and just under the window in the view order.</summary>
+    private void PlaceFrame(IntPtr handle)
+    {
+        if (!_frames.TryGetValue(handle, out View? frame) || !_views.TryGetValue(handle, out View? view) || view is null) return;
+        if (AndroidWindow.FromHandle(handle) is { HasFrame: true } framed)
+        {
+            framed.GetFrameRect(out int fx, out int fy, out int fw, out int fh);
+            var flp = (FrameLayout.LayoutParams)frame.LayoutParameters!;
+            if (flp.LeftMargin != fx || flp.TopMargin != fy || flp.Width != fw || flp.Height != fh)
+            {
+                flp.LeftMargin = fx; flp.TopMargin = fy; flp.Width = fw; flp.Height = fh;
+                frame.LayoutParameters = flp;
+            }
+        }
+        frame.Visibility = view.Visibility;
+        frame.Invalidate();
     }
 
     public void SetViewFrame(IntPtr handle, int x, int y, int width, int height) => OnMain(() => SetViewFrameCore(handle, x, y, width, height));
@@ -1054,6 +1192,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         lp.Width = width;
         lp.Height = height;
         view.LayoutParameters = lp;
+        PlaceFrame(handle);
     }
 
     public void SetViewVisible(IntPtr handle, bool visible) => OnMain(() => SetViewVisibleCore(handle, visible));
@@ -1064,6 +1203,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // Gone, not Invisible: an Invisible view still occupies its slot for layout and hit-testing,
         // and a hidden WPF window must not intercept touches meant for what is behind it.
         view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
+        PlaceFrame(handle);
     }
 
     public void InvalidateAccessibilityNode(IntPtr handle, int nodeId) => OnMain(() => InvalidateAccessibilityNodeCore(handle, nodeId));
@@ -1123,6 +1263,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     {
         if (!_views.Remove(handle, out View? view)) return;
         if (view is WpfSurfaceView surfaceView) surfaceView.Detached = true;
+        if (_frames.Remove(handle, out View? frame)) { _root.RemoveView(frame); frame.Dispose(); }
         _parents.Remove(handle);
         foreach (IntPtr child in ChildrenOf(handle)) _parents.Remove(child);
         _root.RemoveView(view);

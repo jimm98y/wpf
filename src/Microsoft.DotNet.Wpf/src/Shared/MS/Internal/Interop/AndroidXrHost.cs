@@ -807,70 +807,11 @@ namespace MS.Internal.Interop
         {
             if (panel.FrameSurface == IntPtr.Zero || AndroidWindow.FromHandle(panel.Handle) is not { HasFrame: true } w) return;
             int width = panel.FrameWidth, height = panel.FrameHeight;
-            w.GetFrameInsets(out int left, out int top, out _, out _);
-            float scale = (float)w.GetBackingScale();
-            bool active = w.IsActiveWindow;
             using var javaSurface = Java.Lang.Object.GetObject<Surface>(panel.FrameSurface, JniHandleOwnership.DoNotTransfer)!;
             Canvas canvas = javaSurface.LockCanvas(null);
             try
             {
-                canvas.DrawColor(Color.Transparent, PorterDuff.Mode.Clear!);
-                using var paint = new Paint();
-                int margin = Math.Max(0, left - 1);
-                int vl = margin, vt = 0, vr = width - margin, vb = height - margin;      // the visible window
-                // the shadow: a ring a pixel wide per step out, each pixel in one ring only
-                for (int i = margin; i > 0; i--)
-                {
-                    float k = (float)(margin - i + 1) / Math.Max(1, margin);
-                    paint.Color = Color.Argb((int)(28 * k * k), 0, 0, 0);
-                    int st = vt + Math.Min(i, 2), sb = vb + i - 1;
-                    canvas.DrawRect(vl - i, st, vl - i + 1, sb + 1, paint);
-                    canvas.DrawRect(vr + i - 1, st, vr + i, sb + 1, paint);
-                    canvas.DrawRect(vl - i + 1, sb, vr + i - 1, sb + 1, paint);
-                }
-                paint.Color = active ? Color.White : Color.Rgb(243, 243, 243);
-                canvas.DrawRect(vl, vt, vr, vb, paint);
-                float line = Math.Max(1, MathF.Round(scale));
-                paint.SetStyle(Paint.Style.Stroke!);
-                paint.StrokeWidth = line;
-                paint.Color = active ? Color.Rgb(120, 120, 120) : Color.Rgb(170, 170, 170);
-                canvas.DrawRect(vl + line / 2, vt + line / 2, vr - line / 2, vb - line / 2, paint);
-                paint.SetStyle(Paint.Style.Fill!);
-
-                // the close button, 46 pixels at 96 dpi across the caption's right end
-                int closeRight = vr - 1, closeLeft = w.FrameHasCloseBox ? closeRight - (int)MathF.Round(46 * scale) : closeRight;
-                if (w.FrameHasCloseBox)
-                {
-                    int state = w.FrameState;
-                    if (state != 0)
-                    {
-                        paint.Color = state == AndroidWindow.FrameClosePressed ? Color.Rgb(200, 66, 58) : Color.Rgb(196, 43, 28);
-                        canvas.DrawRect(closeLeft, vt + 1, closeRight, top, paint);
-                    }
-                    float cx = (closeLeft + closeRight) / 2f, cy = (vt + 1 + top) / 2f, arm = 5 * scale;
-                    paint.AntiAlias = true;
-                    paint.SetStyle(Paint.Style.Stroke!);
-                    paint.StrokeWidth = scale;
-                    paint.Color = state != 0 ? Color.White : active ? Color.Black : Color.Rgb(150, 150, 150);
-                    canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, paint);
-                    canvas.DrawLine(cx + arm, cy - arm, cx - arm, cy + arm, paint);
-                    paint.SetStyle(Paint.Style.Fill!);
-                }
-
-                // the title: the caption font (9 points, 12 pixels at 96 dpi) from the left edge to the buttons
-                paint.AntiAlias = true;
-                paint.TextSize = 12 * scale;
-                paint.Color = active ? Color.Black : Color.Rgb(150, 150, 150);
-                float textLeft = vl + 1 + 11 * scale, room = closeLeft - 4 * scale - textLeft;
-                string title = w.Title;
-                if (room > 0 && paint.MeasureText(title) > room)
-                {
-                    while (title.Length > 0 && paint.MeasureText(title + "\u2026") > room) title = title[..^1];
-                    title += "\u2026";
-                }
-                Paint.FontMetrics metrics = paint.GetFontMetrics()!;
-                float baseline = (vt + 1 + top) / 2f - (metrics.Ascent + metrics.Descent) / 2f;
-                if (room > 0) canvas.DrawText(title, textLeft, baseline, paint);
+                AndroidFramePainter.Draw(canvas, w, width, height);
             }
             finally
             {
