@@ -912,7 +912,6 @@ namespace MS.Internal.Interop
                         if (number >= 0)
                         {
                             MeasureLead(state.PredictedDisplayTime, XrStereo3D.DrawnTime(number));
-                            NoteLeap(number, nowLeft.Position, nowLeft.Orientation);
                             // its own image, each eye's half filling that eye, transparent where empty
                             projectionViews[0] = ProjectionView(nowLeft, 0, iw / 2, ih);
                             projectionViews[1] = ProjectionView(nowRight, iw / 2, iw / 2, ih);
@@ -1020,20 +1019,6 @@ namespace MS.Internal.Interop
             }
         }
         private static long s_leadLogged;
-
-        // a picture shown with eyes far from those it was drawn for (a head moves millimetres a frame): which, how far
-        private static long s_leapLogged, s_leaps;
-        private static void NoteLeap(long number, System.Numerics.Vector3 now, System.Numerics.Quaternion nowTurn)
-        {
-            if (!XrStereo3D.TryGetDrawnViews(number, out var drawn, out _)) return;
-            float metres = System.Numerics.Vector3.Distance(drawn.Position, now);
-            float degrees = 2 * MathF.Acos(Math.Clamp(MathF.Abs(System.Numerics.Quaternion.Dot(drawn.Orientation, nowTurn)), 0f, 1f)) * 180 / MathF.PI;
-            if (metres < 0.1f && degrees < 15f) return;
-            s_leaps++;
-            if (Environment.TickCount64 - s_leapLogged < 1000) return;
-            s_leapLogged = Environment.TickCount64;
-            Log($"fullscreen leap ({s_leaps} so far): picture {number} drawn at {drawn.Position.X:0.000},{drawn.Position.Y:0.000},{drawn.Position.Z:0.000}, the eye now at {now.X:0.000},{now.Y:0.000},{now.Z:0.000} ({metres:0.000} m, {degrees:0} degrees), drawn {s_leadNs / 1e6:0} ms before");
-        }
 
         private void LocateEyes(long time)
         {

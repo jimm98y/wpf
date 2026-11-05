@@ -586,23 +586,6 @@ namespace MS.Internal.Interop
 
         // the WPF Viewport3D the headset shows alone, if it is one (not a 3D engine's view: s_fullView)
         private static WeakReference? s_fullWpf;
-        private static System.Numerics.Vector4 s_placed;
-        private static System.Numerics.Vector3 s_placedCentre;
-        private static long s_placedLogged;
-
-        private static void NotePlacement(System.Numerics.Vector3 rectCentre, float s, System.Numerics.Vector3 centre, Point d0, Point d1)
-        {
-            var now = new System.Numerics.Vector4(rectCentre, s);
-            bool moved = System.Numerics.Vector4.Distance(now, s_placed) > 1e-3f || System.Numerics.Vector3.Distance(centre, s_placedCentre) > 1e-3f;
-            if (moved && s_placed != default && Environment.TickCount64 - s_placedLogged > 200)
-            {
-                s_placedLogged = Environment.TickCount64;
-                Log(FormattableString.Invariant($"placement changed: rect centre {s_placed.X:0.000},{s_placed.Y:0.000},{s_placed.Z:0.000} -> {rectCentre.X:0.000},{rectCentre.Y:0.000},{rectCentre.Z:0.000}, scale {s_placed.W:0.##} -> {s:0.##}, look-at {s_placedCentre.X:0.##},{s_placedCentre.Y:0.##},{s_placedCentre.Z:0.##} -> {centre.X:0.##},{centre.Y:0.##},{centre.Z:0.##}, device rect {d0.X:0},{d0.Y:0} {d1.X - d0.X:0}x{d1.Y - d0.Y:0}"));
-            }
-            s_placed = now;
-            s_placedCentre = centre;
-        }
-
         /// <summary>Whether the fullscreen view is a WPF Viewport3D, drawn for the eyes side by side.</summary>
         internal static bool DrawsWpfFullscreen => s_fullWpf?.Target != null;
         private static bool s_wpfLogged;
@@ -647,9 +630,6 @@ namespace MS.Internal.Interop
             float far = double.IsFinite(camera.FarPlaneDistance) ? (float)camera.FarPlaneDistance : focus * 100f;
             var worldUp = System.Numerics.Vector3.Normalize(up);
             var centre = position + forward * focus;
-            // what places the model, frame to frame: any change of it moves the model (a leap if it jumps)
-            NotePlacement(rectCentre, s, centre, d0, d1);
-
             var cameras = new float[64];
             for (int e = 0; e < 2; e++)
             {
