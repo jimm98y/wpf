@@ -38,6 +38,27 @@ public static class Icons
     public static byte[] PngAt((byte[] Rgba, int Width, int Height) image, int size) =>
         EncodePng(Scale(image.Rgba, image.Width, image.Height, size, size), size, size);
 
+    /// <summary>A macOS icon (.icns): the image as PNGs at 16 to 1024 pixels, each under its type.</summary>
+    public static byte[] Icns((byte[] Rgba, int Width, int Height) image)
+    {
+        (string Type, int Size)[] sizes = { ("icp4", 16), ("icp5", 32), ("icp6", 64), ("ic07", 128), ("ic08", 256), ("ic09", 512), ("ic10", 1024) };
+        using var ms = new MemoryStream();
+        ms.Write("icns"u8);
+        ms.Write(new byte[4]);
+        Span<byte> len = stackalloc byte[4];
+        foreach (var (type, size) in sizes)
+        {
+            byte[] png = PngAt(image, size);
+            ms.Write(System.Text.Encoding.ASCII.GetBytes(type));
+            BinaryPrimitives.WriteInt32BigEndian(len, png.Length + 8);
+            ms.Write(len);
+            ms.Write(png);
+        }
+        byte[] icns = ms.ToArray();
+        BinaryPrimitives.WriteInt32BigEndian(icns.AsSpan(4), icns.Length);
+        return icns;
+    }
+
     /// <summary>A plain icon for a template with no app's yet: a rounded square in a neutral blue.</summary>
     public static (byte[] Rgba, int Width, int Height) Placeholder(int size = 192)
     {

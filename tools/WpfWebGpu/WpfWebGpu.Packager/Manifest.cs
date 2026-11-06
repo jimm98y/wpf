@@ -125,6 +125,8 @@ public sealed class SigningSection
     public string AppleCertificate { get; set; } = "";
     public string AppleProvisioningProfile { get; set; } = "";
     public string DeveloperIdCertificate { get; set; } = "";
+    /// <summary>The keychain identity a macOS package is signed with ("Developer ID Installer: Name (TEAM)").</summary>
+    public string DeveloperIdInstaller { get; set; } = "";
     public string NotaryKey { get; set; } = "";
     public string AuthenticodeCertificate { get; set; } = "";
     // passwords are never stored: WPFPKG_*_PASSWORD environment variables, or asked for

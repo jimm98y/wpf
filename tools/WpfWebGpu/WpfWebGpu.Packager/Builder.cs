@@ -21,7 +21,17 @@ public static class Builder
             foreach (var app in mobile)
                 made.Add(AndroidPackager.Build(manifest, app, staged, pack, Path.Combine(outDir, "android"), log));
         }
-        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest)))
+        if (targets.Contains(Target.MacOS))
+        {
+            // a package per architecture the packs folder has a runtime for
+            var rids = Directory.Exists(packsFolder)
+                ? Directory.EnumerateFiles(packsFolder, "desktop-osx-*.pack").Select(f => Path.GetFileNameWithoutExtension(f)["desktop-".Length..]).Order().ToList()
+                : new List<string>();
+            if (rids.Count == 0) throw new PackagerError($"no desktop-osx-<arch>.pack in {packsFolder}: the macOS runtime is not installed");
+            foreach (string rid in rids)
+                made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log));
+        }
+        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS)))
             log($"{t}: not made yet by this Packager");
         return made;
     }

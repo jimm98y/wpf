@@ -4,7 +4,9 @@
 // process does until it is told to stop: by the manager -- SIGTERM, which systemd and launchd send -- or Ctrl-C at a
 // terminal, which stops every service (OnStop) and returns from Run, or by the services stopping themselves (Stop).
 // A service whose OnStart throws is stopped and the process ends with its exit code, as the manager records a
-// service that failed to start.
+// service that failed to start. A stop is given the time the manager gives it (20 seconds, more on each
+// RequestAdditionalTime); a service still stopping then is abandoned and the process ended, as the manager ends a
+// service that does not stop, rather than left running with its stop half done.
 
 using System.ComponentModel;
 using System.Diagnostics;
@@ -19,7 +21,10 @@ namespace System.ServiceProcess
     {
         public const int MaxNameLength = 80;
 
+        private const int StopTimeoutMs = 20_000;
+
         private string _serviceName = "";
+        private long _stopDeadline;
         private EventLog _eventLog;
         private bool _running;
         private static readonly object s_gate = new object();
@@ -75,8 +80,9 @@ namespace System.ServiceProcess
         protected virtual void OnStart(string[] args) { }
         protected virtual void OnStop() { }
 
-        public void RequestAdditionalTime(int milliseconds) { }
-        public void RequestAdditionalTime(TimeSpan time) { }
+        /// <summary>More time for the start or stop in progress, as the manager gives it.</summary>
+        public void RequestAdditionalTime(int milliseconds) => Interlocked.Add(ref _stopDeadline, Math.Max(0, milliseconds));
+        public void RequestAdditionalTime(TimeSpan time) => RequestAdditionalTime((int)Math.Min(int.MaxValue, time.TotalMilliseconds));
 
         [EditorBrowsable(EditorBrowsableState.Never)]
         public void ServiceMainCallback(int argCount, IntPtr argPointer) { }
@@ -104,7 +110,12 @@ namespace System.ServiceProcess
                 s_stopped = new ManualResetEventSlim();
             }
             var signals = new[] { PosixSignal.SIGTERM, PosixSignal.SIGINT, PosixSignal.SIGHUP }
-                .Select(sig => PosixSignalRegistration.Create(sig, ctx => { ctx.Cancel = true; s_stopped.Set(); }))
+                .Select(sig => PosixSignalRegistration.Create(sig, ctx =>
+                {
+                    ctx.Cancel = true;
+                    Console.Error.WriteLine($"{ctx.Signal}: stopping {string.Join(", ", services.Select(s => s.ServiceName))}");
+                    s_stopped.Set();
+                }))
                 .ToList();
             try
             {
@@ -125,12 +136,36 @@ namespace System.ServiceProcess
                     }
                 }
                 if (Array.Exists(services, s => s._running)) s_stopped.Wait();
-                foreach (ServiceBase service in services) StopOne(service);
+                bool stopped = true;
+                foreach (ServiceBase service in services) stopped &= StopWithin(service);
+                if (!stopped)
+                {
+                    // a stop that does not finish: the process ends, as the manager ends a service that does not stop
+                    Console.Error.WriteLine("services did not stop in time; ending the process");
+                    Console.Error.Flush();
+                    Environment.Exit(Array.Find(services, s => s.ExitCode != 0)?.ExitCode ?? 0);
+                }
             }
             finally
             {
                 foreach (var r in signals) r.Dispose();
             }
+        }
+
+        /// <summary>Stops the service on a thread of its own, as the manager's control thread does; false when it has
+        /// not stopped by its deadline.</summary>
+        private static bool StopWithin(ServiceBase service)
+        {
+            Interlocked.Exchange(ref service._stopDeadline, Environment.TickCount64 + StopTimeoutMs);
+            var stop = new Thread(() => StopOne(service)) { IsBackground = true, Name = "service stop: " + service.ServiceName };
+            stop.Start();
+            while (!stop.Join(250))
+                if (Environment.TickCount64 > Interlocked.Read(ref service._stopDeadline))
+                {
+                    Log(service, "Service did not stop in time.");
+                    return false;
+                }
+            return true;
         }
 
         private static void StopOne(ServiceBase service)
@@ -142,6 +177,7 @@ namespace System.ServiceProcess
             }
             try
             {
+                if (service.AutoLog) Log(service, "Service stopping.");
                 if (service.CanStop) service.OnStop();
                 if (service.AutoLog) Log(service, "Service stopped successfully.");
             }

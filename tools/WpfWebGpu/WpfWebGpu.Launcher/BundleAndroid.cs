@@ -446,6 +446,7 @@ internal static partial class Bundle
                 /// <summary>The app's Main, on the app's UI thread; the process ends when it returns.</summary>
                 internal static void RunApp(Android.Content.Res.AssetManager assets, string files)
                 {
+                    ForwardStderr();
                     ApplyEnvironment();
                     if (System.Environment.GetEnvironmentVariable("WPF_WEBGPU_LOG_FIRST_CHANCE") is "1")
                         AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
@@ -476,6 +477,32 @@ internal static partial class Bundle
                         entry.GetParameters().Length == 1 ? new object[] { Array.Empty<string>() } : null, null);
                     Console.WriteLine(name + ": Main returned " + (result ?? 0));
                 }
+
+                /// <summary>The native libraries' standard error (wgpu's and Rust's panics, which say why the process
+                /// is about to abort) into the log: Android sends an app's stderr nowhere.</summary>
+                private static void ForwardStderr()
+                {
+                    var fds = new int[2];
+                    if (pipe(fds) != 0 || dup2(fds[1], 2) < 0) return;
+                    var reader = new System.Threading.Thread(() =>
+                    {
+                        var buffer = new byte[4096];
+                        var line = new System.Collections.Generic.List<byte>();
+                        for (nint n; (n = read(fds[0], buffer, buffer.Length)) > 0;)
+                            for (int i = 0; i < n; i++)
+                            {
+                                if (buffer[i] != (byte)'\n') { line.Add(buffer[i]); continue; }
+                                __android_log_write(6, "stderr", System.Text.Encoding.UTF8.GetString(line.ToArray()));
+                                line.Clear();
+                            }
+                    }) { IsBackground = true, Name = "stderr" };
+                    reader.Start();
+                }
+
+                [System.Runtime.InteropServices.DllImport("libc")] private static extern int pipe(int[] fds);
+                [System.Runtime.InteropServices.DllImport("libc")] private static extern int dup2(int from, int to);
+                [System.Runtime.InteropServices.DllImport("libc")] private static extern nint read(int fd, byte[] buffer, nint count);
+                [System.Runtime.InteropServices.DllImport("liblog")] private static extern int __android_log_write(int priority, string tag, string text);
 
                 /// <summary>Diagnostics' variables, from a system property: an Android app inherits no
                 /// environment from adb (adb shell setprop debug.wpfrun.env "A=1 B=2").</summary>
