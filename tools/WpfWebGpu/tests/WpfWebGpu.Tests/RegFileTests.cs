@@ -111,5 +111,5 @@ public class RegFileTests
 
     [Fact]
     public void Rejects_what_is_not_a_reg_file() =>
-        Assert.Throws<UserError>(() => RegFile.Import("[HKEY_CURRENT_USER\\X]\n\"a\"=\"b\""));
+        Assert.Throws<WpfWebGpu.Packager.PackagerError>(() => RegFile.Import("[HKEY_CURRENT_USER\\X]\n\"a\"=\"b\""));
 }

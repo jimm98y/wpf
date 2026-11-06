@@ -20,6 +20,8 @@
     <ProjectReference Include="../../../shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" Aliases="RegistryShim" />
     <!-- the COM-import rewrite of app assemblies (ComImportStep.cs) -->
     <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+    <!-- `wpfrun package`: the Packager's engine (and the .reg parser `wpfrun reg` shares with it) -->
+    <ProjectReference Include="../WpfWebGpu.Packager/WpfWebGpu.Packager.csproj" />
   </ItemGroup>
 
 </Project>

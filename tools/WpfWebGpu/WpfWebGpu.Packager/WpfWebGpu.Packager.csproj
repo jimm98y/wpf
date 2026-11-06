@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Packager's engine: a Windows installation (its Program Files folder, optionally its ProgramData
+       folders and a regedit export) into installers and apps for each head. Used by `wpfrun package` and
+       by the Packager app. Pure managed code: nothing here calls an external tool. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.Packager</AssemblyName>
+    <RootNamespace>WpfWebGpu.Packager</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WpfWebGpu.Tests" />
+  </ItemGroup>
+
+</Project>

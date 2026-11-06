@@ -12,6 +12,7 @@ extern alias RegistryShim;
 using System.Globalization;
 using System.Text;
 using RegistryShim::Microsoft.Win32;
+using WpfWebGpu.Packager;
 
 namespace WpfWebGpu;
 
@@ -46,187 +47,60 @@ internal static class RegFile
     {
         int keys = 0, values = 0, deleted = 0;
         RegistryKey? current = null;
-        string? currentPath = null;
-        bool header = false;
-        foreach (string line in LogicalLines(text))
+        foreach (RegEntry e in RegText.Parse(text))
         {
-            string l = line.Trim();
-            if (l.Length == 0 || l[0] == ';') continue;
-            if (!header)
+            switch (e.Kind)
             {
-                if (l != "Windows Registry Editor Version 5.00" && l != "REGEDIT4") throw new UserError("not a .reg file (no 'Windows Registry Editor Version 5.00' or 'REGEDIT4' header).");
-                header = true;
-                continue;
-            }
-            if (l[0] == '[')
-            {
-                if (l[^1] != ']') throw new UserError($"bad key line: {l}");
-                current?.Dispose();
-                current = null;
-                string path = l[1..^1];
-                if (path.StartsWith('-'))
-                {
-                    var (hive, sub) = Split(path[1..]);
-                    hive.DeleteSubKeyTree(sub, false);
+                case RegEntryKind.DeleteKey:
+                    current?.Dispose();
+                    current = null;
+                    Hive(e.Hive).DeleteSubKeyTree(e.Key, false);
                     deleted++;
-                    currentPath = null;
-                    continue;
-                }
-                var (root, subPath) = Split(path);
-                current = subPath.Length == 0 ? root : root.CreateSubKey(subPath);
-                currentPath = path;
-                keys++;
-                continue;
+                    break;
+                case RegEntryKind.Key:
+                    current?.Dispose();
+                    current = e.Key.Length == 0 ? Hive(e.Hive) : Hive(e.Hive).CreateSubKey(e.Key);
+                    keys++;
+                    break;
+                case RegEntryKind.DeleteValue:
+                    current!.DeleteValue(e.Name, false);
+                    deleted++;
+                    break;
+                default:
+                    current!.SetValue(e.Name, e.Value!, (RegistryValueKind)e.ValueKind);
+                    values++;
+                    break;
             }
-            if (current == null) throw new UserError($"value outside a key{(currentPath == null ? "" : " (its key was deleted)")}: {l}");
-
-            var (name, data) = SplitValue(l);
-            if (data == "-")
-            {
-                current.DeleteValue(name, false);
-                deleted++;
-                continue;
-            }
-            var (value, kind) = ParseData(data);
-            current.SetValue(name, value, kind);
-            values++;
         }
         current?.Dispose();
         return (keys, values, deleted);
     }
 
-    // Joins "\"-continued lines (hex data is wrapped that way) into one.
-    private static IEnumerable<string> LogicalLines(string text)
+    private static RegistryKey Hive(string hive) => hive switch
     {
-        var sb = new StringBuilder();
-        foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
-        {
-            string line = raw.TrimEnd();
-            // regedit wraps only hex data; a string value may well end in a backslash.
-            if (line.EndsWith('\\') && IsHexValue(sb.ToString() + line))
-            {
-                sb.Append(line, 0, line.Length - 1);
-                continue;
-            }
-            sb.Append(sb.Length > 0 ? line.TrimStart() : line);
-            yield return sb.ToString();
-            sb.Clear();
-        }
-        if (sb.Length > 0) yield return sb.ToString();
-    }
-
-    private static bool IsHexValue(string line)
-    {
-        string t = line.TrimStart();
-        if (t.Length == 0 || t[0] == '[' || t[0] == ';') return false;
-        int at = t.StartsWith("@=", StringComparison.Ordinal) ? 2 : -1;
-        if (at < 0)
-        {
-            // The value name is quoted and may contain anything escaped; the data follows its '"='.
-            for (int i = 1; i < t.Length; i++)
-            {
-                if (t[i] == '\\') { i++; continue; }
-                if (t[i] == '"') { at = i + 2; break; }
-            }
-        }
-        return at > 0 && at < t.Length && t[at..].StartsWith("hex", StringComparison.OrdinalIgnoreCase);
-    }
+        "HKEY_CURRENT_USER" => Registry.CurrentUser,
+        "HKEY_LOCAL_MACHINE" => Registry.LocalMachine,
+        "HKEY_CLASSES_ROOT" => Registry.ClassesRoot,
+        "HKEY_USERS" => Registry.Users,
+        _ => Registry.CurrentConfig,
+    };
 
     private static (RegistryKey Hive, string Sub) Split(string path)
     {
-        int slash = path.IndexOf('\\');
-        string hive = slash < 0 ? path : path[..slash];
-        string sub = slash < 0 ? "" : path[(slash + 1)..];
-        RegistryKey root = hive.ToUpperInvariant() switch
-        {
-            "HKEY_CURRENT_USER" or "HKCU" => Registry.CurrentUser,
-            "HKEY_LOCAL_MACHINE" or "HKLM" => Registry.LocalMachine,
-            "HKEY_CLASSES_ROOT" or "HKCR" => Registry.ClassesRoot,
-            "HKEY_USERS" or "HKU" => Registry.Users,
-            "HKEY_CURRENT_CONFIG" or "HKCC" => Registry.CurrentConfig,
-            _ => throw new UserError($"unknown hive '{hive}'."),
-        };
-        return (root, sub);
-    }
-
-    private static (string Name, string Data) SplitValue(string line)
-    {
-        if (line.StartsWith("@=", StringComparison.Ordinal)) return ("", line[2..]);
-        if (line[0] != '"') throw new UserError($"bad value line: {line}");
-        var name = new StringBuilder();
-        int i = 1;
-        for (; i < line.Length; i++)
-        {
-            char c = line[i];
-            if (c == '\\' && i + 1 < line.Length) { name.Append(line[++i]); continue; }
-            if (c == '"') break;
-            name.Append(c);
-        }
-        if (i + 1 >= line.Length || line[i + 1] != '=') throw new UserError($"bad value line: {line}");
-        return (name.ToString(), line[(i + 2)..].Trim());
+        var (hive, sub) = RegText.SplitKey(path);
+        return (Hive(hive), sub);
     }
 
     internal static (object Value, RegistryValueKind Kind) ParseData(string data)
     {
-        if (data.StartsWith('"'))
-        {
-            if (data.Length < 2 || data[^1] != '"') throw new UserError($"bad string value: {data}");
-            var sb = new StringBuilder();
-            for (int i = 1; i < data.Length - 1; i++)
-            {
-                if (data[i] == '\\' && i + 1 < data.Length - 1) i++;
-                sb.Append(data[i]);
-            }
-            return (sb.ToString(), RegistryValueKind.String);
-        }
-        if (data.StartsWith("dword:", StringComparison.OrdinalIgnoreCase))
-            return (unchecked((int)uint.Parse(data[6..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)), RegistryValueKind.DWord);
-
-        int colon = data.IndexOf(':');
-        if (colon < 0 || !data.StartsWith("hex", StringComparison.OrdinalIgnoreCase)) throw new UserError($"bad value: {data}");
-        string type = data[..colon];
-        byte[] bytes = Hex(data[(colon + 1)..]);
-        int kind = type.Equals("hex", StringComparison.OrdinalIgnoreCase) ? 3
-            : type.Length > 5 && type[3] == '(' && type[^1] == ')' ? int.Parse(type[4..^1], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
-            : throw new UserError($"bad value type: {type}");
-        return kind switch
-        {
-            1 => (Utf16(bytes), RegistryValueKind.String),
-            2 => (Utf16(bytes), RegistryValueKind.ExpandString),
-            4 => (bytes.Length >= 4 ? BitConverter.ToInt32(bytes, 0) : 0, RegistryValueKind.DWord),
-            7 => (Utf16(bytes).Split('\0', StringSplitOptions.None) is var parts && parts.Length > 0 ? TrimMulti(parts) : Array.Empty<string>(), RegistryValueKind.MultiString),
-            11 => (bytes.Length >= 8 ? BitConverter.ToInt64(bytes, 0) : 0L, RegistryValueKind.QWord),
-            _ => (bytes, RegistryValueKind.Binary),
-        };
-    }
-
-    // A REG_MULTI_SZ ends in two NULs: the strings, then an empty one, then the terminator.
-    private static string[] TrimMulti(string[] parts)
-    {
-        int n = parts.Length;
-        while (n > 0 && parts[n - 1].Length == 0) n--;
-        return parts[..n];
-    }
-
-    private static string Utf16(byte[] bytes)
-    {
-        string s = Encoding.Unicode.GetString(bytes);
-        return s.EndsWith('\0') ? s[..^1] : s;
-    }
-
-    private static byte[] Hex(string s)
-    {
-        var list = new List<byte>();
-        foreach (string part in s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            list.Add(byte.Parse(part, NumberStyles.HexNumber, CultureInfo.InvariantCulture));
-        return list.ToArray();
+        var (value, kind) = RegText.ParseData(data);
+        return (value, (RegistryValueKind)kind);
     }
 
     private static string ReadText(string path)
     {
-        if (!File.Exists(path)) throw new UserError($"no such file: {path}");
         // regedit writes UTF-16LE with a BOM (version 5) or the ANSI code page (REGEDIT4).
-        return File.ReadAllText(path, Encoding.UTF8);
+        return RegText.Read(path);
     }
 
     // ---- export -------------------------------------------------------------------------------------
