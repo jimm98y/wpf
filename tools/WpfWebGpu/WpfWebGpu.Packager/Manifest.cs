@@ -126,6 +126,8 @@ public sealed class SigningSection
     public string AndroidKeystore { get; set; } = "";
     public string AndroidKeyAlias { get; set; } = "";
     public string AppleCertificate { get; set; } = "";
+    /// <summary>The keychain identity a device .ipa is signed with ("Apple Distribution: Name (TEAM)").</summary>
+    public string AppleSigningIdentity { get; set; } = "";
     public string AppleProvisioningProfile { get; set; } = "";
     public string DeveloperIdCertificate { get; set; } = "";
     /// <summary>The keychain identity a macOS package is signed with ("Developer ID Installer: Name (TEAM)").</summary>

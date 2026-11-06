@@ -19,7 +19,7 @@ internal static class Pack
     public static int Run(string[] args)
     {
         string? outDir = null, feed = null;
-        bool android = false, verbose = false;
+        bool android = false, verbose = false, ios = false;
         var desktop = new List<string>();
         var setup = new List<string>();
         string? wpfrunBuilds = null;
@@ -30,6 +30,7 @@ internal static class Pack
                 case "--out" or "-o": outDir = args[++i]; break;
                 case "--feed": feed = args[++i]; break;
                 case "--android": android = true; break;
+                case "--ios": ios = true; break;
                 case "--desktop": desktop.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
                 case "--setup": setup.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
@@ -37,7 +38,7 @@ internal static class Pack
                 default: throw new UserError($"unknown option '{args[i]}'.");
             }
         }
-        if (!android && desktop.Count == 0 && setup.Count == 0) throw new UserError("which template? --android, --desktop <rid>[,<rid>...], --setup <win-rid>[,...]");
+        if (!android && !ios && desktop.Count == 0 && setup.Count == 0) throw new UserError("which template? --android, --desktop <rid>[,<rid>...], --setup <win-rid>[,...]");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)
@@ -50,9 +51,61 @@ internal static class Pack
             int code = PackSetup(outDir, rid, verbose);
             if (code != 0) return code;
         }
-        if (!android) return 0;
+        if (!android && !ios) return 0;
         feed = Path.GetFullPath(feed ?? Bundle.FindFeedForPack() ?? throw new UserError("no package feed with WpfWebGpu.Sdk found beside wpfrun; pass --feed <folder>."));
+        if (ios)
+        {
+            int code = PackIos(outDir, feed, verbose);
+            if (code != 0 || !android) return code;
+        }
         return PackAndroid(outDir, feed, verbose);
+    }
+
+    // ---- iOS ----------------------------------------------------------------------------------------------
+
+    private static int PackIos(string outDir, string feed, bool verbose)
+    {
+        if (!OperatingSystem.IsMacOS()) throw new UserError("the iOS template is built on a Mac (Xcode)");
+        var apps = new Dictionary<string, string>();
+        foreach (var (kind, rid) in new[] { ("simulator", "iossimulator-arm64"), ("device", "ios-arm64") })
+        {
+            string project = Path.Combine(Locations.CacheRoot, "bundles", "template-ios-" + kind);
+            if (Directory.Exists(project)) Directory.Delete(project, recursive: true);
+            Directory.CreateDirectory(project);
+            Bundle.WriteIosTemplateProject(project, feed, rid);
+            Console.WriteLine($"wpfrun pack: building the iOS template ({kind}) in {project}");
+            int code = Bundle.DotnetForPack(verbose, "build", Path.Combine(project, "Bundle.csproj"), "-c", "Release", "-nologo");
+            if (code != 0) return code;
+            string app = Path.Combine(project, "bin", "Release", "net10.0-ios", rid, "WpfRunBundle.app");
+            if (!Directory.Exists(app)) throw new UserError($"the build made no {app}");
+            apps[kind] = app;
+        }
+
+        string pack = Path.Combine(outDir, "ios.pack");
+        if (File.Exists(pack)) File.Delete(pack);
+        using (var zip = ZipFile.Open(pack, ZipArchiveMode.Create))
+        {
+            var info = new Dictionary<string, object>
+            {
+                ["kind"] = "ios", ["templateId"] = Bundle.IosTemplateId, ["templateLabel"] = Bundle.IosTemplateLabel,
+                ["built"] = DateTime.UtcNow.ToString("O"),
+            };
+            using (var w = new StreamWriter(zip.CreateEntry("pack.json").Open()))
+                w.Write(JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
+            foreach (var (kind, app) in apps)
+                foreach (string f in Directory.EnumerateFiles(app, "*", SearchOption.AllDirectories))
+                {
+                    string rel = Path.GetRelativePath(app, f).Replace('\\', '/');
+                    var entry = zip.CreateEntryFromFile(f, $"{kind}/WpfRunBundle.app/{rel}", CompressionLevel.Optimal);
+                    entry.ExternalAttributes = (int)(((File.GetUnixFileMode(f) & UnixFileMode.UserExecute) != 0 ? 0x81ED : 0x81A4) << 16);
+                }
+            // the assemblies the bundle holds (the device's: the same set), for the rewrite of an app's onto the stack
+            foreach (string dll in Directory.EnumerateFiles(apps["device"], "*.dll", SearchOption.AllDirectories)
+                .Where(f => !f.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase)))
+                zip.CreateEntryFromFile(dll, "refs/" + Path.GetFileName(dll), CompressionLevel.Optimal);
+        }
+        Console.WriteLine($"wpfrun pack: {pack} ({new FileInfo(pack).Length / (1024 * 1024)} MB)");
+        return 0;
     }
 
     // ---- desktop ----------------------------------------------------------------------------------------

@@ -49,7 +49,14 @@ public static class Builder
             foreach (string rid in rids)
                 made.Add(Desktop.WindowsPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log));
         }
-        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows)))
+        if (targets.Contains(Target.IOS))
+        {
+            if (mobile.Count == 0) throw new PackagerError("no app is marked \"mobile\": nothing to make for iOS");
+            var pack = PackFile.Open(packsFolder, "ios");
+            foreach (var app in mobile)
+                made.AddRange(Apple.IosPackager.Build(manifest, app, staged, pack, outDir, log));
+        }
+        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows or Target.IOS)))
             log($"{t}: not made yet by this Packager");
         return made;
     }
