@@ -22,6 +22,8 @@
   <ItemGroup>
     <!-- the stack's PNG decoder (every colour type, every filter), for the icons -->
     <Compile Include="$(WpfWebGpuRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/Composition/PngReader.cs" Link="Shared/PngReader.cs" />
+    <!-- Setup.exe's payload format, which the Windows packager writes and Setup reads -->
+    <Compile Include="../WpfWebGpu.Setup/Payload.cs" Link="Shared/Payload.cs" />
   </ItemGroup>
 
 </Project>

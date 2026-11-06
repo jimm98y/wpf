@@ -21,6 +21,7 @@ internal static class Pack
         string? outDir = null, feed = null;
         bool android = false, verbose = false;
         var desktop = new List<string>();
+        var setup = new List<string>();
         string? wpfrunBuilds = null;
         for (int i = 0; i < args.Length; i++)
         {
@@ -31,16 +32,22 @@ internal static class Pack
                 case "--android": android = true; break;
                 case "--desktop": desktop.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
+                case "--setup": setup.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "-v" or "--verbose": verbose = true; break;
                 default: throw new UserError($"unknown option '{args[i]}'.");
             }
         }
-        if (!android && desktop.Count == 0) throw new UserError("which template? --android, --desktop <rid>[,<rid>...]");
+        if (!android && desktop.Count == 0 && setup.Count == 0) throw new UserError("which template? --android, --desktop <rid>[,<rid>...], --setup <win-rid>[,...]");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)
         {
             int code = PackDesktop(outDir, rid, Path.GetFullPath(wpfrunBuilds ?? Path.Combine(Bundle.FindFeedForPack() ?? ".", "..", "wpfrun")));
+            if (code != 0) return code;
+        }
+        foreach (string rid in setup)
+        {
+            int code = PackSetup(outDir, rid, verbose);
             if (code != 0) return code;
         }
         if (!android) return 0;
@@ -66,6 +73,16 @@ internal static class Pack
         CopyTree(Path.Combine(build, "launcher"), Path.Combine(runtime, "launcher"));
         CopyTree(Path.Combine(build, "overlay"), Path.Combine(runtime, "overlay"));
         bool windows = rid.StartsWith("win", StringComparison.Ordinal);
+        if (windows)
+        {
+            // dotnetw.exe: the runtime's dotnet.exe as a window program (its PE subsystem GUI), for the Start menu's
+            // shortcuts: it finds the runtime beside itself as dotnet.exe does, and opens no console window
+            byte[] exe = File.ReadAllBytes(Path.Combine(runtime, "dotnet", "dotnet.exe"));
+            int pe = BitConverter.ToInt32(exe, 0x3C);
+            if (BitConverter.ToUInt32(exe, pe) != 0x00004550) throw new UserError("dotnet.exe is not a PE file");
+            BitConverter.GetBytes((ushort)2 /* IMAGE_SUBSYSTEM_WINDOWS_GUI */).CopyTo(exe, pe + 24 + 68);
+            File.WriteAllBytes(Path.Combine(runtime, "dotnet", "dotnetw.exe"), exe);
+        }
         if (windows)
             File.WriteAllText(Path.Combine(runtime, "run.cmd"), "@\"%~dp0dotnet\\dotnet.exe\" \"%~dp0launcher\\wpfrun.dll\" run %*\r\n");
         else
@@ -94,6 +111,38 @@ internal static class Pack
             }
         }
         Console.WriteLine($"wpfrun pack: {pack}: .NET {version} for {rid}, wpfrun from {build} ({new FileInfo(pack).Length / (1024 * 1024)} MB)");
+        return 0;
+    }
+
+    // ---- setup ----------------------------------------------------------------------------------------------
+
+    private static int PackSetup(string outDir, string rid, bool verbose)
+    {
+        string? project = null;
+        foreach (string start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
+            for (string? d = start; d != null && project == null; d = Path.GetDirectoryName(d.TrimEnd(Path.DirectorySeparatorChar)))
+            {
+                string candidate = Path.Combine(d, "tools", "WpfWebGpu", "WpfWebGpu.Setup", "WpfWebGpu.Setup.csproj");
+                if (File.Exists(candidate)) project = candidate;
+            }
+        if (project == null) throw new UserError("WpfWebGpu.Setup is not found: run wpfrun pack --setup from the repository");
+        string publish = Path.Combine(Locations.CacheRoot, "packs", "setup-" + rid);
+        if (Directory.Exists(publish)) Directory.Delete(publish, recursive: true);
+        Console.WriteLine($"wpfrun pack: publishing Setup.exe for {rid}");
+        int code = Bundle.DotnetForPack(verbose, "publish", project, "-c", "Release", "-r", rid, "-o", publish, "-nologo");
+        if (code != 0) return code;
+        string exe = Path.Combine(publish, "Setup.exe");
+        if (!File.Exists(exe)) throw new UserError($"the publish made no {exe}");
+        string pack = Path.Combine(outDir, $"setup-{rid}.pack");
+        if (File.Exists(pack)) File.Delete(pack);
+        using (var zip = ZipFile.Open(pack, ZipArchiveMode.Create))
+        {
+            var info = new Dictionary<string, object> { ["kind"] = "setup", ["rid"] = rid, ["built"] = DateTime.UtcNow.ToString("O") };
+            using (var w = new StreamWriter(zip.CreateEntry("pack.json").Open()))
+                w.Write(JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
+            zip.CreateEntryFromFile(exe, "Setup.exe", CompressionLevel.Optimal);
+        }
+        Console.WriteLine($"wpfrun pack: {pack} ({new FileInfo(exe).Length / (1024 * 1024)} MB Setup.exe)");
         return 0;
     }
 

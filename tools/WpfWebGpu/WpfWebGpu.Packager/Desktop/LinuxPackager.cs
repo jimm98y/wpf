@@ -123,6 +123,7 @@ public static class LinuxPackager
             Environment=WPFRUN_STATE={state}
             Environment=WPFRUN_CACHE=/var/cache/{pkg}
             Environment=WPFRUN_LOGS=/var/log/{pkg}
+            {string.Concat(service.Environment.Select(e => $"Environment={e.Key}={e.Value}\n"))}
             UMask=0002
             Restart=on-failure
             RestartSec=10
@@ -185,6 +186,10 @@ public static class LinuxPackager
         if [ -d /run/systemd/system ]; then
           systemctl daemon-reload || true
         {{string.Concat(units.Where(u => u.Enable).Select(u => $"  systemctl enable --now {u.Name} || true\n"))}}fi
+        # a service per program, each watching its configuration: more inotify instances than Linux allows a user by
+        # default (128); Windows has no such limit
+        printf 'fs.inotify.max_user_instances = 8192\nfs.inotify.max_user_watches = 524288\n' > /etc/sysctl.d/60-{{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}}.conf
+        sysctl -q -p /etc/sysctl.d/60-{{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}}.conf || true
         command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
         command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q /usr/share/icons/hicolor || true
         exit 0
@@ -208,7 +213,7 @@ public static class LinuxPackager
         {string.Concat(units.Select(u => $"    systemctl disable {u.Name} >/dev/null 2>&1 || true\n"))}    systemctl daemon-reload || true
           fi
         fi
-        if [ "$1" = purge ]; then rm -rf "{Path.GetDirectoryName(state)}"; fi
+        if [ "$1" = purge ]; then rm -rf "{Path.GetDirectoryName(state)}" "/etc/sysctl.d/60-{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}.conf"; fi
         exit 0
 
         """;

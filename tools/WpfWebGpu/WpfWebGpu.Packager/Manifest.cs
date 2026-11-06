@@ -97,6 +97,9 @@ public sealed class ServiceEntry
     public List<string> Args { get; set; } = new();
     public StartType Start { get; set; } = StartType.Auto;
     public List<string> DependsOn { get; set; } = new();
+    /// <summary>Its environment besides the installation's (WPFWEBGPU_OS_IDENTITY=windows for a program that refuses to
+    /// start anywhere but on Windows: its own checks are then answered as Windows would answer them).</summary>
+    public Dictionary<string, string> Environment { get; set; } = new();
 }
 
 public sealed class PathMapping

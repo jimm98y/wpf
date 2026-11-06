@@ -70,7 +70,18 @@ public static class Scanner
         foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Service))
         {
             string name = Path.GetFileNameWithoutExtension(app.Exe);
-            manifest.Services.Add(new ServiceEntry { Name = name, DisplayName = app.Name, Exe = app.Exe });
+            // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
+            var service = new ServiceEntry
+            {
+                Name = name, DisplayName = app.Name, Exe = app.Exe,
+                Start = app.Warnings.Contains("32-bit only") ? StartType.Disabled : StartType.Auto,
+            };
+            // a program that checks it is on Windows and refuses to start otherwise (its own assembly asks the system
+            // and makes a PlatformNotSupportedException): told it is (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
+            if (PeFile.TryRead(Path.Combine(installDir, Path.ChangeExtension(app.Exe, ".dll"))) is { } pe
+                && pe.TypeReferences.Contains("PlatformNotSupportedException") && pe.TypeReferences.Contains("OperatingSystem"))
+                service.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
+            manifest.Services.Add(service);
         }
 
         manifest.Product.Name = Path.GetFileName(installDir);

@@ -9,8 +9,8 @@ public static class PackagerCli
                                         a first manifest: the installation's apps, services and registry paths
         package stage <x.wpfpkg.json> [--work <folder>] [--copy]
                                         its registry as hive files, its ProgramData listed (--copy: copied)
-        package build <x.wpfpkg.json> [--target <android|quest|macos|linux>[,...]] [--out <folder>] [--packs <folder>]
-                                        the packages: one app per "mobile" app for a phone or headset; the whole installation for macOS and Linux
+        package build <x.wpfpkg.json> [--target <android|quest|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>]
+                                        the packages: one app per "mobile" app for a phone or headset; the whole installation for macOS, Linux and Windows
         """;
 
     public static int Run(string[] args, TextWriter? output = null)

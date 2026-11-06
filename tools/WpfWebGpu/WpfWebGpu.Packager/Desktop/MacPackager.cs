@@ -110,6 +110,7 @@ public static class MacPackager
                 <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
                 <key>WPFRUN_CACHE</key><string>/Library/Caches/{X(product)}</string>
                 <key>WPFRUN_LOGS</key><string>/Library/Logs/{X(product)}</string>
+            {string.Concat(service.Environment.Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}
               </dict>
               <key>WorkingDirectory</key><string>{X(root + "/app/" + Path.GetDirectoryName(service.Exe)!.Replace('\\', '/'))}</string>
               <key>RunAtLoad</key><{(service.Start == StartType.Auto ? "true" : "false")}/>
