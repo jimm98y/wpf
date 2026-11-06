@@ -79,6 +79,9 @@
     <!-- A framework member, not a package: at its higher version it wins over the shared framework's copy. -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
+    <!-- access control lists (a mutex's, a file's, a registry key's), kept and read back, not enforced -->
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Security.AccessControl/System.Security.AccessControl.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />
   </ItemGroup>
 
 </Project>
