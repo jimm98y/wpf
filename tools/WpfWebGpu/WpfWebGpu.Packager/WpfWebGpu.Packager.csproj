@@ -11,6 +11,17 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="WpfWebGpu.Tests" />
+    <InternalsVisibleTo Include="wpfrun" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the rewrite of an app's assemblies onto the stack, as a bundled head's build runs it -->
+    <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- the stack's PNG decoder (every colour type, every filter), for the icons -->
+    <Compile Include="$(WpfWebGpuRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/Composition/PngReader.cs" Link="Shared/PngReader.cs" />
   </ItemGroup>
 
 </Project>

@@ -46,45 +46,11 @@ try
     if (placeholdersOnly)
     {
         // what the app's assemblies reference and nothing provides -- none of them and none of what else
-        // the app is built with (--published): placeholders holding the types they name, in <dir> (Placeholders)
-        var scans = inputs.Select(i => AssemblyScan.Read(i)).Where(x => x != null).Select(x => x!).ToList();
-        var provided = new HashSet<string>(scans.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);
-        provided.UnionWith(publishedNames);
-        // An app may carry an assembly inside another, as a resource it loads itself when the name is
-        // asked for (app's script engine embeds its JScript and resolves it from the resource): that
-        // assembly is the app's, not missing, and ships as it is -- what the app would load anyway. What
-        // it references is looked at in turn.
-        var embedded = Placeholders.EmbeddedAssemblies(scans.Select(x => x.File));
-        List<string> missing;
-        while (true)
-        {
-            missing = scans.SelectMany(x => x.References).Distinct(StringComparer.OrdinalIgnoreCase)
-                .Where(r => !provided.Contains(r)).OrderBy(r => r, StringComparer.OrdinalIgnoreCase).ToList();
-            var found = Placeholders.MatchEmbedded(missing, scans.Select(x => x.File), embedded, search);
-            if (found.Count == 0) break;
-            Directory.CreateDirectory(outDir);
-            foreach (var (name, (bytes, source)) in found)
-            {
-                string path = Path.Combine(outDir, name + ".dll");
-                File.WriteAllBytes(path, bytes);
-                provided.Add(name);
-                if (AssemblyScan.Read(path) is { } scan) scans.Add(scan);
-                Console.WriteLine($"wpf-rewrite: {name}, referenced and not shipped, is the app's own from {source}: bundled from there");
-            }
-        }
-        if (missing.Count > 0)
-        {
-            Placeholders.Write(missing, scans.Select(x => x.File), outDir);
-            Console.WriteLine($"wpf-rewrite: referenced and not shipped, placeholders of the types named in them: {string.Join(", ", missing)}");
-        }
+        // the app is built with (--published): placeholders holding the types they name, in <dir>
+        RewriteSteps.Placeholders(inputs, publishedNames, search, outDir, Console.WriteLine);
         return 0;
     }
-    // System.Drawing.Primitives made its Windows build (SystemColorsPatch): its user32 GetSysColor is
-    // then rewritten with the app's P/Invokes, onto the stack's user32
-    if (primitives != null && SystemColorsPatch.Write(primitives, Path.Combine(outDir, ".primitives"), Console.WriteLine) is { } patched)
-        inputs.Add(patched);
-    var done = BuildRewrite.Run(inputs, search, outDir, name => name.StartsWith("WpfWebGpu.", StringComparison.Ordinal), Console.WriteLine);
-    Console.WriteLine($"wpf-rewrite: {inputs.Count} assemblies read, {done.Count} rewritten");
+    RewriteSteps.Rewrite(inputs, search, outDir, primitives, Console.WriteLine);
     return 0;
 }
 catch (Exception e)

@@ -21,6 +21,7 @@ internal static class Program
           wpfrun reg import <file.reg>              macOS: load a regedit export into the registry apps see here
           wpfrun reg export <key> <file.reg>        macOS: write a key of that registry as a regedit file
           wpfrun package scan|stage ...             an installation into packages for each head ('wpfrun package' for more)
+          wpfrun pack --android [--out <dir>]      build the Packager's template for a head (its packs/ folder)
           wpfrun clean [--all]                      delete generated files (--all: also logs and shim state)
           wpfrun where                              print every location wpfrun uses
 
@@ -50,6 +51,7 @@ internal static class Program
                 "clean" => Clean(args[1..]),
                 "reg" => RegFile.Run(args[1..]),
                 "package" => WpfWebGpu.Packager.PackagerCli.Run(args[1..]),
+                "pack" => Pack.Run(args[1..]),
                 "where" => Where(),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),
             };

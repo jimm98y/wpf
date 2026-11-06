@@ -104,3 +104,38 @@ public class PackagerTests
         Assert.Equal(Target.Quest, back.Output.Targets[0]);
     }
 }
+
+public class PackagerArchiveTests
+{
+    [Fact]
+    public void A_zip_written_reads_back_with_every_entry_whole_and_aligned()
+    {
+        string dir = TestEnvironment.NewDirectory("zip");
+        string path = Path.Combine(dir, "a.zip");
+        long cd;
+        using (var f = File.Create(path))
+        {
+            var zip = new WpfWebGpu.Packager.Archives.ZipWriter(f);
+            zip.Add("empty.txt", Array.Empty<byte>(), compress: true);
+            zip.Add("text.txt", System.Text.Encoding.UTF8.GetBytes(new string('x', 10000)), compress: true);
+            zip.Add("lib/arm64-v8a/libx.so", new byte[] { 1, 2, 3 }, compress: false);
+            zip.Add("stored.png", new byte[] { 4, 5 }, compress: false);
+            cd = zip.Finish();
+        }
+        using (var z = System.IO.Compression.ZipFile.OpenRead(path))
+        {
+            Assert.Equal(4, z.Entries.Count);
+            foreach (var e in z.Entries) { using var s = e.Open(); s.CopyTo(Stream.Null); }
+            using var r = new StreamReader(z.GetEntry("text.txt")!.Open());
+            Assert.Equal(10000, r.ReadToEnd().Length);
+        }
+        using var reader = new WpfWebGpu.Packager.Archives.ZipReader(path);
+        var so = reader.Entries.Single(e => e.Name.EndsWith(".so"));
+        Assert.Equal(new byte[] { 1, 2, 3 }, reader.Read(so));
+        // the data of a native library on a 16 KB page, of any other stored entry on 4 bytes
+        byte[] all = File.ReadAllBytes(path);
+        int soData = Array.IndexOf(all, (byte)1, (int)so.LocalHeaderOffset + 30);
+        Assert.Equal(0, soData % 16384);
+        Assert.True(cd > 0);
+    }
+}

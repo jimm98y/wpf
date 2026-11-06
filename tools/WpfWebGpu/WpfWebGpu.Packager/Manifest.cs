@@ -21,6 +21,9 @@ public sealed class PackageManifest
     public List<PathMapping> PathMappings { get; set; } = new();
     /// <summary>Files left out of the package: globs relative to the installation or a ProgramData folder.</summary>
     public List<string> Exclude { get; set; } = new() { "**/Logs/**", "**/*.dmp" };
+    /// <summary>ProgramData files left out of the phone, headset and browser apps besides: what a machine
+    /// records as it runs (a historian's data), which an app on its own has no use for.</summary>
+    public List<string> MobileExclude { get; set; } = new();
     public OutputSection Output { get; set; } = new();
     public SigningSection Signing { get; set; } = new();
 

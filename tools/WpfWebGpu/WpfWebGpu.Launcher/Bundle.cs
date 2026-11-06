@@ -106,6 +106,10 @@ internal static partial class Bundle
         return p.ExitCode;
     }
 
+    internal static string? FindFeedForPack() => FindFeed();
+    internal static int DotnetForPack(bool verbose, params string[] args) => Dotnet(verbose, args);
+    internal static string OpenXrLoaderForPack() => OpenXrLoader();
+
     /// <summary>The feed WpfWebGpu.Sdk was packed into: artifacts/local-feed, beside artifacts/wpfrun/&lt;rid&gt;/launcher.</summary>
     private static string? FindFeed()
     {

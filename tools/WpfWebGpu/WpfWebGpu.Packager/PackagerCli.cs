@@ -9,6 +9,8 @@ public static class PackagerCli
                                         a first manifest: the installation's apps, services and registry paths
         package stage <x.wpfpkg.json> [--work <folder>] [--copy]
                                         its registry as hive files, its ProgramData listed (--copy: copied)
+        package build <x.wpfpkg.json> [--target <android|quest>[,...]] [--out <folder>] [--packs <folder>]
+                                        the packages: one app per "mobile" app for a phone or headset
         """;
 
     public static int Run(string[] args, TextWriter? output = null)
@@ -19,6 +21,7 @@ public static class PackagerCli
         {
             "scan" => ScanCommand(args[1..], o),
             "stage" => StageCommand(args[1..], o),
+            "build" => BuildCommand(args[1..], o),
             _ => throw new PackagerError($"unknown package command '{args[0]}'.\nusage:\n{Usage}"),
         };
     }
@@ -88,6 +91,36 @@ public static class PackagerCli
             }
             o.WriteLine($"  copied to {dest}");
         }
+        return 0;
+    }
+
+    private static int BuildCommand(string[] args, TextWriter o)
+    {
+        string? manifestPath = null, outDir = null, packs = null;
+        var targets = new List<Target>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--out" or "-o": outDir = Value(args, ref i); break;
+                case "--packs": packs = Value(args, ref i); break;
+                case "--target" or "-t":
+                    foreach (string t in Value(args, ref i).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        targets.Add(Enum.TryParse<Target>(t, ignoreCase: true, out var target) ? target : throw new PackagerError($"unknown target '{t}'"));
+                    break;
+                default:
+                    if (args[i].StartsWith('-') || manifestPath != null) throw new PackagerError($"unexpected '{args[i]}'.\nusage:\n{Usage}");
+                    manifestPath = args[i];
+                    break;
+            }
+        }
+        if (manifestPath == null) throw new PackagerError("usage:\n" + Usage);
+        var manifest = PackageManifest.Load(manifestPath);
+        if (targets.Count == 0) targets = manifest.Output.Targets;
+        if (targets.Count == 0) throw new PackagerError("which targets? --target, or output.targets in the manifest");
+        outDir = Path.GetFullPath(outDir ?? (manifest.Output.Directory.Length > 0 ? manifest.Output.Directory
+            : Path.Combine(Path.GetDirectoryName(Path.GetFullPath(manifestPath))!, manifest.Product.Name + ".packages")));
+        Builder.Build(manifest, targets, outDir, packs ?? PackFile.DefaultFolder, line => o.WriteLine(line));
         return 0;
     }
 
