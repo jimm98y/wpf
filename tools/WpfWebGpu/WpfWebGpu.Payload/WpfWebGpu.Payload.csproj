@@ -58,18 +58,20 @@
   </ItemGroup>
 
   <!-- Windows: the real packages, so the WebGPU instance differs from the stock one in its UI stack
-       only. macOS: replacements for the Windows-only packages whose own non-Windows builds throw
-       PlatformNotSupportedException (repo shims/). Each has the package's identity and surface at a
+       only (their ServiceBase is the service control manager's). Elsewhere (macOS, Linux): replacements
+       for the Windows-only packages whose own non-Windows builds throw PlatformNotSupportedException
+       (repo shims/); each keeps what is macOS's to itself (OperatingSystem.IsMacOS) and answers on Linux
+       from /proc or with Windows' defaults. Each has the package's identity and surface at a
        higher version, so it also replaces the copy an app deploys itself (System.Management and
        ServiceController are app-local packages, not framework members). -->
   <PropertyGroup>
     <_WpfWebGpuShims>$(MSBuildThisFileDirectory)../../../shims/</_WpfWebGpuShims>
   </PropertyGroup>
-  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('osx'))">
+  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfWebGpuExtrasVersion)" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfWebGpuExtrasVersion)" />
   </ItemGroup>
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
+  <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('win'))">
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Management/System.Management.csproj" />
