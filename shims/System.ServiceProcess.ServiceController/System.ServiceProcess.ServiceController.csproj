@@ -5,7 +5,8 @@
        machine whose service control manager has no services installed: GetServices() is empty, and a
        ServiceController for any name fails the way Windows fails for a service that does not exist
        (InvalidOperationException over Win32Exception 1060), so an app takes its "service not
-       installed" path. Writing services (ServiceBase, installers) stays unsupported.
+       installed" path. A service (ServiceBase) runs as the service manager there runs it (ServiceBase.cs):
+       started, then stopped when the manager stops it (systemd's or launchd's SIGTERM).
 
        Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
        as the package, AssemblyVersion above it. -->

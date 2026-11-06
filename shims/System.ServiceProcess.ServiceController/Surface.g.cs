@@ -21,46 +21,6 @@ namespace System.ServiceProcess
         OemEvent = 11,
         ResumeAutomatic = 18,
     }
-    public partial class ServiceBase : System.ComponentModel.Component
-    {
-        public const int MaxNameLength = 80;
-        public ServiceBase() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        [System.ComponentModel.DefaultValueAttribute(true)]
-        public bool AutoLog { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.DefaultValueAttribute(false)]
-        public bool CanHandlePowerEvent { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.DefaultValueAttribute(false)]
-        public bool CanHandleSessionChangeEvent { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.DefaultValueAttribute(false)]
-        public bool CanPauseAndContinue { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.DefaultValueAttribute(false)]
-        public bool CanShutdown { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.DefaultValueAttribute(true)]
-        public bool CanStop { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.BrowsableAttribute(false)]
-        [System.ComponentModel.DesignerSerializationVisibilityAttribute(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-        public virtual System.Diagnostics.EventLog EventLog { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        public int ExitCode { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        [System.ComponentModel.EditorBrowsableAttribute(System.ComponentModel.EditorBrowsableState.Advanced)]
-        protected System.IntPtr ServiceHandle { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        public string ServiceName { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        protected override void Dispose(bool disposing) { }
-        protected virtual void OnContinue() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual void OnCustomCommand(int command) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual void OnPause() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual bool OnPowerEvent(System.ServiceProcess.PowerBroadcastStatus powerStatus) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual void OnSessionChange(System.ServiceProcess.SessionChangeDescription changeDescription) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual void OnShutdown() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual void OnStart(string[] args) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        protected virtual void OnStop() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public void RequestAdditionalTime(int milliseconds) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public void RequestAdditionalTime(System.TimeSpan time) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public static void Run(System.ServiceProcess.ServiceBase service) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public static void Run(System.ServiceProcess.ServiceBase[] services) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        [System.ComponentModel.EditorBrowsableAttribute(System.ComponentModel.EditorBrowsableState.Never)]
-        public void ServiceMainCallback(int argCount, System.IntPtr argPointer) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public void Stop() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-    }
     public enum ServiceControllerStatus
     {
         Stopped = 1,
