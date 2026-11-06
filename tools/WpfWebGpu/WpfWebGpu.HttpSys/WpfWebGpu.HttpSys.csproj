@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- http.sys's shared ports off Windows: the machine's registry of URL prefixes, http.sys's routing among them,
+       and the service that owns the ports and forwards each request to the process whose prefix claims it
+       (`wpfrun httpsys`). The HttpSys stand-in (shims/Microsoft.AspNetCore.Server.HttpSys) registers an app's
+       prefixes here. YARP's forwarder: MIT. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.HttpSys</AssemblyName>
+    <RootNamespace>WpfWebGpu.HttpSys</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+  </ItemGroup>
+
+</Project>

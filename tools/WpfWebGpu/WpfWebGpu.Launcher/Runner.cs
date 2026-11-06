@@ -138,7 +138,15 @@ internal sealed class Runner
             psi.Environment["WPFWEBGPU_REGISTRY_DIR"] = Path.Combine(Locations.StateRoot, "registry");
             // This launcher, for the app's own Process.Start of another Windows .NET program, which is run
             // through it as this one is (WindowsPaths.Process_Start).
-            if (Environment.ProcessPath is { Length: > 0 } self) psi.Environment["WPFWEBGPU_LAUNCHER"] = self;
+            if (Environment.ProcessPath is { Length: > 0 } self)
+            {
+                psi.Environment["WPFWEBGPU_LAUNCHER"] = self;
+                // run as `dotnet wpfrun.dll` (the installed runtime's run script): the dll is the launcher's
+                // first argument
+                if (Path.GetFileNameWithoutExtension(self).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                    psi.Environment["WPFWEBGPU_LAUNCHER_DLL"] = typeof(Runner).Assembly.Location;
+                else psi.Environment.Remove("WPFWEBGPU_LAUNCHER_DLL");
+            }
             // The ProtectedData shim's keys are not set here: on macOS they are in the login keychain,
             // where the shim moves the ones it used to keep in this state folder (dpapi/).
         }

@@ -22,6 +22,9 @@
     <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
     <!-- `wpfrun package`: the Packager's engine (and the .reg parser `wpfrun reg` shares with it) -->
     <ProjectReference Include="../WpfWebGpu.Packager/WpfWebGpu.Packager.csproj" />
+    <!-- `wpfrun httpsys`: the machine's http.sys service (WpfWebGpu.HttpSys), on ASP.NET Core's Kestrel -->
+    <ProjectReference Include="../WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
 </Project>

@@ -18,7 +18,7 @@
     <PublicSign>true</PublicSign>
     <AssemblyOriginatorKeyFile>aspnetcore.publickey</AssemblyOriginatorKeyFile>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <NoWarn>CA1416</NoWarn>
+    <NoWarn>CA1416;CS8002</NoWarn>
     <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
     <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
     <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
@@ -29,8 +29,8 @@
   <!-- the framework for Kestrel and hosting, kept to this project: what references it does not become a web app -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
-    <!-- the shared port's forwarding (HttpSysPort.cs): YARP's forwarder, MIT -->
-    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <!-- the machine's prefixes and its http.sys service (tools/WpfWebGpu/WpfWebGpu.HttpSys) -->
+    <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
   </ItemGroup>
 
   <Target Name="WpfWebGpuShimsOnly" AfterTargets="ResolveTargetingPackAssets">

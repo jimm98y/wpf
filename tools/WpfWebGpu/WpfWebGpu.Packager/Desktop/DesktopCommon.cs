@@ -26,5 +26,22 @@ internal static class DesktopCommon
         return ico == null ? null : Icons.Largest(ico);
     }
 
+    /// <summary>Whether a program of the installation serves through http.sys (references its server assembly):
+    /// then the package installs the machine's http.sys service (wpfrun httpsys), which owns the ports.</summary>
+    public static bool UsesHttpSys(PackageManifest manifest)
+    {
+        byte[] name = System.Text.Encoding.ASCII.GetBytes("Microsoft.AspNetCore.Server.HttpSys");
+        var excludes = new GlobSet(manifest.Exclude);
+        foreach (string dll in Directory.EnumerateFiles(manifest.Inputs.InstallDir, "*.dll", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(manifest.Inputs.InstallDir, dll).Replace('\\', '/');
+            if (excludes.Matches(rel) || Path.GetFileNameWithoutExtension(dll).Equals("Microsoft.AspNetCore.Server.HttpSys", StringComparison.OrdinalIgnoreCase)) continue;
+            var info = new FileInfo(dll);
+            if (info.Length > 64 * 1024 * 1024) continue;
+            if (File.ReadAllBytes(dll).AsSpan().IndexOf(name) >= 0) return true;
+        }
+        return false;
+    }
+
     public static string AppName(AppEntry app) => app.Name.Length > 0 ? app.Name : Path.GetFileNameWithoutExtension(app.Exe);
 }

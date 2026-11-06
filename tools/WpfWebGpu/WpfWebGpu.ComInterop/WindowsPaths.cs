@@ -342,14 +342,17 @@ public static class WindowsPaths
                 (string.IsNullOrEmpty(launcher) ? "as is (no launcher)" : managed ? "through the launcher" : File.Exists(exe) ? "as is (not a .NET program)" : "as is (no such file)"));
         if (string.IsNullOrEmpty(launcher) || !managed) return psi;
         psi.FileName = launcher;
+        // the launcher hosted by dotnet (the installed runtime): its dll first
+        string? dll = Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL");
         if (psi.ArgumentList.Count > 0)
         {
             psi.ArgumentList.Insert(0, exe);
             psi.ArgumentList.Insert(0, "run");
+            if (!string.IsNullOrEmpty(dll)) psi.ArgumentList.Insert(0, dll);
         }
         else
         {
-            psi.Arguments = "run \"" + exe + "\"" + (string.IsNullOrEmpty(psi.Arguments) ? "" : " " + psi.Arguments);
+            psi.Arguments = (string.IsNullOrEmpty(dll) ? "" : "\"" + dll + "\" ") + "run \"" + exe + "\"" + (string.IsNullOrEmpty(psi.Arguments) ? "" : " " + psi.Arguments);
         }
         // Explorer starts an .exe in its own folder unless told otherwise; the launcher runs it there too.
         if (string.IsNullOrEmpty(psi.WorkingDirectory)) psi.WorkingDirectory = Path.GetDirectoryName(exe)!;

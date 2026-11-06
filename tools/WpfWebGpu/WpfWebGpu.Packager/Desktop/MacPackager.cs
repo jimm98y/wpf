@@ -8,6 +8,7 @@
 //       uninstall.sh
 //   /Library/LaunchDaemons/<id>.<service>.plist      each service, started by launchd as the SCM starts it
 //   /Library/LaunchAgents/<id>.startup.plist           at each log-on, the Startup folders' shortcuts (wpfrun startup)
+//   /Library/LaunchDaemons/<id>.httpsys.plist          the machine's http.sys (wpfrun httpsys), where a program serves through it
 //   /Applications/<Product>/<App>.app                 each window app, with its icon
 //
 // The state is made on the first install only: an upgrade keeps what the machine has done with its registry and
@@ -58,6 +59,16 @@ public static class MacPackager
             Directory.CreateDirectory(Path.GetDirectoryName(plist)!);
             File.WriteAllText(plist, Daemon(label, root, product, service, manifest.Product.OsIdentity));
             daemons.Add(label);
+        }
+
+        // the machine's http.sys: the ports the programs' URL prefixes name, owned apart from every program
+        if (DesktopCommon.UsesHttpSys(manifest))
+        {
+            string label = id + ".httpsys";
+            Directory.CreateDirectory(Path.Combine(payload, "Library", "LaunchDaemons"));
+            File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), HttpSysDaemon(label, root, product));
+            daemons.Insert(0, label);
+            log("  http.sys service: a program serves through http.sys");
         }
 
         // at log-on, what the apps put in the Startup folders, as Explorer starts it
@@ -137,6 +148,31 @@ public static class MacPackager
             </plist>
             """;
     }
+
+    private static string HttpSysDaemon(string label, string root, string product) => $"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>Label</key><string>{X(label)}</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>{X(root)}/runtime/dotnet/dotnet</string>
+            <string>{X(root)}/runtime/launcher/wpfrun.dll</string>
+            <string>httpsys</string>
+          </array>
+          <key>EnvironmentVariables</key>
+          <dict>
+            <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
+          </dict>
+          <key>RunAtLoad</key><true/>
+          <key>KeepAlive</key><true/>
+          <key>ThrottleInterval</key><integer>5</integer>
+          <key>StandardOutPath</key><string>/Library/Logs/{X(product)}/httpsys.log</string>
+          <key>StandardErrorPath</key><string>/Library/Logs/{X(product)}/httpsys.log</string>
+        </dict>
+        </plist>
+        """;
 
     private static string StartupAgent(string label, string root, string osIdentity) => $"""
         <?xml version="1.0" encoding="UTF-8"?>

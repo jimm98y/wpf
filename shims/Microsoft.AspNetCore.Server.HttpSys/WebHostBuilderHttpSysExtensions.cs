@@ -1,19 +1,17 @@
-// UseHttpSys, served by Kestrel. http.sys takes URL prefixes (http://+:80/app/) on ports it shares among every
-// process of the machine, and routes each request to the prefix that claims it. Here the process serves its own
-// pipeline on a loopback port of its own, and its prefixes are registered with the machine's (HttpSysPort), whose
-// front on each port forwards to it what its prefixes claim; a middleware ahead of the app's does http.sys's routing
-// in the process: the connection taken as the front took it, the prefix with the strongest host (+, then a name,
-// then *) and the longest path chosen, its path the PathBase and the rest the Path, and a request no prefix claims
-// answered 404 as http.sys answers it. HTTPS -- ended at the front -- takes the certificate http.sys's SSL binding
-// for the port names (netsh's, in the registry); with none, one made for this machine.
+// UseHttpSys, served by Kestrel. http.sys takes URL prefixes (http://+:80/app/) on ports it owns for every process
+// of the machine, and routes each request to the prefix that claims it. Here the process serves its own pipeline on a
+// loopback port of its own and registers its prefixes with the machine's (WpfWebGpu.HttpSys), whose service -- a
+// process of its own, as http.sys is the system's -- owns the ports and forwards to it what its prefixes claim. A
+// middleware ahead of the app's does http.sys's routing in the process: the connection taken as the service took it,
+// the prefix with the strongest host (+, then a name, then *) and the longest path chosen, its path the PathBase and
+// the rest the Path, and a request no prefix claims answered 404 as http.sys answers it.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
@@ -26,6 +24,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using WpfWebGpu.HttpSys;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using AuthenticationSchemes = Microsoft.AspNetCore.Server.HttpSys.AuthenticationSchemes;
 
@@ -70,7 +69,6 @@ namespace Microsoft.AspNetCore.Hosting
         private readonly ILogger _logger;
         private readonly IServiceProvider _services;
         private UrlPrefix[]? _prefixes;
-        private X509Certificate2? _ownCertificate;
 
         public PrefixServer(IOptions<HttpSysOptions> options, IConfiguration configuration, ILoggerFactory loggers, IServiceProvider services)
         {
@@ -115,7 +113,7 @@ namespace Microsoft.AspNetCore.Hosting
             if (timeouts.MinSendBytesPerSecond > 0) kestrel.Limits.MinResponseDataRate = new MinDataRate(timeouts.MinSendBytesPerSecond, TimeSpan.FromSeconds(5));
             else kestrel.Limits.MinResponseDataRate = null;
 
-            // this process's own endpoint: a loopback port of its own, which the port's front (HttpSysPort) forwards
+            // this process's own endpoint: a loopback port of its own, which the machine's http.sys service forwards
             // the requests of this process's prefixes to
             kestrel.Listen(IPAddress.Loopback, 0);
             foreach (var p in Prefixes()) _logger.LogInformation("Listening on prefix: {Prefix}", p.FullPrefix);
@@ -130,7 +128,7 @@ namespace Microsoft.AspNetCore.Hosting
                 if (!_options.Authentication.AllowAnonymous)
                     _logger.LogWarning("Windows authentication is not available here: requests to a host that allows no anonymous ones are answered 401");
             }
-            // once the server listens: the prefixes registered with its port, and the ports they name fronted
+            // once the server listens: the prefixes registered with its port, and the machine's service serving them
             if (app.ApplicationServices.GetService<IHostApplicationLifetime>() is { } lifetime)
             {
                 lifetime.ApplicationStarted.Register(() =>
@@ -138,46 +136,36 @@ namespace Microsoft.AspNetCore.Hosting
                     var addresses = app.ApplicationServices.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()?.Addresses;
                     int local = addresses?.Select(a => Uri.TryCreate(a, UriKind.Absolute, out var u) ? u.Port : 0).FirstOrDefault(p => p > 0) ?? 0;
                     if (local == 0) { _logger.LogError("the server's own port is unknown: its prefixes are not registered"); return; }
-                    _port = HttpSysPort.Register(Prefixes(), local, Certificate, _logger);
+                    _registration = HttpSysRegistry.Register(local, Prefixes().Select(Shared));
+                    HttpSysService.EnsureRunning(Prefixes().Select(p => p.PortValue), _logger);
+                    // an instance started on demand that has gone (no system service restarts it): started again
+                    _watch = new Timer(_ =>
+                    {
+                        if (!HttpSysService.IsRunning()) HttpSysService.EnsureRunning(Prefixes().Select(p => p.PortValue), _logger);
+                    }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
                 });
-                lifetime.ApplicationStopping.Register(() => _port?.DisposeAsync().AsTask().GetAwaiter().GetResult());
+                lifetime.ApplicationStopping.Register(() =>
+                {
+                    _watch?.Dispose();
+                    _registration?.Dispose();
+                });
             }
             app.Use(Route);
             next(app);
         };
 
-        private HttpSysPort? _port;
+        private IDisposable? _registration;
+        private Timer? _watch;
 
-        /// <summary>http.sys's choice among prefixes: the strong wildcard's first, then a name's, then the weak
-        /// wildcard's; within each, the longest path. Null where none claims the request.</summary>
-        internal static UrlPrefix? Best(IEnumerable<UrlPrefix> prefixes, bool https, string host, IPAddress? localAddress, int port, string path)
-        {
-            string? local = localAddress?.ToString();
-            UrlPrefix? match = null;
-            int rank = int.MaxValue;
-            foreach (var p in prefixes)
-            {
-                if (p.IsHttps != https || (p.PortValue != 0 && p.PortValue != port)) continue;
-                int r = p.Host == "+" ? 0 : p.Host == "*" ? 2 : 1;
-                if (r == 1)
-                {
-                    string h = p.Host.StartsWith('[') && p.Host.EndsWith(']') ? p.Host[1..^1] : p.Host;
-                    if (!string.Equals(h, host.Trim('[', ']'), StringComparison.OrdinalIgnoreCase)
-                        && !(local != null && IPAddress.TryParse(h, out var ip) && ip.ToString() == local)) continue;
-                }
-                if (!(path + "/").StartsWith(p.Path, StringComparison.OrdinalIgnoreCase)) continue;
-                if (match == null || r < rank || (r == rank && p.Path.Length > match.Path.Length)) { match = p; rank = r; }
-            }
-            return match;
-        }
+        private static SharedPrefix Shared(UrlPrefix p) => new(p.IsHttps, p.Host, p.PortValue, p.Path);
 
         private Task Route(HttpContext context, RequestDelegate next)
         {
             var request = context.Request;
-            // the connection as the port's front took it (what http.sys would have told this process)
-            if (request.Headers.TryGetValue(HttpSysPort.ConnectionHeader, out var facts) && facts.ToString().Split(';') is { Length: 5 } f)
+            // the connection as the service took it (what http.sys would have told this process)
+            if (request.Headers.TryGetValue(HttpSysService.ConnectionHeader, out var facts) && facts.ToString().Split(';') is { Length: 5 } f)
             {
-                request.Headers.Remove(HttpSysPort.ConnectionHeader);
+                request.Headers.Remove(HttpSysService.ConnectionHeader);
                 request.Scheme = f[0];
                 var c = context.Connection;
                 if (IPAddress.TryParse(f[1], out var localIp)) c.LocalIpAddress = localIp;
@@ -187,7 +175,7 @@ namespace Microsoft.AspNetCore.Hosting
             }
             string full = (request.PathBase + request.Path).Value ?? string.Empty;
             if (full.Length == 0) full = "/";
-            var match = Best(Prefixes(), request.IsHttps, request.Host.Host, context.Connection.LocalIpAddress, context.Connection.LocalPort, full);
+            var match = HttpSysRouting.Best(Prefixes(), Shared, request.IsHttps, request.Host.Host, context.Connection.LocalIpAddress, context.Connection.LocalPort, full);
             if (match == null)
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -206,62 +194,6 @@ namespace Microsoft.AspNetCore.Hosting
             return next(context);
         }
 
-        /// <summary>The certificate http.sys's SSL binding names for the name and port, else this machine's own.</summary>
-        internal X509Certificate2 Certificate(string? name, int port)
-        {
-            if (Bound(name, port) is { } bound) return bound;
-            lock (this)
-            {
-                if (_ownCertificate != null) return _ownCertificate;
-                _logger.LogWarning(
-                    "no certificate is bound to port {Port} (HKLM\\SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\SslBindingInfo\\0.0.0.0:{Port}, as netsh http add sslcert binds one): a certificate made for this machine is used",
-                    port, port);
-                return _ownCertificate = MachineCertificate();
-            }
-        }
-
-        private static X509Certificate2? Bound(string? name, int port)
-        {
-            const string Parameters = @"SYSTEM\CurrentControlSet\Services\HTTP\Parameters\";
-            var keys = new List<string>();
-            if (!string.IsNullOrEmpty(name)) keys.Add($@"{Parameters}SslSniBindingInfo\{name}:{port}");
-            keys.Add($@"{Parameters}SslCcsBindingInfo\0.0.0.0:{port}");
-            keys.Add($@"{Parameters}SslBindingInfo\0.0.0.0:{port}");
-            keys.Add($@"{Parameters}SslBindingInfo\[::]:{port}");
-            foreach (string path in keys)
-            {
-                try
-                {
-                    using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(path);
-                    if (key?.GetValue("SslCertHash") is not byte[] hash) continue;
-                    string storeName = key.GetValue("SslCertStoreName") as string ?? "MY";
-                    using var store = new X509Store(storeName, StoreLocation.LocalMachine);
-                    store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
-                    var found = store.Certificates.Find(X509FindType.FindByThumbprint, Convert.ToHexString(hash), validOnly: false);
-                    if (found.Count > 0 && found[0].HasPrivateKey) return found[0];
-                }
-                catch (Exception) { }
-            }
-            return null;
-        }
-
-        private static X509Certificate2 MachineCertificate()
-        {
-            using var rsa = RSA.Create(2048);
-            string machine = Environment.MachineName;
-            var request = new CertificateRequest($"CN={machine}", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-            var names = new SubjectAlternativeNameBuilder();
-            names.AddDnsName(machine);
-            names.AddDnsName("localhost");
-            names.AddIpAddress(IPAddress.Loopback);
-            names.AddIpAddress(IPAddress.IPv6Loopback);
-            request.CertificateExtensions.Add(names.Build());
-            request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") }, critical: false));
-            request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, critical: true));
-            using var made = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
-            // the key a TLS server can use on every platform: the certificate exported and loaded again
-            return X509CertificateLoader.LoadPkcs12(made.Export(X509ContentType.Pkcs12), null);
-        }
     }
 
     /// <summary>

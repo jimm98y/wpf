@@ -84,8 +84,8 @@
     <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />
     <!-- a web host serving through http.sys (UseHttpSys): served by Kestrel, its URL prefixes routed as http.sys routes them -->
     <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Server.HttpSys/Microsoft.AspNetCore.Server.HttpSys.csproj" />
-    <!-- its shared ports' forwarding, named here: restore prunes a framework member's dependencies (NU1511) -->
-    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
+    <!-- the machine's prefixes it registers with, named here: restore prunes a framework member's dependencies (NU1511) -->
+    <ProjectReference Include="../WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
     <!-- Data Protection's key ring protected with DPAPI (ProtectKeysWithDpapi): crypt32's DPAPI the ProtectedData stand-in's -->
     <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
   </ItemGroup>

@@ -8,6 +8,7 @@
 //   /lib/systemd/system/<pkg>-<service>.service       each service, as the SCM runs it
 //   /usr/share/applications/<pkg>-<app>.desktop       each window app, with its icon
 //   /etc/xdg/autostart/<pkg>-startup.desktop          at each log-on, the Startup folders' shortcuts (wpfrun startup)
+//   /lib/systemd/system/<pkg>-httpsys.service         the machine's http.sys (wpfrun httpsys), where a program serves through it
 //
 // The state is writable by the group 'users', as ProgramData and HKLM are by a Windows machine's users.
 
@@ -60,6 +61,14 @@ public static class LinuxPackager
                 installedBytes += tar.AddFile(source, $"{root}/seed/ProgramData/{target}", executable: false);
             log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData");
 
+            // the machine's http.sys: the ports the programs' URL prefixes name, owned apart from every program
+            bool httpSys = DesktopCommon.UsesHttpSys(manifest);
+            if (httpSys)
+            {
+                tar.AddText($"/lib/systemd/system/{pkg}-httpsys.service", HttpSysUnit(manifest, pkg, root, state), executable: false);
+                units.Add(($"{pkg}-httpsys.service", true));
+                log("  http.sys service: a program serves through http.sys");
+            }
             foreach (var service in manifest.Services.Where(s => s.Start != StartType.Disabled))
             {
                 string unit = UnitName(pkg, service.Name);
@@ -160,6 +169,25 @@ public static class LinuxPackager
         """;
 
     // ---- what is installed ---------------------------------------------------------------------------------
+
+    private static string HttpSysUnit(PackageManifest manifest, string pkg, string root, string state) => $"""
+        [Unit]
+        Description=http.sys ({manifest.Product.Name})
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=simple
+        ExecStart={Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} httpsys
+        Environment=WPFRUN_STATE={state}
+        Restart=always
+        RestartSec=5
+        SyslogIdentifier={pkg}-httpsys
+
+        [Install]
+        WantedBy=multi-user.target
+
+        """;
 
     private static string Unit(PackageManifest manifest, ServiceEntry service, string pkg, string root, string state)
     {

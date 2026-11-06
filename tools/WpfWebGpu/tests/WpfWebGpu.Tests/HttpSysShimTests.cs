@@ -32,6 +32,7 @@ public class HttpSysShimTests
     public async Task Requests_are_routed_to_their_prefix_and_keys_are_protected_with_DPAPI()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        using var service = Service.Start("httpsys-routing");
         int http = FreePort(), https = FreePort();
         string keys = Path.Combine(Path.GetTempPath(), "wpfwebgpu-keys-" + Guid.NewGuid().ToString("N"));
         var builder = WebApplication.CreateBuilder();
@@ -72,10 +73,10 @@ public class HttpSysShimTests
     }
 
     [Fact]
-    public async Task Two_hosts_share_a_port_by_their_prefixes_and_the_port_outlives_its_front()
+    public async Task Hosts_share_a_port_through_the_machine_s_service_which_outlives_them()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
-        Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", TestEnvironment.NewDirectory("httpsys"));
+        using var service = Service.Start("httpsys-shared");
         int port = FreePort();
         async Task<WebApplication> Host(string prefix, string answer)
         {
@@ -87,37 +88,74 @@ public class HttpSysShimTests
             await app.StartAsync();
             return app;
         }
-        var one = await Host("one", "1");
-        var two = await Host("two", "2");
         using var client = new HttpClient();
-        async Task<string> Get(string path)
+        async Task<string> Get(string path, int tries = 1)
         {
-            for (int tries = 0; ; tries++)
+            for (int t = 0; ; t++)
             {
                 try
                 {
                     var r = await client.GetAsync($"http://127.0.0.1:{port}{path}");
-                    if (r.StatusCode != HttpStatusCode.NotFound || tries > 40) return $"{(int)r.StatusCode} {await r.Content.ReadAsStringAsync()}";
+                    if (r.IsSuccessStatusCode || t + 1 >= tries) return $"{(int)r.StatusCode} {await r.Content.ReadAsStringAsync()}";
                 }
-                catch (HttpRequestException) when (tries <= 40) { }
-                await Task.Delay(250);
+                catch (HttpRequestException) when (t + 1 < tries) { }
+                await Task.Delay(500);
             }
         }
+        var one = await Host("one", "1");
+        var two = await Host("two", "2");
         try
         {
+            // served once the hosts have started, as http.sys's prefixes are
             Assert.Equal($"200 1|/one|/a|{port}|127.0.0.1", await Get("/one/a"));
             Assert.Equal($"200 2|/two|/b|{port}|127.0.0.1", await Get("/two/b"));
             Assert.StartsWith("404", await Get("/three/"));
-            // the first host's front gone with it: the second takes the port over
+            // the host that started the service stops: the other is served as before
             await one.StopAsync();
             await one.DisposeAsync();
             Assert.Equal($"200 2|/two|/c|{port}|127.0.0.1", await Get("/two/c"));
+            Assert.StartsWith("404", await Get("/one/a"));
+            // the service itself ends: the hosts start it again
+            service.Kill();
+            Assert.Equal($"200 2|/two|/d|{port}|127.0.0.1", await Get("/two/d", tries: 60));
         }
         finally
         {
             await two.StopAsync();
             await two.DisposeAsync();
+        }
+    }
+
+    /// <summary>The machine's http.sys service for a test: its own registry folder, started on demand through the
+    /// launcher built beside the tests, and stopped at the end.</summary>
+    private sealed class Service : IDisposable
+    {
+        private readonly string _folder;
+        private Service(string folder) => _folder = folder;
+
+        public static Service Start(string name)
+        {
+            string folder = TestEnvironment.NewDirectory(name);
+            Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", folder);
+            string root = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
+            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER", Path.Combine(root, "dotnet"));
+            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL", Path.Combine(AppContext.BaseDirectory, "wpfrun.dll"));
+            return new Service(folder);
+        }
+
+        public void Kill()
+        {
+            string pid = Path.Combine(_folder, "service.pid");
+            if (File.Exists(pid) && int.TryParse(File.ReadAllText(pid), out int id))
+                try { using var p = System.Diagnostics.Process.GetProcessById(id); p.Kill(); p.WaitForExit(5000); } catch (ArgumentException) { }
+        }
+
+        public void Dispose()
+        {
+            Kill();
             Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", null);
+            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER", null);
+            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL", null);
         }
     }
 
