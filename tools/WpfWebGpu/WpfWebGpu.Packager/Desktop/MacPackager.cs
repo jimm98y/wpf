@@ -18,7 +18,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security;
-using System.Text;
 
 namespace WpfWebGpu.Packager.Desktop;
 
@@ -29,7 +28,7 @@ public static class MacPackager
         if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (pkgbuild)");
         string product = manifest.Product.Name;
         string arch = runtimePack["rid"].Split('-')[1];
-        string id = manifest.Product.IdPrefix + "." + Segment(product);
+        string id = manifest.Product.IdPrefix + "." + DesktopCommon.Segment(product);
         string root = "/Library/Application Support/" + product;
 
         string work = Path.Combine(outDir, ".work", "macos-" + arch);
@@ -53,7 +52,7 @@ public static class MacPackager
         var daemons = new List<string>();
         foreach (var service in manifest.Services.Where(s => s.Start != StartType.Disabled))
         {
-            string label = id + "." + Segment(service.Name);
+            string label = id + "." + DesktopCommon.Segment(service.Name);
             string plist = Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist");
             Directory.CreateDirectory(Path.GetDirectoryName(plist)!);
             File.WriteAllText(plist, Daemon(label, root, product, service));
@@ -61,7 +60,7 @@ public static class MacPackager
         }
 
         // the window apps
-        var image = Icon(manifest);
+        var image = DesktopCommon.Icon(manifest);
         foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             WriteAppStub(Path.Combine(payload, "Applications", product), root, id, app, manifest, image);
 
@@ -80,7 +79,7 @@ public static class MacPackager
             "--install-location", "/", "--ownership", "recommended", component);
 
         Directory.CreateDirectory(outDir);
-        string pkg = Path.Combine(outDir, $"{FileName(product)}-{manifest.Product.Version}-macos-{arch}.pkg");
+        string pkg = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-macos-{arch}.pkg");
         var args = new List<string> { "--package", component, "--identifier", id, "--version", manifest.Product.Version };
         if (manifest.Signing.DeveloperIdInstaller.Length > 0) { args.Add("--sign"); args.Add(manifest.Signing.DeveloperIdInstaller); }
         args.Add(pkg);
@@ -126,7 +125,7 @@ public static class MacPackager
     private static void WriteAppStub(string folder, string root, string id, AppEntry app, PackageManifest manifest, (byte[] Rgba, int Width, int Height)? productIcon)
     {
         string name = app.Name.Length > 0 ? app.Name : Path.GetFileNameWithoutExtension(app.Exe);
-        string bundle = Path.Combine(folder, FileName(name) + ".app", "Contents");
+        string bundle = Path.Combine(folder, DesktopCommon.FileName(name) + ".app", "Contents");
         Directory.CreateDirectory(Path.Combine(bundle, "MacOS"));
         Directory.CreateDirectory(Path.Combine(bundle, "Resources"));
         string exeName = "launch";
@@ -145,7 +144,7 @@ public static class MacPackager
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             <plist version="1.0">
             <dict>
-              <key>CFBundleIdentifier</key><string>{X(id + "." + Segment(Path.GetFileNameWithoutExtension(app.Exe)))}</string>
+              <key>CFBundleIdentifier</key><string>{X(id + "." + DesktopCommon.Segment(Path.GetFileNameWithoutExtension(app.Exe)))}</string>
               <key>CFBundleName</key><string>{X(name)}</string>
               <key>CFBundleDisplayName</key><string>{X(name)}</string>
               <key>CFBundleExecutable</key><string>{exeName}</string>
@@ -253,21 +252,5 @@ public static class MacPackager
         if (p.ExitCode != 0) throw new PackagerError($"{Path.GetFileName(tool)} failed ({p.ExitCode}): {output.Trim()}");
     }
 
-    private static (byte[] Rgba, int Width, int Height)? Icon(PackageManifest manifest)
-    {
-        if (manifest.Product.Icon.Length == 0) return null;
-        string p = Path.Combine(manifest.Inputs.InstallDir, manifest.Product.Icon);
-        byte[]? ico = p.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? PeFile.ReadIcon(p) : File.Exists(p) ? File.ReadAllBytes(p) : null;
-        return ico == null ? null : Icons.Largest(ico);
-    }
-
-    internal static string Segment(string s)
-    {
-        var sb = new StringBuilder();
-        foreach (char c in s.ToLowerInvariant()) if (char.IsAsciiLetterOrDigit(c) || c == '-') sb.Append(c);
-        return sb.Length == 0 ? "app" : sb.ToString();
-    }
-
-    private static string FileName(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ':' ? '_' : c));
     private static string X(string s) => SecurityElement.Escape(s)!;
 }

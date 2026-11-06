@@ -31,7 +31,16 @@ public static class Builder
             foreach (string rid in rids)
                 made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log));
         }
-        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS)))
+        if (targets.Contains(Target.Linux))
+        {
+            var rids = Directory.Exists(packsFolder)
+                ? Directory.EnumerateFiles(packsFolder, "desktop-linux-*.pack").Select(f => Path.GetFileNameWithoutExtension(f)["desktop-".Length..]).Order().ToList()
+                : new List<string>();
+            if (rids.Count == 0) throw new PackagerError($"no desktop-linux-<arch>.pack in {packsFolder}: the Linux runtime is not installed");
+            foreach (string rid in rids)
+                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log));
+        }
+        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux)))
             log($"{t}: not made yet by this Packager");
         return made;
     }
