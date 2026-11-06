@@ -80,7 +80,7 @@ public static class IosPackager
         var excludes = new GlobSet(manifest.MobileExclude);
         foreach (var (source, target) in staged.ProgramDataFiles)
             if (!excludes.Matches(target)) Copy(source, Path.Combine(app, "wpfrun-state", "ProgramData", target));
-        File.WriteAllText(Path.Combine(app, "wpfrun-app.txt"), $"name={mobile.Name}\nexe={mobile.Exe}\nfolder=app\n");
+        File.WriteAllText(Path.Combine(app, "wpfrun-app.txt"), $"name={mobile.Name}\nexe={mobile.Exe}\nfolder=app\nosidentity={manifest.Product.OsIdentity}\n");
 
         string infoPath = Path.Combine(app, "Info.plist");
         var info = (PlistDict)Plist.Read(File.ReadAllBytes(infoPath));

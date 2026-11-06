@@ -68,7 +68,7 @@ public static class LinuxPackager
             foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             {
                 string id = pkg + "-" + DesktopCommon.Segment(Path.GetFileNameWithoutExtension(app.Exe));
-                tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, id, root, state), executable: false);
+                tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, id, root, state, manifest.Product.OsIdentity), executable: false);
                 if (DesktopCommon.Icon(manifest, app) is { } image)
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
             }
@@ -177,7 +177,9 @@ public static class LinuxPackager
             Environment=WPFRUN_STATE={state}
             Environment=WPFRUN_CACHE=/var/cache/{pkg}
             Environment=WPFRUN_LOGS=/var/log/{pkg}
-            {string.Concat(service.Environment.Select(e => $"Environment={e.Key}={e.Value}\n"))}
+            {string.Concat(service.Environment.Concat(manifest.Product.OsIdentity.Length > 0 && !service.Environment.ContainsKey("WPFWEBGPU_OS_IDENTITY")
+                ? new[] { new KeyValuePair<string, string>("WPFWEBGPU_OS_IDENTITY", manifest.Product.OsIdentity) } : Array.Empty<KeyValuePair<string, string>>())
+                .Select(e => $"Environment={e.Key}={e.Value}\n"))}
             UMask=0002
             Restart=on-failure
             RestartSec=10
@@ -190,11 +192,11 @@ public static class LinuxPackager
             """;
     }
 
-    private static string Desktop(AppEntry app, string id, string root, string state) => $"""
+    private static string Desktop(AppEntry app, string id, string root, string state, string osIdentity) => $"""
         [Desktop Entry]
         Type=Application
         Name={DesktopCommon.AppName(app)}
-        Exec=env WPFRUN_STATE={state} {Quote(root + "/runtime/run")} {Quote(root + "/app/" + app.Exe)}
+        Exec=env WPFRUN_STATE={state}{(osIdentity.Length > 0 ? " WPFWEBGPU_OS_IDENTITY=" + osIdentity : "")} {Quote(root + "/runtime/run")} {Quote(root + "/app/" + app.Exe)}
         Icon={id}
         Terminal=false
         Categories=Utility;

@@ -454,6 +454,8 @@ internal static partial class Bundle
                     string root = Path.Combine(files, "app");
                     var info = AppInfo(assets);
                     string name = info["name"];
+                    // a product written for Windows only, told it runs on it (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
+                    if (info["osidentity"].Length > 0) System.Environment.SetEnvironmentVariable("WPFWEBGPU_OS_IDENTITY", info["osidentity"]);
                     Unpack(assets, files, info["stamp"]);
                     // the app's assemblies the APK does not hold (a template's app: all of them) are its folder's,
                     // as on Windows: there, and a culture's satellites in the culture's folder
@@ -521,7 +523,7 @@ internal static partial class Bundle
                 /// <summary>The app the APK starts (wpfrun-app.txt: name=, exe=, stamp=).</summary>
                 private static System.Collections.Generic.Dictionary<string, string> AppInfo(Android.Content.Res.AssetManager assets)
                 {
-                    var info = new System.Collections.Generic.Dictionary<string, string> { ["name"] = "", ["exe"] = "", ["stamp"] = "" };
+                    var info = new System.Collections.Generic.Dictionary<string, string> { ["name"] = "", ["exe"] = "", ["stamp"] = "", ["osidentity"] = "" };
                     using var reader = new StreamReader(assets.Open("wpfrun-app.txt"));
                     for (string line; (line = reader.ReadLine()) != null;)
                     {

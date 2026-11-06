@@ -239,6 +239,8 @@ internal static partial class Bundle
                     if (Info["name"].Length == 0) throw new InvalidOperationException("this bundle holds no app (a template the Packager has not filled)");
                     if (Info["folder"].Length > 0) AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", Path.Combine(bundle, Info["folder"]) + "/");
                     Bundle = bundle;
+                    // a product written for Windows only, told it runs on it (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
+                    if (Info["osidentity"].Length > 0) Environment.SetEnvironmentVariable("WPFWEBGPU_OS_IDENTITY", Info["osidentity"]);
                     // the app's own command line: a launch passes no arguments to an iOS app, but an environment
                     // (WPFRUN_ARGS, '|' between arguments; SIMCTL_CHILD_WPFRUN_ARGS on a simulator launch)
                     if (Environment.GetEnvironmentVariable("WPFRUN_ARGS") is { Length: > 0 } passed)
@@ -247,7 +249,7 @@ internal static partial class Bundle
                 }
 
                 internal static string[] Args = Array.Empty<string>();
-                internal static readonly System.Collections.Generic.Dictionary<string, string> Info = new() { ["name"] = "", ["exe"] = "", ["folder"] = "" };
+                internal static readonly System.Collections.Generic.Dictionary<string, string> Info = new() { ["name"] = "", ["exe"] = "", ["folder"] = "", ["osidentity"] = "" };
                 internal static string Bundle = "";
 
                 /// <summary>The app's Main, on the main thread, once the scene has its window; the process

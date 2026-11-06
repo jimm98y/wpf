@@ -71,7 +71,7 @@ public static class AndroidPackager
                 if (!mobileExcludes.Matches(target)) Asset(source, "state/ProgramData/" + target);
 
             zip.Add("assets/wpfrun-assets.txt", Encoding.UTF8.GetBytes(string.Join("\n", assets) + "\n"), compress: true);
-            zip.Add("assets/wpfrun-app.txt", Encoding.UTF8.GetBytes($"name={app.Name}\nexe={app.Exe}\nstamp={Guid.NewGuid():N}\n"), compress: false);
+            zip.Add("assets/wpfrun-app.txt", Encoding.UTF8.GetBytes($"name={app.Name}\nexe={app.Exe}\nstamp={Guid.NewGuid():N}\nosidentity={manifest.Product.OsIdentity}\n"), compress: false);
             cdOffset = zip.Finish();
         }
 

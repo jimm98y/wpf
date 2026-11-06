@@ -85,6 +85,8 @@ public static class Scanner
         }
 
         manifest.Product.Name = Path.GetFileName(installDir);
+        // programs that check for Windows: the product is told it runs on it, every program of it alike
+        if (manifest.Services.Any(s => s.Environment.ContainsKey("WPFWEBGPU_OS_IDENTITY"))) manifest.Product.OsIdentity = "windows";
         // the first window app's icon (the product's main app comes first in the folder order more often than not)
         foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui))
         {

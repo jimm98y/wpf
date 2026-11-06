@@ -55,7 +55,7 @@ public static class MacPackager
             string label = id + "." + DesktopCommon.Segment(service.Name);
             string plist = Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist");
             Directory.CreateDirectory(Path.GetDirectoryName(plist)!);
-            File.WriteAllText(plist, Daemon(label, root, product, service));
+            File.WriteAllText(plist, Daemon(label, root, product, service, manifest.Product.OsIdentity));
             daemons.Add(label);
         }
 
@@ -91,7 +91,14 @@ public static class MacPackager
 
     // ---- what is installed --------------------------------------------------------------------------------
 
-    private static string Daemon(string label, string root, string product, ServiceEntry service)
+    private static IEnumerable<KeyValuePair<string, string>> ServiceEnvironment(string? osIdentity, ServiceEntry service)
+    {
+        var env = new Dictionary<string, string>(service.Environment);
+        if (!string.IsNullOrEmpty(osIdentity)) env.TryAdd("WPFWEBGPU_OS_IDENTITY", osIdentity);
+        return env;
+    }
+
+    private static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity)
     {
         var args = new List<string> { root + "/runtime/run", root + "/app/" + service.Exe };
         args.AddRange(service.Args);
@@ -110,7 +117,7 @@ public static class MacPackager
                 <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
                 <key>WPFRUN_CACHE</key><string>/Library/Caches/{X(product)}</string>
                 <key>WPFRUN_LOGS</key><string>/Library/Logs/{X(product)}</string>
-            {string.Concat(service.Environment.Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}
+            {string.Concat(ServiceEnvironment(osIdentity, service).Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}
               </dict>
               <key>WorkingDirectory</key><string>{X(root + "/app/" + Path.GetDirectoryName(service.Exe)!.Replace('\\', '/'))}</string>
               <key>RunAtLoad</key><{(service.Start == StartType.Auto ? "true" : "false")}/>
@@ -135,7 +142,7 @@ public static class MacPackager
         File.WriteAllText(Path.Combine(bundle, "MacOS", exeName), $"""
             #!/bin/sh
             # {name}: the Windows program run on this Mac (WPF and WinForms on WebGPU)
-            export WPFRUN_STATE="{root}/state"
+            export WPFRUN_STATE="{root}/state"{(manifest.Product.OsIdentity.Length > 0 ? $"\nexport WPFWEBGPU_OS_IDENTITY={manifest.Product.OsIdentity}" : "")}
             exec "{root}/runtime/run" "{root}/app/{app.Exe}" "$@"
 
             """);

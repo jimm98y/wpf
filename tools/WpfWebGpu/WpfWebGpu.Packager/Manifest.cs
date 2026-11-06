@@ -65,6 +65,10 @@ public sealed class ProductSection
     public string IdPrefix { get; set; } = "com.example";
     /// <summary>The product's icon: an .exe whose icon it is, an .ico or a .png; relative to the installation.</summary>
     public string Icon { get; set; } = "";
+    /// <summary>"windows": every program of the product is told it runs on Windows (WPFWEBGPU_OS_IDENTITY) -- a
+    /// product written for Windows only, whose programs check for it (a licence read through WMI, a service that
+    /// refuses to start elsewhere). Empty: the system's own answers.</summary>
+    public string OsIdentity { get; set; } = "";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<AppKind>))]
