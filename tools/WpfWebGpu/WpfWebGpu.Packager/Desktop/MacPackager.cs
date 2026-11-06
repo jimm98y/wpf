@@ -115,6 +115,7 @@ public static class MacPackager
               <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
               <key>ThrottleInterval</key><integer>10</integer>
               <key>ExitTimeOut</key><integer>30</integer>
+              <key>Umask</key><integer>2</integer>
               <key>StandardOutPath</key><string>{X(log)}</string>
               <key>StandardErrorPath</key><string>{X(log)}</string>
             </dict>
