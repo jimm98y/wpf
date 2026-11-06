@@ -1,10 +1,11 @@
-// UseHttpSys, served by Kestrel. http.sys takes URL prefixes (http://+:80/app/) where Kestrel takes endpoints, and
-// routes each request to the prefix that claims it; so the prefixes are made endpoints -- one per port, every
-// address where a prefix names any host or a name, the address itself where it names one -- and a middleware ahead
-// of the app's does http.sys's routing: the request goes to the prefix with the strongest host (+, then a name, then
-// *) and the longest path, the prefix's path is its PathBase and the rest its Path, and a request no prefix claims
-// is answered 404 as http.sys answers it. HTTPS takes the certificate http.sys's SSL binding for the port names
-// (netsh's, in the registry); with none, one made for this machine.
+// UseHttpSys, served by Kestrel. http.sys takes URL prefixes (http://+:80/app/) on ports it shares among every
+// process of the machine, and routes each request to the prefix that claims it. Here the process serves its own
+// pipeline on a loopback port of its own, and its prefixes are registered with the machine's (HttpSysPort), whose
+// front on each port forwards to it what its prefixes claim; a middleware ahead of the app's does http.sys's routing
+// in the process: the connection taken as the front took it, the prefix with the strongest host (+, then a name,
+// then *) and the longest path chosen, its path the PathBase and the rest the Path, and a request no prefix claims
+// answered 404 as http.sys answers it. HTTPS -- ended at the front -- takes the certificate http.sys's SSL binding
+// for the port names (netsh's, in the registry); with none, one made for this machine.
 
 using System;
 using System.Collections.Generic;
@@ -23,7 +24,9 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using AuthenticationSchemes = Microsoft.AspNetCore.Server.HttpSys.AuthenticationSchemes;
 
 namespace Microsoft.AspNetCore.Hosting
@@ -112,40 +115,10 @@ namespace Microsoft.AspNetCore.Hosting
             if (timeouts.MinSendBytesPerSecond > 0) kestrel.Limits.MinResponseDataRate = new MinDataRate(timeouts.MinSendBytesPerSecond, TimeSpan.FromSeconds(5));
             else kestrel.Limits.MinResponseDataRate = null;
 
-            foreach (var port in Prefixes().GroupBy(p => p.PortValue))
-            {
-                bool https = port.First().IsHttps;
-                if (port.Any(p => p.IsHttps != https))
-                    _logger.LogWarning("port {Port} has both http and https prefixes; it is served as {Scheme}", port.Key, port.First().Scheme);
-                int portValue = port.Key;
-                void Endpoint(ListenOptions listen)
-                {
-                    if (https) listen.UseHttps(new Microsoft.AspNetCore.Server.Kestrel.Https.HttpsConnectionAdapterOptions
-                    {
-                        ServerCertificateSelector = (_, name) => Certificate(name, portValue),
-                    });
-                }
-                var addresses = port.Select(p => Address(p.Host)).ToList();
-                if (addresses.Any(a => a == null))
-                {
-                    kestrel.ListenAnyIP(port.Key, Endpoint);
-                    continue;
-                }
-                foreach (var address in addresses.Distinct())
-                {
-                    if (address == IPAddress.Loopback) kestrel.ListenLocalhost(port.Key, Endpoint);
-                    else kestrel.Listen(address!, port.Key, Endpoint);
-                }
-            }
+            // this process's own endpoint: a loopback port of its own, which the port's front (HttpSysPort) forwards
+            // the requests of this process's prefixes to
+            kestrel.Listen(IPAddress.Loopback, 0);
             foreach (var p in Prefixes()) _logger.LogInformation("Listening on prefix: {Prefix}", p.FullPrefix);
-        }
-
-        /// <summary>The address a prefix's host binds: null for every address (+, *, a name).</summary>
-        private static IPAddress? Address(string host)
-        {
-            if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)) return IPAddress.Loopback;
-            string h = host.StartsWith('[') && host.EndsWith(']') ? host[1..^1] : host;
-            return IPAddress.TryParse(h, out var ip) ? ip : null;
         }
 
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
@@ -157,25 +130,34 @@ namespace Microsoft.AspNetCore.Hosting
                 if (!_options.Authentication.AllowAnonymous)
                     _logger.LogWarning("Windows authentication is not available here: requests to a host that allows no anonymous ones are answered 401");
             }
+            // once the server listens: the prefixes registered with its port, and the ports they name fronted
+            if (app.ApplicationServices.GetService<IHostApplicationLifetime>() is { } lifetime)
+            {
+                lifetime.ApplicationStarted.Register(() =>
+                {
+                    var addresses = app.ApplicationServices.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()?.Addresses;
+                    int local = addresses?.Select(a => Uri.TryCreate(a, UriKind.Absolute, out var u) ? u.Port : 0).FirstOrDefault(p => p > 0) ?? 0;
+                    if (local == 0) { _logger.LogError("the server's own port is unknown: its prefixes are not registered"); return; }
+                    _port = HttpSysPort.Register(Prefixes(), local, Certificate, _logger);
+                });
+                lifetime.ApplicationStopping.Register(() => _port?.DisposeAsync().AsTask().GetAwaiter().GetResult());
+            }
             app.Use(Route);
             next(app);
         };
 
-        // http.sys's routing: the strong wildcard's prefixes first, then a name's, then the weak wildcard's; within
-        // each, the longest path
-        private Task Route(HttpContext context, RequestDelegate next)
+        private HttpSysPort? _port;
+
+        /// <summary>http.sys's choice among prefixes: the strong wildcard's first, then a name's, then the weak
+        /// wildcard's; within each, the longest path. Null where none claims the request.</summary>
+        internal static UrlPrefix? Best(IEnumerable<UrlPrefix> prefixes, bool https, string host, IPAddress? localAddress, int port, string path)
         {
-            var request = context.Request;
-            string full = (request.PathBase + request.Path).Value ?? string.Empty;
-            if (full.Length == 0) full = "/";
-            string host = request.Host.Host;
-            string? local = context.Connection.LocalIpAddress?.ToString();
-            int port = context.Connection.LocalPort;
+            string? local = localAddress?.ToString();
             UrlPrefix? match = null;
             int rank = int.MaxValue;
-            foreach (var p in Prefixes())
+            foreach (var p in prefixes)
             {
-                if (p.IsHttps != request.IsHttps || (p.PortValue != 0 && p.PortValue != port)) continue;
+                if (p.IsHttps != https || (p.PortValue != 0 && p.PortValue != port)) continue;
                 int r = p.Host == "+" ? 0 : p.Host == "*" ? 2 : 1;
                 if (r == 1)
                 {
@@ -183,9 +165,29 @@ namespace Microsoft.AspNetCore.Hosting
                     if (!string.Equals(h, host.Trim('[', ']'), StringComparison.OrdinalIgnoreCase)
                         && !(local != null && IPAddress.TryParse(h, out var ip) && ip.ToString() == local)) continue;
                 }
-                if (!(full + "/").StartsWith(p.Path, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!(path + "/").StartsWith(p.Path, StringComparison.OrdinalIgnoreCase)) continue;
                 if (match == null || r < rank || (r == rank && p.Path.Length > match.Path.Length)) { match = p; rank = r; }
             }
+            return match;
+        }
+
+        private Task Route(HttpContext context, RequestDelegate next)
+        {
+            var request = context.Request;
+            // the connection as the port's front took it (what http.sys would have told this process)
+            if (request.Headers.TryGetValue(HttpSysPort.ConnectionHeader, out var facts) && facts.ToString().Split(';') is { Length: 5 } f)
+            {
+                request.Headers.Remove(HttpSysPort.ConnectionHeader);
+                request.Scheme = f[0];
+                var c = context.Connection;
+                if (IPAddress.TryParse(f[1], out var localIp)) c.LocalIpAddress = localIp;
+                if (int.TryParse(f[2], out int localPort)) c.LocalPort = localPort;
+                if (IPAddress.TryParse(f[3], out var remoteIp)) c.RemoteIpAddress = remoteIp;
+                if (int.TryParse(f[4], out int remotePort)) c.RemotePort = remotePort;
+            }
+            string full = (request.PathBase + request.Path).Value ?? string.Empty;
+            if (full.Length == 0) full = "/";
+            var match = Best(Prefixes(), request.IsHttps, request.Host.Host, context.Connection.LocalIpAddress, context.Connection.LocalPort, full);
             if (match == null)
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
@@ -205,7 +207,7 @@ namespace Microsoft.AspNetCore.Hosting
         }
 
         /// <summary>The certificate http.sys's SSL binding names for the name and port, else this machine's own.</summary>
-        private X509Certificate2 Certificate(string? name, int port)
+        internal X509Certificate2 Certificate(string? name, int port)
         {
             if (Bound(name, port) is { } bound) return bound;
             lock (this)

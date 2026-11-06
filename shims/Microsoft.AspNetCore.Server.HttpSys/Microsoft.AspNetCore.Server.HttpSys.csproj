@@ -29,6 +29,8 @@
   <!-- the framework for Kestrel and hosting, kept to this project: what references it does not become a web app -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
+    <!-- the shared port's forwarding (HttpSysPort.cs): YARP's forwarder, MIT -->
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
   </ItemGroup>
 
   <Target Name="WpfWebGpuShimsOnly" AfterTargets="ResolveTargetingPackAssets">

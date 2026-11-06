@@ -71,6 +71,56 @@ public class HttpSysShimTests
         }
     }
 
+    [Fact]
+    public async Task Two_hosts_share_a_port_by_their_prefixes_and_the_port_outlives_its_front()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", TestEnvironment.NewDirectory("httpsys"));
+        int port = FreePort();
+        async Task<WebApplication> Host(string prefix, string answer)
+        {
+            var builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseHttpSys(o => o.UrlPrefixes.Add($"http://+:{port}/{prefix}/"));
+            var app = builder.Build();
+            app.Run(c => c.Response.WriteAsync($"{answer}|{c.Request.PathBase}|{c.Request.Path}|{c.Connection.LocalPort}|{c.Connection.RemoteIpAddress}"));
+            await app.StartAsync();
+            return app;
+        }
+        var one = await Host("one", "1");
+        var two = await Host("two", "2");
+        using var client = new HttpClient();
+        async Task<string> Get(string path)
+        {
+            for (int tries = 0; ; tries++)
+            {
+                try
+                {
+                    var r = await client.GetAsync($"http://127.0.0.1:{port}{path}");
+                    if (r.StatusCode != HttpStatusCode.NotFound || tries > 40) return $"{(int)r.StatusCode} {await r.Content.ReadAsStringAsync()}";
+                }
+                catch (HttpRequestException) when (tries <= 40) { }
+                await Task.Delay(250);
+            }
+        }
+        try
+        {
+            Assert.Equal($"200 1|/one|/a|{port}|127.0.0.1", await Get("/one/a"));
+            Assert.Equal($"200 2|/two|/b|{port}|127.0.0.1", await Get("/two/b"));
+            Assert.StartsWith("404", await Get("/three/"));
+            // the first host's front gone with it: the second takes the port over
+            await one.StopAsync();
+            await one.DisposeAsync();
+            Assert.Equal($"200 2|/two|/c|{port}|127.0.0.1", await Get("/two/c"));
+        }
+        finally
+        {
+            await two.StopAsync();
+            await two.DisposeAsync();
+            Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", null);
+        }
+    }
+
     private static int FreePort()
     {
         using var l = new TcpListener(IPAddress.Loopback, 0);

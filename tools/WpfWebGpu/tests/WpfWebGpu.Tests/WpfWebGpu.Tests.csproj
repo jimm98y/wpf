@@ -49,6 +49,7 @@
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.AspNetCore.Server.HttpSys/Microsoft.AspNetCore.Server.HttpSys.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
   </ItemGroup>
 
   <!-- compiled against the shims' System.Net.Requests, System.Net.WebClient, HttpSys and EventLog (ASP.NET Core's
