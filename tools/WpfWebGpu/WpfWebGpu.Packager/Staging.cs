@@ -16,6 +16,8 @@ public sealed class StagedState
     public required IReadOnlyList<(string Source, string Target)> ProgramDataFiles { get; init; }
     /// <summary>The product's icon (.ico or .png) in the work folder, or null.</summary>
     public string? Icon { get; init; }
+    /// <summary>ProgramData files left out of the seed (a machine's own certificate), by target, each with why.</summary>
+    public IReadOnlyDictionary<string, string> LeftOut { get; init; } = new Dictionary<string, string>();
     public int Keys { get; init; }
     public int Values { get; init; }
 }
@@ -47,7 +49,12 @@ public static class Staging
                 files.Add((f, name + "/" + rel));
             }
         }
-        return new StagedState { RegistryDir = registryDir, ProgramDataFiles = files, Icon = StageIcon(manifest, workDir), Keys = tree.KeyCount, Values = tree.ValueCount };
+        var machines = MachineCertificates.Find(files);
+        files.RemoveAll(f => machines.ContainsKey(f.Item2));
+        return new StagedState
+        {
+            RegistryDir = registryDir, ProgramDataFiles = files, LeftOut = machines, Icon = StageIcon(manifest, workDir), Keys = tree.KeyCount, Values = tree.ValueCount,
+        };
     }
 
     private static string? StageIcon(PackageManifest manifest, string workDir)

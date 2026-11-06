@@ -11,6 +11,7 @@ public static class Builder
         var made = new List<string>();
         var staged = Staging.Stage(manifest, Path.Combine(outDir, ".work"));
         log($"staged: registry {staged.Keys} keys, ProgramData {staged.ProgramDataFiles.Count} files");
+        foreach (var (target, why) in staged.LeftOut) log($"  left out ProgramData/{target}: {why}");
         var mobile = manifest.Apps.Where(a => a.Mobile).ToList();
 
         // Android and Quest are one APK (both activities: the panel, and the immersive one a headset starts)

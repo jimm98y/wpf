@@ -78,6 +78,46 @@ public class PackagerTests
         Assert.Contains("\"Data\"=str:/var/p 100%25\\Vendor\\Data\n", resolved);
     }
 
+    [Fact]
+    public void A_machine_s_own_certificate_is_left_out_of_the_seed_and_a_peer_s_kept()
+    {
+        string data = TestEnvironment.NewDirectory("pki"), work = TestEnvironment.NewDirectory("work");
+        string own = Path.Combine(data, "pki", "own"), trusted = Path.Combine(data, "pki", "trusted", "certs");
+        Directory.CreateDirectory(Path.Combine(own, "certs"));
+        Directory.CreateDirectory(Path.Combine(own, "private"));
+        Directory.CreateDirectory(trusted);
+        using var mine = SelfSigned("CN=Server, DC=winbox", "winbox");
+        File.WriteAllBytes(Path.Combine(own, "private", $"Server [{mine.Thumbprint}].pfx"), mine.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12));
+        File.WriteAllBytes(Path.Combine(own, "certs", "Server.der"), mine.RawData);
+        using var peer = SelfSigned("CN=Peer, DC=otherbox", "otherbox");
+        File.WriteAllBytes(Path.Combine(trusted, $"Peer [{peer.Thumbprint}].der"), peer.RawData);
+        using var local = SelfSigned("CN=Local", "localhost");
+        File.WriteAllBytes(Path.Combine(own, "private", "Local.pfx"), local.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12));
+        File.WriteAllText(Path.Combine(own, "certs", "Readme.txt"), "certificates");
+        var manifest = new PackageManifest();
+        manifest.Inputs.InstallDir = Install();
+        manifest.Inputs.ProgramData.Add(data);
+
+        var staged = Staging.Stage(manifest, work);
+        string root = Path.GetFileName(data);
+        var kept = staged.ProgramDataFiles.Select(f => f.Target).ToHashSet();
+        Assert.Equal(new[] { $"{root}/pki/own/certs/Server.der", $"{root}/pki/own/private/Server [{mine.Thumbprint}].pfx" }, staged.LeftOut.Keys.Order());
+        Assert.Contains("winbox", staged.LeftOut.Values.First());
+        Assert.Contains($"{root}/pki/trusted/certs/Peer [{peer.Thumbprint}].der", kept);     // a peer's, without its key
+        Assert.Contains($"{root}/pki/own/private/Local.pfx", kept);                           // made for no host
+        Assert.Contains($"{root}/pki/own/certs/Readme.txt", kept);
+    }
+
+    private static System.Security.Cryptography.X509Certificates.X509Certificate2 SelfSigned(string subject, string host)
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var request = new System.Security.Cryptography.X509Certificates.CertificateRequest(subject, rsa, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        var names = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+        names.AddDnsName(host);
+        request.CertificateExtensions.Add(names.Build());
+        return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
+    }
+
     [Theory]
     [InlineData("**/Logs/**", "11/Logs/Traces/a.log", true)]
     [InlineData("**/Logs/**", "Logs/a.log", true)]

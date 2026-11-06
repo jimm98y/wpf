@@ -42,6 +42,33 @@ public sealed class PathSubstitutions
         return token is { Length: 8 } && s_microsoftKeys.Contains(Convert.ToHexString(token));
     }
 
+    // a library that asks about macOS, Linux or the others itself (an OPC UA stack loading a key as macOS's .NET
+    // can, a client choosing its native code) was written for them: its questions get the system's own answers too.
+    // Only code that knows Windows alone is told it runs there.
+    private static readonly HashSet<string> s_otherSystems = new(StringComparer.Ordinal)
+    {
+        "System.Runtime.InteropServices.OSPlatform::get_OSX", "System.Runtime.InteropServices.OSPlatform::get_Linux",
+        "System.Runtime.InteropServices.OSPlatform::get_FreeBSD",
+        "System.OperatingSystem::IsMacOS", "System.OperatingSystem::IsMacOSVersionAtLeast", "System.OperatingSystem::IsLinux",
+        "System.OperatingSystem::IsFreeBSD", "System.OperatingSystem::IsFreeBSDVersionAtLeast", "System.OperatingSystem::IsIOS",
+        "System.OperatingSystem::IsIOSVersionAtLeast", "System.OperatingSystem::IsMacCatalyst", "System.OperatingSystem::IsMacCatalystVersionAtLeast",
+        "System.OperatingSystem::IsTvOS", "System.OperatingSystem::IsTvOSVersionAtLeast", "System.OperatingSystem::IsWatchOS",
+        "System.OperatingSystem::IsWatchOSVersionAtLeast", "System.OperatingSystem::IsAndroid", "System.OperatingSystem::IsAndroidVersionAtLeast",
+        "System.OperatingSystem::IsBrowser", "System.OperatingSystem::IsWasi",
+    };
+
+    private static bool KnowsOtherSystems(ModuleDefinition module)
+    {
+        foreach (TypeDefinition t in module.GetTypes())
+            foreach (MethodDefinition m in t.Methods)
+            {
+                if (!m.HasBody) continue;
+                foreach (Instruction i in m.Body.Instructions)
+                    if (i.Operand is MethodReference r && s_otherSystems.Contains(r.DeclaringType.FullName + "::" + r.Name)) return true;
+            }
+        return false;
+    }
+
     private readonly Dictionary<string, MethodDefinition> _bySignature = new(StringComparer.Ordinal);
     // (type, member) of every stand-in: the cheap test of whether an assembly may call one (MayUse)
     private readonly HashSet<string> _members = new(StringComparer.Ordinal);
@@ -119,7 +146,8 @@ public sealed class PathSubstitutions
     public int Apply(ModuleDefinition module)
     {
         int n = 0;
-        bool microsofts = IsMicrosofts(module);
+        // the system's own answers for .NET's assemblies, Microsoft's libraries and those written for other systems
+        bool trueAnswers = IsMicrosofts(module) || KnowsOtherSystems(module);
         foreach (TypeDefinition t in module.GetTypes())
             foreach (MethodDefinition m in t.Methods)
             {
@@ -128,7 +156,7 @@ public sealed class PathSubstitutions
                 {
                     if ((i.OpCode != OpCodes.Call && i.OpCode != OpCodes.Callvirt && i.OpCode != OpCodes.Newobj)
                         || i.Operand is not MethodReference r || For(r) is not { } stand) continue;
-                    if (microsofts && (s_osTypes.Contains(r.DeclaringType.FullName) || r.Name == "get_OSVersion")) continue;
+                    if (trueAnswers && (s_osTypes.Contains(r.DeclaringType.FullName) || r.Name == "get_OSVersion")) continue;
                     // a constructor is only stood in for where it makes the object (newobj), not where a
                     // derived type's constructor calls it
                     if (r.Name == ".ctor" && i.OpCode != OpCodes.Newobj) continue;

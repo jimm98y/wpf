@@ -79,6 +79,7 @@ public static class PackagerCli
         long bytes = staged.ProgramDataFiles.Sum(f => new FileInfo(f.Source).Length);
         o.WriteLine($"registry: {staged.Keys} keys, {staged.Values} values -> {staged.RegistryDir}");
         o.WriteLine($"ProgramData: {staged.ProgramDataFiles.Count} files, {bytes / (1024.0 * 1024):0.0} MB");
+        foreach (var (target, why) in staged.LeftOut) o.WriteLine($"  left out {target}: {why}");
         if (staged.Icon != null) o.WriteLine($"icon: {staged.Icon}");
         if (copy)
         {

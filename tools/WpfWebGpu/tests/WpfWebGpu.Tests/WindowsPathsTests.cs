@@ -57,3 +57,33 @@ public sealed class WindowsPathsTests
         Assert.False(WindowsPaths.Uri_new("/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
     }
 }
+
+// The OS questions an assembly asks, rewritten onto WindowsPaths (and so answered as Windows under
+// WPFWEBGPU_OS_IDENTITY=windows) only where the assembly knows Windows alone.
+public sealed class OSIdentityRewriteTests
+{
+    [Theory]
+    [InlineData(false, true)]       // a program written for Windows: told it runs there
+    [InlineData(true, false)]       // a library that asks about macOS itself: the system's own answers
+    public void An_assembly_s_OS_checks_are_stood_in_for_unless_it_knows_other_systems(bool asksAboutMacOS, bool rewritten)
+    {
+        var subs = WpfWebGpu.ComRewrite.PathSubstitutions.For(new[] { AppContext.BaseDirectory })!;
+        var module = Mono.Cecil.ModuleDefinition.CreateModule("OsChecks", Mono.Cecil.ModuleKind.Dll);
+        var type = new Mono.Cecil.TypeDefinition("Fixture", "Checks", Mono.Cecil.TypeAttributes.Public | Mono.Cecil.TypeAttributes.Abstract | Mono.Cecil.TypeAttributes.Sealed, module.TypeSystem.Object);
+        module.Types.Add(type);
+        var method = new Mono.Cecil.MethodDefinition("Check", Mono.Cecil.MethodAttributes.Public | Mono.Cecil.MethodAttributes.Static, module.TypeSystem.Boolean);
+        type.Methods.Add(method);
+        var il = method.Body.GetILProcessor();
+        il.Emit(Mono.Cecil.Cil.OpCodes.Call, module.ImportReference(typeof(OperatingSystem).GetMethod(nameof(OperatingSystem.IsWindows))));
+        if (asksAboutMacOS)
+        {
+            il.Emit(Mono.Cecil.Cil.OpCodes.Call, module.ImportReference(typeof(OperatingSystem).GetMethod(nameof(OperatingSystem.IsMacOS))));
+            il.Emit(Mono.Cecil.Cil.OpCodes.Or);
+        }
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
+
+        subs.Apply(module);
+        bool standIn = method.Body.Instructions.Any(i => i.Operand is Mono.Cecil.MethodReference r && r.DeclaringType.Name == "WindowsPaths");
+        Assert.Equal(rewritten, standIn);
+    }
+}
