@@ -108,6 +108,8 @@ public static class MacPackager
               <key>EnvironmentVariables</key>
               <dict>
                 <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
+                <key>WPFRUN_CACHE</key><string>/Library/Caches/{X(product)}</string>
+                <key>WPFRUN_LOGS</key><string>/Library/Logs/{X(product)}</string>
               </dict>
               <key>WorkingDirectory</key><string>{X(root + "/app/" + Path.GetDirectoryName(service.Exe)!.Replace('\\', '/'))}</string>
               <key>RunAtLoad</key><{(service.Start == StartType.Auto ? "true" : "false")}/>

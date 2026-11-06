@@ -121,6 +121,8 @@ public static class LinuxPackager
             ExecStart={Quote(root + "/runtime/run")} {Quote(exe)}{args}
             WorkingDirectory={root}/app/{Path.GetDirectoryName(service.Exe)!.Replace('\\', '/')}
             Environment=WPFRUN_STATE={state}
+            Environment=WPFRUN_CACHE=/var/cache/{pkg}
+            Environment=WPFRUN_LOGS=/var/log/{pkg}
             UMask=0002
             Restart=on-failure
             RestartSec=10

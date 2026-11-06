@@ -30,6 +30,22 @@ internal static class Program
         crash report and a "quit unexpectedly" dialog; --crash-reports keeps the system's behaviour.
         """;
 
+    /// <summary>An argument quoted as CommandLineToArgvW reads it back.</summary>
+    internal static string WindowsQuote(string a)
+    {
+        if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return a;
+        var sb = new System.Text.StringBuilder("\"");
+        int slashes = 0;
+        foreach (char c in a)
+        {
+            if (c == '\\') { slashes++; continue; }
+            if (c == '"') { sb.Append('\\', slashes * 2 + 1).Append('"'); slashes = 0; continue; }
+            sb.Append('\\', slashes).Append(c);
+            slashes = 0;
+        }
+        return sb.Append('\\', slashes * 2).Append('"').ToString();
+    }
+
     public static int Main(string[] args)
     {
         try
@@ -119,6 +135,8 @@ internal static class Program
         Console.WriteLine($"runtimeconfig: {p.RuntimeConfig}");
         Console.WriteLine($"deps: {p.Deps}");
         Console.WriteLine($"command: {p.StartInfo.FileName} {string.Join(' ', p.StartInfo.ArgumentList)}");
+        // the same, quoted as a Windows command line takes it (a service's image path, a shortcut)
+        Console.WriteLine($"commandline: {string.Join(' ', new[] { p.StartInfo.FileName }.Concat(p.StartInfo.ArgumentList).Select(WindowsQuote))}");
         return 0;
     }
 

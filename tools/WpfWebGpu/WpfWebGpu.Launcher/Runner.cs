@@ -168,6 +168,9 @@ internal sealed class Runner
             Console.Error.WriteLine($"wpfrun: {p.StartInfo.FileName} {string.Join(' ', p.StartInfo.ArgumentList.Select(Quote))}");
         }
         Console.Error.WriteLine($"wpfrun: log {p.LogPath}");
+        // Windows: a launcher with no console of its own (dotnetw.exe, a shortcut's) starts the app without one, as
+        // Explorer starts a window app; otherwise dotnet.exe, a console program, opened a console window beside it
+        if (HostInfo.IsWindows && GetConsoleWindow() == IntPtr.Zero) p.StartInfo.CreateNoWindow = true;
         using var process = Process.Start(p.StartInfo) ?? throw new UserError("could not start dotnet.");
 
         // wpfrun is only a parent: whatever stops it stops the app too, so killing the launcher (a
@@ -217,6 +220,9 @@ internal sealed class Runner
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s.ToLowerInvariant())))[..12].ToLowerInvariant();
 
     private static string Quote(string s) => s.Contains(' ') ? $"\"{s}\"" : s;
+
+    [System.Runtime.InteropServices.DllImport("kernel32")]
+    private static extern IntPtr GetConsoleWindow();
 }
 
 internal static partial class Unix
