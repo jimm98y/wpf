@@ -24,7 +24,23 @@ public sealed class PathSubstitutions
         "System.Xml.Linq.XDocument", "System.Xml.Linq.XElement", "System.Reflection.Assembly", "System.Uri",
         "System.Diagnostics.Process", "System.Environment", "System.IO.MemoryMappedFiles.MemoryMappedFile",
         "System.Threading.Thread",
+        // the operating system as the app asks about it (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
+        "System.OperatingSystem", "System.Runtime.InteropServices.RuntimeInformation",
     };
+
+    // .NET's own assemblies, and Microsoft's libraries an app carries (a SQL client choosing its native code by
+    // the system): their questions about the system get its own answers, never a stand-in's
+    private static readonly HashSet<string> s_osTypes = new(StringComparer.Ordinal) { "System.OperatingSystem", "System.Runtime.InteropServices.RuntimeInformation" };
+    private static readonly HashSet<string> s_microsoftKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "b03f5f7f11d50a3a", "31bf3856ad364e35", "cc7b13ffcd2ddd51", "7cec85d7bea7798e", "adb9793829ddae60", "b77a5c561934e089",
+    };
+
+    private static bool IsMicrosofts(ModuleDefinition module)
+    {
+        byte[]? token = module.Assembly?.Name?.PublicKeyToken;
+        return token is { Length: 8 } && s_microsoftKeys.Contains(Convert.ToHexString(token));
+    }
 
     private readonly Dictionary<string, MethodDefinition> _bySignature = new(StringComparer.Ordinal);
     // (type, member) of every stand-in: the cheap test of whether an assembly may call one (MayUse)
@@ -103,6 +119,7 @@ public sealed class PathSubstitutions
     public int Apply(ModuleDefinition module)
     {
         int n = 0;
+        bool microsofts = IsMicrosofts(module);
         foreach (TypeDefinition t in module.GetTypes())
             foreach (MethodDefinition m in t.Methods)
             {
@@ -111,6 +128,7 @@ public sealed class PathSubstitutions
                 {
                     if ((i.OpCode != OpCodes.Call && i.OpCode != OpCodes.Callvirt && i.OpCode != OpCodes.Newobj)
                         || i.Operand is not MethodReference r || For(r) is not { } stand) continue;
+                    if (microsofts && (s_osTypes.Contains(r.DeclaringType.FullName) || r.Name == "get_OSVersion")) continue;
                     // a constructor is only stood in for where it makes the object (newobj), not where a
                     // derived type's constructor calls it
                     if (r.Name == ".ctor" && i.OpCode != OpCodes.Newobj) continue;

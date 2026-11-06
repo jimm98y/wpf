@@ -40,6 +40,42 @@ public static class WindowsPaths
         return copy;
     }
 
+    // ---- the operating system, as the app asks about it ----
+    //
+    // A program written for Windows only may check that it is on Windows and refuse to start otherwise (a service
+    // that throws PlatformNotSupportedException off Windows). Told so (WPFWEBGPU_OS_IDENTITY=windows: an
+    // installation sets it for such a program), the app's own checks get Windows 11's answers; otherwise, and
+    // always for .NET's own code (whose calls are not rewritten), the real system's: an app that runs on macOS or
+    // Linux by its own code (a library with a macOS path of its own) keeps running it.
+
+    private static readonly bool s_asWindows = !s_windows
+        && string.Equals(Environment.GetEnvironmentVariable("WPFWEBGPU_OS_IDENTITY"), "windows", StringComparison.OrdinalIgnoreCase);
+    private static readonly Version s_windows11 = new(10, 0, 22631, 0);
+
+    public static bool OperatingSystem_IsWindows() => s_asWindows || OperatingSystem.IsWindows();
+    public static bool OperatingSystem_IsLinux() => !s_asWindows && OperatingSystem.IsLinux();
+    public static bool OperatingSystem_IsMacOS() => !s_asWindows && OperatingSystem.IsMacOS();
+    public static bool OperatingSystem_IsMacCatalyst() => !s_asWindows && OperatingSystem.IsMacCatalyst();
+    public static bool OperatingSystem_IsIOS() => !s_asWindows && OperatingSystem.IsIOS();
+    public static bool OperatingSystem_IsAndroid() => !s_asWindows && OperatingSystem.IsAndroid();
+    public static bool OperatingSystem_IsFreeBSD() => !s_asWindows && OperatingSystem.IsFreeBSD();
+
+    public static bool OperatingSystem_IsWindowsVersionAtLeast(int major, int minor, int build, int revision)
+        => s_asWindows ? s_windows11 >= new Version(major, minor, build, revision) : OperatingSystem.IsWindowsVersionAtLeast(major, minor, build, revision);
+
+    public static bool OperatingSystem_IsOSPlatform(string platform)
+        => s_asWindows ? platform.Equals("Windows", StringComparison.OrdinalIgnoreCase) : OperatingSystem.IsOSPlatform(platform);
+
+    public static bool RuntimeInformation_IsOSPlatform(System.Runtime.InteropServices.OSPlatform platform)
+        => s_asWindows ? platform == System.Runtime.InteropServices.OSPlatform.Windows : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(platform);
+
+    public static string RuntimeInformation_get_OSDescription()
+        => s_asWindows ? "Microsoft Windows 10.0.22631" : System.Runtime.InteropServices.RuntimeInformation.OSDescription;
+
+    // in a page always Windows' (as BrowserApis answered it before this stood in for it first)
+    public static OperatingSystem Environment_get_OSVersion()
+        => s_asWindows || OperatingSystem.IsBrowser() ? new OperatingSystem(PlatformID.Win32NT, s_windows11) : Environment.OSVersion;
+
     // ---- System.Environment ----
     //
     // What the app was started as. wpfrun starts every app through its host (WpfWebGpu.AppHost), and a page
