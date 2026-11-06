@@ -265,6 +265,9 @@ public static partial class ComRewriter
             var t = StripMods(type);
             var e = t is ByReferenceType br ? br.ElementType : null;
             if (e == null && Safe(t) is { } d && IsDelegate(d)) return new Arg(Kind.Delegate, _intPtr, t);
+            // a parameter of the base type (Delegate, MulticastDelegate) takes any delegate, marshalled as the instance it
+            // is (a service's handler registered as `Delegate callback`)
+            if (e == null && t.FullName is "System.Delegate" or "System.MulticastDelegate") return new Arg(Kind.Delegate, _intPtr, t);
             if (e != null && Safe(e) is { } ed && IsDelegate(ed)) { why = "a delegate by reference"; return null; }
             if (e == null && IsSafeHandle(t)) return new Arg(Kind.SafeHandle, _intPtr, t);
             if (e != null && IsSafeHandle(e)) return new Arg(Kind.OutSafeHandle, _intPtr, e);
