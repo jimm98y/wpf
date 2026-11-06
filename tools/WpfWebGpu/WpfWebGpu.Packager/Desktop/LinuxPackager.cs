@@ -126,7 +126,10 @@ public static class LinuxPackager
         cd "$(dirname "$0")"
         if [ -d /run/systemd/system ]; then
         {{string.Concat(units.Select(u => $"  systemctl stop {u.Name} 2>/dev/null || true\n"))}}fi
-        tar xzf files.tar.gz -C / --no-same-owner
+        # into /lib, /bin, /sbin as they are: on a merged-/usr system each is a symlink to usr/, and an archive's
+        # directory entry for one must not replace it with a directory (tar does unless told: every program on the
+        # machine then lost its dynamic loader, /lib/ld-linux-*.so)
+        tar xzf files.tar.gz -C / --no-same-owner --keep-directory-symlink
         mkdir -p "{{root}}"
         tar tzf files.tar.gz | sed -e 's|^\.||' > "{{root}}/installed-files.txt"
         cp uninstall.sh "{{root}}/uninstall.sh"
