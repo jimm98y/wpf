@@ -113,6 +113,16 @@ namespace Microsoft.AspNetCore.Hosting
             if (timeouts.MinSendBytesPerSecond > 0) kestrel.Limits.MinResponseDataRate = new MinDataRate(timeouts.MinSendBytesPerSecond, TimeSpan.FromSeconds(5));
             else kestrel.Limits.MinResponseDataRate = null;
 
+            // the prefixes this account may register (URL reservations), as http.sys checks them when the server
+            // starts: "Access is denied" otherwise
+            uint uid = UrlAcl.CurrentUid();
+            foreach (var p in Prefixes())
+            {
+                if (UrlAcl.MayRegister(uid, Shared(p), out string why)) continue;
+                _logger.LogError("{Prefix}: {Why}", p.FullPrefix, why);
+                throw new HttpSysException(5, "Access is denied.");
+            }
+
             // this process's own endpoint: a loopback port of its own, which the machine's http.sys service forwards
             // the requests of this process's prefixes to
             kestrel.Listen(IPAddress.Loopback, 0);

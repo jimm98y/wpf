@@ -1,3 +1,5 @@
+extern alias RegistryShim;
+
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.AspNetCore.Builder;
@@ -34,6 +36,8 @@ public class HttpSysShimTests
         Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
         using var service = Service.Start("httpsys-routing");
         int http = FreePort(), https = FreePort();
+        Service.Reserve($"http://+:{http}/", "D:(A;;GX;;;WD)");
+        Service.Reserve($"https://+:{https}/", "D:(A;;GX;;;WD)");
         string keys = Path.Combine(Path.GetTempPath(), "wpfwebgpu-keys-" + Guid.NewGuid().ToString("N"));
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
@@ -78,6 +82,7 @@ public class HttpSysShimTests
         Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
         using var service = Service.Start("httpsys-shared");
         int port = FreePort();
+        Service.Reserve($"http://+:{port}/", "D:(A;;GX;;;WD)");
         async Task<WebApplication> Host(string prefix, string answer)
         {
             var builder = WebApplication.CreateBuilder();
@@ -126,12 +131,58 @@ public class HttpSysShimTests
         }
     }
 
+    [Fact]
+    public async Task A_prefix_is_registered_only_under_a_reservation_that_lets_the_account_listen()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        Assert.SkipWhen(WpfWebGpu.HttpSys.UrlAcl.CurrentUid() == 0, "root registers any prefix, as an elevated administrator");
+        using var service = Service.Start("httpsys-acl");
+        int port = FreePort();
+        Service.Reserve($"http://+:{port}/ok/", "D:(A;;GX;;;WD)");
+        Service.Reserve($"http://+:{port}/denied/", "D:(D;;GX;;;WD)(A;;GX;;;WD)");
+        async Task<WebApplication> Start(string prefix)
+        {
+            var builder = WebApplication.CreateBuilder();
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseHttpSys(o => o.UrlPrefixes.Add($"http://+:{port}/{prefix}/"));
+            var app = builder.Build();
+            app.Run(c => c.Response.WriteAsync(prefix));
+            await app.StartAsync();
+            return app;
+        }
+        await using var ok = await Start("ok");
+        // no reservation, and one that denies: "Access is denied" when the server starts, as from http.sys
+        Assert.Equal(5, (await Assert.ThrowsAsync<HttpSysException>(() => Start("none"))).ErrorCode);
+        Assert.Equal(5, (await Assert.ThrowsAsync<HttpSysException>(() => Start("denied"))).ErrorCode);
+
+        // a registration written past the stand-in (pointing a prefix it may not have at this process's server):
+        // the service refuses it too
+        string forged = Path.Combine(service.Folder, $"{Environment.ProcessId}-1.prefixes");
+        int okPort = new Uri(ok.Urls.First()).Port;
+        File.WriteAllLines(forged, new[] { okPort.ToString(), $"http://+:{port}/forged/" });
+        using var client = new HttpClient();
+        Assert.Equal("ok", await client.GetStringAsync($"http://127.0.0.1:{port}/ok/"));
+        await Task.Delay(1200);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"http://127.0.0.1:{port}/forged/")).StatusCode);
+        Assert.Contains($"http://+:{port}/forged/ refused: no URL reservation covers", File.ReadAllText(Path.Combine(service.Folder, "service.log")));
+        File.Delete(forged);
+        await ok.StopAsync();
+    }
+
     /// <summary>The machine's http.sys service for a test: its own registry folder, started on demand through the
     /// launcher built beside the tests, and stopped at the end.</summary>
     private sealed class Service : IDisposable
     {
         private readonly string _folder;
         private Service(string folder) => _folder = folder;
+        public string Folder => _folder;
+
+        /// <summary>A URL reservation, as netsh http add urlacl makes one (its descriptor as SDDL).</summary>
+        public static void Reserve(string url, string sddl)
+        {
+            using var key = RegistryShim::Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Services\HTTP\Parameters\UrlAclInfo");
+            key.SetValue(url, sddl);
+        }
 
         public static Service Start(string name)
         {

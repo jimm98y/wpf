@@ -47,8 +47,8 @@ public static class HttpSysRegistry
         }
     }
 
-    /// <summary>A live server's registration.</summary>
-    public sealed record Server(int ProcessId, int LocalPort, SharedPrefix[] Prefixes);
+    /// <summary>A live server's registration, and the account that made it (its file's owner).</summary>
+    public sealed record Server(int ProcessId, int LocalPort, SharedPrefix[] Prefixes, uint Owner);
 
     /// <summary>Every live server's registration.</summary>
     public static List<Server> Read()
@@ -66,9 +66,10 @@ public static class HttpSysRegistry
                 }
                 try
                 {
+                    if (UrlAcl.OwnerOf(file) is not uint owner) continue;
                     string[] lines = File.ReadAllLines(file);
                     if (lines.Length < 2 || !int.TryParse(lines[0], out int local)) continue;
-                    list.Add(new Server(pid, local, lines.Skip(1).Select(SharedPrefix.Parse).OfType<SharedPrefix>().ToArray()));
+                    list.Add(new Server(pid, local, lines.Skip(1).Select(SharedPrefix.Parse).OfType<SharedPrefix>().ToArray(), owner));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }

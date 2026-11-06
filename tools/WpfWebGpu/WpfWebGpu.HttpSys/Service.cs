@@ -49,6 +49,7 @@ public static partial class HttpSysService
             try { await Task.Delay(2000, stop); } catch (OperationCanceledException) { return 0; }
         }
         Own(folder);
+        Log = log;
         log.LogInformation("serving the registered prefixes ({Folder})", folder);
         var certificates = new Certificates(log);
         var fronts = new Dictionary<int, (WebApplication App, DateTime Wanted)>();
@@ -171,10 +172,27 @@ public static partial class HttpSysService
     {
         if (force || DateTime.UtcNow - s_read > TimeSpan.FromSeconds(1))
         {
-            s_servers = HttpSysRegistry.Read();
+            s_servers = HttpSysRegistry.Read().Select(Permitted).Where(s => s.Prefixes.Length > 0).ToList();
             s_read = DateTime.UtcNow;
         }
         return s_servers;
+    }
+
+    private static readonly HashSet<string> s_refusedOnce = new();
+    internal static ILogger? Log;
+
+    // a registration's prefixes its account may register (URL reservations); the others refused, as http.sys
+    // refuses them, whoever wrote the file
+    private static HttpSysRegistry.Server Permitted(HttpSysRegistry.Server server)
+    {
+        var allowed = new List<SharedPrefix>();
+        foreach (var p in server.Prefixes)
+        {
+            if (UrlAcl.MayRegister(server.Owner, p, out string why)) { allowed.Add(p); continue; }
+            lock (s_refusedOnce)
+                if (s_refusedOnce.Add($"{server.ProcessId}:{p.FullPrefix}")) Log?.LogWarning("process {Pid}: {Prefix} refused: {Why}", server.ProcessId, p.FullPrefix, why);
+        }
+        return allowed.Count == server.Prefixes.Length ? server : server with { Prefixes = allowed.ToArray() };
     }
 
     private static async Task Forward(HttpContext context, IHttpForwarder forwarder)
