@@ -255,6 +255,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private IntPtr _unpremultiply, _opaque, _unpremultiplyLayout;
         private IntPtr _scratch;
+
+        /// <summary>The front buffers' device objects (on dispose, and when the device is lost).</summary>
+        private void ReleaseExternalGpu()
+        {
+            if (_scratch != IntPtr.Zero) wgpuTextureRelease(_scratch);
+            if (_unpremultiply != IntPtr.Zero) wgpuRenderPipelineRelease(_unpremultiply);
+            if (_opaque != IntPtr.Zero) wgpuRenderPipelineRelease(_opaque);
+            if (_unpremultiplyLayout != IntPtr.Zero) wgpuBindGroupLayoutRelease(_unpremultiplyLayout);
+            _scratch = _unpremultiply = _opaque = _unpremultiplyLayout = IntPtr.Zero;
+            _scratchW = _scratchH = 0;
+        }
         private int _scratchW, _scratchH;
 
         private const string UnpremultiplyWgsl = @"

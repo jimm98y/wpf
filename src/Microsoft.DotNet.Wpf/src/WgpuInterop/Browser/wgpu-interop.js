@@ -106,11 +106,28 @@ export async function requestDevice(adapterId) {
         device.addEventListener("uncapturederror", (e) => {
             console.error("[wgpu] uncaptured error:", e.error?.message ?? e.error);
         });
-        device.lost.then((info) => {
-            console.error("[wgpu] device lost:", info.reason, info.message);
-        });
     } catch { /* optional */ }
-    return put(device);
+    const id = put(device);
+    // a lost device (a GPU reset, the browser's GPU process gone): told to C# (deviceLostReason), which asks for
+    // another and draws everything again on it (WgpuContext, "a lost device")
+    device.lost.then((info) => {
+        console.error("[wgpu] device lost:", info.reason, info.message);
+        if (info.reason !== "destroyed") lostDevices.set(id, info.message || info.reason || "lost");
+    });
+    return id;
+}
+
+const lostDevices = new Map();
+
+/** The device lost on purpose (WPF_WEBGPU_LOSE_DEVICE: a test of what follows). */
+export function loseDevice(deviceId) {
+    lostDevices.set(deviceId, "simulated (WPF_WEBGPU_LOSE_DEVICE)");
+    get(deviceId).destroy();
+}
+
+/** Why the device was lost, or "" while it is not. */
+export function deviceLostReason(deviceId) {
+    return lostDevices.get(deviceId) ?? "";
 }
 
 // webgpu.h's WGPUFeatureName (D3DDevice.cs s_wantedFeatures): what the device was made with.

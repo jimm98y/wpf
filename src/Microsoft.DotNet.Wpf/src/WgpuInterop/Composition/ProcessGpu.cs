@@ -94,6 +94,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             gone.Dispose();
         }
 
+        /// <summary>The device <paramref name="device"/> is lost (its callback, any thread): the process's context is
+        /// marked so, and the first to draw next makes a new one (WgpuContext.Renew).</summary>
+        public static void MarkLost(IntPtr device, string reason)
+        {
+            WgpuContext? ctx;
+            lock (s_lock) ctx = s_ctx;
+            if (ctx == null || ctx.Device != device) return;
+            Trace("lost: " + reason);
+            ctx.MarkLost(device, reason);
+        }
+
+        // WPF_WEBGPU_LOSE_DEVICE=<seconds>: the device lost that long after it was first used, once -- a test of
+        // what a GPU reset does to every window (see WgpuContext, "a lost device")
+        private static readonly double s_loseAfter =
+            double.TryParse(Environment.GetEnvironmentVariable("WPF_WEBGPU_LOSE_DEVICE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v) ? v : 0;
+        private static long s_firstFrame;
+        private static bool s_lostForTest;
+
+        /// <summary>Called as a frame begins: loses the device for a test when it was asked to.</summary>
+        public static void LoseForTestIfAsked(WgpuContext ctx)
+        {
+            if (s_loseAfter <= 0 || s_lostForTest) return;
+            long now = Environment.TickCount64;
+            if (s_firstFrame == 0) { s_firstFrame = now; return; }
+            if (now - s_firstFrame < s_loseAfter * 1000) return;
+            s_lostForTest = true;
+            Trace("lost for a test");
+            ctx.LoseForTest();
+        }
+
+        /// <summary>A lost device made again (WgpuContext.Renew): true when <paramref name="ctx"/> can be drawn on.
+        /// Every holder of the old device's objects sees its Generation change and makes them again.</summary>
+        public static bool Recover(WgpuContext ctx) => !ctx.Lost || ctx.Renew();
+
         /// <summary>Whether <paramref name="ctx"/> is the process's device.</summary>
         public static bool Manages(WgpuContext ctx) { lock (s_lock) return ReferenceEquals(ctx, s_ctx); }
 

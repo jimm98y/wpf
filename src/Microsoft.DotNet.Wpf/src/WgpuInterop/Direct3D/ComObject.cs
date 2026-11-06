@@ -33,6 +33,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public const int DXGI_ERROR_NOT_FOUND = unchecked((int)0x887A0002);
         public const int DXGI_ERROR_INVALID_CALL = unchecked((int)0x887A0001);
         public const int DXGI_ERROR_DEVICE_REMOVED = unchecked((int)0x887A0005);
+        public const int DXGI_ERROR_DEVICE_HUNG = unchecked((int)0x887A0006);
+        public const int DXGI_ERROR_DEVICE_RESET = unchecked((int)0x887A0007);
         public const int DXGI_ERROR_WAS_STILL_DRAWING = unchecked((int)0x887A000A);
         public const int DXGI_ERROR_UNSUPPORTED = unchecked((int)0x887A0004);
     }

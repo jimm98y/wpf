@@ -157,12 +157,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        // the device's generation this panel's objects were made on (WgpuContext: "a lost device")
+        private static int s_gpuGeneration = -1;
+
+        /// <summary>Whether the panel can draw on <paramref name="ctx"/>: not while its device is lost; on a new one,
+        /// what it made on the old -- its pipelines, read buffers, the surface's configuration -- let go of first.</summary>
+        private static bool Current(WgpuContext ctx)
+        {
+            if (ctx.Lost) return false;
+            if (s_gpuGeneration == ctx.Generation) return true;
+            if (s_gpuGeneration >= 0)
+            {
+                ReleaseReproject();
+                if (s_readBuffer != IntPtr.Zero) wgpuBufferRelease(s_readBuffer);
+                if (s_cellsReadBuffer != IntPtr.Zero) wgpuBufferRelease(s_cellsReadBuffer);
+                s_readBuffer = s_cellsReadBuffer = IntPtr.Zero;
+                s_readSize = s_cellsReadSize = 0;
+                s_readNumber = -1;
+                s_latest = null;
+                s_images.Clear();
+                s_width = 0;          // the surface configured again, with the new device
+            }
+            s_gpuGeneration = ctx.Generation;
+            return true;
+        }
+
         private static bool Draw(ExternalImage image, IntPtr nativeWindow, float[] moved)
         {
             int width = image.Width, height = image.Height;
             {
                 WgpuContext? ctx = ProcessGpu.Peek();
-                if (ctx == null || image.Device != ctx.Device) return false;
+                if (ctx == null || !Current(ctx) || image.Device != ctx.Device) return false;
                 if (!Surface(ctx, nativeWindow, width, height, image.Format)) return false;
 
                 WGPUSurfaceTexture st;
@@ -200,7 +225,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 if (s_latest is not { } image || s_latestNumber == s_readNumber) return -1;
                 WgpuContext? ctx = ProcessGpu.Peek();
-                if (ctx == null || image.Device != ctx.Device) return -1;
+                if (ctx == null || !Current(ctx) || image.Device != ctx.Device) return -1;
                 int row = (image.Width * 4 + 255) & ~255;
                 ulong size = (ulong)row * (ulong)image.Height;
                 if (s_readBuffer == IntPtr.Zero || s_readSize != size)
@@ -237,7 +262,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 if (s_latest is not { } image || s_latestNumber == s_readNumber) return -1;
                 WgpuContext? ctx = ProcessGpu.Peek();
-                if (ctx == null || image.Device != ctx.Device) return -1;
+                if (ctx == null || !Current(ctx) || image.Device != ctx.Device) return -1;
                 int row = (image.Width * 4 + 255) & ~255;
                 ulong size = (ulong)row * (ulong)image.Height;
                 if (s_readBuffer == IntPtr.Zero || s_readSize != size)

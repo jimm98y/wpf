@@ -41,6 +41,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private readonly Dictionary<uint, TargetSurface> _surfaces = new();
         private WgpuContext? _ctx;
         private WgpuSceneRenderer? _renderer;
+        // the device's generation the renderer's objects were made on (WgpuContext: "a lost device")
+        private int _gpuGeneration;
         private uint _nextHandle;
         private string _targetsSig = "";
         private int _diagCount;
@@ -477,6 +479,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // when there is nothing to present.
                 return;
             }
+            // the device lost: a new one, and everything made again on it -- or, while none can be made, no frame
+            ProcessGpu.LoseForTestIfAsked(_ctx!);
+            if ((_ctx!.Lost || _ctx.Generation != _gpuGeneration) && !RenewGpu()) return;
 
             _renderer!.BeginFrame();
             WgpuSceneRenderer.PerfReset();
@@ -790,6 +795,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 return;
             }
+            // the device lost since the frame began: nothing is acquired from it (the next frame renews it)
+            if (_ctx!.Lost) return;
 
             WGPUSurfaceTexture surfaceTexture;
             wgpuSurfaceGetCurrentTexture(ts.Surface, &surfaceTexture);
@@ -1293,6 +1300,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // shape and rasterize with actual glyphs. WPF's own text arrives as pre-shaped
                 // glyph-INDEX runs with per-run fonts, so this default is only used for those string runs.
                 _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.OpenTypeTextShaper(), LoadStyledFont);
+                _gpuGeneration = _ctx.Generation;
                 OfferHeadsetRendering();      // a headset's fullscreen WPF 3D view (WpfCompositionSink.Headset.cs)
                 if (s_logPath != null) WgpuSceneRenderer.DebugLog = Log;
                 // Let the engine rasterize VisualBrush/DrawingBrush sources to straight-RGBA bitmaps
@@ -1454,6 +1462,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
         private void Configure(TargetSurface ts)
         {
+            // nor on a lost device (wgpu-native aborts): the surface is made again with the new one (RenewGpu)
+            if (_ctx == null || _ctx.Lost) return;
             // A surface on a window that has gone cannot be configured: wgpu-native aborts the
             // process ("Invalid surface"). The render thread composites behind the UI thread, so a
             // frame for a window the UI thread has just destroyed is an ordinary event here.
@@ -1578,6 +1588,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             Log($"WpfCompositionSink disposed (thread {_ownerThreadId}, {LiveCount} live)");
         }
 
+        /// <summary>The device was lost (WgpuContext: "a lost device"): once the process has a new one, what this
+        /// sink made on the old -- its renderer, its windows' persistent frames, its D3DImage front buffers -- is
+        /// let go of and made again on the new one, every window's surface with them, and every window drawn whole. As Windows' compositor does after a GPU reset. False
+        /// while there is no device yet: the frame is skipped.</summary>
+        private bool RenewGpu()
+        {
+            bool wasLost = _ctx!.Lost;
+            if (wasLost) FrontBufferAvailable(false);
+            if (!ProcessGpu.Recover(_ctx)) return false;
+            Log($"WebGPU device lost ({_ctx.LostReason}): drawing again on a new one, generation {_ctx.Generation} {_ctx.AdapterDescription}");
+            // each window's surface made again too (EnsureSurface): its format is the new adapter's to choose
+            foreach (TargetSurface ts in _surfaces.Values)
+            {
+                ts.Partial?.Dispose();
+                ts.Partial = null;
+                if (ts.Surface != IntPtr.Zero) wgpuSurfaceRelease(ts.Surface);
+                ts.Surface = IntPtr.Zero;
+            }
+            _surfaces.Clear();
+            _renderer?.Dispose();
+            ReleaseExternalGpu();
+            ForgetExternals();
+            _renderer = new WgpuSceneRenderer(_ctx, LoadDefaultFont(), new Text.OpenTypeTextShaper(), LoadStyledFont);
+            _gpuGeneration = _ctx.Generation;
+            _presentedAllTargets = false;
+            FrontBufferAvailable(true);
+            return true;
+        }
+
+        /// <summary>D3DImage.IsFrontBufferAvailable for every image (PresentationCore registers the delegate):
+        /// false when the device is lost, true when there is a new one, so an app makes its Direct3D content
+        /// again as it does after a GPU reset on Windows.</summary>
+        private static void FrontBufferAvailable(bool available)
+        {
+            try { (AppContext.GetData("WpfWebGpu.FrontBufferAvailable") as Action<bool>)?.Invoke(available); }
+            catch (Exception e) { Log("front buffer availability: " + e.Message); }
+        }
+
         private void ReleaseGpu()
         {
             foreach (TargetSurface ts in _surfaces.Values)
@@ -1590,6 +1638,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _surfaces.Clear();
             _renderer?.Dispose();
             _renderer = null;
+            ReleaseExternalGpu();
             if (_ctx != null) ProcessGpu.Release(_ctx);      // the process's device: the last of its users disposes it
             _ctx = null;
             ForgetExternals();     // the renderer, gone, had them

@@ -40,6 +40,26 @@ namespace System.Windows.Interop
                     );
 
             IsFrontBufferAvailableProperty = IsFrontBufferAvailablePropertyKey.DependencyProperty;
+
+            // Off Windows the compositor's device is a WebGPU one (WgpuInterop's WpfCompositionSink), and when it is
+            // lost -- a GPU reset, a driver gone -- the front buffer is lost as it is on Windows: every image's
+            // IsFrontBufferAvailable goes false, and true again once there is a new device, through the same
+            // Callback the composition thread calls on Windows. An app then makes its Direct3D content again.
+            AppContext.SetData("WpfWebGpu.FrontBufferAvailable", (Action<bool>)FrontBufferAvailableForAll);
+        }
+
+        private static readonly List<WeakReference<D3DImage>> s_live = new();
+
+        private static void FrontBufferAvailableForAll(bool available)
+        {
+            List<D3DImage> images = new();
+            lock (s_live)
+            {
+                s_live.RemoveAll(w => !w.TryGetTarget(out _));
+                foreach (WeakReference<D3DImage> w in s_live)
+                    if (w.TryGetTarget(out D3DImage image)) images.Add(image);
+            }
+            foreach (D3DImage image in images) image.Callback(available, image._version);
         }
 
         /// <summary>
@@ -65,6 +85,7 @@ namespace System.Windows.Interop
             _dpiY = dpiY;
 
             _listener = new WeakReference<IAppDomainShutdownListener>(this);
+            lock (s_live) s_live.Add(new WeakReference<D3DImage>(this));
             AppDomainShutdownMonitor.Add(_listener);
         }
 

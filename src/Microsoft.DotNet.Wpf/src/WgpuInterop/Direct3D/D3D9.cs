@@ -310,7 +310,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static Vtable Build()
         {
             var vt = new Vtable("IDirect3DDevice9Ex", Vtbl.IDirect3DDevice9Ex.SlotCount, Vtbl.IDirect3DDevice9Ex.IID, Vtbl.IDirect3DDevice9.IID);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.TestCooperativeLevel, (delegate* unmanaged<IntPtr, int>)&Ok0);
+            vt.Set(Vtbl.IDirect3DDevice9Ex.TestCooperativeLevel, (delegate* unmanaged<IntPtr, int>)&TestCooperativeLevel);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetAvailableTextureMem, (delegate* unmanaged<IntPtr, uint>)&GetAvailableTextureMem);
             vt.Set(Vtbl.IDirect3DDevice9Ex.EvictManagedResources, (delegate* unmanaged<IntPtr, int>)&Ok0);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetDirect3D, (delegate* unmanaged<IntPtr, IntPtr*, int>)&GetDirect3D);
@@ -358,9 +358,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly] private static uint GetAvailableTextureMem(IntPtr self) => 512u << 20;
         [UnmanagedCallersOnly] private static int GetGPUThreadPriority(IntPtr self, int* p) { if (p != null) *p = 0; return HResult.S_OK; }
         [UnmanagedCallersOnly] private static int GetMaximumFrameLatency(IntPtr self, uint* p) { if (p != null) *p = 3; return HResult.S_OK; }
-        [UnmanagedCallersOnly] private static int Present(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty) => HResult.S_OK;
-        [UnmanagedCallersOnly] private static int PresentEx(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty, uint flags) => HResult.S_OK;
-        [UnmanagedCallersOnly] private static int CheckDeviceState(IntPtr self, IntPtr wnd) => HResult.S_OK;
+        // A D3D9Ex device whose GPU was reset is removed (D3DERR_DEVICEREMOVED), as Windows reports it after a TDR:
+        // its app makes a new device and its resources again
+        private const int D3DERR_DEVICEREMOVED = unchecked((int)0x88760870);
+        private static int State(IntPtr self) => From<Direct3DDevice9>(self) is { } d && d.Device11.RemovedReason != HResult.S_OK ? D3DERR_DEVICEREMOVED : HResult.S_OK;
+        [UnmanagedCallersOnly] private static int TestCooperativeLevel(IntPtr self) => State(self);
+        [UnmanagedCallersOnly] private static int Present(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty) => State(self);
+        [UnmanagedCallersOnly] private static int PresentEx(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty, uint flags) => State(self);
+        [UnmanagedCallersOnly] private static int CheckDeviceState(IntPtr self, IntPtr wnd) => State(self);
 
         [UnmanagedCallersOnly]
         private static int GetDirect3D(IntPtr self, IntPtr* d3d)

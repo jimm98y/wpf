@@ -175,6 +175,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 @fragment fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> { return vec4<f32>(textureLoad(src, vec2<i32>(pos.xy), 0), 0.0, 0.0, 1.0); }
 ";
 
+        /// <summary>The reprojection's device objects let go of (a lost device's: made again on the next draw).</summary>
+        private static void ReleaseReproject()
+        {
+            foreach (IntPtr t in new[] { s_depth, s_cells, s_moveDepth }) if (t != IntPtr.Zero) wgpuTextureRelease(t);
+            foreach (IntPtr v in new[] { s_depthView, s_cellsView, s_moveDepthView }) if (v != IntPtr.Zero) wgpuTextureViewRelease(v);
+            foreach (IntPtr p in new[] { s_copyPipeline, s_copyPipelineMs, s_cellsPipeline, s_movePipeline }) if (p != IntPtr.Zero) wgpuRenderPipelineRelease(p);
+            foreach (IntPtr m in new[] { s_copyModule, s_moveModule }) if (m != IntPtr.Zero) wgpuShaderModuleRelease(m);
+            foreach (IntPtr l in new[] { s_cellsLayout, s_moveLayout }) if (l != IntPtr.Zero) wgpuBindGroupLayoutRelease(l);
+            if (s_moveSampler != IntPtr.Zero) wgpuSamplerRelease(s_moveSampler);
+            if (s_moveUniforms != IntPtr.Zero) wgpuBufferRelease(s_moveUniforms);
+            s_depth = s_depthView = s_cells = s_cellsView = s_moveDepth = s_moveDepthView = IntPtr.Zero;
+            s_copyModule = s_copyPipeline = s_copyPipelineMs = s_cellsPipeline = s_cellsLayout = IntPtr.Zero;
+            s_moveModule = s_moveLayout = s_movePipeline = s_moveSampler = s_moveUniforms = IntPtr.Zero;
+            s_depthWidth = s_depthHeight = s_cellsWidth = s_cellsHeight = s_moveDepthWidth = s_moveDepthHeight = 0;
+        }
+
         private static IntPtr CopyPipeline(WgpuContext ctx, bool ms)
         {
             ref IntPtr cached = ref ms ? ref s_copyPipelineMs : ref s_copyPipeline;

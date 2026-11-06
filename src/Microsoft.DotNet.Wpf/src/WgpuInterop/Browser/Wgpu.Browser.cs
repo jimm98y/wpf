@@ -69,6 +69,52 @@ namespace Microsoft.Wpf.Interop.WebGpu
             IsInitialized = true;
         }
 
+        /// <summary>Why the page's device <paramref name="device"/> was lost, or null while it is not.</summary>
+        internal static string? LostReason(IntPtr device)
+        {
+            if (!IsInitialized || device == IntPtr.Zero) return null;
+            string reason = WgpuBrowserJs.DeviceLostReason((int)device);
+            return reason.Length > 0 ? reason : null;
+        }
+
+        private static Task? s_renewing;
+        private static int s_renewedDevice;
+
+        /// <summary>A new device in place of a lost one (WgpuContext.Renew): the page asks for it (a Promise), and it
+        /// is taken by the first call after it is there; null meanwhile.</summary>
+        internal static IntPtr? TakeRenewedDevice()
+        {
+            if (s_renewedDevice != 0)
+            {
+                DeviceHandle = s_renewedDevice;
+                s_renewedDevice = 0;
+                return (IntPtr)DeviceHandle;
+            }
+            s_renewing ??= RenewAsync();
+            return null;
+        }
+
+        private static async Task RenewAsync()
+        {
+            try
+            {
+                int adapter = await WgpuBrowserJs.RequestAdapter("high-performance");
+                if (adapter == 0) return;
+                int device = await WgpuBrowserJs.RequestDevice(adapter);
+                if (device == 0) return;
+                AdapterHandle = adapter;
+                s_renewedDevice = device;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("[wgpu] a new device after a lost one: " + e.Message);
+            }
+            finally
+            {
+                s_renewing = null;
+            }
+        }
+
         internal static void EnsureInitialized()
         {
             if (!IsInitialized)

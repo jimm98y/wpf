@@ -37,6 +37,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [JSImport("requestDevice", ModuleName)]
         internal static partial Task<int> RequestDevice(int adapter);
 
+        [JSImport("loseDevice", ModuleName)]
+        internal static partial void LoseDevice(int device);
+
+        [JSImport("deviceLostReason", ModuleName)]
+        internal static partial string DeviceLostReason(int device);
+
         [JSImport("getQueue", ModuleName)]
         internal static partial int GetQueue(int device);
 

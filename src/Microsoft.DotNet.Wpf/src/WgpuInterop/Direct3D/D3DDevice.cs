@@ -147,7 +147,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public readonly bool OwnsGpu;
         /// <summary>The device's lock: wgpu objects are thread-safe, but the shim's own caches are not.</summary>
         public readonly object Sync = new();
-        public volatile int RemovedReason;
+        /// <summary>The WebGPU device's generation this device's objects were made on (WgpuContext.Generation).</summary>
+        public readonly int GpuGeneration;
+
+        /// <summary>Why the device is unusable, as GetDeviceRemovedReason says it: S_OK, or -- the WebGPU device
+        /// it was made on lost, as a GPU reset loses a Direct3D device on Windows -- DXGI_ERROR_DEVICE_RESET,
+        /// for good: the app makes another device, as it does on Windows.</summary>
+        public int RemovedReason => Gpu.Lost || Gpu.Generation != GpuGeneration ? HResult.DXGI_ERROR_DEVICE_RESET : HResult.S_OK;
 
         private static readonly Vtable s_device = BuildDevice();
         private static readonly Vtable s_dxgiDevice = BuildDxgiDevice();
@@ -157,6 +163,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             : base(s_device, s_dxgiDevice, s_multithread, s_videoDevice)
         {
             Gpu = gpu;
+            GpuGeneration = gpu.Generation;
             OwnsGpu = ownsGpu;
             FeatureLevel = level;
             if (gpu.IsOpenGL) MsReadsResolved = true;
@@ -287,7 +294,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
         private static void OnLost(IntPtr* device, int reason, WGPUStringView message, IntPtr u1, IntPtr u2)
         {
-            if (reason != 2 /* destroyed */) D3DLog.Once("lost:" + reason, $"WebGPU device lost ({reason}): {Text(message)}");
+            if (reason == 2 /* destroyed: released by its owner */ || reason == 3 /* callback cancelled */) return;
+            string why = $"{(reason == 4 ? "failed creation" : "lost")}: {Text(message)}";
+            D3DLog.Once("lost:" + reason + ":" + (device == null ? 0 : (long)*device), $"WebGPU device {why}");
+            if (device != null) Composition.ProcessGpu.MarkLost(*device, why);
         }
 
         // ---- vtables ------------------------------------------------------------------------------

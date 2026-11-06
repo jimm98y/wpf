@@ -35,6 +35,13 @@ namespace Microsoft.Wpf.Interop.WebGpu
         /// </summary>
         internal static WGPUStatus PresentAndRelease(IntPtr surface, IntPtr texture)
         {
+            // the device lost while the frame was made: nothing is presented on it (wgpu-native aborts), and
+            // the texture is abandoned with the device (Composition.WgpuContext, "a lost device")
+            if (Composition.WgpuContext.AnyLost)
+            {
+                System.Threading.Interlocked.Increment(ref s_abandonedSurfaceTextures);
+                return WGPUStatus.Error;
+            }
             WGPUStatus status = wgpuSurfacePresent(surface);
             if (status == WGPUStatus.Success) wgpuTextureRelease(texture);
             else System.Threading.Interlocked.Increment(ref s_abandonedSurfaceTextures);

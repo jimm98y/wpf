@@ -58,6 +58,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
         internal static extern void wgpuDeviceRelease(IntPtr device);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuDeviceDestroy(IntPtr device);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void wgpuAdapterRelease(IntPtr adapter);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]

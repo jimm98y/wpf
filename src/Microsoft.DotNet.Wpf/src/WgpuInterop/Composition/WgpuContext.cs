@@ -61,6 +61,103 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public IntPtr Device { get; private set; }
         public IntPtr Queue { get; private set; }
 
+        // ---- a lost device ----
+        //
+        // A device can be lost at any time: the GPU reset after a hang (Windows' TDR), its driver updated or
+        // crashed, a virtual machine's or an emulator's GPU gone. Windows' answer, which WPF and Direct3D apps
+        // are written for: the compositor makes a new device and draws everything again, and an app's own
+        // Direct3D device reports itself removed (GetDeviceRemovedReason, D3DImage.IsFrontBufferAvailable)
+        // so that the app makes its own again. So here: the device-lost callback marks the context Lost; no
+        // surface is acquired, configured or presented on a lost device (wgpu-native aborts on that); the
+        // first to draw next makes a new device in this context (Renew: a new adapter and device on the same
+        // instance, so every window's surface stays and is configured again), and Generation tells every
+        // holder of the old device's objects to make them again.
+
+        /// <summary>The device is lost: nothing may be drawn on it until <see cref="Renew"/> makes another.</summary>
+        public bool Lost
+        {
+            get
+            {
+#if WGPU_BROWSER
+                // the page says so (device.lost, wgpu-interop.js): there is no native callback in a browser
+                if (!_lost && WgpuBrowser.LostReason(Device) is { } reason) MarkLost(Device, reason);
+#endif
+                return _lost;
+            }
+        }
+        private volatile bool _lost;
+
+        /// <summary>Why the device was lost, as wgpu said.</summary>
+        public string? LostReason { get; private set; }
+
+        /// <summary>Counts the devices this context has had: a holder of device objects made at an earlier
+        /// generation makes them again.</summary>
+        public int Generation => _generation;
+        private volatile int _generation;
+
+        private Func<IntPtr, IntPtr>? _deviceDescriptor;
+        private readonly object _renewLock = new();
+        private long _lastRenewAttempt;
+
+        /// <summary>The device <paramref name="device"/> is lost (from the device-lost callback, any thread).</summary>
+        public void MarkLost(IntPtr device, string reason)
+        {
+            if (device != Device || _lost) return;
+            LostReason = reason;
+            _lost = true;
+            System.Threading.Interlocked.Increment(ref s_lostCount);
+            Console.Error.WriteLine($"wgpu: the device was lost ({reason}); drawing stops until there is a new one");
+            DeviceLostChanged?.Invoke(this, true);
+        }
+
+        /// <summary>Some device is lost (and not yet made again): no surface is presented meanwhile.</summary>
+        public static bool AnyLost => s_lostCount > 0;
+        private static int s_lostCount;
+
+        /// <summary>Raised when the device is lost (true) and when a new one has been made (false), on the
+        /// thread that saw it.</summary>
+        public static event Action<WgpuContext, bool>? DeviceLostChanged;
+
+        /// <summary>The device lost on purpose, as a GPU reset loses it (WPF_WEBGPU_LOSE_DEVICE): a test of what follows.</summary>
+        public void LoseForTest()
+        {
+#if WGPU_BROWSER
+            Browser.WgpuBrowserJs.LoseDevice((int)Device);
+#else
+            IntPtr device = Device;
+            MarkLost(device, "simulated (WPF_WEBGPU_LOSE_DEVICE)");
+            wgpuDeviceDestroy(device);
+#endif
+        }
+
+        /// <summary>A new device in place of a lost one; false while none can be made (tried again at most
+        /// once a second).</summary>
+        public bool Renew()
+        {
+            if (!_lost) return true;
+            lock (_renewLock)
+            {
+                if (!_lost) return true;
+                long now = Environment.TickCount64;
+                if (now - _lastRenewAttempt < 1000) return false;
+                _lastRenewAttempt = now;
+                if (!RenewCore()) return false;
+                _generation++;
+                _lost = false;
+                System.Threading.Interlocked.Decrement(ref s_lostCount);
+            }
+            LogAdapterRenewed();
+            DeviceLostChanged?.Invoke(this, false);
+            return true;
+        }
+
+        private void LogAdapterRenewed()
+        {
+            Console.Error.WriteLine($"wgpu: a new device (generation {_generation}) after the last was lost: {AdapterDescription}");
+            try { (AppContext.GetData("WpfWebGpu.Log") as Action<string>)?.Invoke($"wgpu: a new device after the last was lost ({LostReason}): {AdapterDescription}"); }
+            catch { /* logging only */ }
+        }
+
         //
         // Native -> managed callbacks are STATIC [UnmanagedCallersOnly] methods rather than lambdas.
         // A lambda that captures locals compiles to a closure instance, and calling one from native
@@ -397,8 +494,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 throw new InvalidOperationException("Could not acquire a WebGPU device.");
             ctx.Device = deviceResult;
             ctx.Queue = wgpuDeviceGetQueue(deviceResult);
+            ctx._deviceDescriptor = deviceDescriptor;
 
             return ctx;
+#endif
+        }
+
+        private bool RenewCore()
+        {
+#if WGPU_BROWSER
+            // the page asks for a new device (a Promise, WgpuBrowser.RenewDevice): taken when it is there
+            if (WgpuBrowser.TakeRenewedDevice() is not { } device) return false;
+            Device = device;
+            Adapter = (IntPtr)WgpuBrowser.AdapterHandle;
+            Queue = wgpuDeviceGetQueue(device);
+            return true;
+#else
+            IntPtr adapter, device;
+            lock (s_requestLock)
+            {
+                adapter = RequestAdapter(Instance, out string? description, out _);
+                if (adapter == IntPtr.Zero) return false;
+                s_deviceResult = IntPtr.Zero;
+                s_deviceDone = false;
+                var deviceInfo = new WGPURequestDeviceCallbackInfo
+                {
+                    mode = WGPUCallbackMode.AllowSpontaneous,
+                    callback = (IntPtr)(delegate* unmanaged[Cdecl]<WGPURequestDeviceStatus, IntPtr, WGPUStringView, IntPtr, IntPtr, void>)&OnDeviceReady,
+                };
+                wgpuAdapterRequestDevice(adapter, _deviceDescriptor?.Invoke(adapter) ?? IntPtr.Zero, deviceInfo);
+                for (int i = 0; i < 1000 && !s_deviceDone; i++) Thread.Sleep(1);
+                device = s_deviceResult;
+                if (device == IntPtr.Zero) { wgpuAdapterRelease(adapter); return false; }
+                AdapterDescription = description;
+            }
+            // the lost device's own: released, not waited for (a lost device finishes nothing)
+            if (Queue != IntPtr.Zero) wgpuQueueRelease(Queue);
+            if (Device != IntPtr.Zero) wgpuDeviceRelease(Device);
+            if (Adapter != IntPtr.Zero) wgpuAdapterRelease(Adapter);
+            Adapter = adapter;
+            Device = device;
+            Queue = wgpuDeviceGetQueue(device);
+            _glResetBuffer = _glResetTexture = IntPtr.Zero;
+            return true;
 #endif
         }
 
@@ -567,7 +705,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // device -- with its adapter, instance and, on GL, its context and hidden window -- stays
             // alive until it is: wait once, so they go now rather than never (nothing polls a device
             // that is being let go).
-            if (Device != IntPtr.Zero) wgpuDevicePoll(Device, WGPU_TRUE, null);
+            if (Device != IntPtr.Zero && !_lost) wgpuDevicePoll(Device, WGPU_TRUE, null);
 #endif
             if (Queue != IntPtr.Zero) wgpuQueueRelease(Queue);
             if (Device != IntPtr.Zero) wgpuDeviceRelease(Device);

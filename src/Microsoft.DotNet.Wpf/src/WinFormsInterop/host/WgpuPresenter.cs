@@ -36,8 +36,10 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     // never called them, so a window's renderer kept every texture it had ever made: every bitmap a
     // control drew, at every size a resize passed through. app's private bytes rose by about
     // 27 MB per move+resize cycle for good, and the user's session reached 1.5 GB.
-    private readonly WgpuSceneRenderer _renderer;
-    private readonly WGPUTextureFormat _format;
+    private WgpuSceneRenderer _renderer;
+    // the device's generation the renderer's objects were made on (WgpuContext: "a lost device")
+    private int _gpuGeneration;
+    private WGPUTextureFormat _format;
     private readonly bool _srgb;          // sRGB surface -> renderer applies gamma-correct text coverage
     private int _width, _height;          // logical (point) size
     private float _scale;                 // backing scale (2 on Retina): render at device pixels
@@ -114,11 +116,30 @@ internal sealed unsafe class WgpuPresenter : IDisposable
         // measurements agreed with Windows and the pixels did not.
         _renderer = new WgpuSceneRenderer(ctx, LoadFont(), new KerningTextShaper());
         _partial = new WgpuSceneRenderer.PartialTarget(_renderer, " wf");
+        _gpuGeneration = ctx.Generation;
+    }
+
+    /// <summary>The device lost (WgpuContext: "a lost device"): once the process has a new one, the renderer and
+    /// the kept frame are made again on it and the surface -- made on the instance, which stays -- configured
+    /// with it; the next frame is drawn whole. False while there is no device: nothing is presented.</summary>
+    private bool GpuReady()
+    {
+        Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.LoseForTestIfAsked(_ctx);
+        if (!_ctx.Lost && _ctx.Generation == _gpuGeneration) return true;
+        if (!Microsoft.Wpf.Interop.WebGpu.Composition.ProcessGpu.Recover(_ctx)) return false;
+        _partial.Dispose();
+        _renderer.Dispose();
+        _format = ChooseFormat(_surface, _ctx.Adapter, _srgb);
+        _renderer = new WgpuSceneRenderer(_ctx, LoadFont(), new KerningTextShaper());
+        _partial = new WgpuSceneRenderer.PartialTarget(_renderer, " wf");
+        _gpuGeneration = _ctx.Generation;
+        ConfigureNow();
+        return true;
     }
 
     // Partial redraw: the frames are rendered into a texture that keeps the previous one, only where
     // the scenes changed, and copied to the swap chain (see WgpuSceneRenderer.PartialTarget).
-    private readonly WgpuSceneRenderer.PartialTarget _partial;
+    private WgpuSceneRenderer.PartialTarget _partial;
 
     /// <summary>The last scene present's damage, for frame traces: "full" or "N rects, P px".</summary>
     /// <summary>Make the next present a full one.</summary>
@@ -543,6 +564,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             _inFrame = true;
             try
             {
+                if (!GpuReady()) return false;
                 if (_configurePending) { _configurePending = false; ConfigureNow(); }
                 return body();
             }
@@ -588,6 +610,7 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
     private void ConfigureCore()
     {
+        if (_ctx.Lost) return;          // nor on a lost device (wgpu-native aborts): GpuReady configures the new one
         // The window has gone: its surface cannot be configured (wgpu-native aborts, "Invalid surface").
         if (!Microsoft.Wpf.Interop.WebGpu.Composition.Platform.NativePlatform.IsWindowAlive(NativeWindow)) return;
         var config = new WGPUSurfaceConfiguration
