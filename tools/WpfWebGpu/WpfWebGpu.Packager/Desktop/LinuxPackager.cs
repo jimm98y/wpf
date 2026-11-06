@@ -97,10 +97,61 @@ public static class LinuxPackager
             using (var c = File.OpenRead(control)) ArMember(output, "control.tar.gz", c);
             using (var d = File.OpenRead(data)) ArMember(output, "data.tar.gz", d);
         }
-        Directory.Delete(work, recursive: true);
         log($"{deb} ({new FileInfo(deb).Length / (1024 * 1024)} MB)");
+
+        // the same for a Linux without dpkg (Fedora, RHEL, SUSE, Arch): the files as they are in the .deb, and
+        // install.sh / uninstall.sh doing what its maintainer scripts do
+        string archive = Path.Combine(outDir, $"{pkg}-{DebVersion(manifest.Product.Version)}-linux-{arch}.tar.gz");
+        string folder = $"{pkg}-{DebVersion(manifest.Product.Version)}";
+        using (var output = File.Create(archive))
+        using (var gz = new GZipStream(output, CompressionLevel.Fastest))
+        {
+            var tar = new TarTree(gz, directories: false);
+            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units), executable: true);
+            tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units), executable: true);
+            tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
+            tar.Finish();
+        }
+        Directory.Delete(work, recursive: true);
+        log($"{archive} ({new FileInfo(archive).Length / (1024 * 1024)} MB)");
         return deb;
     }
+
+    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units) => $$"""
+        #!/bin/sh
+        # Installs {{pkg}} on a Linux without dpkg: its files into / (the list kept for uninstall.sh), then as the .deb's
+        # postinst does -- the machine's state on the first install, the services enabled and started.
+        set -e
+        [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+        cd "$(dirname "$0")"
+        if [ -d /run/systemd/system ]; then
+        {{string.Concat(units.Select(u => $"  systemctl stop {u.Name} 2>/dev/null || true\n"))}}fi
+        tar xzf files.tar.gz -C / --no-same-owner
+        mkdir -p "{{root}}"
+        tar tzf files.tar.gz | sed -e 's|^\.||' > "{{root}}/installed-files.txt"
+        cp uninstall.sh "{{root}}/uninstall.sh"
+        chmod 755 "{{root}}/uninstall.sh"
+        {{PostInstBody(root, state, units)}}
+        echo "{{pkg}} installed into {{root}}"
+
+        """;
+
+    private static string UninstallScript(string pkg, string root, string state, List<(string Name, bool Enable)> units) => $$"""
+        #!/bin/sh
+        # Removes {{pkg}} as installed by install.sh. The machine's state ({{state}}) is kept unless --all is given,
+        # as Windows keeps ProgramData.
+        [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+        if [ -d /run/systemd/system ]; then
+        {{string.Concat(units.Select(u => $"  systemctl disable --now {u.Name} 2>/dev/null || true\n"))}}fi
+        if [ -f "{{root}}/installed-files.txt" ]; then
+          while IFS= read -r f; do [ -f "$f" ] && rm -f "$f"; done < "{{root}}/installed-files.txt"
+        fi
+        rm -rf "{{root}}"
+        [ -d /run/systemd/system ] && systemctl daemon-reload || true
+        if [ "$1" = "--all" ]; then rm -rf "{{Path.GetDirectoryName(state)}}" "/etc/sysctl.d/60-{{pkg}}.conf"; fi
+        echo "{{pkg}} removed"
+
+        """;
 
     // ---- what is installed ---------------------------------------------------------------------------------
 
@@ -162,11 +213,11 @@ public static class LinuxPackager
 
         """;
 
-    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units) => $$"""
-        #!/bin/sh
-        # the machine's state made from the seed on the first install (the registry's paths this installation's) and
-        # kept on an upgrade; then the services enabled and started
-        set -e
+    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units) =>
+        "#!/bin/sh\n# the machine's state made from the seed on the first install (the registry's paths this installation's) and\n"
+        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units) + "exit 0\n";
+
+    private static string PostInstBody(string root, string state, List<(string Name, bool Enable)> units) => $$"""
         STATE="{{state}}"
         SEED="{{root}}/seed"
         mkdir -p "$STATE"
@@ -192,7 +243,6 @@ public static class LinuxPackager
         sysctl -q -p /etc/sysctl.d/60-{{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}}.conf || true
         command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
         command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q /usr/share/icons/hicolor || true
-        exit 0
 
         """;
 
