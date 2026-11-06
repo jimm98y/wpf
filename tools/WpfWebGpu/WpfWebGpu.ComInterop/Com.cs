@@ -231,7 +231,13 @@ public static unsafe partial class Com
         if (o == null) return o;
         bool dynamic = !ProxyCasts;
         if ((dynamic || o is not ComObject) && t.IsInstanceOfType(o)) return o;
-        if (Unwrap(o) is not ComObject c) return o;                 // the cast that follows decides
+        if (Unwrap(o) is not ComObject c)
+        {
+            // an object of a COM server run here (WScript.Shell's shortcut): reached through its CCW, as the
+            // server's own object is reached through the interfaces it answers
+            if (o is not IComServerObject || !t.IsInterface) return o;   // the cast that follows decides
+            c = (ComObject)Take(CcwUnknown(o))!;
+        }
         if (dynamic && t.IsInstanceOfType(c)) return c;
         if (!c.Implements(t, throwIfNot)) return throwIfNot ? o : null;
         return c.ProxyFor(t) ?? (throwIfNot ? o : null);
@@ -282,8 +288,10 @@ public static unsafe partial class Com
     {
         if (!OperatingSystem.IsWindows())
         {
-            LogOnce("cocreate:" + clsid, $"CoCreateInstance of {{{clsid}}}: there is no COM class registry on this OS");
-            throw new COMException($"Class {{{clsid}}} is not registered", unchecked((int)0x80040154));
+            // a class this has (a server run here, a .NET class registered for COM)
+            if (ComServers.Create(clsid) is { } made) return made;
+            LogOnce("cocreate:" + clsid, $"CoCreateInstance of {{{clsid}}}: the class is neither in the registry as a .NET class nor one this runs itself");
+            throw ComServers.NotRegistered(clsid);
         }
         Guid iid = IID_IUnknown;
         int hr = CoCreateInstance(in clsid, IntPtr.Zero, 0x17 /* CLSCTX_ALL */, in iid, out IntPtr p);

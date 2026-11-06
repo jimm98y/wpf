@@ -7,6 +7,7 @@
 //       state/          the machine's state (WPFRUN_STATE): registry/ and ProgramData/, as Windows keeps them
 //       uninstall.sh
 //   /Library/LaunchDaemons/<id>.<service>.plist      each service, started by launchd as the SCM starts it
+//   /Library/LaunchAgents/<id>.startup.plist           at each log-on, the Startup folders' shortcuts (wpfrun startup)
 //   /Applications/<Product>/<App>.app                 each window app, with its icon
 //
 // The state is made on the first install only: an upgrade keeps what the machine has done with its registry and
@@ -58,6 +59,11 @@ public static class MacPackager
             File.WriteAllText(plist, Daemon(label, root, product, service, manifest.Product.OsIdentity));
             daemons.Add(label);
         }
+
+        // at log-on, what the apps put in the Startup folders, as Explorer starts it
+        string agent = Path.Combine(payload, "Library", "LaunchAgents", id + ".startup.plist");
+        Directory.CreateDirectory(Path.GetDirectoryName(agent)!);
+        File.WriteAllText(agent, StartupAgent(id + ".startup", root, manifest.Product.OsIdentity));
 
         // the window apps
         var image = DesktopCommon.Icon(manifest);
@@ -131,6 +137,28 @@ public static class MacPackager
             </plist>
             """;
     }
+
+    private static string StartupAgent(string label, string root, string osIdentity) => $"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>Label</key><string>{X(label)}</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>{X(root)}/runtime/dotnet/dotnet</string>
+            <string>{X(root)}/runtime/launcher/wpfrun.dll</string>
+            <string>startup</string>
+          </array>
+          <key>EnvironmentVariables</key>
+          <dict>
+            <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
+        {(osIdentity.Length > 0 ? $"    <key>WPFWEBGPU_OS_IDENTITY</key><string>{X(osIdentity)}</string>\n" : "")}  </dict>
+          <key>RunAtLoad</key><true/>
+          <key>LimitLoadToSessionType</key><string>Aqua</string>
+        </dict>
+        </plist>
+        """;
 
     private static void WriteAppStub(string folder, string root, string id, AppEntry app, PackageManifest manifest, (byte[] Rgba, int Width, int Height)? productIcon)
     {
@@ -214,7 +242,8 @@ public static class MacPackager
         # Removes {product}: its services, its apps and its files. The machine's state (state/: the registry and
         # ProgramData) is kept unless --all is given, as Windows keeps ProgramData after an uninstall.
         if [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
-        {string.Concat(daemons.Select(d => $"launchctl bootout system/{d} 2>/dev/null || true\nrm -f \"/Library/LaunchDaemons/{d}.plist\"\n"))}rm -rf "/Applications/{product}"
+        {string.Concat(daemons.Select(d => $"launchctl bootout system/{d} 2>/dev/null || true\nrm -f \"/Library/LaunchDaemons/{d}.plist\"\n"))}rm -f "/Library/LaunchAgents/{id}.startup.plist"
+        rm -rf "/Applications/{product}"
         rm -rf "{root}/app" "{root}/runtime" "{root}/seed"
         if [ "$1" = "--all" ]; then rm -rf "{root}" "/Library/Logs/{product}"; fi
         pkgutil --forget "{id}" >/dev/null 2>&1 || true

@@ -7,6 +7,7 @@
 //   /var/opt/<product>/state/    the machine's state (WPFRUN_STATE), kept on upgrades and on remove (purge removes it)
 //   /lib/systemd/system/<pkg>-<service>.service       each service, as the SCM runs it
 //   /usr/share/applications/<pkg>-<app>.desktop       each window app, with its icon
+//   /etc/xdg/autostart/<pkg>-startup.desktop          at each log-on, the Startup folders' shortcuts (wpfrun startup)
 //
 // The state is writable by the group 'users', as ProgramData and HKLM are by a Windows machine's users.
 
@@ -72,6 +73,8 @@ public static class LinuxPackager
                 if (DesktopCommon.Icon(manifest, app) is { } image)
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
             }
+            // at log-on, what the apps put in the Startup folders, as Explorer starts it
+            tar.AddText($"/etc/xdg/autostart/{pkg}-startup.desktop", Autostart(manifest, root, state), executable: false);
             tar.Finish();
         }
 
@@ -200,6 +203,17 @@ public static class LinuxPackager
         Icon={id}
         Terminal=false
         Categories=Utility;
+
+        """;
+
+    private static string Autostart(PackageManifest manifest, string root, string state) => $"""
+        [Desktop Entry]
+        Type=Application
+        Name={manifest.Product.Name} startup programs
+        Exec=env WPFRUN_STATE={state}{(manifest.Product.OsIdentity.Length > 0 ? " WPFWEBGPU_OS_IDENTITY=" + manifest.Product.OsIdentity : "")} {Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} startup
+        NoDisplay=true
+        Terminal=false
+        X-GNOME-Autostart-enabled=true
 
         """;
 

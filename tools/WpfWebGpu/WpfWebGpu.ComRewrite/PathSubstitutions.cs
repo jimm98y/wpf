@@ -24,6 +24,8 @@ public sealed class PathSubstitutions
         "System.Xml.Linq.XDocument", "System.Xml.Linq.XElement", "System.Reflection.Assembly", "System.Uri",
         "System.Diagnostics.Process", "System.Environment", "System.IO.MemoryMappedFiles.MemoryMappedFile",
         "System.Threading.Thread",
+        // COM classes by ProgID or CLSID (WindowsPaths: the registry's, and the servers run here)
+        "System.Type",
         // the operating system as the app asks about it (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
         "System.OperatingSystem", "System.Runtime.InteropServices.RuntimeInformation",
     };
@@ -42,34 +44,36 @@ public sealed class PathSubstitutions
         return token is { Length: 8 } && s_microsoftKeys.Contains(Convert.ToHexString(token));
     }
 
-    // a library that asks about macOS, Linux or the others itself (an OPC UA stack loading a key as macOS's .NET
-    // can, a client choosing its native code) was written for them: its questions get the system's own answers too.
-    // Only code that knows Windows alone is told it runs there.
-    private static readonly HashSet<string> s_otherSystems = new(StringComparer.Ordinal)
+    // code that asks about macOS, Linux or another system itself (an OPC UA stack loading a key as macOS's .NET
+    // can) was written for it: there its questions get the system's own answers. Which systems a method knows is
+    // handed to the stand-ins (their variant with a last int knownSystems, WindowsPaths' KnownSystem bits), which
+    // tell Windows only to code that does not know the system it runs on. A method, not its assembly: a licence
+    // library with a macOS path for its USB keys still reads the machine's identity as on Windows alone (WMI,
+    // which answers here), and is told Windows there.
+    private static readonly Dictionary<string, int> s_systemChecks = new(StringComparer.Ordinal)
     {
-        "System.Runtime.InteropServices.OSPlatform::get_OSX", "System.Runtime.InteropServices.OSPlatform::get_Linux",
-        "System.Runtime.InteropServices.OSPlatform::get_FreeBSD",
-        "System.OperatingSystem::IsMacOS", "System.OperatingSystem::IsMacOSVersionAtLeast", "System.OperatingSystem::IsLinux",
-        "System.OperatingSystem::IsFreeBSD", "System.OperatingSystem::IsFreeBSDVersionAtLeast", "System.OperatingSystem::IsIOS",
-        "System.OperatingSystem::IsIOSVersionAtLeast", "System.OperatingSystem::IsMacCatalyst", "System.OperatingSystem::IsMacCatalystVersionAtLeast",
-        "System.OperatingSystem::IsTvOS", "System.OperatingSystem::IsTvOSVersionAtLeast", "System.OperatingSystem::IsWatchOS",
-        "System.OperatingSystem::IsWatchOSVersionAtLeast", "System.OperatingSystem::IsAndroid", "System.OperatingSystem::IsAndroidVersionAtLeast",
-        "System.OperatingSystem::IsBrowser", "System.OperatingSystem::IsWasi",
+        ["System.Runtime.InteropServices.OSPlatform::get_OSX"] = 1, ["System.OperatingSystem::IsMacOS"] = 1, ["System.OperatingSystem::IsMacOSVersionAtLeast"] = 1,
+        ["System.Runtime.InteropServices.OSPlatform::get_Linux"] = 2, ["System.OperatingSystem::IsLinux"] = 2,
+        ["System.OperatingSystem::IsIOS"] = 4, ["System.OperatingSystem::IsIOSVersionAtLeast"] = 4,
+        ["System.OperatingSystem::IsMacCatalyst"] = 4, ["System.OperatingSystem::IsMacCatalystVersionAtLeast"] = 4,
+        ["System.OperatingSystem::IsTvOS"] = 4, ["System.OperatingSystem::IsTvOSVersionAtLeast"] = 4,
+        ["System.OperatingSystem::IsWatchOS"] = 4, ["System.OperatingSystem::IsWatchOSVersionAtLeast"] = 4,
+        ["System.OperatingSystem::IsAndroid"] = 8, ["System.OperatingSystem::IsAndroidVersionAtLeast"] = 8,
+        ["System.Runtime.InteropServices.OSPlatform::get_FreeBSD"] = 16, ["System.OperatingSystem::IsFreeBSD"] = 16, ["System.OperatingSystem::IsFreeBSDVersionAtLeast"] = 16,
+        ["System.OperatingSystem::IsBrowser"] = 32, ["System.OperatingSystem::IsWasi"] = 32,
     };
 
-    private static bool KnowsOtherSystems(ModuleDefinition module)
+    /// <summary>The systems the method asks about by name (bits as WindowsPaths' KnownSystem).</summary>
+    internal static int KnownSystems(MethodDefinition method)
     {
-        foreach (TypeDefinition t in module.GetTypes())
-            foreach (MethodDefinition m in t.Methods)
-            {
-                if (!m.HasBody) continue;
-                foreach (Instruction i in m.Body.Instructions)
-                    if (i.Operand is MethodReference r && s_otherSystems.Contains(r.DeclaringType.FullName + "::" + r.Name)) return true;
-            }
-        return false;
+        int known = 0;
+        foreach (Instruction i in method.Body.Instructions)
+            if (i.Operand is MethodReference r && s_systemChecks.TryGetValue(r.DeclaringType.FullName + "::" + r.Name, out int bit)) known |= bit;
+        return known;
     }
 
     private readonly Dictionary<string, MethodDefinition> _bySignature = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MethodDefinition> _knowing = new(StringComparer.Ordinal);
     // (type, member) of every stand-in: the cheap test of whether an assembly may call one (MayUse)
     private readonly HashSet<string> _members = new(StringComparer.Ordinal);
 
@@ -82,6 +86,12 @@ public sealed class PathSubstitutions
             if (!m.IsStatic || !m.IsPublic || at <= 0) continue;
             string type = m.Name[..at], member = m.Name[(at + 1)..];
             if (member == "new") member = ".ctor";
+            // an OS stand-in's variant told the systems its caller knows: keyed without that last parameter
+            if (m.Parameters.Count > 0 && m.Parameters[^1].Name == "knownSystems")
+            {
+                _knowing[Key(type, member, m.Parameters.Take(m.Parameters.Count - 1).Select(p => p.ParameterType))] = m;
+                continue;
+            }
             _bySignature[Key(type, member, m.Parameters.Select(p => p.ParameterType))] = m;
             _members.Add(type + "::" + member);
         }
@@ -110,12 +120,12 @@ public sealed class PathSubstitutions
         return null;
     }
 
-    private MethodDefinition? For(MethodReference r)
+    private MethodDefinition? For(MethodReference r, bool knowing = false)
     {
         if (!s_types.Contains(r.DeclaringType.FullName) || r is GenericInstanceMethod) return null;
         IEnumerable<TypeReference> ps = r.Parameters.Select(p => p.ParameterType);
         if (r.HasThis && r.Name != ".ctor") ps = ps.Prepend(r.DeclaringType);
-        return _bySignature.TryGetValue(Key(r.DeclaringType.Name, r.Name, ps), out var m) ? m : null;
+        return (knowing ? _knowing : _bySignature).TryGetValue(Key(r.DeclaringType.Name, r.Name, ps), out var m) ? m : null;
     }
 
     /// <summary>Whether the file may call a member this substitutes: a reference to one by type and name
@@ -146,17 +156,20 @@ public sealed class PathSubstitutions
     public int Apply(ModuleDefinition module)
     {
         int n = 0;
-        // the system's own answers for .NET's assemblies, Microsoft's libraries and those written for other systems
-        bool trueAnswers = IsMicrosofts(module) || KnowsOtherSystems(module);
+        // .NET's assemblies and Microsoft's libraries: the system's own answers
+        bool microsofts = IsMicrosofts(module);
         foreach (TypeDefinition t in module.GetTypes())
             foreach (MethodDefinition m in t.Methods)
             {
                 if (!m.HasBody) continue;
+                int known = microsofts ? 0 : KnownSystems(m);
+                var told = new List<(Instruction Call, MethodDefinition Stand)>();
                 foreach (Instruction i in m.Body.Instructions)
                 {
                     if ((i.OpCode != OpCodes.Call && i.OpCode != OpCodes.Callvirt && i.OpCode != OpCodes.Newobj)
                         || i.Operand is not MethodReference r || For(r) is not { } stand) continue;
-                    if (trueAnswers && (s_osTypes.Contains(r.DeclaringType.FullName) || r.Name == "get_OSVersion")) continue;
+                    bool os = s_osTypes.Contains(r.DeclaringType.FullName) || r.Name == "get_OSVersion";
+                    if (microsofts && os) continue;
                     // a constructor is only stood in for where it makes the object (newobj), not where a
                     // derived type's constructor calls it
                     if (r.Name == ".ctor" && i.OpCode != OpCodes.Newobj) continue;
@@ -164,8 +177,20 @@ public sealed class PathSubstitutions
                     // override's base call (XmlDocument.Load in a derived document's Load), which the
                     // stand-in -- calling the member virtually -- would turn into the override again
                     if (r.HasThis && r.Name != ".ctor" && i.OpCode != OpCodes.Callvirt) continue;
+                    if (os && known != 0 && For(r, knowing: true) is { } knowing) { told.Add((i, knowing)); continue; }
                     i.OpCode = OpCodes.Call;
                     i.Operand = module.ImportReference(stand);
+                    n++;
+                }
+                // the systems the assembly knows, pushed last: the call's own instruction becomes the push (a branch
+                // to the call reaches it), the stand-in's call after it
+                foreach (var (call, stand) in told)
+                {
+                    var il = m.Body.GetILProcessor();
+                    var invoke = il.Create(OpCodes.Call, module.ImportReference(stand));
+                    call.OpCode = OpCodes.Ldc_I4;
+                    call.Operand = known;
+                    il.InsertAfter(call, invoke);
                     n++;
                 }
             }

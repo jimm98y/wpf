@@ -59,13 +59,14 @@ public sealed class WindowsPathsTests
 }
 
 // The OS questions an assembly asks, rewritten onto WindowsPaths (and so answered as Windows under
-// WPFWEBGPU_OS_IDENTITY=windows) only where the assembly knows Windows alone.
+// WPFWEBGPU_OS_IDENTITY=windows), told which systems the assembly knows: one that knows the system it runs on
+// gets that system's answers; the unit is the method.
 public sealed class OSIdentityRewriteTests
 {
     [Theory]
-    [InlineData(false, true)]       // a program written for Windows: told it runs there
-    [InlineData(true, false)]       // a library that asks about macOS itself: the system's own answers
-    public void An_assembly_s_OS_checks_are_stood_in_for_unless_it_knows_other_systems(bool asksAboutMacOS, bool rewritten)
+    [InlineData(false, -1)]     // a program written for Windows: the plain stand-in
+    [InlineData(true, 1)]       // a library that asks about macOS: the variant told it knows macOS (bit 1)
+    public void An_assembly_s_OS_checks_are_stood_in_for_with_the_systems_it_knows(bool asksAboutMacOS, int known)
     {
         var subs = WpfWebGpu.ComRewrite.PathSubstitutions.For(new[] { AppContext.BaseDirectory })!;
         var module = Mono.Cecil.ModuleDefinition.CreateModule("OsChecks", Mono.Cecil.ModuleKind.Dll);
@@ -83,7 +84,16 @@ public sealed class OSIdentityRewriteTests
         il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
 
         subs.Apply(module);
-        bool standIn = method.Body.Instructions.Any(i => i.Operand is Mono.Cecil.MethodReference r && r.DeclaringType.Name == "WindowsPaths");
-        Assert.Equal(rewritten, standIn);
+        var ins = method.Body.Instructions;
+        var first = ins.First(i => i.Operand is Mono.Cecil.MethodReference r && r.Name == "OperatingSystem_IsWindows");
+        var stand = (Mono.Cecil.MethodReference)first.Operand;
+        Assert.Equal("WindowsPaths", stand.DeclaringType.Name);
+        if (known < 0) Assert.Empty(stand.Parameters);
+        else
+        {
+            Assert.Equal("System.Int32", Assert.Single(stand.Parameters).ParameterType.FullName);
+            Assert.Equal(Mono.Cecil.Cil.OpCodes.Ldc_I4, first.Previous.OpCode);
+            Assert.Equal(known, first.Previous.Operand);
+        }
     }
 }

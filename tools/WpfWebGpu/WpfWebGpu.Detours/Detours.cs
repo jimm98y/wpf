@@ -247,25 +247,39 @@ public static class Detours
         _ => null,
     };
 
+    // the user's shell folders .NET has none of off Windows (it answers ""): where Windows has them, under the
+    // user's application data (as WpfWebGpu.ComInterop's WindowsPaths has them for an app's rewritten calls)
+    private static string? UserFolder(Environment.SpecialFolder folder) => folder switch
+    {
+        Environment.SpecialFolder.StartMenu => "Microsoft/Windows/Start Menu",
+        Environment.SpecialFolder.Programs => "Microsoft/Windows/Start Menu/Programs",
+        Environment.SpecialFolder.Startup => "Microsoft/Windows/Start Menu/Programs/Startup",
+        Environment.SpecialFolder.AdminTools => "Microsoft/Windows/Start Menu/Programs/Administrative Tools",
+        Environment.SpecialFolder.Recent => "Microsoft/Windows/Recent",
+        Environment.SpecialFolder.SendTo => "Microsoft/Windows/SendTo",
+        Environment.SpecialFolder.NetworkShortcuts => "Microsoft/Windows/Network Shortcuts",
+        Environment.SpecialFolder.PrinterShortcuts => "Microsoft/Windows/Printer Shortcuts",
+        _ => null,
+    };
+
+    // the folder as this stack has it, the system's own lookup (real) telling whether it has the user's
+    private static string? Folder(Func<Environment.SpecialFolder, string> real, Environment.SpecialFolder folder, Environment.SpecialFolderOption option)
+    {
+        string? path = null;
+        if (CommonFolder(folder) is { } common) path = Path.Combine(s_state, common);
+        else if (UserFolder(folder) is { } user && real(folder).Length == 0 && real(Environment.SpecialFolder.ApplicationData) is { Length: > 0 } roaming)
+            path = Path.Combine(roaming, user);
+        if (path != null && option != Environment.SpecialFolderOption.DoNotVerify) Directory.CreateDirectory(path);
+        return path;
+    }
+
     private static void InstallSpecialFolders()
     {
         Add(typeof(Environment).GetMethod(nameof(Environment.GetFolderPath), new[] { typeof(Environment.SpecialFolder), typeof(Environment.SpecialFolderOption) })!,
             (Func<Environment.SpecialFolder, Environment.SpecialFolderOption, string> orig, Environment.SpecialFolder folder, Environment.SpecialFolderOption option) =>
-            {
-                string? relative = CommonFolder(folder);
-                if (relative == null) return orig(folder, option);
-                string path = Path.Combine(s_state, relative);
-                if (option != Environment.SpecialFolderOption.DoNotVerify) Directory.CreateDirectory(path);
-                return path;
-            });
+                Folder(f => orig(f, Environment.SpecialFolderOption.DoNotVerify), folder, option) ?? orig(folder, option));
         Add(typeof(Environment).GetMethod(nameof(Environment.GetFolderPath), new[] { typeof(Environment.SpecialFolder) })!,
             (Func<Environment.SpecialFolder, string> orig, Environment.SpecialFolder folder) =>
-            {
-                string? relative = CommonFolder(folder);
-                if (relative == null) return orig(folder);
-                string path = Path.Combine(s_state, relative);
-                Directory.CreateDirectory(path);
-                return path;
-            });
+                Folder(orig, folder, Environment.SpecialFolderOption.None) ?? orig(folder));
     }
 }

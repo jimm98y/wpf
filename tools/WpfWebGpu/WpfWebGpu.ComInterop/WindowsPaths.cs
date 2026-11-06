@@ -52,29 +52,52 @@ public static class WindowsPaths
         && string.Equals(Environment.GetEnvironmentVariable("WPFWEBGPU_OS_IDENTITY"), "windows", StringComparison.OrdinalIgnoreCase);
     private static readonly Version s_windows11 = new(10, 0, 22631, 0);
 
-    public static bool OperatingSystem_IsWindows() => s_asWindows || OperatingSystem.IsWindows();
-    public static bool OperatingSystem_IsLinux() => !s_asWindows && OperatingSystem.IsLinux();
-    public static bool OperatingSystem_IsMacOS() => !s_asWindows && OperatingSystem.IsMacOS();
-    public static bool OperatingSystem_IsMacCatalyst() => !s_asWindows && OperatingSystem.IsMacCatalyst();
-    public static bool OperatingSystem_IsIOS() => !s_asWindows && OperatingSystem.IsIOS();
-    public static bool OperatingSystem_IsAndroid() => !s_asWindows && OperatingSystem.IsAndroid();
-    public static bool OperatingSystem_IsFreeBSD() => !s_asWindows && OperatingSystem.IsFreeBSD();
+    // The systems an assembly asks about by name, as the rewriter hands them to the variants taking knownSystems:
+    // an assembly that knows the system it runs on gets that system's answers (it has a way of its own there).
+    private const int KnownMacOS = 1, KnownLinux = 2, KnownIOS = 4, KnownAndroid = 8, KnownFreeBSD = 16, KnownBrowser = 32;
+    private static readonly int s_thisSystem = OperatingSystem.IsMacOS() ? KnownMacOS : OperatingSystem.IsLinux() ? KnownLinux
+        : OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() || OperatingSystem.IsTvOS() ? KnownIOS
+        : OperatingSystem.IsAndroid() ? KnownAndroid : OperatingSystem.IsFreeBSD() ? KnownFreeBSD
+        : OperatingSystem.IsBrowser() || OperatingSystem.IsWasi() ? KnownBrowser : 0;
 
-    public static bool OperatingSystem_IsWindowsVersionAtLeast(int major, int minor, int build, int revision)
-        => s_asWindows ? s_windows11 >= new Version(major, minor, build, revision) : OperatingSystem.IsWindowsVersionAtLeast(major, minor, build, revision);
+    private static bool AsWindows(int knownSystems) => s_asWindows && (knownSystems & s_thisSystem) == 0;
 
-    public static bool OperatingSystem_IsOSPlatform(string platform)
-        => s_asWindows ? platform.Equals("Windows", StringComparison.OrdinalIgnoreCase) : OperatingSystem.IsOSPlatform(platform);
+    public static bool OperatingSystem_IsWindows() => OperatingSystem_IsWindows(0);
+    public static bool OperatingSystem_IsLinux() => OperatingSystem_IsLinux(0);
+    public static bool OperatingSystem_IsMacOS() => OperatingSystem_IsMacOS(0);
+    public static bool OperatingSystem_IsMacCatalyst() => OperatingSystem_IsMacCatalyst(0);
+    public static bool OperatingSystem_IsIOS() => OperatingSystem_IsIOS(0);
+    public static bool OperatingSystem_IsAndroid() => OperatingSystem_IsAndroid(0);
+    public static bool OperatingSystem_IsFreeBSD() => OperatingSystem_IsFreeBSD(0);
+    public static bool OperatingSystem_IsWindowsVersionAtLeast(int major, int minor, int build, int revision) => OperatingSystem_IsWindowsVersionAtLeast(major, minor, build, revision, 0);
+    public static bool OperatingSystem_IsOSPlatform(string platform) => OperatingSystem_IsOSPlatform(platform, 0);
+    public static bool RuntimeInformation_IsOSPlatform(System.Runtime.InteropServices.OSPlatform platform) => RuntimeInformation_IsOSPlatform(platform, 0);
+    public static string RuntimeInformation_get_OSDescription() => RuntimeInformation_get_OSDescription(0);
+    public static OperatingSystem Environment_get_OSVersion() => Environment_get_OSVersion(0);
 
-    public static bool RuntimeInformation_IsOSPlatform(System.Runtime.InteropServices.OSPlatform platform)
-        => s_asWindows ? platform == System.Runtime.InteropServices.OSPlatform.Windows : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(platform);
+    public static bool OperatingSystem_IsWindows(int knownSystems) => AsWindows(knownSystems) || OperatingSystem.IsWindows();
+    public static bool OperatingSystem_IsLinux(int knownSystems) => !AsWindows(knownSystems) && OperatingSystem.IsLinux();
+    public static bool OperatingSystem_IsMacOS(int knownSystems) => !AsWindows(knownSystems) && OperatingSystem.IsMacOS();
+    public static bool OperatingSystem_IsMacCatalyst(int knownSystems) => !AsWindows(knownSystems) && OperatingSystem.IsMacCatalyst();
+    public static bool OperatingSystem_IsIOS(int knownSystems) => !AsWindows(knownSystems) && OperatingSystem.IsIOS();
+    public static bool OperatingSystem_IsAndroid(int knownSystems) => !AsWindows(knownSystems) && OperatingSystem.IsAndroid();
+    public static bool OperatingSystem_IsFreeBSD(int knownSystems) => !AsWindows(knownSystems) && OperatingSystem.IsFreeBSD();
 
-    public static string RuntimeInformation_get_OSDescription()
-        => s_asWindows ? "Microsoft Windows 10.0.22631" : System.Runtime.InteropServices.RuntimeInformation.OSDescription;
+    public static bool OperatingSystem_IsWindowsVersionAtLeast(int major, int minor, int build, int revision, int knownSystems)
+        => AsWindows(knownSystems) ? s_windows11 >= new Version(major, minor, build, revision) : OperatingSystem.IsWindowsVersionAtLeast(major, minor, build, revision);
+
+    public static bool OperatingSystem_IsOSPlatform(string platform, int knownSystems)
+        => AsWindows(knownSystems) ? platform.Equals("Windows", StringComparison.OrdinalIgnoreCase) : OperatingSystem.IsOSPlatform(platform);
+
+    public static bool RuntimeInformation_IsOSPlatform(System.Runtime.InteropServices.OSPlatform platform, int knownSystems)
+        => AsWindows(knownSystems) ? platform == System.Runtime.InteropServices.OSPlatform.Windows : System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(platform);
+
+    public static string RuntimeInformation_get_OSDescription(int knownSystems)
+        => AsWindows(knownSystems) ? "Microsoft Windows 10.0.22631" : System.Runtime.InteropServices.RuntimeInformation.OSDescription;
 
     // in a page always Windows' (as BrowserApis answered it before this stood in for it first)
-    public static OperatingSystem Environment_get_OSVersion()
-        => s_asWindows || OperatingSystem.IsBrowser() ? new OperatingSystem(PlatformID.Win32NT, s_windows11) : Environment.OSVersion;
+    public static OperatingSystem Environment_get_OSVersion(int knownSystems)
+        => AsWindows(knownSystems) || OperatingSystem.IsBrowser() ? new OperatingSystem(PlatformID.Win32NT, s_windows11) : Environment.OSVersion;
 
     // ---- System.Environment ----
     //
@@ -106,10 +129,47 @@ public static class WindowsPaths
     // launcher's detour has them in its state folder on macOS.
 
     public static string Environment_GetFolderPath(Environment.SpecialFolder folder)
-        => StateFolder(folder, Environment.SpecialFolderOption.None) ?? Environment.GetFolderPath(folder);
+        => StateFolder(folder, Environment.SpecialFolderOption.None) ?? UserFolder(folder, Environment.SpecialFolderOption.None) ?? Environment.GetFolderPath(folder);
 
     public static string Environment_GetFolderPath(Environment.SpecialFolder folder, Environment.SpecialFolderOption option)
-        => StateFolder(folder, option) ?? Environment.GetFolderPath(folder, option);
+        => StateFolder(folder, option) ?? UserFolder(folder, option) ?? Environment.GetFolderPath(folder, option);
+
+    // the user's shell folders .NET has none of off Windows (it answers ""): where Windows has them, under the
+    // user's application data -- the Start menu, its Startup folder, Recent, SendTo
+    private static string? UserFolder(Environment.SpecialFolder folder, Environment.SpecialFolderOption option)
+    {
+        if (s_windows) return null;
+        string? relative = folder switch
+        {
+            Environment.SpecialFolder.StartMenu => "Microsoft/Windows/Start Menu",
+            Environment.SpecialFolder.Programs => "Microsoft/Windows/Start Menu/Programs",
+            Environment.SpecialFolder.Startup => "Microsoft/Windows/Start Menu/Programs/Startup",
+            Environment.SpecialFolder.AdminTools => "Microsoft/Windows/Start Menu/Programs/Administrative Tools",
+            Environment.SpecialFolder.Recent => "Microsoft/Windows/Recent",
+            Environment.SpecialFolder.SendTo => "Microsoft/Windows/SendTo",
+            Environment.SpecialFolder.NetworkShortcuts => "Microsoft/Windows/Network Shortcuts",
+            Environment.SpecialFolder.PrinterShortcuts => "Microsoft/Windows/Printer Shortcuts",
+            _ => null,
+        };
+        if (relative == null || Environment.GetFolderPath(folder, Environment.SpecialFolderOption.DoNotVerify).Length > 0) return null;
+        string roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData, Environment.SpecialFolderOption.DoNotVerify);
+        if (roaming.Length == 0) return null;
+        string path = Path.Combine(roaming, relative);
+        if (option != Environment.SpecialFolderOption.DoNotVerify) Directory.CreateDirectory(path);
+        return path;
+    }
+
+    // ---- System.Type: COM classes by ProgID and CLSID (ComServers: the registry's, and the servers run here;
+    // on Windows the system's) ----
+
+    public static Type? Type_GetTypeFromProgID(string progID) => ComServers.TypeFromProgID(progID, null, throwOnError: false);
+    public static Type? Type_GetTypeFromProgID(string progID, bool throwOnError) => ComServers.TypeFromProgID(progID, null, throwOnError);
+    public static Type? Type_GetTypeFromProgID(string progID, string? server) => ComServers.TypeFromProgID(progID, server, throwOnError: false);
+    public static Type? Type_GetTypeFromProgID(string progID, string? server, bool throwOnError) => ComServers.TypeFromProgID(progID, server, throwOnError);
+    public static Type? Type_GetTypeFromCLSID(Guid clsid) => ComServers.TypeFromCLSID(clsid, null, throwOnError: false);
+    public static Type? Type_GetTypeFromCLSID(Guid clsid, bool throwOnError) => ComServers.TypeFromCLSID(clsid, null, throwOnError);
+    public static Type? Type_GetTypeFromCLSID(Guid clsid, string? server) => ComServers.TypeFromCLSID(clsid, server, throwOnError: false);
+    public static Type? Type_GetTypeFromCLSID(Guid clsid, string? server, bool throwOnError) => ComServers.TypeFromCLSID(clsid, server, throwOnError);
 
     private static string? StateFolder(Environment.SpecialFolder folder, Environment.SpecialFolderOption option)
     {
