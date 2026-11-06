@@ -169,6 +169,22 @@ public class HttpSysShimTests
         await ok.StopAsync();
     }
 
+    [Fact]
+    public void A_reservation_netsh_wrote_is_read_from_its_binary_descriptor()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        // as a Windows machine's registry export has them: one for NETWORK SERVICE (GA), one for everyone (GX)
+        int port = FreePort();
+        Service.Reserve($"http://+:{port}/service/", Convert.FromHexString("010004800000000000000000000000001400000002001c00010000000000140000000010010100000000000514000000"));
+        Service.Reserve($"http://+:{port}/everyone/", Convert.FromHexString("010004800000000000000000000000001400000002001c00010000000000140000000020010100000000000100000000"));
+        var service = WpfWebGpu.HttpSys.SharedPrefix.Parse($"http://+:{port}/service/")!;
+        var everyone = WpfWebGpu.HttpSys.SharedPrefix.Parse($"http://+:{port}/everyone/sub/")!;
+        Assert.False(WpfWebGpu.HttpSys.UrlAcl.MayRegister(501, service, out string why));
+        Assert.Contains("does not let", why);
+        Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(0, service, out _));          // an elevated administrator
+        Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(501, everyone, out _));       // under the reserved path
+    }
+
     /// <summary>The machine's http.sys service for a test: its own registry folder, started on demand through the
     /// launcher built beside the tests, and stopped at the end.</summary>
     private sealed class Service : IDisposable
@@ -178,10 +194,10 @@ public class HttpSysShimTests
         public string Folder => _folder;
 
         /// <summary>A URL reservation, as netsh http add urlacl makes one (its descriptor as SDDL).</summary>
-        public static void Reserve(string url, string sddl)
+        public static void Reserve(string url, object descriptor)
         {
             using var key = RegistryShim::Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Services\HTTP\Parameters\UrlAclInfo");
-            key.SetValue(url, sddl);
+            key.SetValue(url, descriptor);
         }
 
         public static Service Start(string name)
