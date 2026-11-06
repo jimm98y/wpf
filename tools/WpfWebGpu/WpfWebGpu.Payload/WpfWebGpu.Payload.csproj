@@ -82,6 +82,10 @@
     <!-- access control lists (a mutex's, a file's, a registry key's), kept and read back, not enforced -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.AccessControl/System.Security.AccessControl.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />
+    <!-- a web host serving through http.sys (UseHttpSys): served by Kestrel, its URL prefixes routed as http.sys routes them -->
+    <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Server.HttpSys/Microsoft.AspNetCore.Server.HttpSys.csproj" />
+    <!-- Data Protection's key ring protected with DPAPI (ProtectKeysWithDpapi): crypt32's DPAPI the ProtectedData stand-in's -->
+    <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
   </ItemGroup>
 
 </Project>

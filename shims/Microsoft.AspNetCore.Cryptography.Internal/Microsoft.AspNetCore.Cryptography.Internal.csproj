@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Replacement for the shared framework's Microsoft.AspNetCore.Cryptography.Internal off Windows: ASP.NET Core's
+       own source (Runtime/, dotnet/aspnetcore v10.0.9, MIT) with crypt32's DPAPI answered by the ProtectedData
+       stand-in (Crypt32.cs), so a web host whose key ring is protected with DPAPI (ProtectKeysWithDpapi) runs as
+       it does on Windows instead of stopping at "requires Windows 7". CNG (bcrypt, ncrypt) stays Windows' own:
+       elsewhere Data Protection chooses its managed algorithms, as it always has. Same identity as the framework
+       assembly at a higher version, so the host binds it for Data Protection and KeyDerivation alike. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.AspNetCore.Cryptography.Internal</AssemblyName>
+    <RootNamespace>Microsoft.AspNetCore.Cryptography</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);NETCOREAPP</DefineConstants>
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>aspnetcore.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;CS1591;SYSLIB1054</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Microsoft.AspNetCore.Cryptography.KeyDerivation" Key="0024000004800000940000000602000000240000525341310004000001000100f33a29044fa9d740c9b3213a93e57c84b472c84e0b8a0e1ae48e67a9f8f6de9d5f7f3d52ac23e48ac51801f1dc950abe901da34d2a9e3baadb141a17c77ef3c565dd5ee5054b91cf63bb3c6ab83f72ab3aafe93d0fc3c2348b764fafb0b1c0733de51459aeab46580384bf9d74c4e28164b7cde247f891ba07891c9d872ad2bb" />
+    <InternalsVisibleTo Include="Microsoft.AspNetCore.DataProtection" Key="0024000004800000940000000602000000240000525341310004000001000100f33a29044fa9d740c9b3213a93e57c84b472c84e0b8a0e1ae48e67a9f8f6de9d5f7f3d52ac23e48ac51801f1dc950abe901da34d2a9e3baadb141a17c77ef3c565dd5ee5054b91cf63bb3c6ab83f72ab3aafe93d0fc3c2348b764fafb0b1c0733de51459aeab46580384bf9d74c4e28164b7cde247f891ba07891c9d872ad2bb" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+  </ItemGroup>
+
+</Project>

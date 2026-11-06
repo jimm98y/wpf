@@ -45,12 +45,18 @@
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" Aliases="PrincipalShim" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Security.AccessControl/System.Security.AccessControl.csproj" Aliases="AclShim" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Threading.AccessControl/System.Threading.AccessControl.csproj" Aliases="ThreadingAclShim" />
+    <!-- a web host on UseHttpSys with a DPAPI-protected key ring (HttpSysShimTests): framework members both -->
+    <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.AspNetCore.Server.HttpSys/Microsoft.AspNetCore.Server.HttpSys.csproj" />
+    <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
-  <!-- compiled against the shims' System.Net.Requests and System.Net.WebClient, not the framework's -->
+  <!-- compiled against the shims' System.Net.Requests, System.Net.WebClient, HttpSys and EventLog (ASP.NET Core's
+       framework carries one too), not the frameworks' -->
   <Target Name="WpfWebGpuNetShimsOnly" AfterTargets="ResolveTargetingPackAssets">
     <ItemGroup>
-      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'System.Net.Requests' or '%(Filename)' == 'System.Net.WebClient'" />
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'System.Net.Requests' or '%(Filename)' == 'System.Net.WebClient' or '%(Filename)' == 'Microsoft.AspNetCore.Server.HttpSys'
+                                                    or '%(Filename)' == 'System.Diagnostics.EventLog'" />
     </ItemGroup>
   </Target>
 
