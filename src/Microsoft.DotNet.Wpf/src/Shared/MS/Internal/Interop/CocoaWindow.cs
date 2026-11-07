@@ -2372,8 +2372,45 @@ namespace MS.Internal.Interop
             if (key == _wasKey) return;
             _wasKey = key;
             TraceWindow(key ? "ACTIVATE" : "DEACTIVATE");
+            if (key) RaiseOwned();
             ActiveChanged?.Invoke(key);
         }
+
+        // ---- owned windows ----------------------------------------------------------------------
+        //
+        // A window with an owner (Window.Owner, WindowInteropHelper.Owner, GWL_HWNDPARENT) is always above
+        // it on Windows: activating the owner brings the owned windows up with it. AppKit has no such
+        // relation short of a child window, which moves with its parent -- an owned window does not. An
+        // owner came forward and covered its dialog (app's SQL configuration, owned by its main window
+        // through WindowInteropHelper.Owner): the owned windows are ordered back above it here.
+
+        /// <summary>The owner set after the window was made: it is shown above it from now on.</summary>
+        public void SetOwner(IntPtr owner)
+        {
+            _ownerHandle = owner;
+            if (_window == IntPtr.Zero || owner == IntPtr.Zero || !SendBool(_window, Sel("isVisible"))) return;
+            CocoaWindow o = FromHandle(owner);
+            if (o != null && !ReferenceEquals(o, this) && o._window != IntPtr.Zero)
+                SendVoidNIntNInt(_window, Sel("orderWindow:relativeTo:"), 1, (nint)Send(o._window, Sel("windowNumber")));   // NSWindowAbove
+        }
+
+        private void RaiseOwned()
+        {
+            if (_window == IntPtr.Zero) return;
+            CocoaWindow[] all;
+            lock (s_lock) { all = new CocoaWindow[s_byHandle.Count]; s_byHandle.Values.CopyTo(all, 0); }
+            nint below = (nint)Send(_window, Sel("windowNumber"));
+            foreach (CocoaWindow w in all)
+            {
+                if (ReferenceEquals(w, this) || w._window == IntPtr.Zero || w._destroyedByUs || w._borderless || w._ownerHandle == IntPtr.Zero) continue;
+                if (!ReferenceEquals(FromHandle(w._ownerHandle), this) || !SendBool(w._window, Sel("isVisible"))) continue;
+                SendVoidNIntNInt(w._window, Sel("orderWindow:relativeTo:"), 1, below);   // NSWindowAbove
+                w.RaiseOwned();
+            }
+        }
+
+        [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+        private static extern void SendVoidNIntNInt(IntPtr receiver, IntPtr selector, nint a, nint b);
 
         private void CheckClosed()
         {

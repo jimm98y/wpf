@@ -383,6 +383,13 @@ namespace MS.Win32
         /// </remarks>
         private static void ApplyStyleOffWindows(HandleRef hWnd, int nIndex, IntPtr dwNewLong)
         {
+            // the owner (GWL_HWNDPARENT is the owner of a top-level window): what keeps a dialog above
+            // the window it belongs to
+            if (nIndex == NativeMethods.GWL_HWNDPARENT)
+            {
+                MS.Internal.Interop.PlatformWindow.FromHandle(hWnd.Handle)?.SetOwner(dwNewLong);
+                return;
+            }
             if (nIndex != NativeMethods.GWL_STYLE)
             {
                 return;
