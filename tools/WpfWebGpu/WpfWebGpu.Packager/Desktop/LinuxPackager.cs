@@ -77,7 +77,7 @@ public static class LinuxPackager
             }
             foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             {
-                string id = pkg + "-" + DesktopCommon.Segment(Path.GetFileNameWithoutExtension(app.Exe));
+                string id = pkg + "-" + DesktopCommon.Segment(DesktopCommon.ProgramName(app));
                 tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, id, root, state, manifest.Product.OsIdentity), executable: false);
                 if (DesktopCommon.Icon(manifest, app) is { } image)
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));

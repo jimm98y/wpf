@@ -29,6 +29,9 @@ public static class MacPackager
     {
         if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (pkgbuild)");
         string product = manifest.Product.Name;
+        // the folders an upgrade clears are named by it: never /Applications itself
+        if (product.Trim().Length == 0 || product.Contains('/') || product is "." or "..")
+            throw new PackagerError($"a product name names the installation's folders: \"{product}\" cannot");
         string arch = runtimePack["rid"].Split('-')[1];
         string id = manifest.Product.IdPrefix + "." + DesktopCommon.Segment(product);
         string root = "/Library/Application Support/" + product;
@@ -88,7 +91,7 @@ public static class MacPackager
         if (daemons.Contains(id + ".httpsys")) named.Insert(0, ("HTTP", id + ".httpsys"));
         File.WriteAllText(Path.Combine(home, "services.sh"), DesktopCommon.ServicesScript(product, named, mac: true));
         Executable(Path.Combine(home, "services.sh"));
-        File.WriteAllText(Path.Combine(scripts, "preinstall"), PreInstall(daemons));
+        File.WriteAllText(Path.Combine(scripts, "preinstall"), PreInstall(root, product, daemons));
         File.WriteAllText(Path.Combine(scripts, "postinstall"), PostInstall(root, daemons, Accounts(manifest, product)));
         Executable(Path.Combine(scripts, "preinstall"));
         Executable(Path.Combine(scripts, "postinstall"));
@@ -97,12 +100,25 @@ public static class MacPackager
         Run("/bin/chmod", "-R", "u+rwX,go+rX,go-w", payload);
         string component = Path.Combine(work, "component.pkg");
         log("  pkgbuild (compressing the payload takes a while)");
-        Run("/usr/bin/pkgbuild", "--root", payload, "--scripts", scripts, "--identifier", id, "--version", manifest.Product.Version,
-            "--install-location", "/", "--ownership", "recommended", component);
+        // the app stubs installed where they belong: pkgbuild makes a bundle relocatable, and the installer then
+        // updates whatever copy of it it finds instead (another folder, or <App>.localized/ beside the old one)
+        string components = Path.Combine(work, "components.plist");
+        Run("/usr/bin/pkgbuild", "--analyze", "--root", payload, components);
+        File.WriteAllText(components, System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(components),
+            @"(<key>BundleIsRelocatable</key>\s*)<true/>", "$1<false/>"));
+        Run("/usr/bin/pkgbuild", "--root", payload, "--component-plist", components, "--scripts", scripts, "--identifier", id,
+            "--version", manifest.Product.Version, "--install-location", "/", "--ownership", "recommended", component);
 
         Directory.CreateDirectory(outDir);
         string pkg = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-macos-{arch}.pkg");
-        var args = new List<string> { "--package", component, "--identifier", id, "--version", manifest.Product.Version };
+        // the product archive's Distribution, with the product's name as its title (what Installer and `installer`
+        // show; productbuild --package alone writes none)
+        string distribution = Path.Combine(work, "distribution.xml");
+        Run("/usr/bin/productbuild", "--synthesize", "--package", component, distribution);
+        var dist = System.Xml.Linq.XDocument.Load(distribution);
+        dist.Root!.AddFirst(new System.Xml.Linq.XElement("title", product));
+        dist.Save(distribution);
+        var args = new List<string> { "--distribution", distribution, "--package-path", work, "--identifier", id, "--version", manifest.Product.Version };
         if (manifest.Signing.DeveloperIdInstaller.Length > 0) { args.Add("--sign"); args.Add(manifest.Signing.DeveloperIdInstaller); }
         args.Add(pkg);
         Run("/usr/bin/productbuild", args.ToArray());
@@ -224,7 +240,7 @@ public static class MacPackager
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             <plist version="1.0">
             <dict>
-              <key>CFBundleIdentifier</key><string>{X(id + "." + DesktopCommon.Segment(Path.GetFileNameWithoutExtension(app.Exe)))}</string>
+              <key>CFBundleIdentifier</key><string>{X(id + "." + DesktopCommon.Segment(DesktopCommon.ProgramName(app)))}</string>
               <key>CFBundleName</key><string>{X(name)}</string>
               <key>CFBundleDisplayName</key><string>{X(name)}</string>
               <key>CFBundleExecutable</key><string>{exeName}</string>
@@ -239,10 +255,19 @@ public static class MacPackager
             """);
     }
 
-    private static string PreInstall(List<string> daemons) => $"""
+    // an upgrade: the services stopped before their files are replaced, and the previous version's programs and app
+    // stubs removed, so that what the new version no longer has is gone (as an MSI upgrade removes it); the machine's
+    // state stays
+    // (launchctl bootout returns before a slow service has gone, and a label still going cannot be bootstrapped:
+    // each is waited for, up to half a minute)
+    private static string PreInstall(string root, string product, List<string> daemons) => $$"""
         #!/bin/sh
-        # an upgrade: the services stopped before their files are replaced
-        {string.Concat(daemons.Select(d => $"launchctl bootout system/{d} 2>/dev/null || true\n"))}exit 0
+        stop() {
+          launchctl bootout system/"$1" 2>/dev/null || return 0
+          i=0; while launchctl print system/"$1" >/dev/null 2>&1 && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
+        }
+        {{string.Concat(daemons.Select(d => $"stop {d}\n"))}}rm -rf "{{root}}/app" "{{root}}/runtime" "/Applications/{{product}}"
+        exit 0
 
         """;
 
@@ -302,9 +327,18 @@ public static class MacPackager
         chgrp -R staff "$STATE" 2>/dev/null || true
         chmod -R g+rwX "$STATE"
         mkdir -p "/Library/Logs/{{Path.GetFileName(root)}}" 2>/dev/null || true
+        # a service started, again while launchd is still letting go of the previous version's (up to ten seconds)
+        start() {
+          i=0
+          until launchctl bootstrap system "/Library/LaunchDaemons/$1.plist" 2>/dev/null; do
+            launchctl print system/"$1" >/dev/null 2>&1 && return 0
+            i=$((i+1)); if [ $i -ge 10 ]; then echo "could not start $1" >&2; return 0; fi
+            sleep 1
+          done
+        }
         if [ -z "$WPFPKG_ROOT" ]; then
         {{accounts}}
-        {{string.Concat(daemons.Select(d => $"  launchctl bootstrap system \"/Library/LaunchDaemons/{d}.plist\" 2>/dev/null || true\n"))}}fi
+        {{string.Concat(daemons.Select(d => $"  start {d}\n"))}}fi
         exit 0
 
         """;

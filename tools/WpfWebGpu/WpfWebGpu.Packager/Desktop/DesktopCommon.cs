@@ -14,6 +14,19 @@ internal static class DesktopCommon
         return sb.Length == 0 ? "app" : sb.ToString();
     }
 
+    private static readonly string[] s_architectureSuffixes = { "_ARM64", "_x64", "_x86" };
+
+    /// <summary>The program an app entry is, whichever processor's executable it names: App for App.exe and for
+    /// App_ARM64.exe alike (a product's per-processor executables), so that what is installed for it (an app
+    /// bundle's identifier, a .desktop entry) is the same app from one package to the next.</summary>
+    public static string ProgramName(AppEntry app)
+    {
+        string name = Path.GetFileNameWithoutExtension(app.Exe);
+        foreach (string suffix in s_architectureSuffixes)
+            if (name.Length > suffix.Length && name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return name[..^suffix.Length];
+        return name;
+    }
+
     public static string FileName(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ':' ? '_' : c));
 
     /// <summary>The app's own icon (its .exe's), else the product's.</summary>
