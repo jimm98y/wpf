@@ -101,13 +101,11 @@ namespace System.Net.WebSockets
                 }
                 else
                 {
-                    // AuthenticationSchemes.Digest, AuthenticationSchemes.Negotiate, AuthenticationSchemes.NTLM.
-#if TARGET_WINDOWS
+                    // AuthenticationSchemes.Digest, AuthenticationSchemes.Negotiate, AuthenticationSchemes.NTLM: a local caller's
+                    // account here (HttpSysEndpoints.LocalWindowsUser), copied by its token as on Windows -- the Principal
+                    // stand-in has a token for each account
                     WindowsIdentity windowsIdentity = (WindowsIdentity)user.Identity!;
                     return new WindowsPrincipal(new WindowsIdentity(windowsIdentity.Token, windowsIdentity.AuthenticationType!, WindowsAccountType.Normal, true));
-#else
-                    throw new PlatformNotSupportedException();
-#endif
 
                 }
             }

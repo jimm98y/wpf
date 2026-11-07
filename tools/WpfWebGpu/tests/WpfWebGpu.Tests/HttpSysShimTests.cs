@@ -149,6 +149,14 @@ public class HttpSysShimTests
             {
                 System.Net.HttpListenerContext c;
                 try { c = await listener.GetContextAsync(); } catch (Exception) { return; }
+                if (c.Request.IsWebSocketRequest)
+                {
+                    // the user carried into the WebSocket's context, as Windows copies it
+                    var ws = await c.AcceptWebSocketAsync(null);
+                    byte[] name = System.Text.Encoding.UTF8.GetBytes(ws.User?.Identity?.Name ?? "");
+                    await ws.WebSocket.SendAsync(name, System.Net.WebSockets.WebSocketMessageType.Text, true, CancellationToken.None);
+                    continue;
+                }
                 var identity = c.User?.Identity;
                 byte[] body = System.Text.Encoding.UTF8.GetBytes($"{identity?.IsAuthenticated}|{identity?.Name}");
                 c.Response.OutputStream.Write(body);
@@ -168,6 +176,13 @@ public class HttpSysShimTests
             Assert.Equal(System.Net.HttpStatusCode.OK, r?.StatusCode);
             string expected = PrincipalShim::System.Security.Principal.WindowsIdentity.GetCurrent().Name;
             Assert.Equal($"True|{expected}", await r!.Content.ReadAsStringAsync());
+            using (var ws = new System.Net.WebSockets.ClientWebSocket())
+            {
+                await ws.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/auth/ws"), CancellationToken.None);
+                var buffer = new byte[256];
+                var got = await ws.ReceiveAsync(buffer, new CancellationTokenSource(5000).Token);
+                Assert.Equal(expected, System.Text.Encoding.UTF8.GetString(buffer, 0, got.Count));
+            }
 
             // the same facts written straight to the listener's own loopback port, root claimed: not the service's, not taken
             var server = WpfWebGpu.HttpSys.HttpSysRegistry.Read().Single(x => x.ProcessId == Environment.ProcessId && x.Prefixes.Any(p => p.Port == port));
