@@ -35,6 +35,13 @@ namespace System.Net
             if (expectedSchemes == AuthenticationSchemes.Anonymous)
                 return;
 
+            // Windows authentication of a local caller, as Windows authenticates one (HttpSysEndpoints.cs)
+            if (HttpSysEndpoints.LocalWindowsUser(expectedSchemes, Request) is IPrincipal local)
+            {
+                _user = local;
+                return;
+            }
+
             string? header = Request.Headers[HttpKnownHeaderNames.Authorization];
             if (string.IsNullOrEmpty(header))
                 return;

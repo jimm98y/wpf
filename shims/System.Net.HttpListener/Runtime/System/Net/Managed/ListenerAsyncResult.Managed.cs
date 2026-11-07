@@ -130,7 +130,8 @@ namespace System.Net
 
                 if (context.AuthenticationSchemes != AuthenticationSchemes.None &&
                     (context.AuthenticationSchemes & AuthenticationSchemes.Anonymous) != AuthenticationSchemes.Anonymous &&
-                    (context.AuthenticationSchemes & AuthenticationSchemes.Basic) != AuthenticationSchemes.Basic)
+                    (context.AuthenticationSchemes & AuthenticationSchemes.Basic) != AuthenticationSchemes.Basic &&
+                    HttpSysEndpoints.LocalWindowsUser(context.AuthenticationSchemes, context.Request) == null)
                 {
                     authFailure = true;
                     context.Response.StatusCode = (int)HttpStatusCode.Unauthorized;

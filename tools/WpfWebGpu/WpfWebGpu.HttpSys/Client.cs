@@ -9,8 +9,23 @@ namespace WpfWebGpu.HttpSys;
 public static class HttpSysClient
 {
     /// <summary>What the service tells a server about a request's connection: scheme;local address;local port;remote
-    /// address;remote port, as http.sys would have.</summary>
+    /// address;remote port;the caller's uid where it is on this machine, as http.sys would have.</summary>
     public const string ConnectionHeader = "X-WpfWebGpu-HttpSys";
+
+    /// <summary>The registering process's key (HttpSysRegistry.ProcessKey), with which the service vouches for the
+    /// connection facts it sends.</summary>
+    public const string KeyHeader = "X-WpfWebGpu-HttpSys-Key";
+
+    /// <summary>The connection facts of a request, where the service vouched for them with this process's key; null
+    /// otherwise (anything at the loopback port could have written them). Both headers are the caller's to remove.</summary>
+    public static string[]? VouchedFacts(string? facts, string? key)
+    {
+        if (facts == null || key == null) return null;
+        if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                System.Text.Encoding.ASCII.GetBytes(key), System.Text.Encoding.ASCII.GetBytes(HttpSysRegistry.ProcessKey))) return null;
+        string[] f = facts.Split(';');
+        return f.Length >= 5 ? f : null;
+    }
 
     internal static FileStream? TryLock(string folder)
     {

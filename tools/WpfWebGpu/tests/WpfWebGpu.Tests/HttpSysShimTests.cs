@@ -1,3 +1,4 @@
+extern alias PrincipalShim;
 extern alias RegistryShim;
 
 using System.Net;
@@ -130,6 +131,109 @@ public class HttpSysShimTests
             await two.StopAsync();
             await two.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task Windows_authentication_of_a_local_caller_is_its_account_and_only_the_service_vouches_for_it()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        using var service = Service.Start("httpsys-auth");
+        int port = FreePort();
+        Service.Reserve($"http://+:{port}/", "D:(A;;GX;;;WD)");
+        using var listener = new System.Net.HttpListener { AuthenticationSchemes = System.Net.AuthenticationSchemes.IntegratedWindowsAuthentication };
+        listener.Prefixes.Add($"http://+:{port}/auth/");
+        listener.Start();
+        var serving = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                System.Net.HttpListenerContext c;
+                try { c = await listener.GetContextAsync(); } catch (Exception) { return; }
+                var identity = c.User?.Identity;
+                byte[] body = System.Text.Encoding.UTF8.GetBytes($"{identity?.IsAuthenticated}|{identity?.Name}");
+                c.Response.OutputStream.Write(body);
+                c.Response.Close();
+            }
+        });
+        using var client = new HttpClient();
+        try
+        {
+            // through the machine's service: this process's account, asked nothing
+            HttpResponseMessage? r = null;
+            for (int t = 0; t < 60; t++)
+            {
+                try { r = await client.GetAsync($"http://127.0.0.1:{port}/auth/x"); if (r.IsSuccessStatusCode) break; } catch (HttpRequestException) { }
+                await Task.Delay(250);
+            }
+            Assert.Equal(System.Net.HttpStatusCode.OK, r?.StatusCode);
+            string expected = PrincipalShim::System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+            Assert.Equal($"True|{expected}", await r!.Content.ReadAsStringAsync());
+
+            // the same facts written straight to the listener's own loopback port, root claimed: not the service's, not taken
+            var server = WpfWebGpu.HttpSys.HttpSysRegistry.Read().Single(x => x.ProcessId == Environment.ProcessId && x.Prefixes.Any(p => p.Port == port));
+            var forged = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{server.LocalPort}/auth/x");
+            forged.Headers.Host = $"127.0.0.1:{port}";
+            forged.Headers.TryAddWithoutValidation(WpfWebGpu.HttpSys.HttpSysClient.ConnectionHeader, $"http;127.0.0.1;{port};127.0.0.1;50000;0");
+            forged.Headers.TryAddWithoutValidation(WpfWebGpu.HttpSys.HttpSysClient.KeyHeader, "0123456789ABCDEF0123456789ABCDEF");
+            Assert.Equal(System.Net.HttpStatusCode.Unauthorized, (await client.SendAsync(forged)).StatusCode);
+        }
+        finally
+        {
+            listener.Stop();
+            await serving;
+        }
+    }
+
+    [Fact]
+    public async Task A_WebSocket_s_response_closed_after_the_upgrade_leaves_the_connection_to_the_WebSocket()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        using var service = Service.Start("httpsys-ws");
+        int port = FreePort();
+        Service.Reserve($"http://+:{port}/", "D:(A;;GX;;;WD)");
+        using var listener = new System.Net.HttpListener();
+        listener.Prefixes.Add($"http://+:{port}/ws/");
+        listener.Start();
+        var serving = Task.Run(async () =>
+        {
+            var c = await listener.GetContextAsync();
+            var ws = await c.AcceptWebSocketAsync(null);
+            c.Response.Close();                          // done with the response, as a server may be once upgraded
+            await ws.WebSocket.SendAsync("hello"u8.ToArray(), System.Net.WebSockets.WebSocketMessageType.Text, true, CancellationToken.None);
+            await Task.Delay(500);
+        });
+        try
+        {
+            using var client = new System.Net.WebSockets.ClientWebSocket();
+            for (int t = 0; ; t++)
+            {
+                try { await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/ws/"), CancellationToken.None); break; }
+                catch (System.Net.WebSockets.WebSocketException) when (t < 40) { await Task.Delay(250); }
+            }
+            var buffer = new byte[64];
+            var r = await client.ReceiveAsync(buffer, new CancellationTokenSource(5000).Token);
+            Assert.Equal("hello", System.Text.Encoding.UTF8.GetString(buffer, 0, r.Count));
+        }
+        finally
+        {
+            await serving.WaitAsync(TimeSpan.FromSeconds(10));
+            listener.Stop();
+        }
+    }
+
+    [Fact]
+    public void The_account_behind_a_loopback_connection_is_found()
+    {
+        Assert.SkipWhen(!OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux(), "the machine's own sockets");
+        using var server = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        server.Start();
+        int serverPort = ((System.Net.IPEndPoint)server.LocalEndpoint).Port;
+        using var client = new System.Net.Sockets.TcpClient();
+        client.Connect(System.Net.IPAddress.Loopback, serverPort);
+        using var accepted = server.AcceptTcpClient();
+        int clientPort = ((System.Net.IPEndPoint)client.Client.LocalEndPoint!).Port;
+        Assert.Equal(WpfWebGpu.HttpSys.UrlAcl.CurrentUid(), WpfWebGpu.HttpSys.LocalPeers.UidOf(System.Net.IPAddress.Loopback, clientPort, serverPort));
+        Assert.Null(WpfWebGpu.HttpSys.LocalPeers.UidOf(System.Net.IPAddress.Parse("10.1.2.3"), clientPort, serverPort));   // not on this machine
     }
 
     [Fact]

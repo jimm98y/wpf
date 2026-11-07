@@ -33,6 +33,7 @@
   <ItemGroup>
     <!-- the machine's prefixes and its http.sys service -->
     <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
+    <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 
   <Target Name="WpfWebGpuShimsOnly" AfterTargets="ResolveTargetingPackAssets">

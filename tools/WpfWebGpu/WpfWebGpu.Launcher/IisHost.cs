@@ -133,11 +133,12 @@ internal sealed class IisHost
     {
         var request = context.Request;
         // the connection http.sys took, as it hands a request over (scheme;local address;local port;remote address;remote port)
-        string[] facts = (request.Headers[HttpSysClient.ConnectionHeader].ToString()).Split(';');
+        string[] facts = HttpSysClient.VouchedFacts(request.Headers[HttpSysClient.ConnectionHeader].ToString(), request.Headers[HttpSysClient.KeyHeader].ToString()) ?? Array.Empty<string>();
         request.Headers.Remove(HttpSysClient.ConnectionHeader);
-        string scheme = facts.Length == 5 ? facts[0] : request.Scheme;
-        int port = facts.Length == 5 && int.TryParse(facts[2], NumberStyles.None, CultureInfo.InvariantCulture, out int p) ? p : request.Host.Port ?? 80;
-        string remote = facts.Length == 5 ? facts[3] : context.Connection.RemoteIpAddress?.ToString() ?? "";
+        request.Headers.Remove(HttpSysClient.KeyHeader);
+        string scheme = facts.Length >= 5 ? facts[0] : request.Scheme;
+        int port = facts.Length >= 5 && int.TryParse(facts[2], NumberStyles.None, CultureInfo.InvariantCulture, out int p) ? p : request.Host.Port ?? 80;
+        string remote = facts.Length >= 5 ? facts[3] : context.Connection.RemoteIpAddress?.ToString() ?? "";
         string path = (request.PathBase + request.Path).Value is { Length: > 0 } v ? v : "/";
 
         var app = _apps

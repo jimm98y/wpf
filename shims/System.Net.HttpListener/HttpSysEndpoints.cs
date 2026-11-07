@@ -13,7 +13,7 @@ using WpfWebGpu.HttpSys;
 
 namespace System.Net
 {
-    internal static class HttpSysEndpoints
+    internal static partial class HttpSysEndpoints
     {
         private sealed class Port
         {
@@ -95,23 +95,47 @@ namespace System.Net
         }
     }
 
+    internal static partial class HttpSysEndpoints
+    {
+        /// <summary>
+        /// Windows authentication (Negotiate, NTLM) of a caller on this machine: the account its process runs as, which
+        /// the machine's http.sys service learned from the connection (its other end's owner), as Windows authenticates
+        /// a local caller -- a service as its account, a user's program as the user -- without asking anything of it.
+        /// Null where the request is not Windows-authenticated so (a remote caller, Windows authentication not asked).
+        /// </summary>
+        public static System.Security.Principal.IPrincipal? LocalWindowsUser(AuthenticationSchemes schemes, HttpListenerRequest request)
+        {
+            if ((schemes & (AuthenticationSchemes.Negotiate | AuthenticationSchemes.Ntlm)) == 0 || request.LocalPeerUid is not uint uid) return null;
+            string? user = WpfWebGpu.Services.WindowsAccounts.UserName(uid);
+            if (user == null) return null;
+            try { return new System.Security.Principal.WindowsPrincipal(new System.Security.Principal.WindowsIdentity(user + "@" + Environment.MachineName)); }
+            catch (System.Security.SecurityException) { return null; }
+        }
+    }
+
     public sealed partial class HttpListenerRequest
     {
-        private sealed record ConnectionFacts(bool Secure, IPEndPoint? Local, IPEndPoint? Remote);
+        private sealed record ConnectionFacts(bool Secure, IPEndPoint? Local, IPEndPoint? Remote, uint? PeerUid);
+
+        /// <summary>The account of the process at the connection's other end, where it is on this machine.</summary>
+        internal uint? LocalPeerUid => _facts?.PeerUid;
 
         private ConnectionFacts? _facts;
 
-        // scheme;local address;local port;remote address;remote port, as the machine's http.sys service forwards them
+        // scheme;local address;local port;remote address;remote port[;local caller's uid], as the machine's http.sys
+        // service forwards them
         private void TakeConnectionFacts()
         {
             string? header = _headers[HttpSysClient.ConnectionHeader];
-            if (header == null) return;
+            string? key = _headers[HttpSysClient.KeyHeader];
             _headers.Remove(HttpSysClient.ConnectionHeader);
-            string[] f = header.Split(';');
-            if (f.Length != 5) return;
+            _headers.Remove(HttpSysClient.KeyHeader);
+            // vouched for with this process's key: anything else at the loopback port could have written it
+            if (HttpSysClient.VouchedFacts(header, key) is not { } f) return;
             static IPEndPoint? EndPoint(string address, string port) =>
                 IPAddress.TryParse(address, out var a) && int.TryParse(port, NumberStyles.None, CultureInfo.InvariantCulture, out int p) ? new IPEndPoint(a, p) : null;
-            _facts = new ConnectionFacts(f[0].Equals("https", StringComparison.OrdinalIgnoreCase), EndPoint(f[1], f[2]), EndPoint(f[3], f[4]));
+            uint? peer = f.Length > 5 && uint.TryParse(f[5], NumberStyles.None, CultureInfo.InvariantCulture, out uint u) ? u : null;
+            _facts = new ConnectionFacts(f[0].Equals("https", StringComparison.OrdinalIgnoreCase), EndPoint(f[1], f[2]), EndPoint(f[3], f[4]), peer);
         }
     }
 }

@@ -31,6 +31,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
     <!-- the machine's prefixes and its http.sys service (tools/WpfWebGpu/WpfWebGpu.HttpSys) -->
     <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
+    <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 
   <Target Name="WpfWebGpuShimsOnly" AfterTargets="ResolveTargetingPackAssets">

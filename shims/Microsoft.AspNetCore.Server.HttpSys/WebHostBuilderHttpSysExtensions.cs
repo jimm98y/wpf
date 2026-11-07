@@ -173,9 +173,15 @@ namespace Microsoft.AspNetCore.Hosting
         {
             var request = context.Request;
             // the connection as the service took it (what http.sys would have told this process)
-            if (request.Headers.TryGetValue(HttpSysClient.ConnectionHeader, out var facts) && facts.ToString().Split(';') is { Length: 5 } f)
+            // -- vouched for with this process's key: anything else at the loopback port could have written it
+            uint? caller = null;
+            string? factsText = request.Headers.TryGetValue(HttpSysClient.ConnectionHeader, out var facts) ? facts.ToString() : null;
+            string? keyText = request.Headers.TryGetValue(HttpSysClient.KeyHeader, out var key) ? key.ToString() : null;
+            request.Headers.Remove(HttpSysClient.ConnectionHeader);
+            request.Headers.Remove(HttpSysClient.KeyHeader);
+            if (HttpSysClient.VouchedFacts(factsText, keyText) is { } f)
             {
-                request.Headers.Remove(HttpSysClient.ConnectionHeader);
+                if (f.Length > 5 && uint.TryParse(f[5], out uint uid)) caller = uid;
                 request.Scheme = f[0];
                 var c = context.Connection;
                 if (IPAddress.TryParse(f[1], out var localIp)) c.LocalIpAddress = localIp;
@@ -196,6 +202,13 @@ namespace Microsoft.AspNetCore.Hosting
             request.Path = baseLength < full.Length ? new PathString(full[baseLength..]) : PathString.Empty;
 
             var auth = _options.Authentication;
+            // Windows authentication of a caller on this machine: its process's account, as Windows authenticates one
+            if (caller is uint local && (auth.Schemes & (AuthenticationSchemes.Negotiate | AuthenticationSchemes.NTLM)) != 0
+                && WindowsAuthenticationHandler.LocalUser(local) is { } user)
+            {
+                context.User = user;
+                return next(context);
+            }
             if (auth.Schemes != AuthenticationSchemes.None && !auth.AllowAnonymous)
             {
                 WindowsAuthenticationHandler.Challenge(context.Response, auth.Schemes);
@@ -207,8 +220,9 @@ namespace Microsoft.AspNetCore.Hosting
     }
 
     /// <summary>
-    /// http.sys's "Windows" scheme: who a request authenticated as with Negotiate, NTLM or Basic. There is no Windows
-    /// authentication here, so a request is anonymous; a challenge asks for the schemes as http.sys asks.
+    /// http.sys's "Windows" scheme: who a request authenticated as with Negotiate, NTLM or Basic. A caller on this
+    /// machine is its process's account (the http.sys service found it); any other is anonymous, there being no
+    /// Windows authentication here to verify it, and a challenge asks for the schemes as http.sys asks.
     /// </summary>
     internal sealed class WindowsAuthenticationHandler : IAuthenticationHandler
     {
@@ -223,7 +237,20 @@ namespace Microsoft.AspNetCore.Hosting
             return Task.CompletedTask;
         }
 
-        public Task<AuthenticateResult> AuthenticateAsync() => Task.FromResult(AuthenticateResult.NoResult());
+        public Task<AuthenticateResult> AuthenticateAsync() =>
+            Task.FromResult(_context?.User?.Identity is System.Security.Principal.WindowsIdentity { IsAuthenticated: true } windows
+                ? AuthenticateResult.Success(new AuthenticationTicket(_context.User, HttpSysDefaults.AuthenticationScheme))
+                : AuthenticateResult.NoResult());
+
+        /// <summary>The account <paramref name="uid"/> as a Windows principal: a caller on this machine, authenticated
+        /// as Windows authenticates one (Negotiate over the loopback) -- by its account, asked nothing.</summary>
+        internal static System.Security.Claims.ClaimsPrincipal? LocalUser(uint uid)
+        {
+            string? user = WpfWebGpu.Services.WindowsAccounts.UserName(uid);
+            if (user == null) return null;
+            try { return new System.Security.Principal.WindowsPrincipal(new System.Security.Principal.WindowsIdentity(user + "@" + Environment.MachineName)); }
+            catch (System.Security.SecurityException) { return null; }
+        }
 
         public Task ChallengeAsync(AuthenticationProperties? properties)
         {

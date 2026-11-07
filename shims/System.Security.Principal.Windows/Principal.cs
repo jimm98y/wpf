@@ -511,20 +511,37 @@ namespace System.Security.Principal
             Sid = new SecurityIdentifier(5, 7), Name = "", Groups = Array.Empty<SecurityIdentifier>(), Token = s_anonymousToken,
         };
 
-        private static Account MakeCurrent()
+        private static Account MakeCurrent() => MakeFor(Native.Uid(), Environment.UserName, s_currentToken, current: true);
+
+        // Another account of this machine, as a server sees a local caller it authenticated (Windows authentication over
+        // the loopback: the account the connection's other end runs as), with a token of its own.
+        private static readonly Dictionary<uint, Account> s_byUid = new Dictionary<uint, Account>();
+        private const long OtherTokens = 0x7E58_0000;
+
+        internal static Account ForUid(uint uid)
         {
-            uint uid = Native.Uid();
+            if (uid == Native.Uid()) return Current;
+            lock (s_byUid)
+            {
+                if (!s_byUid.TryGetValue(uid, out Account account))
+                    s_byUid[uid] = account = MakeFor(uid, Native.UserName(uid) ?? uid.ToString(CultureInfo.InvariantCulture), new IntPtr(OtherTokens + uid), current: false);
+                return account;
+            }
+        }
+
+        private static Account MakeFor(uint uid, string userName, IntPtr token, bool current)
+        {
             if (uid == 0)
                 return new Account
                 {
-                    Sid = new SecurityIdentifier(5, 18), Name = NtAuthority + "\\SYSTEM", Token = s_currentToken,
+                    Sid = new SecurityIdentifier(5, 18), Name = NtAuthority + "\\SYSTEM", Token = token,
                     Groups = new[] { new SecurityIdentifier(5, 32, 544), new SecurityIdentifier(1, 0), new SecurityIdentifier(5, 11), new SecurityIdentifier(16, 16384) },
                 };
             // the machine's service accounts (the installers make them): NETWORK SERVICE, LOCAL SERVICE, as Windows'
             if (ServiceAccount(Native.UserName(uid)) is (SecurityIdentifier serviceSid, string serviceName))
                 return new Account
                 {
-                    Sid = serviceSid, Name = NtAuthority + "\\" + serviceName, Token = s_currentToken,
+                    Sid = serviceSid, Name = NtAuthority + "\\" + serviceName, Token = token,
                     Groups = new[]
                     {
                         new SecurityIdentifier(1, 0),         // Everyone
@@ -541,7 +558,7 @@ namespace System.Security.Principal
                 Domain(513),                          // MACHINE\None: a workgroup PC's local users
                 new SecurityIdentifier(1, 0),         // Everyone
             };
-            if (Native.InAdminGroup()) groups.Add(new SecurityIdentifier(5, 32, 544));   // BUILTIN\Administrators
+            if (current && Native.InAdminGroup()) groups.Add(new SecurityIdentifier(5, 32, 544));   // BUILTIN\Administrators
             groups.Add(new SecurityIdentifier(5, 32, 545));                               // BUILTIN\Users
             groups.Add(new SecurityIdentifier(5, 4));                                     // INTERACTIVE
             groups.Add(new SecurityIdentifier(2, 1));                                     // CONSOLE LOGON
@@ -551,8 +568,8 @@ namespace System.Security.Principal
             groups.Add(new SecurityIdentifier(5, 64, 10));                                // NTLM Authentication
             return new Account
             {
-                Sid = Domain(RidOfUid(uid)), Name = Environment.UserDomainName + "\\" + Environment.UserName,
-                Groups = groups.ToArray(), Token = s_currentToken,
+                Sid = Domain(RidOfUid(uid)), Name = Environment.UserDomainName + "\\" + userName,
+                Groups = groups.ToArray(), Token = token,
             };
         }
 
@@ -567,14 +584,23 @@ namespace System.Security.Principal
         };
 
         internal static Account FromToken(IntPtr token)
-            => token == s_currentToken ? Current : token == s_anonymousToken ? Anonymous : null;
+        {
+            if (token == s_currentToken) return Current;
+            if (token == s_anonymousToken) return Anonymous;
+            long t = token.ToInt64();
+            if (t >= OtherTokens && t < OtherTokens + uint.MaxValue)
+                lock (s_byUid) return s_byUid.TryGetValue((uint)(t - OtherTokens), out Account a) ? a : null;
+            return null;
+        }
 
+        /// <summary>The account a user principal name names: this machine's local account of that name (its service
+        /// accounts and root -- SYSTEM -- included); null for any other, a domain controller's to know.</summary>
         internal static Account FromUpn(string upn)
         {
             if (upn is null) throw new ArgumentNullException("sUserPrincipalName");
             string user = upn.Split('@')[0];
             if (string.Equals(user, Environment.UserName, StringComparison.OrdinalIgnoreCase)) return Current;
-            return null;
+            return Native.Uid(user) is uint uid ? ForUid(uid) : null;
         }
 
         // ---- Windows' well-known SIDs and their names ------------------------------------------------

@@ -220,28 +220,42 @@ public static partial class HttpSysService
         }
         // an IPv4 peer as http.sys names it (127.0.0.1), not as the dual-mode socket does (::ffff:127.0.0.1)
         static IPAddress? Plain(IPAddress? a) => a is { IsIPv4MappedToIPv6: true } ? a.MapToIPv4() : a;
+        // the caller's account where it is on this machine (LocalPeers), found once for the connection
+        var items = context.Features.Get<Microsoft.AspNetCore.Connections.Features.IConnectionItemsFeature>()?.Items;
+        uint? peer;
+        if (items != null && items.TryGetValue(PeerKey, out object? known)) peer = (uint?)known;
+        else
+        {
+            peer = LocalPeers.UidOf(c.RemoteIpAddress, c.RemotePort, c.LocalPort);
+            if (items != null) items[PeerKey] = peer;
+        }
         string facts = string.Join(';', request.Scheme, Plain(c.LocalIpAddress), c.LocalPort.ToString(CultureInfo.InvariantCulture),
-            Plain(c.RemoteIpAddress), c.RemotePort.ToString(CultureInfo.InvariantCulture));
-        var error = await forwarder.SendAsync(context, $"http://127.0.0.1:{claim.Value.Port}", s_client, s_config, new Facts(facts));
+            Plain(c.RemoteIpAddress), c.RemotePort.ToString(CultureInfo.InvariantCulture), peer?.ToString(CultureInfo.InvariantCulture) ?? "");
+        string Key(int port) => s_servers.FirstOrDefault(s => s.LocalPort == port)?.Key ?? "";
+        var error = await forwarder.SendAsync(context, $"http://127.0.0.1:{claim.Value.Port}", s_client, s_config, new Facts(facts, Key(claim.Value.Port)));
         if (error == ForwarderError.None || context.Response.HasStarted) return;
         // its server unreachable: what the registry says now -- gone, it is answered as no prefix claimed it; its
         // prefix another's since, forwarded there; still registered, the server's queue is unavailable
         var now = Claim(Refresh(force: true));
         if (now == null) context.Response.StatusCode = StatusCodes.Status404NotFound;
         else if (now.Value.Port != claim.Value.Port && error == ForwarderError.Request)
-            await forwarder.SendAsync(context, $"http://127.0.0.1:{now.Value.Port}", s_client, s_config, new Facts(facts));
+            await forwarder.SendAsync(context, $"http://127.0.0.1:{now.Value.Port}", s_client, s_config, new Facts(facts, Key(now.Value.Port)));
         else context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
     }
 
     /// <summary>The request as it came, with what http.sys would have told the server about its connection.</summary>
-    private sealed class Facts(string facts) : HttpTransformer
+    private static readonly object PeerKey = new();
+
+    private sealed class Facts(string facts, string key) : HttpTransformer
     {
         public override async ValueTask TransformRequestAsync(HttpContext context, HttpRequestMessage proxy, string destinationPrefix, CancellationToken cancellation)
         {
             await base.TransformRequestAsync(context, proxy, destinationPrefix, cancellation);
             proxy.Headers.Host = context.Request.Host.Value;
             proxy.Headers.Remove(ConnectionHeader);
+            proxy.Headers.Remove(HttpSysClient.KeyHeader);
             proxy.Headers.TryAddWithoutValidation(ConnectionHeader, facts);
+            proxy.Headers.TryAddWithoutValidation(HttpSysClient.KeyHeader, key);
         }
     }
 }

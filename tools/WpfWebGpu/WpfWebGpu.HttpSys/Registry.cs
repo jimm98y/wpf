@@ -29,15 +29,28 @@ public static class HttpSysRegistry
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 
+    /// <summary>
+    /// This process's key: in its registrations, which only it and the service (root) may read, and sent back by the
+    /// service with every request it forwards (<see cref="HttpSysClient.KeyHeader"/>). What the service tells a server
+    /// about a connection -- its caller's account among it -- is taken only with the key: anything else at the server's
+    /// loopback port could have written it, where http.sys, in the kernel, cannot be stood in for.
+    /// </summary>
+    public static readonly string ProcessKey = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+
     /// <summary>Registers <paramref name="prefixes"/> as served on 127.0.0.1:<paramref name="localPort"/>, until
     /// disposed.</summary>
     public static IDisposable Register(int localPort, IEnumerable<SharedPrefix> prefixes)
     {
         string file = Path.Combine(EnsureFolder(), $"{Environment.ProcessId}-{localPort}.prefixes");
-        File.WriteAllLines(file, new[] { localPort.ToString(CultureInfo.InvariantCulture) }.Concat(prefixes.Select(p => p.FullPrefix)));
-        Mode(file, "644");
+        string temp = file + ".tmp";
+        File.WriteAllText(temp, "");
+        Mode(temp, "600");
+        File.WriteAllLines(temp, new[] { localPort.ToString(CultureInfo.InvariantCulture), KeyLine + ProcessKey }.Concat(prefixes.Select(p => p.FullPrefix)));
+        File.Move(temp, file, overwrite: true);
         return new Registration(file);
     }
+
+    private const string KeyLine = "key ";
 
     private sealed class Registration(string file) : IDisposable
     {
@@ -48,7 +61,7 @@ public static class HttpSysRegistry
     }
 
     /// <summary>A live server's registration, and the account that made it (its file's owner).</summary>
-    public sealed record Server(int ProcessId, int LocalPort, SharedPrefix[] Prefixes, uint Owner);
+    public sealed record Server(int ProcessId, int LocalPort, SharedPrefix[] Prefixes, uint Owner, string Key = "");
 
     /// <summary>Every live server's registration.</summary>
     public static List<Server> Read()
@@ -69,7 +82,8 @@ public static class HttpSysRegistry
                     if (UrlAcl.OwnerOf(file) is not uint owner) continue;
                     string[] lines = File.ReadAllLines(file);
                     if (lines.Length < 2 || !int.TryParse(lines[0], out int local)) continue;
-                    list.Add(new Server(pid, local, lines.Skip(1).Select(SharedPrefix.Parse).OfType<SharedPrefix>().ToArray(), owner));
+                    string key = lines.Skip(1).FirstOrDefault(l => l.StartsWith(KeyLine, StringComparison.Ordinal))?[KeyLine.Length..] ?? "";
+                    list.Add(new Server(pid, local, lines.Skip(1).Where(l => !l.StartsWith(KeyLine, StringComparison.Ordinal)).Select(SharedPrefix.Parse).OfType<SharedPrefix>().ToArray(), owner, key));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }
