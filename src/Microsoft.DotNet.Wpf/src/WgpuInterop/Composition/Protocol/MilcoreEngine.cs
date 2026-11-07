@@ -3280,8 +3280,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             return figures;
         }
 
-        // MIL_SEGMENT_*: Type@0, Flags@4, BackSize@8. Non-poly have ForcePacking@12 then points@16;
-        // poly have Count@12 then points@16. Returns the segment's byte size.
+        // MIL_SEGMENT_*: Type@0, Flags@4, BackSize@8. Line/Bezier have ForcePacking@12, an arc has
+        // LargeArc@12, a poly has Count@12; points follow from @16. Returns the segment's byte size.
         private static int ParsePathSegment(MilReader r, byte[] data, int segPos, PathFigure figure)
         {
             r.Position = segPos;
@@ -3298,13 +3298,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case 3: // Quadratic Bezier
                     figure.Segments.Add(new QuadraticBezierSegment(P(16), P(32)));
                     return 48;
-                case 4: // Arc (MIL_SEGMENT_ARC) -> cubic beziers. Point@16, Size(radii)@32,
-                {       // XRotation(deg)@48, eSweepDirection@56 (0=CCW, 1=CW), fLargeArc@60.
+                case 4: // Arc (MIL_SEGMENT_ARC) -> cubic beziers. LargeArc@12, Point@16,
+                {       // Size(radii)@32, XRotation(deg)@48, Sweep@56 (0=CCW, 1=CW), ForcePacking@60.
+                    // LargeArc sits in the slot the other non-poly segments leave as padding, not
+                    // at the end: reading it from ForcePacking (always 0) turned every large arc
+                    // into the SMALL arc between the same endpoints -- a 270-degree spinner ring
+                    // drew as a quarter circle bulging the other way, while layout (which bounds
+                    // the real geometry managed-side) still sized and stretched it as the ring.
+                    r.Position = segPos + 12; bool largeArc = r.U32() != 0;
                     Vector2 end = P(16);
                     Vector2 rad = P(32);
                     r.Position = segPos + 48; double xRotDeg = r.F64();
                     r.Position = segPos + 56; bool sweepClockwise = r.U32() != 0;
-                    r.Position = segPos + 60; bool largeArc = r.U32() != 0;
                     AddArcAsBeziers(figure, CurrentPoint(figure), end, (float)rad.X, (float)rad.Y,
                         (float)xRotDeg, largeArc, sweepClockwise);
                     return 64;

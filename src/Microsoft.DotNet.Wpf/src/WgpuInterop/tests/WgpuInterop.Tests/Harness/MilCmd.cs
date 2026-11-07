@@ -609,6 +609,46 @@ namespace WgpuInterop.Tests.Harness
             return cmd.ToArray();
         }
 
+        /// <summary>
+        /// MIL_PATHGEOMETRY carrying ONE open figure of a single MIL_SEGMENT_ARC, laid out exactly as
+        /// WPF's ByteStreamGeometryContext writes it: Type@0, Flags@4, BackSize@8, LargeArc@12,
+        /// Point@16, Size@32, XRotation@48, Sweep@56 (1 = clockwise), ForcePacking@60. LargeArc is
+        /// NOT next to Sweep -- it takes the slot the other non-poly segments leave as padding -- so
+        /// a decoder that guesses the layout from the field order reads it from ForcePacking and
+        /// sees every arc as the small one.
+        /// </summary>
+        public static byte[] PathGeometryArc(uint handle, uint hTransform,
+            (double X, double Y) start, (double X, double Y) end, double rx, double ry,
+            double xRotationDegrees, bool largeArc, bool clockwise)
+        {
+            const int segBytes = 64;
+            int figureSize = 40 + segBytes;
+            int blobSize = 48 + figureSize;
+
+            var blob = new Buf();
+            blob.U32((uint)blobSize); blob.U32(0);                 // MIL_PATHGEOMETRY: Size, Flags
+            blob.F64(0); blob.F64(0); blob.F64(0); blob.F64(0);    // Bounds
+            blob.U32(1); blob.U32(0);                              // FigureCount = 1, ForcePacking
+            blob.U32(0); blob.U32(0x8u);                           // MIL_PATHFIGURE: BackSize, Flags = IsFillable (open)
+            blob.U32(1); blob.U32((uint)figureSize);               // segment count, figure size
+            blob.F64(start.X); blob.F64(start.Y);                  // StartPoint
+            blob.U32(0); blob.U32(0);                              // OffsetToLastSegment, ForcePacking
+
+            blob.U32(4); blob.U32(0); blob.U32(0);                 // MIL_SEGMENT_ARC: Type, Flags, BackSize
+            blob.U32(largeArc ? 1u : 0u);                          // LargeArc@12
+            blob.F64(end.X); blob.F64(end.Y);                      // Point@16
+            blob.F64(rx); blob.F64(ry);                            // Size@32
+            blob.F64(xRotationDegrees);                            // XRotation@48
+            blob.U32(clockwise ? 1u : 0u);                         // Sweep@56
+            blob.U32(0);                                           // ForcePacking@60
+
+            byte[] blobBytes = blob.ToArray();
+            var cmd = new Buf();
+            cmd.U32(0x7d); cmd.U32(handle); cmd.U32(hTransform); cmd.U32(1); cmd.U32((uint)blobBytes.Length);
+            cmd.Raw(blobBytes);
+            return cmd.ToArray();
+        }
+
         // ---- misc --------------------------------------------------------------------------
 
         public static byte[] Concat(params byte[][] parts)
