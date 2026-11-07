@@ -91,6 +91,7 @@ namespace System.Net
         {
             if (Disposed)
                 return;
+            if (WebSocketAccepted) { Disposed = true; return; }   // the connection is the WebSocket's
 
             Close(false);
         }
@@ -339,5 +340,8 @@ namespace System.Net
 
         private bool Disposed { get; set; }
         internal bool SentHeaders { get; set; }
+
+        /// <summary>The request was accepted as a WebSocket: the connection is the WebSocket's from then on.</summary>
+        internal bool WebSocketAccepted { get; set; }
     }
 }

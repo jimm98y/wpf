@@ -55,6 +55,8 @@ namespace System.Net
 
         private void DisposeCore()
         {
+            // a WebSocket's request: its response went out with the handshake, and its connection is the WebSocket's
+            if (_response.WebSocketAccepted) return;
             byte[]? bytes;
             MemoryStream? ms = GetHeaders(true);
             bool chunked = _response.SendChunked;

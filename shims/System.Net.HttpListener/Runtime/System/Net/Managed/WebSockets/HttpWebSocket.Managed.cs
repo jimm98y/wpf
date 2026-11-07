@@ -56,6 +56,9 @@ namespace System.Net.WebSockets
 
             // Send websocket handshake headers
             await responseStream.WriteWebSocketHandshakeHeadersAsync().ConfigureAwait(false);
+            // the request is now the WebSocket's: its response is done, as http.sys has it after an upgrade, and closing or
+            // disposing it neither writes its headers again nor closes the connection the WebSocket runs on
+            response.WebSocketAccepted = true;
 
             WebSocket rawWebSocket = WebSocket.CreateFromStream(context.Connection.ConnectedStream, isServer: true, subProtocol, keepAliveInterval);
 
