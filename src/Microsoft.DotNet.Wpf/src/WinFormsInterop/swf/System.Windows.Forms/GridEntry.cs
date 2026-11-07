@@ -338,17 +338,18 @@ namespace System.Windows.Forms.PropertyGridInternal
 			var converter = GetConverter();
 			var convertContext = (ITypeDescriptorContext)this;
 
+			// as .NET's grid does it (GetPropertyTextValue): the converter asked to convert, whatever it says it
+			// can do -- WPF's KeyConverter.CanConvertTo casts the context's instance (here the component, not the
+			// key) and throws -- and a value it cannot convert shown as no text
 			var convertedValue = (string)null;
-			if (converter != null && converter.CanConvertTo (convertContext, typeof (string))) {
+			if (converter != null) {
 				try {
 					convertedValue = converter.ConvertToString (convertContext, value);
-				} catch {
-					// XXX: Happens too often...
-					// property_grid.ShowError ("Property value of '" + property_descriptor.Name + "' is not convertible to string.");
+				} catch (Exception e) when (e is not (OutOfMemoryException or StackOverflowException or AccessViolationException)) {
 				}
 			}
 
-			return (convertedValue != null) ? convertedValue : (value as string);
+			return convertedValue ?? (value as string) ?? string.Empty;
 		}
 
 		public bool HasCustomEditor {
