@@ -83,6 +83,11 @@ public static class MacPackager
 
         File.WriteAllText(Path.Combine(home, "uninstall.sh"), Uninstall(root, product, id, daemons));
         Executable(Path.Combine(home, "uninstall.sh"));
+        // the services by their Windows names, through launchd
+        var named = manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => (x.Name, id + "." + DesktopCommon.Segment(x.Name))).ToList();
+        if (daemons.Contains(id + ".httpsys")) named.Insert(0, ("HTTP", id + ".httpsys"));
+        File.WriteAllText(Path.Combine(home, "services.sh"), DesktopCommon.ServicesScript(product, named, mac: true));
+        Executable(Path.Combine(home, "services.sh"));
         File.WriteAllText(Path.Combine(scripts, "preinstall"), PreInstall(daemons));
         File.WriteAllText(Path.Combine(scripts, "postinstall"), PostInstall(root, daemons, Accounts(manifest, product)));
         Executable(Path.Combine(scripts, "preinstall"));

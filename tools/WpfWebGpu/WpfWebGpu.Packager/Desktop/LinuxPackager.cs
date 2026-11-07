@@ -82,6 +82,10 @@ public static class LinuxPackager
                 if (DesktopCommon.Icon(manifest, app) is { } image)
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
             }
+            // the services by their Windows names, through systemd
+            var named = manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => (x.Name, UnitName(pkg, x.Name))).ToList();
+            if (httpSys) named.Insert(0, ("HTTP", $"{pkg}-httpsys.service"));
+            tar.AddText($"{root}/services.sh", DesktopCommon.ServicesScript(manifest.Product.Name, named, mac: false), executable: true);
             // at log-on, what the apps put in the Startup folders, as Explorer starts it
             tar.AddText($"/etc/xdg/autostart/{pkg}-startup.desktop", Autostart(manifest, root, state), executable: false);
             tar.Finish();

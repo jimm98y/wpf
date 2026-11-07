@@ -136,6 +136,8 @@ internal static class Pack
             BitConverter.GetBytes((ushort)2 /* IMAGE_SUBSYSTEM_WINDOWS_GUI */).CopyTo(exe, pe + 24 + 68);
             File.WriteAllBytes(Path.Combine(runtime, "dotnet", "dotnetw.exe"), exe);
         }
+        // the programs' own executables are .NET's apphost, patched per program where it runs (ProgramHost)
+        if (!windows) File.Copy(AppHost(rid, version), Path.Combine(runtime, "launcher", "apphost"), overwrite: true);
         if (windows)
             File.WriteAllText(Path.Combine(runtime, "run.cmd"), "@\"%~dp0dotnet\\dotnet.exe\" \"%~dp0launcher\\wpfrun.dll\" run %*\r\n");
         else
@@ -201,7 +203,7 @@ internal static class Pack
 
     private static bool Executable(string file, string rel)
     {
-        if (rel is "runtime/run" or "runtime/dotnet/dotnet") return true;
+        if (rel is "runtime/run" or "runtime/dotnet/dotnet" or "runtime/launcher/apphost") return true;
         if (OperatingSystem.IsWindows()) return false;
         return (File.GetUnixFileMode(file) & UnixFileMode.UserExecute) != 0;
     }
@@ -231,6 +233,23 @@ internal static class Pack
             if (!sha.Equals(hash, StringComparison.OrdinalIgnoreCase)) throw new UserError($"{url} is not the file the release lists (sha512 {sha})");
             File.WriteAllBytes(path, bytes);
         }
+        return path;
+    }
+
+    /// <summary>.NET's apphost for <paramref name="rid"/> (Microsoft.NETCore.App.Host, MIT), of the runtime's version,
+    /// downloaded once from nuget.org.</summary>
+    private static string AppHost(string rid, string version)
+    {
+        string path = Path.Combine(Locations.CacheRoot, "apphosts", rid + "-" + version, "apphost");
+        if (File.Exists(path)) return path;
+        string id = "microsoft.netcore.app.host." + rid;
+        string url = $"https://api.nuget.org/v3-flatcontainer/{id}/{version}/{id}.{version}.nupkg";
+        Console.WriteLine($"wpfrun pack: fetching {url}");
+        using var http = new System.Net.Http.HttpClient();
+        using var package = new ZipArchive(new MemoryStream(http.GetByteArrayAsync(url).GetAwaiter().GetResult()));
+        var entry = package.GetEntry($"runtimes/{rid}/native/apphost") ?? throw new UserError($"{url} holds no apphost for {rid}");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        entry.ExtractToFile(path, overwrite: true);
         return path;
     }
 

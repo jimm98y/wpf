@@ -208,3 +208,47 @@ public class PackagerArchiveTests
         Assert.True(cd > 0);
     }
 }
+
+// A program's own executable (the launcher's ProgramHost): .NET's apphost, its app path written over its placeholder.
+public sealed class ProgramHostTests
+{
+    [Fact]
+    public void The_apphost_is_pointed_at_the_host_and_runs_under_the_program_s_name()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows runs programs through dotnet.exe");
+        string root = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
+        string? template = WpfWebGpu.ProgramHost.Template(root);
+        Assert.SkipWhen(template == null, "no apphost for this machine in the SDK");
+        byte[] image = File.ReadAllBytes(template!);
+        Assert.True(WpfWebGpu.ProgramHost.Patch(image, "host/WpfWebGpu.AppHost.dll"));
+        Assert.True(image.AsSpan().IndexOf("host/WpfWebGpu.AppHost.dll\0"u8) >= 0);
+        Assert.False(WpfWebGpu.ProgramHost.Patch(image, "again"));          // the placeholder is gone
+
+        // a program run by it, as the host folder holds one: an assembly that prints a line, its runtime config beside it
+        string dir = TestEnvironment.NewDirectory("apphost");
+        Directory.CreateDirectory(Path.Combine(dir, "host"));
+        var module = Mono.Cecil.ModuleDefinition.CreateModule("WpfWebGpu.AppHost", Mono.Cecil.ModuleKind.Console);
+        var program = new Mono.Cecil.TypeDefinition("", "Program", Mono.Cecil.TypeAttributes.Public | Mono.Cecil.TypeAttributes.Abstract | Mono.Cecil.TypeAttributes.Sealed, module.TypeSystem.Object);
+        module.Types.Add(program);
+        var main = new Mono.Cecil.MethodDefinition("Main", Mono.Cecil.MethodAttributes.Public | Mono.Cecil.MethodAttributes.Static, module.TypeSystem.Void);
+        program.Methods.Add(main);
+        var il = main.Body.GetILProcessor();
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ldstr, "the program ran");
+        il.Emit(Mono.Cecil.Cil.OpCodes.Call, module.ImportReference(typeof(Console).GetMethod(nameof(Console.WriteLine), new[] { typeof(string) })));
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
+        module.EntryPoint = main;
+        string overlay = TestEnvironment.NewDirectory("overlay");
+        module.Write(Path.Combine(overlay, "WpfWebGpu.AppHost.dll"));
+        var rc = System.Text.Json.Nodes.JsonNode.Parse("{\"runtimeOptions\":{\"tfm\":\"net10.0\",\"framework\":{\"name\":\"Microsoft.NETCore.App\",\"version\":\"10.0.0\"}}}")!.AsObject();
+        var deps = System.Text.Json.Nodes.JsonNode.Parse("{\"runtimeTarget\":{\"name\":\".NETCoreApp,Version=v10.0\"},\"targets\":{\".NETCoreApp,Version=v10.0\":{}},\"libraries\":{}}")!.AsObject();
+        string? exe = WpfWebGpu.ProgramHost.Make(template!, dir, "TheProgram", overlay, rc, deps, new[] { AppContext.BaseDirectory });
+        Assert.NotNull(exe);
+        Assert.Equal("TheProgram", Path.GetFileName(exe));
+        var psi = new System.Diagnostics.ProcessStartInfo(exe!) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        psi.Environment["DOTNET_ROOT"] = root;
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+        p.WaitForExit();
+        Assert.Contains("the program ran", output);
+    }
+}

@@ -159,6 +159,21 @@ internal sealed class Runner
         if (!HostInfo.IsWindows && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_GCgen0size")))
             psi.Environment["DOTNET_GCgen0size"] = "0x4000000";
 
+        // the program under its own name: its own executable (ProgramHost), where this OS runs one
+        // (WPFRUN_DOTNET_EXEC=1: through dotnet exec, as before)
+        string dotnetRoot = Path.GetDirectoryName(psi.FileName)!;
+        if (!HostInfo.IsWindows && Environment.GetEnvironmentVariable("WPFRUN_DOTNET_EXEC") != "1"
+            && ProgramHost.Template(dotnetRoot) is { } template
+            && ProgramHost.Make(template, cacheDir, App.Name, OverlayDir, rc, deps, probeRoots) is { } exe)
+        {
+            var own = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = psi.WorkingDirectory };
+            own.Environment.Clear();
+            foreach (var kv in psi.Environment) own.Environment[kv.Key] = kv.Value;
+            own.Environment["DOTNET_ROOT"] = dotnetRoot;
+            foreach (string a in appArgs) own.ArgumentList.Add(a);
+            psi = own;
+        }
+
         return new Prepared(rcPath, depsPath, logPath, merger.Notes.Concat(comNotes).ToList(), merger.Replaced)
         {
             StartInfo = psi,
@@ -179,6 +194,13 @@ internal sealed class Runner
         // Windows: a launcher with no console of its own (dotnetw.exe, a shortcut's) starts the app without one, as
         // Explorer starts a window app; otherwise dotnet.exe, a console program, opened a console window beside it
         if (HostInfo.IsWindows && GetConsoleWindow() == IntPtr.Zero) p.StartInfo.CreateNoWindow = true;
+        // the program's own executable: this process handed over to it, so it is the process that was started (its
+        // name, its pid for launchd, its exit status)
+        if (!HostInfo.IsWindows && Path.GetFileNameWithoutExtension(p.StartInfo.FileName) != "dotnet")
+        {
+            ProgramHost.Exec(p.StartInfo);
+            Console.Error.WriteLine($"wpfrun: could not hand over to {p.StartInfo.FileName} (error {Marshal.GetLastPInvokeError()}); it runs as a child");
+        }
         using var process = Process.Start(p.StartInfo) ?? throw new UserError("could not start dotnet.");
 
         // wpfrun is only a parent: whatever stops it stops the app too, so killing the launcher (a
