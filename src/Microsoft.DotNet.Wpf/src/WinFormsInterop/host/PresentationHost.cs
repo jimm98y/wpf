@@ -173,6 +173,23 @@ namespace System.Windows.Forms
             // shown and disposed on a thread of its own, left that thread with nothing to close it, and
             // its window stayed on screen for the life of the process.
             if (form != null) form.Disposed += (_, _) => { host.Close(); Detach(host); };
+            // ...and when its handle does, which is the window itself: ShowDialog destroys the dialog's handle
+            // when it returns and leaves the form for the caller to read (or never to dispose -- an About box
+            // shown with `new AboutBox().ShowDialog()`), and the window stayed up, blank, presenting a form
+            // with no handle. A handle only being recreated (a style change) keeps its window; a form shown
+            // again gets a host of its own then.
+            if (form != null)
+            {
+                EventHandler gone = null;
+                gone = (_, _) =>
+                {
+                    if (form.RecreatingHandle) return;
+                    form.HandleDestroyed -= gone;
+                    host.Close();
+                    Detach(host);
+                };
+                form.HandleDestroyed += gone;
+            }
         }
 
         // A thread that showed a form and ended without closing it (a worker-thread splash, a dialog

@@ -556,6 +556,7 @@ internal sealed class CocoaHost : IWinFormsHost
         _k = InitialUnitsPerPoint();
         if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' shown: k={_k} per-monitor={PerMonitor} handle={_form.IsHandleCreated} windowDpi={_driver.WindowDpi(_form.Handle)} screenScale={ScreenScale} form={_form.Bounds}");
         var rect = CocoaRect(clientArea.Left, clientArea.Top, w, h);
+        CenterOnForeignOwner(ref rect);
         _transparent = IsLayered();
         _ownCaption = DrawsOwnCaption();
         win = SendInitWindow(win, Sel("initWithContentRect:styleMask:backing:defer:"), rect, StyleMask(), (nuint)2, false);   // backing Buffered(2)
@@ -1573,6 +1574,31 @@ internal sealed class CocoaHost : IWinFormsHost
     {
         if (!s_wpfLoaded || s_wpfDispatch != null) return;
         s_wpfDispatch = AppContext.GetData("WpfWebGpu.CocoaWindow.DispatchEvent") as Action<IntPtr>;
+    }
+
+    // A dialog shown with ShowDialog() and no owner takes the active window for its owner on Windows, and
+    // one centred on its parent (CenterParent) is centred on that window -- whichever framework made it. A
+    // WPF application's About box is a WinForms form shown from a WPF window: the form has no Form to own
+    // it (Form.CenterToParent then centres it on the screen), so its window is centred here on the window
+    // the user was working in, the key window, when that is not one of ours. Kept on the key window's
+    // screen, below the menu bar, as Windows keeps it in the owner's monitor's working area.
+    private void CenterOnForeignOwner(ref NSRect rect)
+    {
+        if (_form.StartPosition != FormStartPosition.CenterParent || _form.Owner != null || !_form.Modal) return;
+        IntPtr owner = Send(App(), Sel("keyWindow"));
+        if (owner == IntPtr.Zero) owner = Send(App(), Sel("mainWindow"));
+        if (owner == IntPtr.Zero || HostFor(owner) != null || (nint)Send(owner, Sel("isVisible")) == 0) return;
+        NSRect o = SendRectRet(owner, Sel("frame"));
+        double x = o.x + (o.w - rect.w) / 2, y = o.y + (o.h - rect.h) / 2;
+        IntPtr screen = Send(owner, Sel("screen"));
+        if (screen != IntPtr.Zero)
+        {
+            NSRect work = SendRectRet(screen, Sel("visibleFrame"));
+            x = Math.Max(work.x, Math.Min(x, work.x + work.w - rect.w));
+            y = Math.Max(work.y, Math.Min(y, work.y + work.h - rect.h));
+        }
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' centred on the key window ({o.x},{o.y} {o.w}x{o.h})");
+        rect.x = x; rect.y = y;
     }
 
     private static CocoaHost HostFor(IntPtr nsWindow)

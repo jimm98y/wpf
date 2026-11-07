@@ -166,6 +166,13 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
                 // taskbar lower than stock -- and for CenterParent the owner's window rectangle,
                 // kept inside that working area.
                 IntPtr ownerHwnd = (PresentationHost.HostOf(_form.Owner) as Win32Host)?._hwnd ?? IntPtr.Zero;
+                // ShowDialog() with no owner: the active window is the owner, whichever framework made it
+                // (a WPF window showing a WinForms About box), as .NET's ShowDialog takes it
+                if (ownerHwnd == IntPtr.Zero && _form.Modal && _form.Owner == null)
+                {
+                    IntPtr active = GetActiveWindow();
+                    if (active != IntPtr.Zero && !OwnWindow(active)) ownerHwnd = active;
+                }
                 IntPtr mon;
                 if (ownerHwnd != IntPtr.Zero) mon = MonitorFromWindow(ownerHwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
                 else { GetCursorPos(out POINT cur); mon = MonitorFromPoint(cur, 2); }
@@ -1993,6 +2000,15 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     [DllImport("user32")] private static extern IntPtr WindowFromPoint(POINT p);
     private bool _trackingLeave;
     [DllImport("user32")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32")] private static extern IntPtr GetActiveWindow();
+
+    // a window of one of this WinForms' hosts (a form's), not another framework's
+    private static bool OwnWindow(IntPtr hwnd)
+    {
+        foreach (var (host, _) in PresentationHost.HostedForms())
+            if (host is Win32Host w && w._hwnd == hwnd) return true;
+        return false;
+    }
     [DllImport("user32")] private static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32", EntryPoint = "GetWindowLongPtrW")] private static extern IntPtr GetWindowLongPtrW(IntPtr hWnd, int index);
     [DllImport("user32", EntryPoint = "SetWindowLongPtrW")] private static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int index, IntPtr value);
