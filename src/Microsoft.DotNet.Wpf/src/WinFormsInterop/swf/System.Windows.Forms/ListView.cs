@@ -3113,6 +3113,9 @@ namespace System.Windows.Forms
 					EndEdit (item);
 			}
 
+			/// <summary>The item whose label is being edited, if any.</summary>
+			internal ListViewItem EditItem => edit_item;
+
 			internal void CancelEdit (ListViewItem item)
 			{
 				// do nothing if there's no item being edited, or if the
@@ -5328,6 +5331,10 @@ namespace System.Windows.Forms
 			public virtual void Clear ()
 			{
 				if (is_main_collection && owner != null) {
+					// a label being edited is ended first, its item still in place, as Windows ends it before deleting
+					// the items (AfterLabelEdit's handler reads Items [e.Item])
+					if (owner.item_control.EditItem is ListViewItem editing)
+						owner.item_control.CancelEdit (editing);
 					owner.SetFocusedItem (-1);
 					owner.h_scroll.Value = owner.v_scroll.Value = 0;
 
