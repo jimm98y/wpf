@@ -41,13 +41,19 @@ public static partial class HttpSysService
         if (onDemand && !OperatingSystem.IsWindows()) setsid();
         string folder = HttpSysRegistry.EnsureFolder();
         FileStream? held = null;
+        string takeover = Path.Combine(folder, "service.takeover");
         while (held == null)
         {
             held = HttpSysClient.TryLock(folder);
             if (held != null) break;
             if (onDemand) return 0;                       // another serves the ports
+            // the installed service and an instance an app started on demand before it (during an installation, a
+            // service still stopping): that one is told to let go
+            try { File.WriteAllText(takeover, Environment.ProcessId.ToString(CultureInfo.InvariantCulture)); HttpSysRegistry.Mode(takeover, "644"); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             try { await Task.Delay(2000, stop); } catch (OperationCanceledException) { return 0; }
         }
+        if (!onDemand) try { File.Delete(takeover); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         Own(folder);
         Log = log;
         log.LogInformation("serving the registered prefixes ({Folder})", folder);
@@ -74,6 +80,13 @@ public static partial class HttpSysService
                         refused.Remove(port.Key);
                         log.LogInformation("port {Port} ({Scheme}) served", port.Key, https ? "https" : "http");
                     }
+                    // a file of this program missing (it was started while an installation replaced them, and the
+                    // runtime keeps a failed load failed): not the port; a new process serves, this one ends
+                    catch (FileNotFoundException e)
+                    {
+                        log.LogError("port {Port} cannot be served by this process: {Reason} ({File}); it ends, to be started again", port.Key, e.Message, e.FileName);
+                        return 1;
+                    }
                     catch (IOException e)
                     {
                         if (refused.Add(port.Key)) log.LogWarning("port {Port} could not be listened on: {Reason}", port.Key, e.Message);
@@ -87,6 +100,7 @@ public static partial class HttpSysService
                     log.LogInformation("port {Port} released", port);
                 }
                 if (onDemand && now - lastServer > OnDemandIdle) break;
+                if (onDemand && TakenOver(takeover)) { log.LogInformation("the installed service takes over"); break; }
                 try { await Task.Delay(1000, stop); } catch (OperationCanceledException) { }
             }
         }
@@ -96,6 +110,19 @@ public static partial class HttpSysService
             held.Dispose();
         }
         return 0;
+    }
+
+    // the installed service waiting for the ports (its pid in the takeover note, and alive)
+    private static bool TakenOver(string takeover)
+    {
+        try
+        {
+            if (!File.Exists(takeover) || !int.TryParse(File.ReadAllText(takeover).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int pid)) return false;
+            if (pid == Environment.ProcessId) return false;
+            using var p = System.Diagnostics.Process.GetProcessById(pid);
+            return !p.HasExited;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException) { return false; }
     }
 
     private static async Task Stop(WebApplication app)
