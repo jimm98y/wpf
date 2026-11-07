@@ -209,6 +209,8 @@ public static class LinuxPackager
         Type=simple
         ExecStart={Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} {command}
         Environment=WPFRUN_STATE={state}
+        Environment=WPFRUN_CACHE=/var/cache/{pkg}
+        Environment=WPFRUN_LOGS=/var/log/{pkg}
         Restart=always
         RestartSec=5
         SyslogIdentifier={pkg}-{command}

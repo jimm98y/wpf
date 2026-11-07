@@ -195,7 +195,9 @@ public static class MacPackager
             """;
     }
 
-    // a daemon of the stack's own (wpfrun <command>: the http.sys service, the service manager), root, always running
+    // a daemon of the stack's own (wpfrun <command>: the http.sys service, the service manager, the web server), root,
+    // always running; the programs it starts (the web server's workers, under their pools' accounts) take the
+    // product's shared cache and logs, as the services do, not an account's home (a service account's is /var/empty)
     private static string SystemDaemon(string label, string root, string product, string command, string logName) => $"""
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -211,10 +213,13 @@ public static class MacPackager
           <key>EnvironmentVariables</key>
           <dict>
             <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
+            <key>WPFRUN_CACHE</key><string>/Library/Caches/{X(product)}</string>
+            <key>WPFRUN_LOGS</key><string>/Library/Logs/{X(product)}</string>
           </dict>
           <key>RunAtLoad</key><true/>
           <key>KeepAlive</key><true/>
           <key>ThrottleInterval</key><integer>5</integer>
+          <key>Umask</key><integer>2</integer>
           <key>StandardOutPath</key><string>/Library/Logs/{X(product)}/{X(logName)}</string>
           <key>StandardErrorPath</key><string>/Library/Logs/{X(product)}/{X(logName)}</string>
         </dict>
