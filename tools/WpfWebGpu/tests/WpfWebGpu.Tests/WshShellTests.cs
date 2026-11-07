@@ -116,3 +116,40 @@ public sealed unsafe class WshShellTests
     public void A_shortcut_s_arguments_are_split_as_CommandLineToArgvW_splits_them(string line, string[] expected) =>
         Assert.Equal(expected, WpfWebGpu.Startup.SplitCommandLine(line));
 }
+
+// The rewriter's cache (ComImportLoader): an image named by what it is made from, so the copies of a library in an
+// installation's program folders share one, and it is kept in the cache's rewritten/ every app run from it shares.
+public sealed class RewriteCacheTests
+{
+    [Fact]
+    public void Copies_of_an_assembly_in_two_programs_share_one_image_and_other_references_do_not()
+    {
+        string root = TestEnvironment.NewDirectory("rwcache");
+        string one = Path.Combine(root, "one"), two = Path.Combine(root, "two"), three = Path.Combine(root, "three");
+        foreach (string d in new[] { one, two, three }) Directory.CreateDirectory(d);
+        // an assembly and what it references, copied into two programs' folders alike
+        string library = typeof(WpfWebGpu.ComRewrite.ComImportLoader).Assembly.Location;     // references WpfWebGpu.ComInterop
+        string dependency = typeof(WpfWebGpu.ComInterop.Com).Assembly.Location;
+        foreach (string d in new[] { one, two }) { File.Copy(library, Path.Combine(d, "WpfWebGpu.ComRewrite.dll")); File.Copy(dependency, Path.Combine(d, "WpfWebGpu.ComInterop.dll")); }
+        // the third has the same assembly beside another build of what it references
+        File.Copy(library, Path.Combine(three, "WpfWebGpu.ComRewrite.dll"));
+        File.Copy(typeof(Xunit.Assert).Assembly.Location, Path.Combine(three, "WpfWebGpu.ComInterop.dll"));
+
+        string cache = Path.Combine(root, "cache", "apps");
+        string? PathFor(string dir, string app)
+        {
+            var originals = new Dictionary<string, (string, WpfWebGpu.ComRewrite.ComImportLoader.Parts)>
+            {
+                ["WpfWebGpu.ComRewrite"] = (Path.Combine(dir, "WpfWebGpu.ComRewrite.dll"), WpfWebGpu.ComRewrite.ComImportLoader.Parts.Paths),
+            };
+            var loader = new WpfWebGpu.ComRewrite.ComImportLoader(originals, new[] { dir },
+                (string?)typeof(WpfWebGpu.ComRewrite.ComImportLoader).GetMethod("RewrittenDir", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.Invoke(null, new object?[] { Path.Combine(cache, app) }), null);
+            return (string?)typeof(WpfWebGpu.ComRewrite.ComImportLoader).GetMethod("CachePath", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                .Invoke(loader, new object[] { "WpfWebGpu.ComRewrite", Path.Combine(dir, "WpfWebGpu.ComRewrite.dll"), WpfWebGpu.ComRewrite.ComImportLoader.Parts.Paths, false });
+        }
+        string? a = PathFor(one, "ServiceA-1"), b = PathFor(two, "ServiceB-2"), c = PathFor(three, "ServiceC-3");
+        Assert.Equal(Path.Combine(root, "cache", "rewritten"), Path.GetDirectoryName(a));
+        Assert.Equal(a, b);
+        Assert.NotEqual(a, c);
+    }
+}

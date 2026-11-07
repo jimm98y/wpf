@@ -68,12 +68,24 @@ public sealed class ComImportLoader
     /// <summary>The startup hook's entry (reached by name): the launcher's list, into the default context.</summary>
     public static void InstallDefault(string list, string appDir, string overlayDir, string? cacheDir, Action<string> log)
     {
-        var loader = new ComImportLoader(Parse(list), new[] { appDir, overlayDir, RuntimeEnvironment.GetRuntimeDirectory() },
-            cacheDir == null ? null : Path.Combine(cacheDir, "rewritten"), log);
+        var loader = new ComImportLoader(Parse(list), new[] { appDir, overlayDir, RuntimeEnvironment.GetRuntimeDirectory() }, RewrittenDir(cacheDir), log);
         loader.Install(AssemblyLoadContext.Default);
         log($"rewriter: {loader._originals.Count} app assemblies are rewritten when first loaded: {string.Join(", ", loader._originals.Select(kv => $"{kv.Key} ({kv.Value.Parts})"))}");
         if (loader._originals.Values.Any(v => (v.Parts & Parts.PInvokes) != 0) && Win32Catalog.For(loader._searchDirs) is { Problems.Count: > 0 } cat)
             foreach (string problem in cat.Problems) log($"pinvoke: {problem}");
+    }
+
+    /// <summary>Where rewritten images are kept: beside the app's other prepared files (wpfrun's cache, apps/&lt;app&gt;),
+    /// in the cache's own rewritten/ every app run from it shares -- an installation's services carry the same
+    /// libraries, and an image is named by what it is made from, not by whose folder it came from.</summary>
+    private static string? RewrittenDir(string? cacheDir)
+    {
+        if (cacheDir == null) return null;
+        string full = Path.GetFullPath(cacheDir).TrimEnd(Path.DirectorySeparatorChar);
+        string? apps = Path.GetDirectoryName(full);
+        return apps != null && Path.GetFileName(apps) == "apps" && Path.GetDirectoryName(apps) is { } root
+            ? Path.Combine(root, "rewritten")
+            : Path.Combine(cacheDir, "rewritten");
     }
 
     public void Install(AssemblyLoadContext alc)
@@ -98,6 +110,9 @@ public sealed class ComImportLoader
             MemoryStream image;
             MemoryStream? symbols;
             string what;
+            // another process making the same image (an installation's services start together): its result waited
+            // for, not made again
+            using var making = cached == null || File.Exists(cached) ? null : Making(cached);
             if (cached != null && File.Exists(cached))
             {
                 image = new MemoryStream(File.ReadAllBytes(cached));
@@ -146,33 +161,77 @@ public sealed class ComImportLoader
 
     [DllImport("/usr/lib/libSystem.dylib")] private static extern int pthread_main_np();
 
-    /// <summary>Where the rewritten image of <paramref name="path"/> is kept: named by everything it depends on.</summary>
+    /// <summary>Where the rewritten image of <paramref name="path"/> is kept: named by everything it is made from --
+    /// the assembly (its module version id: the same build in any folder), the assemblies it references as they are
+    /// found from it, the rewriter, the stack's implementation and what is rewritten -- and by nothing else, so
+    /// that the copies of a library an installation's programs each carry share one image.</summary>
     private string? CachePath(string name, string path, Parts parts, bool windows)
     {
         if (_cacheDir == null) return null;
         try
         {
-            var fi = new FileInfo(path);
             string fingerprint = (parts & Parts.PInvokes) != 0 ? Win32Catalog.For(_searchDirs).Fingerprint : "";
-            string key = string.Join("|", Path.GetFullPath(path), fi.Length, fi.LastWriteTimeUtc.Ticks, File.Exists(Path.ChangeExtension(path, ".pdb")),
+            var (mvid, references) = Identity(path);
+            var resolved = references.Select(r => r + "=" + (Find(r) is { } file ? Identity(file).Mvid : "-")).Order(StringComparer.Ordinal);
+            string key = string.Join("|", name, mvid, string.Join(",", resolved), File.Exists(Path.ChangeExtension(path, ".pdb")),
                 typeof(ComRewriter).Assembly.ManifestModule.ModuleVersionId, typeof(Com).Assembly.ManifestModule.ModuleVersionId,
                 fingerprint, (int)parts, windows, Environment.GetEnvironmentVariable("WPF_D3D11_SHIM"));
             string hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..20].ToLowerInvariant();
             return Path.Combine(_cacheDir, $"{name}-{hash}.dll");
         }
-        catch (IOException) { return null; }
+        catch (Exception e) when (e is IOException or BadImageFormatException or InvalidOperationException) { return null; }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Length, long Written, string Mvid, string[] References)> s_identities = new();
+
+    // an assembly's module version id and the names of the assemblies it references (its metadata alone, kept per file)
+    private static (string Mvid, string[] References) Identity(string path)
+    {
+        var fi = new FileInfo(path);
+        if (s_identities.TryGetValue(path, out var known) && known.Length == fi.Length && known.Written == fi.LastWriteTimeUtc.Ticks)
+            return (known.Mvid, known.References);
+        using var fs = File.OpenRead(path);
+        using var pe = new System.Reflection.PortableExecutable.PEReader(fs);
+        var md = System.Reflection.Metadata.PEReaderExtensions.GetMetadataReader(pe);
+        string mvid = md.GetGuid(md.GetModuleDefinition().Mvid).ToString("N");
+        string[] references = md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToArray();
+        s_identities[path] = (fi.Length, fi.LastWriteTimeUtc.Ticks, mvid, references);
+        return (mvid, references);
+    }
+
+    // a referenced assembly as the rewriter finds it
+    private string? Find(string assembly)
+    {
+        foreach (string dir in _searchDirs)
+        {
+            string candidate = Path.Combine(dir, assembly + ".dll");
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    /// <summary>The image's lock, held while it is made: another process asking for it waits, then reads it.</summary>
+    private static FileStream? Making(string cached)
+    {
+        string lockPath = cached + ".lock";
+        try { Directory.CreateDirectory(Path.GetDirectoryName(cached)!); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        var deadline = Stopwatch.StartNew();
+        while (deadline.Elapsed < TimeSpan.FromMinutes(5))
+        {
+            try { return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
+            catch (IOException) { Thread.Sleep(50); }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+        return null;                                // made as if nobody else were making it
     }
 
     private void Keep(string cached, MemoryStream image, MemoryStream? symbols)
     {
         try
         {
+            // the name's other images stay: in the shared cache they are other programs' (another build, other
+            // references), still in use
             Directory.CreateDirectory(Path.GetDirectoryName(cached)!);
-            // the name's other images (an older original, rewriter or implementation) go
-            string stem = Path.GetFileName(cached)[..(Path.GetFileName(cached).LastIndexOf('-') + 1)];
-            foreach (string old in Directory.EnumerateFiles(Path.GetDirectoryName(cached)!, stem + "*"))
-                if (Path.GetFileName(old).Length == Path.GetFileName(cached).Length && !Path.GetFileNameWithoutExtension(old).Equals(Path.GetFileNameWithoutExtension(cached), StringComparison.Ordinal))
-                    try { File.Delete(old); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             if (symbols != null) Write(Path.ChangeExtension(cached, ".pdb"), symbols);
             Write(cached, image);           // last: its presence says the pair is complete
         }
