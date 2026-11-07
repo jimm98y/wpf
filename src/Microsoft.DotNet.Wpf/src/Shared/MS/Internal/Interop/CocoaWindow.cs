@@ -2394,6 +2394,19 @@ namespace MS.Internal.Interop
                 SendVoidNIntNInt(_window, Sel("orderWindow:relativeTo:"), 1, (nint)Send(o._window, Sel("windowNumber")));   // NSWindowAbove
         }
 
+        /// <summary>The window of ours that <paramref name="nsWindow"/> is, or is a child window of (AppKit's
+        /// parentWindow, up to the top level), on which EnableWindow(false) is in force; null when none is.</summary>
+        private static CocoaWindow DisabledWindowOf(IntPtr nsWindow)
+        {
+            for (IntPtr win = nsWindow; win != IntPtr.Zero; win = Send(win, Sel("parentWindow")))
+            {
+                IntPtr view = Send(win, Sel("contentView"));
+                CocoaWindow c = view != IntPtr.Zero ? FromHandle(view) : null;
+                if (c != null && PlatformWindow.IsWindowDisabled(c.Handle)) return c;
+            }
+            return null;
+        }
+
         private void RaiseOwned()
         {
             if (_window == IntPtr.Zero) return;
@@ -3132,11 +3145,16 @@ namespace MS.Internal.Interop
             // A press on a disabled window (EnableWindow(false): the owner of a modal dialog) goes to
             // nobody, AppKit's title bar and its buttons included -- the window can be neither moved nor
             // closed -- and, with the system's beep, activates the dialog instead, as on Windows.
-            if (w != null && (type == NSLeftMouseDown || type == NSRightMouseDown || type == NSOtherMouseDown)
-                && PlatformWindow.IsWindowDisabled(w.Handle))
+            // The same for a press in a window that belongs to a disabled one: Windows disables a window's
+            // children with it, and here an embedded window (a hosted WinForms control, an HwndHost, an
+            // ElementHost) is a child NSWindow of the top-level one. Taken by AppKit, a press in one brought
+            // the whole group -- the disabled main window -- to the front over its modal dialog (app's SQL
+            // configuration, which a second press, on the main window itself, then brought back).
+            if ((type == NSLeftMouseDown || type == NSRightMouseDown || type == NSOtherMouseDown)
+                && DisabledWindowOf(window) is { } disabled)
             {
                 NSBeep();
-                PlatformWindow.DisabledWindowPressed?.Invoke(w.Handle);
+                PlatformWindow.DisabledWindowPressed?.Invoke(disabled.Handle);
                 s_consumedByNonClient = true;
                 return;
             }
