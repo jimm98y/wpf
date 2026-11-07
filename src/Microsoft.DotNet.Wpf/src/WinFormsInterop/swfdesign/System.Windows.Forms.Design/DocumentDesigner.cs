@@ -255,6 +255,8 @@ namespace System.Windows.Forms.Design
 		
 		
 		private DesignerViewFrame _designerViewFrame;
+		// the standard commands' set, as .NET's DocumentDesigner holds it (a host reaches into it: CommandSet.cs)
+		private CommandSet _commandSet;
 
 		public DocumentDesigner ()
 		{
@@ -269,6 +271,7 @@ namespace System.Windows.Forms.Design
 		{
 			base.Initialize (component);
 
+			_commandSet = new CommandSet (component.Site);
 			_designerViewFrame = new DesignerViewFrame (this.Control, new ComponentTray (this, component.Site));
 			_designerViewFrame.DesignedControl.Location = new Point (15, 15);
 			SetValue (this.Component,  "Location", new Point (0, 0));
@@ -318,6 +321,10 @@ namespace System.Windows.Forms.Design
 
 		protected override void Dispose (bool disposing)
 		{
+			if (disposing) {
+				_commandSet?.Dispose ();
+				_commandSet = null;
+			}
 			if (disposing) {
 				_designerActionUIService?.Dispose ();
 				_designerActionUIService = null;
