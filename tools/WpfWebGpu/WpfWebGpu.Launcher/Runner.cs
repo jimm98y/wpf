@@ -41,9 +41,9 @@ internal sealed class Runner
     public Prepared Prepare(IEnumerable<string> appArgs)
     {
         string rid = HostInfo.Rid;
-        string cacheDir = Path.Combine(Locations.CacheRoot, "apps", $"{App.Name}-{Hash(App.Directory)}");
+        string cacheDir = Path.Combine(Locations.CacheRoot, "apps", $"{App.ProgramName}-{Hash(App.Directory)}");
         Directory.CreateDirectory(cacheDir);
-        string logPath = Path.Combine(Locations.LogRoot, $"{App.Name}.log");
+        string logPath = Path.Combine(Locations.LogRoot, $"{App.ProgramName}.log");
 
         var payloadDeps = DepsMerger.ReadJson(Path.Combine(OverlayDir, Locations.PayloadName + ".deps.json"));
         string payloadRcPath = Path.Combine(OverlayDir, Locations.PayloadName + ".runtimeconfig.json");
@@ -164,7 +164,7 @@ internal sealed class Runner
         string dotnetRoot = Path.GetDirectoryName(psi.FileName)!;
         if (!HostInfo.IsWindows && Environment.GetEnvironmentVariable("WPFRUN_DOTNET_EXEC") != "1"
             && ProgramHost.Template(dotnetRoot) is { } template
-            && ProgramHost.Make(template, cacheDir, App.Name, OverlayDir, rc, deps, probeRoots) is { } exe)
+            && ProgramHost.Make(template, cacheDir, App.ProgramName, OverlayDir, rc, deps, probeRoots) is { } exe)
         {
             var own = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = psi.WorkingDirectory };
             own.Environment.Clear();

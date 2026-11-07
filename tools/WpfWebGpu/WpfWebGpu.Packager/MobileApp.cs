@@ -28,7 +28,7 @@ public sealed class MobileApp
     {
         string exe = Path.Combine(installDir, entry.Exe);
         string dir = Path.GetDirectoryName(exe)!;
-        string name = Path.GetFileNameWithoutExtension(exe);
+        string name = Path.GetFileNameWithoutExtension(AppHost.AppDll(exe) ?? exe);
         var files = new List<(string, string)>();
         var leftOut = new List<string>();
 

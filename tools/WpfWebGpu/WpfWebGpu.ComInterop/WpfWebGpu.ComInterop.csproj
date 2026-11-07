@@ -7,6 +7,12 @@
     <AssemblyName>WpfWebGpu.ComInterop</AssemblyName>
     <RootNamespace>WpfWebGpu.ComInterop</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);APPHOST_INTERNAL</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- the app an executable starts (App_ARM64.exe's apphost starts App.dll), as the Packager reads it -->
+    <Compile Include="../WpfWebGpu.Packager/AppHost.cs" Link="Shared/AppHost.cs" />
+  </ItemGroup>
 
 </Project>

@@ -12,11 +12,17 @@ internal sealed class AppFiles
     public string Dll => Path.Combine(Directory, Name + ".dll");
     public string RuntimeConfig => Path.Combine(Directory, Name + ".runtimeconfig.json");
     public string Deps => Path.Combine(Directory, Name + ".deps.json");
-    public string Exe => Path.Combine(Directory, Name + ".exe");
+    /// <summary>The executable the app is started as: the one named (App_ARM64.exe, whose apphost starts App.dll),
+    /// else App.exe.</summary>
+    public string Exe => ExeFile ?? Path.Combine(Directory, Name + ".exe");
+    public string? ExeFile { get; init; }
+    /// <summary>The program's name, as Windows shows its process: its executable's.</summary>
+    public string ProgramName => Path.GetFileNameWithoutExtension(Exe);
 
     /// <summary>
     /// Accepts what a user would naturally point at: App.dll, App.exe (the per-RID apphost, which
-    /// only starts App.dll), or the app's folder when it holds exactly one app.
+    /// only starts App.dll -- under any name, App_ARM64.exe too), or the app's folder when it holds
+    /// exactly one app.
     /// </summary>
     public static AppFiles Resolve(string input)
     {
@@ -40,6 +46,12 @@ internal sealed class AppFiles
             throw new UserError($"{input}: expected an app's .dll, its .exe or its folder.");
         }
         var app = Create(Path.GetDirectoryName(path)!, Path.GetFileNameWithoutExtension(path));
+        // an executable under another name than its app's (App_ARM64.exe): the app its apphost starts
+        if (ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) && !File.Exists(app.Dll)
+            && WpfWebGpu.Packager.AppHost.AppDll(path) is { } dll)
+        {
+            app = new AppFiles { Directory = app.Directory, Name = Path.GetFileNameWithoutExtension(dll), ExeFile = path };
+        }
         if (!File.Exists(app.Dll)) throw new UserError($"{app.Dll} does not exist.");
         if (!File.Exists(app.RuntimeConfig))
         {

@@ -71,12 +71,14 @@ public static class Scanner
 
         var folders = new Dictionary<string, FolderInfo>(StringComparer.Ordinal);
         var companies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (string config in Directory.EnumerateFiles(installDir, "*.runtimeconfig.json", SearchOption.AllDirectories).Order(StringComparer.OrdinalIgnoreCase))
+        // every executable that starts a .NET app beside it: App.exe, or another name its apphost carries the app
+        // under (App_ARM64.exe)
+        foreach (string exe in Directory.EnumerateFiles(installDir, "*.exe", SearchOption.AllDirectories).Order(StringComparer.OrdinalIgnoreCase))
         {
-            string dir = Path.GetDirectoryName(config)!;
-            string name = Path.GetFileName(config)[..^".runtimeconfig.json".Length];
-            string exe = Path.Combine(dir, name + ".exe"), dll = Path.Combine(dir, name + ".dll");
-            if (!File.Exists(exe) || !File.Exists(dll)) continue;
+            string dir = Path.GetDirectoryName(exe)!;
+            if (AppHost.AppDll(exe) is not { } dll) continue;
+            string name = Path.GetFileNameWithoutExtension(dll);
+            string config = Path.ChangeExtension(dll, ".runtimeconfig.json");
             var exePe = PeFile.TryRead(exe);
             if (exePe == null) continue;
 
@@ -95,7 +97,7 @@ public static class Scanner
             if (Company(dll) is { Length: > 0 } company) companies[company] = companies.GetValueOrDefault(company) + 1;
             log?.Invoke($"{app.Kind,-8} {app.Exe}{(app.Warnings.Count > 0 ? "  [" + string.Join("; ", app.Warnings) + "]" : "")}");
         }
-        if (manifest.Apps.Count == 0) throw new PackagerError($"{installDir} holds no .NET app (no <name>.exe beside a <name>.dll and <name>.runtimeconfig.json).");
+        if (manifest.Apps.Count == 0) throw new PackagerError($"{installDir} holds no .NET app (no .exe starting a <name>.dll with its <name>.runtimeconfig.json).");
 
         foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Service))
         {
@@ -108,7 +110,7 @@ public static class Scanner
             };
             // a program that checks it is on Windows and refuses to start otherwise (its own assembly asks the system
             // and makes a PlatformNotSupportedException): told it is (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
-            if (PeFile.TryRead(Path.Combine(installDir, Path.ChangeExtension(app.Exe, ".dll"))) is { } pe
+            if (AppHost.AppDll(Path.Combine(installDir, app.Exe)) is { } dll && PeFile.TryRead(dll) is { } pe
                 && pe.TypeReferences.Contains("PlatformNotSupportedException") && pe.TypeReferences.Contains("OperatingSystem"))
                 service.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
             manifest.Services.Add(service);

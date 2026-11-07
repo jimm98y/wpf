@@ -362,9 +362,9 @@ public static class WindowsPaths
     }
 
     // A .NET program: a PE image with a CLR header (a .NET Framework .exe), or the native host .NET builds
-    // as the .exe of an app whose code is the managed .dll beside it.
+    // as the .exe of an app whose code is the managed .dll beside it (the one it names: App_ARM64.exe's App.dll).
     private static bool IsManagedExecutable(string path)
-        => HasClrHeader(path) || (HasClrHeader(Path.ChangeExtension(path, ".dll")) && File.Exists(Path.ChangeExtension(path, ".runtimeconfig.json")));
+        => HasClrHeader(path) || (WpfWebGpu.Packager.AppHost.AppDll(path) is { } dll && HasClrHeader(dll));
 
     private static bool HasClrHeader(string path)
     {
