@@ -5,7 +5,7 @@ namespace WpfWebGpu.Packager;
 public static class PackagerCli
 {
     public const string Usage = """
-        package scan <install folder> [--programdata <folder>]... [--registry <file.reg>]... [--out <x.wpfpkg.json>]
+        package scan <install folder> [--programdata <folder>]... [--registry <file.reg>]... [--iis <applicationHost.config>] [--out <x.wpfpkg.json>]
                                         a first manifest: the installation's apps, services and registry paths
         package stage <x.wpfpkg.json> [--work <folder>] [--copy]
                                         its registry as hive files, its ProgramData listed (--copy: copied)
@@ -28,7 +28,7 @@ public static class PackagerCli
 
     private static int ScanCommand(string[] args, TextWriter o)
     {
-        string? install = null, outPath = null;
+        string? install = null, outPath = null, iis = null;
         var programData = new List<string>();
         var registry = new List<string>();
         for (int i = 0; i < args.Length; i++)
@@ -37,6 +37,7 @@ public static class PackagerCli
             {
                 case "--programdata": programData.Add(Value(args, ref i)); break;
                 case "--registry": registry.Add(Value(args, ref i)); break;
+                case "--iis": iis = Value(args, ref i); break;
                 case "--out" or "-o": outPath = Value(args, ref i); break;
                 default:
                     if (args[i].StartsWith('-') || install != null) throw new PackagerError($"unexpected '{args[i]}'.\nusage:\n{Usage}");
@@ -47,6 +48,11 @@ public static class PackagerCli
         if (install == null) throw new PackagerError("usage:\n" + Usage);
 
         var manifest = Scanner.Scan(install, programData, registry, line => o.WriteLine("  " + line));
+        if (iis != null)
+        {
+            if (!File.Exists(iis)) throw new PackagerError($"no such file: {iis}");
+            manifest.Inputs.IisConfig = Path.GetFullPath(iis);
+        }
         outPath ??= manifest.Product.Name + PackageManifest.Extension;
         manifest.Save(outPath);
         int gui = manifest.Apps.Count(a => a.Kind == AppKind.Gui), con = manifest.Apps.Count(a => a.Kind == AppKind.Console);

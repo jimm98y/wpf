@@ -1,4 +1,5 @@
-// A Windows service, run where the service manager is systemd or launchd (or a terminal): what the service control
+// A Windows service, run where the service manager is systemd or launchd (or a terminal) -- on Windows the service
+// control manager runs it (ServiceBase.Windows.cs): what the service control
 // manager does with a ServiceBase on Windows, done by Run itself. Each service is started (OnStart, with no start
 // parameters, as a service the manager starts automatically has none), and the process then waits as a service
 // process does until it is told to stop: by the manager -- SIGTERM, which systemd and launchd send -- or Ctrl-C at a
@@ -49,9 +50,9 @@ namespace System.ServiceProcess
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public virtual EventLog EventLog => _eventLog ??= new EventLog("Application") { Source = ServiceName };
 
-        /// <summary>No service control manager handle off Windows.</summary>
+        /// <summary>The service control manager's status handle for it on Windows; none elsewhere.</summary>
         [EditorBrowsable(EditorBrowsableState.Advanced)]
-        protected IntPtr ServiceHandle => IntPtr.Zero;
+        protected IntPtr ServiceHandle => OperatingSystem.IsWindows() ? WindowsServiceHandle : IntPtr.Zero;
 
         public string ServiceName
         {
@@ -81,15 +82,23 @@ namespace System.ServiceProcess
         protected virtual void OnStop() { }
 
         /// <summary>More time for the start or stop in progress, as the manager gives it.</summary>
-        public void RequestAdditionalTime(int milliseconds) => Interlocked.Add(ref _stopDeadline, Math.Max(0, milliseconds));
+        public void RequestAdditionalTime(int milliseconds)
+        {
+            if (OperatingSystem.IsWindows()) { RequestWindowsTime(milliseconds); return; }
+            Interlocked.Add(ref _stopDeadline, Math.Max(0, milliseconds));
+        }
         public void RequestAdditionalTime(TimeSpan time) => RequestAdditionalTime((int)Math.Min(int.MaxValue, time.TotalMilliseconds));
 
         [EditorBrowsable(EditorBrowsableState.Never)]
-        public void ServiceMainCallback(int argCount, IntPtr argPointer) { }
+        public void ServiceMainCallback(int argCount, IntPtr argPointer)
+        {
+            if (OperatingSystem.IsWindows()) WindowsServiceMain(argCount, argPointer);
+        }
 
         /// <summary>The service stopped by itself, as when it asks the manager to stop it.</summary>
         public void Stop()
         {
+            if (OperatingSystem.IsWindows()) { WindowsStop(); return; }
             StopOne(this);
             lock (s_gate)
                 if (s_services != null && Array.TrueForAll(s_services, s => !s._running)) s_stopped?.Set();
@@ -104,6 +113,8 @@ namespace System.ServiceProcess
         public static void Run(ServiceBase[] services)
         {
             if (services == null || services.Length == 0) throw new ArgumentException("No services were given to start.");
+            // Windows: the service control manager runs them
+            if (OperatingSystem.IsWindows()) { RunWindows(services); return; }
             lock (s_gate)
             {
                 s_services = services;

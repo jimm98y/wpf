@@ -37,6 +37,7 @@ public static class LinuxPackager
         string data = Path.Combine(work, "data.tar.gz");
         long installedBytes = 0;
         var units = new List<(string Name, bool Enable)>();
+        var maskedUnits = new List<string>();
         using (var file = File.Create(data))
         using (var gz = new GZipStream(file, CompressionLevel.Optimal))
         {
@@ -61,20 +62,43 @@ public static class LinuxPackager
                 installedBytes += tar.AddFile(source, $"{root}/seed/ProgramData/{target}", executable: false);
             log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData");
 
+            // the installation's web sites, as IIS serves them on its machine (iis.json, installed into the machine's state
+            // on every install), and the web server's daemon, root, which claims their URLs from http.sys
+            string? iis = DesktopCommon.IisConfiguration(manifest, root, state);
+            if (iis != null)
+            {
+                tar.AddText($"{root}/iis.json", iis, executable: false);
+                tar.AddText($"/lib/systemd/system/{pkg}-iis.service", SystemUnit(manifest, pkg, root, state, "iis", "web server"), executable: false);
+                log("  web server: the installation's IIS sites");
+            }
             // the machine's http.sys: the ports the programs' URL prefixes name, owned apart from every program
-            bool httpSys = DesktopCommon.UsesHttpSys(manifest);
+            bool httpSys = DesktopCommon.UsesHttpSys(manifest) || iis != null;
             if (httpSys)
             {
-                tar.AddText($"/lib/systemd/system/{pkg}-httpsys.service", HttpSysUnit(manifest, pkg, root, state), executable: false);
+                tar.AddText($"/lib/systemd/system/{pkg}-httpsys.service", SystemUnit(manifest, pkg, root, state, "httpsys", "http.sys"), executable: false);
                 units.Add(($"{pkg}-httpsys.service", true));
                 log("  http.sys service: a program serves through http.sys");
             }
-            foreach (var service in manifest.Services.Where(s => s.Start != StartType.Disabled))
+            // each service's unit, a disabled one's too (masked, so that its start type can be changed); automatic ones
+            // enabled, manual ones started when the service manager starts them
+            var masked = new List<string>();
+            if (iis != null) units.Add(($"{pkg}-iis.service", true));   // after http.sys, whose ports it claims
+            foreach (var service in manifest.Services)
             {
                 string unit = UnitName(pkg, service.Name);
                 tar.AddText($"/lib/systemd/system/{unit}", Unit(manifest, service, pkg, root, state), executable: false);
-                units.Add((unit, service.Start == StartType.Auto));
+                if (service.Start == StartType.Disabled) masked.Add(unit);
+                else units.Add((unit, service.Start == StartType.Auto));
             }
+            // the service manager: the services as registered, installed into the machine's state on every install, and
+            // its daemon, root, which starts and stops them for callers that are not
+            tar.AddText($"{root}/services.json", DesktopCommon.ServiceDatabase(manifest, root, sv => UnitName(pkg, sv.Name)), executable: false);
+            if (manifest.Services.Count > 0)
+            {
+                tar.AddText($"/lib/systemd/system/{pkg}-scm.service", SystemUnit(manifest, pkg, root, state, "scm", "service manager"), executable: false);
+                units.Insert(0, ($"{pkg}-scm.service", true));
+            }
+            maskedUnits = masked;
             foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             {
                 string id = pkg + "-" + DesktopCommon.Segment(DesktopCommon.ProgramName(app));
@@ -83,7 +107,7 @@ public static class LinuxPackager
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
             }
             // the services by their Windows names, through systemd
-            var named = manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => (x.Name, UnitName(pkg, x.Name))).ToList();
+            var named = manifest.Services.Select(x => (x.Name, UnitName(pkg, x.Name))).ToList();
             if (httpSys) named.Insert(0, ("HTTP", $"{pkg}-httpsys.service"));
             tar.AddText($"{root}/services.sh", DesktopCommon.ServicesScript(manifest.Product.Name, named, mac: false), executable: true);
             // at log-on, what the apps put in the Startup folders, as Explorer starts it
@@ -98,7 +122,7 @@ public static class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText("./control", Control(manifest, pkg, arch, installedBytes), executable: false);
-            tar.AddText("./postinst", PostInst(root, state, units, Accounts(manifest, pkg)), executable: true);
+            tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
             tar.AddText("./prerm", PreRm(units), executable: true);
             tar.AddText("./postrm", PostRm(state, units), executable: true);
             tar.Finish();
@@ -123,7 +147,7 @@ public static class LinuxPackager
         using (var gz = new GZipStream(output, CompressionLevel.Fastest))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, Accounts(manifest, pkg)), executable: true);
+            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
             tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
             tar.Finish();
@@ -133,7 +157,7 @@ public static class LinuxPackager
         return deb;
     }
 
-    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, string accounts) => $$"""
+    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts) => $$"""
         #!/bin/sh
         # Installs {{pkg}} on a Linux without dpkg: its files into / (the list kept for uninstall.sh), then as the .deb's
         # postinst does -- the machine's state on the first install, the services enabled and started.
@@ -150,7 +174,7 @@ public static class LinuxPackager
         tar tzf files.tar.gz | sed -e 's|^\.||' > "{{root}}/installed-files.txt"
         cp uninstall.sh "{{root}}/uninstall.sh"
         chmod 755 "{{root}}/uninstall.sh"
-        {{PostInstBody(root, state, units, accounts)}}
+        {{PostInstBody(root, state, units, masked, accounts)}}
         echo "{{pkg}} installed into {{root}}"
 
         """;
@@ -174,19 +198,20 @@ public static class LinuxPackager
 
     // ---- what is installed ---------------------------------------------------------------------------------
 
-    private static string HttpSysUnit(PackageManifest manifest, string pkg, string root, string state) => $"""
+    // a daemon of the stack's own (wpfrun <command>: the http.sys service, the service manager), root, always running
+    private static string SystemUnit(PackageManifest manifest, string pkg, string root, string state, string command, string title) => $"""
         [Unit]
-        Description=http.sys ({manifest.Product.Name})
+        Description={title} ({manifest.Product.Name})
         After=network-online.target
         Wants=network-online.target
 
         [Service]
         Type=simple
-        ExecStart={Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} httpsys
+        ExecStart={Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} {command}
         Environment=WPFRUN_STATE={state}
         Restart=always
         RestartSec=5
-        SyslogIdentifier={pkg}-httpsys
+        SyslogIdentifier={pkg}-{command}
 
         [Install]
         WantedBy=multi-user.target
@@ -285,11 +310,11 @@ public static class LinuxPackager
         return sb.ToString();
     }
 
-    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units, string accounts) =>
+    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts) =>
         "#!/bin/sh\n# the machine's state made from the seed on the first install (the registry's paths this installation's) and\n"
-        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units, accounts) + "exit 0\n";
+        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units, masked, accounts) + "exit 0\n";
 
-    private static string PostInstBody(string root, string state, List<(string Name, bool Enable)> units, string accounts) => $$"""
+    private static string PostInstBody(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts) => $$"""
         STATE="{{state}}"
         SEED="{{root}}/seed"
         mkdir -p "$STATE"
@@ -302,6 +327,9 @@ public static class LinuxPackager
           done
         fi
         if [ ! -d "$STATE/ProgramData" ] && [ -d "$SEED/ProgramData" ]; then cp -a "$SEED/ProgramData" "$STATE/ProgramData"; fi
+        # the service manager's database: the services this version registers, replaced on every install
+        if [ -f "{{root}}/services.json" ]; then cp "{{root}}/services.json" "$STATE/services.json"; fi
+        if [ -f "{{root}}/iis.json" ]; then cp "{{root}}/iis.json" "$STATE/iis.json"; fi
         # every user's, as Windows' ProgramData and HKLM are writable by its users' programs
         chgrp -R users "$STATE" 2>/dev/null || true
         chmod -R g+rwX "$STATE"
@@ -309,7 +337,7 @@ public static class LinuxPackager
         {{accounts}}
         if [ -d /run/systemd/system ]; then
           systemctl daemon-reload || true
-        {{string.Concat(units.Where(u => u.Enable).Select(u => $"  systemctl enable --now {u.Name} || true\n"))}}fi
+        {{string.Concat(units.Select(u => $"  systemctl unmask {u.Name} >/dev/null 2>&1 || true\n"))}}{{string.Concat(units.Where(u => u.Enable).Select(u => $"  systemctl enable --now {u.Name} || true\n"))}}{{string.Concat(masked.Select(u => $"  systemctl mask {u} || true\n"))}}fi
         # a service per program, each watching its configuration: more inotify instances than Linux allows a user by
         # default (128); Windows has no such limit
         printf 'fs.inotify.max_user_instances = 8192\nfs.inotify.max_user_watches = 524288\n' > /etc/sysctl.d/60-{{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}}.conf

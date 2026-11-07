@@ -177,13 +177,13 @@ namespace System.Management
                 P("Handle", S), P("HandleCount", U32), P("Name", S), P("ParentProcessId", U32), P("Priority", U32),
                 P("ProcessId", U32), P("SessionId", U32), P("ThreadCount", U32), P("VirtualSize", U64), P("WorkingSetSize", U64),
             }, Processes),
-            // There are no Windows services on this machine.
+            // the machine's services, as its service manager has them (WpfWebGpu.Services)
             new WmiClass("Win32_Service", new[] { "Name" }, new[]
             {
-                P("AcceptPause", B), P("AcceptStop", B), P("Caption", S), P("Description", S), P("DisplayName", S),
+                P("AcceptPause", B), P("AcceptStop", B), P("Caption", S), P("DelayedAutoStart", B), P("Description", S), P("DisplayName", S),
                 P("ExitCode", U32), P("Name", S), P("PathName", S), P("ProcessId", U32), P("ServiceType", S), P("Started", B),
                 P("StartMode", S), P("StartName", S), P("State", S), P("Status", S),
-            }, () => Array.Empty<Dictionary<string, object>>()),
+            }, Services),
         };
 
         public static WmiClass Find(string name)
@@ -573,6 +573,45 @@ namespace System.Management
                 ["SMBIOSMemoryType"] = 0u,
                 ["Tag"] = "Physical Memory 0",
             };
+        }
+
+        private static IEnumerable<Dictionary<string, object>> Services()
+        {
+            var db = Try(WpfWebGpu.Services.ServiceManager.Database) ?? new WpfWebGpu.Services.ServiceDatabase();
+            var statuses = Try(() => WpfWebGpu.Services.ServiceManager.Statuses(db)) ?? new Dictionary<string, WpfWebGpu.Services.ServiceStatus>();
+            foreach (var s in db.Services)
+            {
+                var status = statuses.TryGetValue(s.Name, out var known) ? known : new WpfWebGpu.Services.ServiceStatus(WpfWebGpu.Services.ServiceState.Stopped, 0, 0);
+                bool running = status.State == WpfWebGpu.Services.ServiceState.Running;
+                yield return new Dictionary<string, object>
+                {
+                    ["AcceptPause"] = false,
+                    ["AcceptStop"] = running,
+                    ["Caption"] = s.DisplayName,
+                    ["DelayedAutoStart"] = s.DelayedAutoStart,
+                    ["Description"] = s.Description,
+                    ["DisplayName"] = s.DisplayName,
+                    ["ExitCode"] = (uint)status.ExitCode,
+                    ["Name"] = s.Name,
+                    ["PathName"] = s.PathName,
+                    ["ProcessId"] = (uint)status.ProcessId,
+                    ["ServiceType"] = "Own Process",
+                    ["Started"] = running,
+                    ["StartMode"] = s.Start.ToString(),
+                    ["StartName"] = s.StartName,
+                    ["State"] = status.State switch
+                    {
+                        WpfWebGpu.Services.ServiceState.Running => "Running",
+                        WpfWebGpu.Services.ServiceState.StartPending => "Start Pending",
+                        WpfWebGpu.Services.ServiceState.StopPending => "Stop Pending",
+                        WpfWebGpu.Services.ServiceState.Paused => "Paused",
+                        WpfWebGpu.Services.ServiceState.PausePending => "Pause Pending",
+                        WpfWebGpu.Services.ServiceState.ContinuePending => "Continue Pending",
+                        _ => "Stopped",
+                    },
+                    ["Status"] = "OK",
+                };
+            }
         }
 
         private static IEnumerable<Dictionary<string, object>> Processes()

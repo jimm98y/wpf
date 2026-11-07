@@ -13,13 +13,17 @@ internal static unsafe class Services
     private const uint SERVICE_WIN32_OWN_PROCESS = 0x10, SERVICE_ERROR_NORMAL = 1;
     private const uint SERVICE_AUTO_START = 2, SERVICE_DEMAND_START = 3, SERVICE_DISABLED = 4;
     private const uint SERVICE_CONTROL_STOP = 1, SERVICE_STOPPED = 1;
-    private const uint SERVICE_CONFIG_FAILURE_ACTIONS = 2;
+    private const uint SERVICE_CONFIG_DESCRIPTION = 1, SERVICE_CONFIG_FAILURE_ACTIONS = 2, SERVICE_CONFIG_DELAYED_AUTO_START_INFO = 3;
+    private const uint DACL_SECURITY_INFORMATION = 4;
     private const int ERROR_SERVICE_DOES_NOT_EXIST = 1060, ERROR_SERVICE_ALREADY_RUNNING = 1056, ERROR_SERVICE_NOT_ACTIVE = 1062;
 
-    public static void CreateOrUpdate(string name, string displayName, string command, string start, List<string> dependsOn, Dictionary<string, string> environment, string account)
+    public static void CreateOrUpdate(string name, string displayName, string command, string start, List<string> dependsOn, Dictionary<string, string> environment, string account,
+        string startName = "", string description = "", bool delayedAutoStart = false, string security = "")
     {
-        // the account it runs as: the manager's names for Windows' own service accounts
-        string user = account switch { "NetworkService" => @"NT AUTHORITY\NetworkService", "LocalService" => @"NT AUTHORITY\LocalService", _ => "LocalSystem" };
+        // the account it runs as: as it was registered (a virtual account, NT SERVICE\Name, included), else the
+        // manager's names for Windows' own service accounts
+        string user = startName.Length > 0 ? startName
+            : account switch { "NetworkService" => @"NT AUTHORITY\NetworkService", "LocalService" => @"NT AUTHORITY\LocalService", _ => "LocalSystem" };
         uint startType = start switch { "Manual" => SERVICE_DEMAND_START, "Disabled" => SERVICE_DISABLED, _ => SERVICE_AUTO_START };
         string deps = dependsOn.Count == 0 ? "\0" : string.Concat(dependsOn.Select(d => d + "\0")) + "\0";
         IntPtr scm = OpenSCManagerW(null, null, SC_MANAGER_ALL_ACCESS);
@@ -38,7 +42,25 @@ internal static unsafe class Services
                     command, null, IntPtr.Zero, deps, user, null);
                 if (svc == IntPtr.Zero) throw new Win32Exception();
             }
-            try { RestartOnFailure(svc); }
+            try
+            {
+                RestartOnFailure(svc);
+                // its description and delayed start, and who may control it, as it was registered
+                fixed (char* text = description + "\0")
+                {
+                    IntPtr p = (IntPtr)text;
+                    ChangeServiceConfig2W(svc, SERVICE_CONFIG_DESCRIPTION, &p);
+                }
+                int delayed = delayedAutoStart ? 1 : 0;
+                ChangeServiceConfig2W(svc, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &delayed);
+                if (security.Length > 0)
+                {
+                    byte[] sd = Convert.FromBase64String(security);
+                    fixed (byte* d = sd)
+                        if (!SetServiceObjectSecurity(svc, DACL_SECURITY_INFORMATION, d))
+                            Console.WriteLine($"  {name}: its security descriptor not set ({new Win32Exception().Message})");
+                }
+            }
             finally { CloseServiceHandle(svc); }
         }
         finally { CloseServiceHandle(scm); }
@@ -104,6 +126,7 @@ internal static unsafe class Services
     [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool ChangeServiceConfigW(IntPtr svc, uint type, uint start, uint error, string path, string? group, IntPtr tag, string deps, string? user, string? password, string display);
     [DllImport("advapi32", SetLastError = true)] private static extern bool ChangeServiceConfig2W(IntPtr svc, uint level, void* info);
+    [DllImport("advapi32", SetLastError = true)] private static extern bool SetServiceObjectSecurity(IntPtr svc, uint information, byte* descriptor);
     [DllImport("advapi32", SetLastError = true)] private static extern bool StartServiceW(IntPtr svc, uint argc, IntPtr argv);
     [DllImport("advapi32", SetLastError = true)] private static extern bool ControlService(IntPtr svc, uint control, SERVICE_STATUS* status);
     [DllImport("advapi32", SetLastError = true)] private static extern bool QueryServiceStatus(IntPtr svc, SERVICE_STATUS* status);

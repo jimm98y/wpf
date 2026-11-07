@@ -1,11 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Replacement for the System.ServiceProcess.ServiceController package's runtime assembly, for
-       macOS. The package's non-Windows build throws PlatformNotSupportedException; this one models a
-       machine whose service control manager has no services installed: GetServices() is empty, and a
-       ServiceController for any name fails the way Windows fails for a service that does not exist
-       (InvalidOperationException over Win32Exception 1060), so an app takes its "service not
-       installed" path. A service (ServiceBase) runs as the service manager there runs it (ServiceBase.cs):
+       macOS and Linux. The package's non-Windows build throws PlatformNotSupportedException; this one is
+       the client of the machine's service manager (WpfWebGpu.Services): the services the installation
+       registered, their state from launchd or systemd, starting and stopping them as each one's
+       security descriptor allows, and a name that is not installed failing as on Windows
+       (InvalidOperationException over Win32Exception 1060). A service (ServiceBase) runs as the service manager there runs it (ServiceBase.cs):
        started, then stopped when the manager stops it (systemd's or launchd's SIGTERM).
 
        Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
@@ -34,6 +34,7 @@
   <ItemGroup>
     <!-- ServiceBase.EventLog. Compiled against the package; binds whatever EventLog the app runs with. -->
     <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 
 </Project>

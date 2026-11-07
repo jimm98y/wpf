@@ -56,18 +56,6 @@ namespace System.ServiceProcess
         Win32ShareProcess = 32,
         InteractiveProcess = 256,
     }
-    [System.Runtime.InteropServices.StructLayoutAttribute(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    public readonly partial struct SessionChangeDescription : System.IEquatable<System.ServiceProcess.SessionChangeDescription>
-    {
-        private readonly int _dummyPrimitive;
-        public System.ServiceProcess.SessionChangeReason Reason { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        public int SessionId { get { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); } }
-        public override bool Equals([System.Diagnostics.CodeAnalysis.NotNullWhenAttribute(true)] object? obj) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public bool Equals(System.ServiceProcess.SessionChangeDescription changeDescription) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public override int GetHashCode() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public static bool operator ==(System.ServiceProcess.SessionChangeDescription a, System.ServiceProcess.SessionChangeDescription b) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public static bool operator !=(System.ServiceProcess.SessionChangeDescription a, System.ServiceProcess.SessionChangeDescription b) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-    }
     public enum SessionChangeReason
     {
         ConsoleConnect = 1,
@@ -79,14 +67,5 @@ namespace System.ServiceProcess
         SessionLock = 7,
         SessionUnlock = 8,
         SessionRemoteControl = 9,
-    }
-    public partial class TimeoutException : System.SystemException
-    {
-        public TimeoutException() { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        [System.ComponentModel.EditorBrowsableAttribute(System.ComponentModel.EditorBrowsableState.Never)]
-        [System.ObsoleteAttribute("This API supports obsolete formatter-based serialization. It should not be called or extended by application code.", DiagnosticId="SYSLIB0051", UrlFormat="https://aka.ms/dotnet-warnings/{0}")]
-        protected TimeoutException(System.Runtime.Serialization.SerializationInfo info, System.Runtime.Serialization.StreamingContext context) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public TimeoutException(string? message) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
-        public TimeoutException(string? message, System.Exception? innerException) { throw new System.PlatformNotSupportedException("System.ServiceProcess.ServiceController is not supported on this platform."); }
     }
 }

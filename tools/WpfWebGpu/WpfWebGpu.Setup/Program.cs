@@ -121,7 +121,8 @@ internal static partial class Program
             string name = ServiceName(info, service);
             string command = Prepare(root, wpfrunCache, service.Exe, service.Args);
             Services.CreateOrUpdate(name, service.DisplayName.Length > 0 ? service.DisplayName : service.Name, command, service.Start,
-                service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment, service.Account);
+                service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment, service.Account,
+                service.StartName, service.Description, service.DelayedAutoStart, service.Security);
             Console.WriteLine($"  service {name}{(service.Account != "LocalSystem" ? $" ({service.Account})" : "")}");
         }
         // what a service running as NETWORK SERVICE or LOCAL SERVICE writes -- its data in ProgramData, wpfrun's

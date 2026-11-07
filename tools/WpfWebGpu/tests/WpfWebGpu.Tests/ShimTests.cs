@@ -7,6 +7,7 @@ using Xunit;
 namespace WpfWebGpu.Tests;
 
 /// <summary>The macOS replacement assemblies, through their public API, as an app uses them.</summary>
+[Collection("service manager")]   // the service manager's database is the process's (WPFWEBGPU_SERVICES)
 public class ShimTests
 {
     [Fact]

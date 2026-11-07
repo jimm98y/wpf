@@ -67,6 +67,13 @@
   <PropertyGroup>
     <_WpfWebGpuShims>$(MSBuildThisFileDirectory)../../../shims/</_WpfWebGpuShims>
   </PropertyGroup>
+  <!-- Every OS, Windows included: the shim forwards to the service control manager there (WpfWebGpu.Services),
+       and answers from the installed services elsewhere. -->
+  <ItemGroup>
+    <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
+    <!-- the service manager it is the client of, named here: restore prunes a package's dependencies otherwise (NU1511) -->
+    <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
+  </ItemGroup>
   <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
     <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfWebGpuExtrasVersion)" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfWebGpuExtrasVersion)" />
@@ -78,7 +85,6 @@
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
     <!-- A framework member, not a package: at its higher version it wins over the shared framework's copy. -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" />
-    <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
     <!-- access control lists (a mutex's, a file's, a registry key's), kept and read back, not enforced -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.AccessControl/System.Security.AccessControl.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />

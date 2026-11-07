@@ -53,23 +53,47 @@ public static class MacPackager
             Clone(source, Path.Combine(home, "seed", "ProgramData", target));
         log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData");
 
-        // the services
+        // the services: each one's daemon, a disabled one's too (kept disabled, so that its start type can be changed)
         var daemons = new List<string>();
-        foreach (var service in manifest.Services.Where(s => s.Start != StartType.Disabled))
+        var disabled = new List<string>();
+        foreach (var service in manifest.Services)
         {
             string label = id + "." + DesktopCommon.Segment(service.Name);
             string plist = Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist");
             Directory.CreateDirectory(Path.GetDirectoryName(plist)!);
             File.WriteAllText(plist, Daemon(label, root, product, service, manifest.Product.OsIdentity));
-            daemons.Add(label);
+            (service.Start == StartType.Disabled ? disabled : daemons).Add(label);
+        }
+        // the service manager: the services as registered (services.json, installed into the machine's state on every
+        // install) and its daemon, root, which starts and stops them for callers that are not
+        File.WriteAllText(Path.Combine(home, "services.json"), DesktopCommon.ServiceDatabase(manifest, root, s => id + "." + DesktopCommon.Segment(s.Name)));
+        if (manifest.Services.Count > 0)
+        {
+            string label = id + ".scm";
+            Directory.CreateDirectory(Path.Combine(payload, "Library", "LaunchDaemons"));
+            File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), SystemDaemon(label, root, product, "scm", "scm.log"));
+            daemons.Insert(0, label);
+        }
+
+        // the installation's web sites, as IIS serves them on its machine: their configuration (iis.json, installed into
+        // the machine's state on every install) and the web server's daemon, root, which claims their URLs from http.sys
+        string? iis = DesktopCommon.IisConfiguration(manifest, root, root + "/state");
+        if (iis != null)
+        {
+            File.WriteAllText(Path.Combine(home, "iis.json"), iis);
+            string label = id + ".iis";
+            Directory.CreateDirectory(Path.Combine(payload, "Library", "LaunchDaemons"));
+            File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), SystemDaemon(label, root, product, "iis", "iis.log"));
+            daemons.Insert(0, label);
+            log("  web server: the installation's IIS sites");
         }
 
         // the machine's http.sys: the ports the programs' URL prefixes name, owned apart from every program
-        if (DesktopCommon.UsesHttpSys(manifest))
+        if (DesktopCommon.UsesHttpSys(manifest) || iis != null)
         {
             string label = id + ".httpsys";
             Directory.CreateDirectory(Path.Combine(payload, "Library", "LaunchDaemons"));
-            File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), HttpSysDaemon(label, root, product));
+            File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), SystemDaemon(label, root, product, "httpsys", "httpsys.log"));
             daemons.Insert(0, label);
             log("  http.sys service: a program serves through http.sys");
         }
@@ -87,12 +111,12 @@ public static class MacPackager
         File.WriteAllText(Path.Combine(home, "uninstall.sh"), Uninstall(root, product, id, daemons));
         Executable(Path.Combine(home, "uninstall.sh"));
         // the services by their Windows names, through launchd
-        var named = manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => (x.Name, id + "." + DesktopCommon.Segment(x.Name))).ToList();
+        var named = manifest.Services.Select(x => (x.Name, id + "." + DesktopCommon.Segment(x.Name))).ToList();
         if (daemons.Contains(id + ".httpsys")) named.Insert(0, ("HTTP", id + ".httpsys"));
         File.WriteAllText(Path.Combine(home, "services.sh"), DesktopCommon.ServicesScript(product, named, mac: true));
         Executable(Path.Combine(home, "services.sh"));
-        File.WriteAllText(Path.Combine(scripts, "preinstall"), PreInstall(root, product, daemons));
-        File.WriteAllText(Path.Combine(scripts, "postinstall"), PostInstall(root, daemons, Accounts(manifest, product)));
+        File.WriteAllText(Path.Combine(scripts, "preinstall"), PreInstall(root, product, id));
+        File.WriteAllText(Path.Combine(scripts, "postinstall"), PostInstall(root, daemons, disabled, Accounts(manifest, product)));
         Executable(Path.Combine(scripts, "preinstall"));
         Executable(Path.Combine(scripts, "postinstall"));
 
@@ -171,7 +195,8 @@ public static class MacPackager
             """;
     }
 
-    private static string HttpSysDaemon(string label, string root, string product) => $"""
+    // a daemon of the stack's own (wpfrun <command>: the http.sys service, the service manager), root, always running
+    private static string SystemDaemon(string label, string root, string product, string command, string logName) => $"""
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
         <plist version="1.0">
@@ -181,7 +206,7 @@ public static class MacPackager
           <array>
             <string>{X(root)}/runtime/dotnet/dotnet</string>
             <string>{X(root)}/runtime/launcher/wpfrun.dll</string>
-            <string>httpsys</string>
+            <string>{X(command)}</string>
           </array>
           <key>EnvironmentVariables</key>
           <dict>
@@ -190,8 +215,8 @@ public static class MacPackager
           <key>RunAtLoad</key><true/>
           <key>KeepAlive</key><true/>
           <key>ThrottleInterval</key><integer>5</integer>
-          <key>StandardOutPath</key><string>/Library/Logs/{X(product)}/httpsys.log</string>
-          <key>StandardErrorPath</key><string>/Library/Logs/{X(product)}/httpsys.log</string>
+          <key>StandardOutPath</key><string>/Library/Logs/{X(product)}/{X(logName)}</string>
+          <key>StandardErrorPath</key><string>/Library/Logs/{X(product)}/{X(logName)}</string>
         </dict>
         </plist>
         """;
@@ -260,13 +285,20 @@ public static class MacPackager
     // state stays
     // (launchctl bootout returns before a slow service has gone, and a label still going cannot be bootstrapped:
     // each is waited for, up to half a minute)
-    private static string PreInstall(string root, string product, List<string> daemons) => $$"""
+    // (every daemon of the product, by its label's prefix: a service renamed or no longer installed is stopped and
+    // removed with the rest, not left loaded from the previous version)
+    private static string PreInstall(string root, string product, string id) => $$"""
         #!/bin/sh
         stop() {
           launchctl bootout system/"$1" 2>/dev/null || return 0
           i=0; while launchctl print system/"$1" >/dev/null 2>&1 && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
         }
-        {{string.Concat(daemons.Select(d => $"stop {d}\n"))}}rm -rf "{{root}}/app" "{{root}}/runtime" "/Applications/{{product}}"
+        for p in /Library/LaunchDaemons/{{id}}.*.plist; do
+          [ -f "$p" ] || continue
+          stop "$(basename "$p" .plist)"
+          rm -f "$p"
+        done
+        rm -rf "{{root}}/app" "{{root}}/runtime" "/Applications/{{product}}"
         exit 0
 
         """;
@@ -300,7 +332,7 @@ public static class MacPackager
         return sb.ToString();
     }
 
-    private static string PostInstall(string root, List<string> daemons, string accounts) => $$"""
+    private static string PostInstall(string root, List<string> daemons, List<string> disabled, string accounts) => $$"""
         #!/bin/sh
         # The machine's state made from the seed on the first install -- the registry's paths made this installation's --
         # and kept on an upgrade; then the services started. WPFPKG_ROOT: a test's root in place of /.
@@ -323,12 +355,16 @@ public static class MacPackager
           mv "$SEED/ProgramData" "$STATE/ProgramData"
         fi
         rm -rf "$SEED"
+        # the service manager's database and the web server's sites: this version's, replaced on every install
+        [ -f "$ROOT/services.json" ] && cp "$ROOT/services.json" "$STATE/services.json"
+        [ -f "$ROOT/iis.json" ] && cp "$ROOT/iis.json" "$STATE/iis.json"
         # every user's, as Windows' ProgramData and HKLM are writable by its users' programs
         chgrp -R staff "$STATE" 2>/dev/null || true
         chmod -R g+rwX "$STATE"
         mkdir -p "/Library/Logs/{{Path.GetFileName(root)}}" 2>/dev/null || true
         # a service started, again while launchd is still letting go of the previous version's (up to ten seconds)
         start() {
+          launchctl enable system/"$1" 2>/dev/null
           i=0
           until launchctl bootstrap system "/Library/LaunchDaemons/$1.plist" 2>/dev/null; do
             launchctl print system/"$1" >/dev/null 2>&1 && return 0
@@ -338,7 +374,7 @@ public static class MacPackager
         }
         if [ -z "$WPFPKG_ROOT" ]; then
         {{accounts}}
-        {{string.Concat(daemons.Select(d => $"  start {d}\n"))}}fi
+        {{string.Concat(daemons.Select(d => $"  start {d}\n"))}}{{string.Concat(disabled.Select(d => $"  launchctl disable system/{d}\n"))}}fi
         exit 0
 
         """;
@@ -348,7 +384,12 @@ public static class MacPackager
         # Removes {product}: its services, its apps and its files. The machine's state (state/: the registry and
         # ProgramData) is kept unless --all is given, as Windows keeps ProgramData after an uninstall.
         if [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
-        {string.Concat(daemons.Select(d => $"launchctl bootout system/{d} 2>/dev/null || true\nrm -f \"/Library/LaunchDaemons/{d}.plist\"\n"))}rm -f "/Library/LaunchAgents/{id}.startup.plist"
+        for p in /Library/LaunchDaemons/{id}.*.plist; do
+          [ -f "$p" ] || continue
+          launchctl bootout system/"$(basename "$p" .plist)" 2>/dev/null || true
+          rm -f "$p"
+        done
+        rm -f "/Library/LaunchAgents/{id}.startup.plist"
         rm -rf "/Applications/{product}"
         rm -rf "{root}/app" "{root}/runtime" "{root}/seed"
         if [ "$1" = "--all" ]; then rm -rf "{root}" "/Library/Logs/{product}"; fi

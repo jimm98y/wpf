@@ -49,7 +49,7 @@ public static partial class UrlAcl
     }
 
     /// <summary>This process's account (root: 0).</summary>
-    public static uint CurrentUid() => OperatingSystem.IsWindows() ? 0 : getuid();
+    public static uint CurrentUid() => WpfWebGpu.Services.WindowsAccounts.CurrentUid();
 
     /// <summary>The owner of a file: who registered it.</summary>
     public static uint? OwnerOf(string path)
@@ -65,19 +65,7 @@ public static partial class UrlAcl
         return BitConverter.ToUInt32(status[8..12]);
     }
 
-    [LibraryImport("libc")]
-    private static partial uint getuid();
-
-    [LibraryImport("libc")]
-    private static partial IntPtr getpwuid(uint uid);
-
-    // struct passwd starts with char *pw_name, on macOS and Linux alike
-    private static string? UserName(uint uid)
-    {
-        if (OperatingSystem.IsWindows()) return null;
-        try { IntPtr p = getpwuid(uid); return p == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(Marshal.ReadIntPtr(p)); }
-        catch (Exception) { return null; }
-    }
+    private static string? UserName(uint uid) => WpfWebGpu.Services.WindowsAccounts.UserName(uid);
 
     [LibraryImport("libSystem.Native", StringMarshalling = StringMarshalling.Utf8)]
     private static unsafe partial int SystemNative_LStat(string path, byte* status);
@@ -130,50 +118,14 @@ public static partial class UrlAcl
 
     // ---- the account's token ----------------------------------------------------------------------------------
 
-    private static string Account(uint uid) => uid == 0 ? "SYSTEM"
-        : ServiceAccount(UserName(uid)) is { } service ? $"NT AUTHORITY\\{service.Name} (uid {uid})"
-        : $"uid {uid} ({Sid(Domain(uid + 500))})";
+    private static string Account(uint uid) => WpfWebGpu.Services.WindowsAccounts.Describe(uid);
 
-    /// <summary>The Windows service account a system account stands for (as the Principal stand-in has them):
-    /// NETWORK SERVICE, LOCAL SERVICE.</summary>
-    public static (string Sid, string Name)? ServiceAccount(string? user) => user switch
-    {
-        "_wpfnetworkservice" or "wpf-networkservice" => ("S-1-5-20", "NETWORK SERVICE"),
-        "_wpflocalservice" or "wpf-localservice" => ("S-1-5-19", "LOCAL SERVICE"),
-        _ => null,
-    };
+    /// <summary>The Windows service account a system account stands for: NETWORK SERVICE, LOCAL SERVICE.</summary>
+    public static (string Sid, string Name)? ServiceAccount(string? user) => WpfWebGpu.Services.WindowsAccounts.ServiceAccount(user);
 
-    internal static HashSet<string> TokenOf(uint uid) => TokenOf(uid, UserName(uid));
+    internal static HashSet<string> TokenOf(uint uid) => WpfWebGpu.Services.WindowsAccounts.TokenOf(uid);
 
-    internal static HashSet<string> TokenOf(uint uid, string? user)
-    {
-        if (uid != 0 && ServiceAccount(user) is { } service)
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                service.Sid, "S-1-1-0", "S-1-5-32-545", "S-1-5-6", "S-1-2-1", "S-1-5-11", "S-1-5-15", "S-1-2-0",
-            };
-        var sids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "S-1-1-0",                 // Everyone
-            "S-1-5-32-545",            // BUILTIN\Users
-            "S-1-5-11",                // Authenticated Users
-            "S-1-5-4",                 // INTERACTIVE
-            "S-1-2-0",                 // LOCAL
-            Sid(Domain(513)),          // MACHINE\None
-        };
-        sids.Add(uid == 0 ? "S-1-5-18" : Sid(Domain(uid + 500)));
-        if (uid == 0) sids.Add("S-1-5-32-544");
-        return sids;
-    }
-
-    // the machine's account domain as the Principal stand-in draws it: a hash of the machine's name
-    private static uint[] Domain(uint rid)
-    {
-        byte[] h = SHA256.HashData(Encoding.UTF8.GetBytes("WpfWebGpu machine SID " + Environment.MachineName.ToUpperInvariant()));
-        return new[] { 21u, BitConverter.ToUInt32(h, 0), BitConverter.ToUInt32(h, 4), BitConverter.ToUInt32(h, 8), rid };
-    }
-
-    private static string Sid(uint[] subs) => "S-1-5-" + string.Join('-', subs);
+    internal static HashSet<string> TokenOf(uint uid, string? user) => WpfWebGpu.Services.WindowsAccounts.TokenOf(uid, user);
 
     // ---- the descriptor's access list: its access-allowed and -denied entries, in order ------------------------
 
@@ -196,17 +148,7 @@ public static partial class UrlAcl
         return false;
     }
 
-    private static string? BinarySid(byte[] b, int at)
-    {
-        if (at + 8 > b.Length) return null;
-        int subs = b[at + 1];
-        if (at + 8 + subs * 4 > b.Length) return null;
-        long authority = 0;
-        for (int i = 2; i < 8; i++) authority = (authority << 8) | b[at + i];
-        var sb = new StringBuilder($"S-{b[at]}-{authority}");
-        for (int i = 0; i < subs; i++) sb.Append('-').Append(BitConverter.ToUInt32(b, at + 8 + i * 4));
-        return sb.ToString();
-    }
+    private static string? BinarySid(byte[] b, int at) => WpfWebGpu.Services.WindowsAccounts.BinarySid(b, at);
 
     private static readonly Dictionary<string, string> s_aliases = new(StringComparer.OrdinalIgnoreCase)
     {

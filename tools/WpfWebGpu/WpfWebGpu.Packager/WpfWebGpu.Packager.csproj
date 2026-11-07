@@ -17,6 +17,8 @@
   <ItemGroup>
     <!-- the rewrite of an app's assemblies onto the stack, as a bundled head's build runs it -->
     <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+    <!-- the service manager's database the desktop packages install (services.json) -->
+    <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 
   <ItemGroup>

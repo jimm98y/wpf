@@ -27,6 +27,62 @@ internal static class DesktopCommon
         return name;
     }
 
+    /// <summary>
+    /// The service manager's database the package installs into the machine's state (services.json): each service as
+    /// it was registered -- its name, display name, description, start type, account, dependencies and security
+    /// descriptor -- with the program it runs here and the system service that runs it (<paramref name="unit"/>).
+    /// </summary>
+    public static string ServiceDatabase(PackageManifest manifest, string root, Func<ServiceEntry, string> unit)
+    {
+        var db = new WpfWebGpu.Services.ServiceDatabase();
+        foreach (var s in manifest.Services)
+        {
+            string program = root + "/app/" + s.Exe.Replace('\\', '/');
+            db.Services.Add(new WpfWebGpu.Services.ServiceRecord
+            {
+                Name = s.Name,
+                DisplayName = s.DisplayName.Length > 0 ? s.DisplayName : s.Name,
+                Description = s.Description,
+                PathName = "\"" + program + "\"" + string.Concat(s.Args.Select(a => " " + (a.Contains(' ') ? "\"" + a + "\"" : a))),
+                Start = s.Start switch { StartType.Auto => WpfWebGpu.Services.ServiceStart.Auto, StartType.Disabled => WpfWebGpu.Services.ServiceStart.Disabled, _ => WpfWebGpu.Services.ServiceStart.Manual },
+                DelayedAutoStart = s.DelayedAutoStart,
+                StartName = s.StartName.Length > 0 ? s.StartName : s.Account switch
+                {
+                    ServiceAccount.NetworkService => @"NT AUTHORITY\NetworkService",
+                    ServiceAccount.LocalService => @"NT AUTHORITY\LocalService",
+                    _ => "LocalSystem",
+                },
+                DependsOn = new List<string>(s.DependsOn),
+                Security = s.Security,
+                Unit = unit(s),
+            });
+        }
+        string path = Path.GetTempFileName();
+        try { db.Save(path); return File.ReadAllText(path); }
+        finally { File.Delete(path); }
+    }
+
+    /// <summary>
+    /// The installation's web sites (iis.json, installed into the machine's state): its machine's IIS configuration,
+    /// each virtual directory's folder where the installation (under <paramref name="root"/>) or its ProgramData
+    /// (under <paramref name="state"/>) puts it; null where there is none to serve.
+    /// </summary>
+    public static string? IisConfiguration(PackageManifest manifest, string root, string state)
+    {
+        if (manifest.Inputs.IisConfig.Length == 0 || !File.Exists(manifest.Inputs.IisConfig)) return null;
+        var mapper = new PathMapper(manifest.PathMappings);
+        string? Local(string windows)
+        {
+            string mapped = mapper.Map(windows);
+            string rest(string token) => mapped[token.Length..].Replace('\\', '/').TrimEnd('/');
+            if (mapped.StartsWith(PathTokens.InstallDir, StringComparison.Ordinal)) return root + "/app" + rest(PathTokens.InstallDir);
+            if (mapped.StartsWith(PathTokens.ProgramData, StringComparison.Ordinal)) return state + "/ProgramData" + rest(PathTokens.ProgramData);
+            return null;
+        }
+        var config = WpfWebGpu.Services.IisConfiguration.Parse(File.ReadAllText(manifest.Inputs.IisConfig), Local);
+        return config.Sites.Any(s => s.Applications.Any(a => a.VirtualDirectories.Any(v => v.PhysicalPath != null))) ? config.ToJson() : null;
+    }
+
     public static string FileName(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ':' ? '_' : c));
 
     /// <summary>The app's own icon (its .exe's), else the product's.</summary>

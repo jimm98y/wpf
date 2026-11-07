@@ -45,6 +45,7 @@ public sealed class PackageManifest
         Inputs.InstallDir = Full(Inputs.InstallDir);
         Inputs.ProgramData = Inputs.ProgramData.Select(Full).ToList();
         Inputs.Registry = Inputs.Registry.Select(Full).ToList();
+        if (Inputs.IisConfig.Length > 0) Inputs.IisConfig = Full(Inputs.IisConfig);
         if (Output.Directory.Length > 0) Output.Directory = Full(Output.Directory);
     }
 }
@@ -54,6 +55,9 @@ public sealed class InputsSection
     public string InstallDir { get; set; } = "";
     public List<string> ProgramData { get; set; } = new();
     public List<string> Registry { get; set; } = new();
+    /// <summary>The installation's machine's IIS configuration (applicationHost.config), where it serves web
+    /// applications of the installation: the sites the desktop packages serve.</summary>
+    public string IisConfig { get; set; } = "";
 }
 
 public sealed class ProductSection
@@ -107,6 +111,16 @@ public sealed class ServiceEntry
     /// <summary>The account it runs as, as its Windows service does (its ObjectName): LocalSystem (root), or
     /// NetworkService / LocalService -- machine accounts the installers make, which the stack takes for Windows' own.</summary>
     public ServiceAccount Account { get; set; } = ServiceAccount.LocalSystem;
+    /// <summary>Its description, as the service manager shows it.</summary>
+    public string Description { get; set; } = "";
+    /// <summary>An automatic service started a little after the others (DelayedAutostart).</summary>
+    public bool DelayedAutoStart { get; set; }
+    /// <summary>The account as Windows names it (ObjectName: LocalSystem, NT AUTHORITY\NetworkService, NT SERVICE\Name),
+    /// what the service manager reports; Account is what runs it here.</summary>
+    public string StartName { get; set; } = "";
+    /// <summary>Who may query, start, stop or change it: its security descriptor (the service key's Security value),
+    /// base64; empty for Windows' default (administrators and the system control it, users query it).</summary>
+    public string Security { get; set; } = "";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ServiceAccount>))]

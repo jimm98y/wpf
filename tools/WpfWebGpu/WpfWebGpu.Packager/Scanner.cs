@@ -99,21 +99,38 @@ public static class Scanner
         }
         if (manifest.Apps.Count == 0) throw new PackagerError($"{installDir} holds no .NET app (no .exe starting a <name>.dll with its <name>.runtimeconfig.json).");
 
-        foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Service))
+        var entries = manifest.Inputs.Registry.SelectMany(r => RegText.Parse(RegText.Read(r))).ToList();
+        manifest.PathMappings.AddRange(DetectMappings(entries, installDir));
+
+        // the services: as the registry registers them, where it does; else the programs that use Windows' service host
+        var registered = RegisteredServices(manifest, entries, installDir, log);
+        if (registered.Count > 0)
         {
-            string name = Path.GetFileNameWithoutExtension(app.Exe);
-            // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
-            var service = new ServiceEntry
+            manifest.Services.AddRange(registered);
+            foreach (var app in manifest.Apps)
+                if (registered.Any(r => r.Exe.Equals(app.Exe, StringComparison.OrdinalIgnoreCase))) { app.Kind = AppKind.Service; app.Shortcut = false; }
+        }
+        else
+        {
+            foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Service))
             {
-                Name = name, DisplayName = app.Name, Exe = app.Exe,
-                Start = app.Warnings.Contains("32-bit only") ? StartType.Disabled : StartType.Auto,
-            };
+                string name = Path.GetFileNameWithoutExtension(app.Exe);
+                // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
+                manifest.Services.Add(new ServiceEntry
+                {
+                    Name = name, DisplayName = app.Name, Exe = app.Exe,
+                    Start = app.Warnings.Contains("32-bit only") ? StartType.Disabled : StartType.Auto,
+                });
+            }
+            AssignAccounts(manifest, entries, log);
+        }
+        foreach (var service in manifest.Services)
+        {
             // a program that checks it is on Windows and refuses to start otherwise (its own assembly asks the system
             // and makes a PlatformNotSupportedException): told it is (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
-            if (AppHost.AppDll(Path.Combine(installDir, app.Exe)) is { } dll && PeFile.TryRead(dll) is { } pe
+            if (AppHost.AppDll(Path.Combine(installDir, service.Exe)) is { } dll && PeFile.TryRead(dll) is { } pe
                 && pe.TypeReferences.Contains("PlatformNotSupportedException") && pe.TypeReferences.Contains("OperatingSystem"))
                 service.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
-            manifest.Services.Add(service);
         }
 
         manifest.Product.Name = Path.GetFileName(installDir);
@@ -129,10 +146,144 @@ public static class Scanner
         }
         manifest.Product.Publisher = companies.OrderByDescending(c => c.Value).Select(c => c.Key).FirstOrDefault() ?? "";
         manifest.Product.IdPrefix = "com." + Identifier(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : "example");
-        var entries = manifest.Inputs.Registry.SelectMany(r => RegText.Parse(RegText.Read(r))).ToList();
-        manifest.PathMappings.AddRange(DetectMappings(entries, installDir));
-        AssignAccounts(manifest, entries, log);
         return manifest;
+    }
+
+    // ---- the services the registry registers ---------------------------------------------------------
+    //
+    // A Windows service is what the service manager has registered: the key SYSTEM\CurrentControlSet\Services\<name>,
+    // with its program (ImagePath), how it starts (Start, DelayedAutostart), the account it runs as (ObjectName), the
+    // services it needs first (DependOnService) and who may control it (its Security key). Where the registry input
+    // holds keys for the installation's programs, those are the services, under the names, start types and accounts
+    // they were registered with -- not a guess from what the programs reference. A key whose program is not the
+    // installation's (Windows' own services, another product's) is passed over.
+
+    private const string ServicesKey = @"SYSTEM\CurrentControlSet\Services\";
+
+    internal static List<ServiceEntry> RegisteredServices(PackageManifest manifest, IReadOnlyList<RegEntry> entries, string installDir, Action<string>? log)
+    {
+        var keys = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+        var order = new List<string>();
+        foreach (var e in entries)
+        {
+            if (e.Kind != RegEntryKind.Value || e.Value == null || !e.Hive.Equals("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase)
+                || !e.Key.StartsWith(ServicesKey, StringComparison.OrdinalIgnoreCase)) continue;
+            string rest = e.Key[ServicesKey.Length..];
+            int slash = rest.IndexOf('\\');
+            string name = slash < 0 ? rest : rest[..slash];
+            // the key's own values, and its security descriptor (Security\Security)
+            string value;
+            if (slash < 0) value = e.Name;
+            else if (rest[(slash + 1)..].Equals("Security", StringComparison.OrdinalIgnoreCase) && e.Name.Equals("Security", StringComparison.OrdinalIgnoreCase)) value = "\\Security";
+            else continue;
+            if (!keys.TryGetValue(name, out var values)) { keys[name] = values = new(StringComparer.OrdinalIgnoreCase); order.Add(name); }
+            values[value] = e.Value;
+        }
+
+        var mapper = new PathMapper(manifest.PathMappings);
+        var services = new List<ServiceEntry>();
+        foreach (string name in order)
+        {
+            var v = keys[name];
+            if (v.GetValueOrDefault("ImagePath") is not string imagePath) continue;
+            var (program, args) = SplitCommandLine(imagePath);
+            string mapped = mapper.Map(program);
+            if (!mapped.StartsWith(PathTokens.InstallDir, StringComparison.Ordinal)) continue;
+            string rel = mapped[PathTokens.InstallDir.Length..].TrimStart('\\', '/').Replace('\\', '/');
+            if (ProgramOf(manifest, installDir, rel) is not { } app)
+            {
+                log?.Invoke($"service {name}: {rel} is not a program of the installation; left out");
+                continue;
+            }
+            int start = v.GetValueOrDefault("Start") is int st ? st : 3;
+            var service = new ServiceEntry
+            {
+                Name = name,
+                DisplayName = v.GetValueOrDefault("DisplayName") as string ?? name,
+                Description = v.GetValueOrDefault("Description") as string ?? "",
+                Exe = app.Exe,
+                Args = args,
+                // boot and system start (0, 1) are a driver's; a program started with the system is automatic
+                Start = start switch { <= 2 => StartType.Auto, 3 => StartType.Manual, _ => StartType.Disabled },
+                DelayedAutoStart = v.GetValueOrDefault("DelayedAutostart") is int d && d != 0,
+                StartName = v.GetValueOrDefault("ObjectName") as string ?? "LocalSystem",
+                Security = v.GetValueOrDefault("\\Security") is byte[] sd ? Convert.ToBase64String(sd) : "",
+            };
+            service.Account = AccountFor(service.StartName, name, log);
+            // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
+            if (app.Warnings.Contains("32-bit only") && service.Start != StartType.Disabled)
+            {
+                log?.Invoke($"service {name}: {app.Exe} is 32-bit only; registered disabled");
+                service.Start = StartType.Disabled;
+            }
+            if (v.GetValueOrDefault("DependOnService") is string[] deps) service.DependsOn.AddRange(deps.Where(x => x.Length > 0));
+            else if (v.GetValueOrDefault("DependOnService") is string dep && dep.Length > 0) service.DependsOn.Add(dep);
+            services.Add(service);
+            log?.Invoke($"service  {name} ({service.Start}{(service.DelayedAutoStart ? ", delayed" : "")}, {service.StartName}): {app.Exe}");
+        }
+        // what they depend on that is not one of them is Windows' own (Tcpip, HTTP), which this system provides itself
+        var names = new HashSet<string>(services.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);
+        foreach (var service in services) service.DependsOn.RemoveAll(x => !names.Contains(x));
+        return services;
+    }
+
+    // the account a service runs as here, for the one it is registered with: Windows' own service accounts are the
+    // machine accounts the installers make; a virtual account (NT SERVICE\name), which reaches the network as the
+    // machine does, runs as NETWORK SERVICE; any other (a user's) as the system, as before
+    private static ServiceAccount AccountFor(string objectName, string service, Action<string>? log)
+    {
+        string bare = objectName.Replace(" ", "");
+        if (bare.Length == 0 || bare.Equals("LocalSystem", StringComparison.OrdinalIgnoreCase) || bare.Equals(@"NTAUTHORITY\SYSTEM", StringComparison.OrdinalIgnoreCase)
+            || bare.Equals(@".\LocalSystem", StringComparison.OrdinalIgnoreCase)) return ServiceAccount.LocalSystem;
+        if (bare.Equals(@"NTAUTHORITY\NetworkService", StringComparison.OrdinalIgnoreCase)) return ServiceAccount.NetworkService;
+        if (bare.Equals(@"NTAUTHORITY\LocalService", StringComparison.OrdinalIgnoreCase)) return ServiceAccount.LocalService;
+        if (bare.StartsWith(@"NTSERVICE\", StringComparison.OrdinalIgnoreCase)) return ServiceAccount.NetworkService;
+        log?.Invoke($"service {service} runs as {objectName} on Windows: run as LocalSystem here (set \"account\" to choose)");
+        return ServiceAccount.LocalSystem;
+    }
+
+    // an ImagePath's program and arguments: quoted, or -- as the service manager reads an unquoted one -- up to the .exe
+    internal static (string Program, List<string> Args) SplitCommandLine(string commandLine)
+    {
+        string text = commandLine.Trim();
+        string program, rest;
+        if (text.StartsWith('"'))
+        {
+            int close = text.IndexOf('"', 1);
+            program = close < 0 ? text[1..] : text[1..close];
+            rest = close < 0 ? "" : text[(close + 1)..];
+        }
+        else
+        {
+            int exe = text.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+            int end = exe < 0 ? (text.IndexOf(' ') is int sp && sp > 0 ? sp : text.Length) : exe + 4;
+            program = text[..end];
+            rest = text[end..];
+        }
+        var args = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool quoted = false, any = false;
+        foreach (char c in rest)
+        {
+            if (c == '"') { quoted = !quoted; any = true; continue; }
+            if (char.IsWhiteSpace(c) && !quoted) { if (any) { args.Add(current.ToString()); current.Clear(); any = false; } continue; }
+            current.Append(c); any = true;
+        }
+        if (any) args.Add(current.ToString());
+        return (program, args);
+    }
+
+    // the installation's program a registration names: that executable, or -- where the installation carries it under
+    // another name, as for another processor (App_ARM64.exe for App.exe) -- the executable in its folder that starts
+    // the same app
+    private static AppEntry? ProgramOf(PackageManifest manifest, string installDir, string rel)
+    {
+        if (manifest.Apps.FirstOrDefault(a => a.Exe.Equals(rel, StringComparison.OrdinalIgnoreCase)) is { } exact) return exact;
+        string dir = Path.GetDirectoryName(rel)?.Replace('\\', '/') ?? "";
+        string wanted = Path.Combine(installDir, dir, Path.GetFileNameWithoutExtension(rel) + ".dll");
+        return manifest.Apps.FirstOrDefault(a =>
+            (Path.GetDirectoryName(a.Exe)?.Replace('\\', '/') ?? "").Equals(dir, StringComparison.OrdinalIgnoreCase)
+            && AppHost.AppDll(Path.Combine(installDir, a.Exe)) is { } dll && dll.Equals(Path.GetFullPath(wanted), StringComparison.OrdinalIgnoreCase));
     }
 
     // ---- what an app is -------------------------------------------------------------------------------

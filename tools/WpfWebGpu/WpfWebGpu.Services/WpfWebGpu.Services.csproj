@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The service manager off Windows: the installed services (services.json in the machine's state), their state
+       from launchd or systemd, and control decided by each service's security descriptor: by root itself, or by
+       the service manager's daemon (`wpfrun scm`) for anyone else. The ServiceController and System.Management
+       stand-ins answer from it; http.sys's URL reservations share its accounts. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.Services</AssemblyName>
+    <RootNamespace>WpfWebGpu.Services</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

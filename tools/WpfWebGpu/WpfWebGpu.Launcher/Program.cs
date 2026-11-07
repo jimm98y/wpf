@@ -24,6 +24,8 @@ internal static class Program
           wpfrun pack --android [--out <dir>]      build the Packager's template for a head (its packs/ folder)
           wpfrun startup [--list]                   start the Startup folders' shortcuts, as Windows does at log-on
           wpfrun httpsys [--on-demand]              the machine's http.sys: serve the ports apps' URL prefixes name
+          wpfrun scm                                the machine's service manager: start, stop, reconfigure services for callers
+          wpfrun iis                                the machine's web server: the installation's IIS sites, through http.sys
           wpfrun clean [--all]                      delete generated files (--all: also logs and shim state)
           wpfrun where                              print every location wpfrun uses
 
@@ -72,6 +74,8 @@ internal static class Program
                 "pack" => Pack.Run(args[1..]),
                 "startup" => Startup.Run(args[1..]),
                 "httpsys" => HttpSysCommand.Run(args[1..]),
+                "scm" => ScmCommand.Run(args[1..]),
+                "iis" => IisCommand.Run(args[1..]),
                 "where" => Where(),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),
             };

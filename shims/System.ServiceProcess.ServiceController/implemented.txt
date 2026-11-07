@@ -1,2 +1,4 @@
 T:System.ServiceProcess.ServiceController
 T:System.ServiceProcess.ServiceBase
+T:System.ServiceProcess.TimeoutException
+T:System.ServiceProcess.SessionChangeDescription

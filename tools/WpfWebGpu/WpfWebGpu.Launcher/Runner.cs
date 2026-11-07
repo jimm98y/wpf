@@ -160,11 +160,15 @@ internal sealed class Runner
             psi.Environment["DOTNET_GCgen0size"] = "0x4000000";
 
         // the program under its own name: its own executable (ProgramHost), where this OS runs one
-        // (WPFRUN_DOTNET_EXEC=1: through dotnet exec, as before)
+        // (WPFRUN_DOTNET_EXEC=1: through dotnet exec, as before). WPFRUN_PROCESS_NAME: the process's name where it is
+        // not the program's own -- an IIS application's worker is w3wp, as IIS hosts it -- for this program alone,
+        // not for the programs it starts.
+        string processName = Environment.GetEnvironmentVariable("WPFRUN_PROCESS_NAME") is { Length: > 0 } named ? named : App.ProgramName;
+        psi.Environment.Remove("WPFRUN_PROCESS_NAME");
         string dotnetRoot = Path.GetDirectoryName(psi.FileName)!;
         if (!HostInfo.IsWindows && Environment.GetEnvironmentVariable("WPFRUN_DOTNET_EXEC") != "1"
             && ProgramHost.Template(dotnetRoot) is { } template
-            && ProgramHost.Make(template, cacheDir, App.ProgramName, OverlayDir, rc, deps, probeRoots) is { } exe)
+            && ProgramHost.Make(template, cacheDir, processName, OverlayDir, rc, deps, probeRoots) is { } exe)
         {
             var own = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = psi.WorkingDirectory };
             own.Environment.Clear();

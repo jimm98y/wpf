@@ -104,6 +104,12 @@ public sealed class SetupService
     public Dictionary<string, string> Environment { get; set; } = new();
     /// <summary>"LocalSystem", "NetworkService" or "LocalService": the account the service runs as.</summary>
     public string Account { get; set; } = "LocalSystem";
+    /// <summary>The account as it was registered (NT SERVICE\Name, a virtual account); empty: Account's.</summary>
+    public string StartName { get; set; } = "";
+    public string Description { get; set; } = "";
+    public bool DelayedAutoStart { get; set; }
+    /// <summary>Its security descriptor as registered (self-relative, base64); empty: Windows' default.</summary>
+    public string Security { get; set; } = "";
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

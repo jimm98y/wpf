@@ -31,8 +31,9 @@ public static class Staging
         Directory.CreateDirectory(registryDir);
 
         var tree = new RegistryTree();
+        var services = new HashSet<string>(manifest.Services.Select(s => s.Name), StringComparer.OrdinalIgnoreCase);
         foreach (string file in manifest.Inputs.Registry)
-            tree.Apply(RegText.Parse(RegText.Read(file)));
+            tree.Apply(RegText.Parse(RegText.Read(file)).Where(e => !OthersService(e, services)));
         var mapper = new PathMapper(manifest.PathMappings);
         tree.MapStrings(mapper.Map);
         tree.WriteHives(registryDir);
@@ -55,6 +56,17 @@ public static class Staging
         {
             RegistryDir = registryDir, ProgramDataFiles = files, LeftOut = machines, Icon = StageIcon(manifest, workDir), Keys = tree.KeyCount, Values = tree.ValueCount,
         };
+    }
+
+    // A service registration that is not one of the package's: an export of the machine's services holds Windows' own
+    // and every other product's, which are that machine's, not the installation's.
+    private static bool OthersService(RegEntry e, HashSet<string> services)
+    {
+        const string Key = @"SYSTEM\CurrentControlSet\Services\";
+        if (!e.Hive.Equals("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase) || !e.Key.StartsWith(Key, StringComparison.OrdinalIgnoreCase)) return false;
+        string rest = e.Key[Key.Length..];
+        int slash = rest.IndexOf('\\');
+        return rest.Length > 0 && !services.Contains(slash < 0 ? rest : rest[..slash]);
     }
 
     private static string? StageIcon(PackageManifest manifest, string workDir)

@@ -24,6 +24,8 @@
     <ProjectReference Include="../WpfWebGpu.Packager/WpfWebGpu.Packager.csproj" />
     <!-- `wpfrun httpsys`: the machine's http.sys service (WpfWebGpu.HttpSys), on ASP.NET Core's Kestrel -->
     <ProjectReference Include="../WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
+    <!-- `wpfrun scm`: the machine's service manager (WpfWebGpu.Services) -->
+    <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
