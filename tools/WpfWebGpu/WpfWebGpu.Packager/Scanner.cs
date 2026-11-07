@@ -20,6 +20,36 @@ public static class Scanner
         "Microsoft.Extensions.Hosting.WindowsServices",
     };
 
+    /// <summary>Each service's account as the registry's service key has it (ObjectName), the key found by the
+    /// service's name or by its program (ImagePath).</summary>
+    internal static void AssignAccounts(PackageManifest manifest, IEnumerable<RegEntry> entries, Action<string>? log)
+    {
+        const string Services = @"SYSTEM\CurrentControlSet\Services\";
+        var keys = new Dictionary<string, (string? ObjectName, string? ImagePath)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in entries)
+        {
+            if (!e.Hive.Equals("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase) || !e.Key.StartsWith(Services, StringComparison.OrdinalIgnoreCase)) continue;
+            string name = e.Key[Services.Length..];
+            if (name.Contains('\\')) continue;
+            keys.TryGetValue(name, out var k);
+            if (e.Name.Equals("ObjectName", StringComparison.OrdinalIgnoreCase)) k.ObjectName = e.Value as string;
+            else if (e.Name.Equals("ImagePath", StringComparison.OrdinalIgnoreCase)) k.ImagePath = e.Value as string;
+            keys[name] = k;
+        }
+        foreach (var service in manifest.Services)
+        {
+            string exe = Path.GetFileName(service.Exe);
+            var key = keys.TryGetValue(service.Name, out var byName) ? byName
+                : keys.Values.FirstOrDefault(k => k.ImagePath?.Contains(exe, StringComparison.OrdinalIgnoreCase) == true);
+            if (key.ObjectName is not { Length: > 0 } account) continue;
+            string bare = account.Replace(" ", "");
+            if (bare.Equals("LocalSystem", StringComparison.OrdinalIgnoreCase) || bare.Equals(@"NTAUTHORITY\SYSTEM", StringComparison.OrdinalIgnoreCase)) service.Account = ServiceAccount.LocalSystem;
+            else if (bare.Equals(@"NTAUTHORITY\NetworkService", StringComparison.OrdinalIgnoreCase)) service.Account = ServiceAccount.NetworkService;
+            else if (bare.Equals(@"NTAUTHORITY\LocalService", StringComparison.OrdinalIgnoreCase)) service.Account = ServiceAccount.LocalService;
+            else log?.Invoke($"service {service.Name} runs as {account} on Windows: run as LocalSystem here (set \"account\" to choose)");
+        }
+    }
+
     public static PackageManifest Scan(string installDir, IEnumerable<string>? programData = null, IEnumerable<string>? registry = null, Action<string>? log = null)
     {
         installDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(installDir));
@@ -97,7 +127,9 @@ public static class Scanner
         }
         manifest.Product.Publisher = companies.OrderByDescending(c => c.Value).Select(c => c.Key).FirstOrDefault() ?? "";
         manifest.Product.IdPrefix = "com." + Identifier(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : "example");
-        manifest.PathMappings.AddRange(DetectMappings(manifest.Inputs.Registry.SelectMany(r => RegText.Parse(RegText.Read(r))), installDir));
+        var entries = manifest.Inputs.Registry.SelectMany(r => RegText.Parse(RegText.Read(r))).ToList();
+        manifest.PathMappings.AddRange(DetectMappings(entries, installDir));
+        AssignAccounts(manifest, entries, log);
         return manifest;
     }
 

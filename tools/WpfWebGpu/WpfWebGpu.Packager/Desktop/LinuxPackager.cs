@@ -94,7 +94,7 @@ public static class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText("./control", Control(manifest, pkg, arch, installedBytes), executable: false);
-            tar.AddText("./postinst", PostInst(root, state, units), executable: true);
+            tar.AddText("./postinst", PostInst(root, state, units, Accounts(manifest, pkg)), executable: true);
             tar.AddText("./prerm", PreRm(units), executable: true);
             tar.AddText("./postrm", PostRm(state, units), executable: true);
             tar.Finish();
@@ -119,7 +119,7 @@ public static class LinuxPackager
         using (var gz = new GZipStream(output, CompressionLevel.Fastest))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units), executable: true);
+            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, Accounts(manifest, pkg)), executable: true);
             tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
             tar.Finish();
@@ -129,7 +129,7 @@ public static class LinuxPackager
         return deb;
     }
 
-    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units) => $$"""
+    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, string accounts) => $$"""
         #!/bin/sh
         # Installs {{pkg}} on a Linux without dpkg: its files into / (the list kept for uninstall.sh), then as the .deb's
         # postinst does -- the machine's state on the first install, the services enabled and started.
@@ -146,7 +146,7 @@ public static class LinuxPackager
         tar tzf files.tar.gz | sed -e 's|^\.||' > "{{root}}/installed-files.txt"
         cp uninstall.sh "{{root}}/uninstall.sh"
         chmod 755 "{{root}}/uninstall.sh"
-        {{PostInstBody(root, state, units)}}
+        {{PostInstBody(root, state, units, accounts)}}
         echo "{{pkg}} installed into {{root}}"
 
         """;
@@ -211,7 +211,8 @@ public static class LinuxPackager
             {string.Concat(service.Environment.Concat(manifest.Product.OsIdentity.Length > 0 && !service.Environment.ContainsKey("WPFWEBGPU_OS_IDENTITY")
                 ? new[] { new KeyValuePair<string, string>("WPFWEBGPU_OS_IDENTITY", manifest.Product.OsIdentity) } : Array.Empty<KeyValuePair<string, string>>())
                 .Select(e => $"Environment={e.Key}={e.Value}\n"))}
-            UMask=0002
+            {(DesktopCommon.SystemAccount(service.Account, mac: false) is { } user
+                ? $"User={user}\nGroup=users\n# a port below 1024, which Windows lets any account listen on\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n" : "")}UMask=0002
             Restart=on-failure
             RestartSec=10
             TimeoutStopSec=30
@@ -260,11 +261,31 @@ public static class LinuxPackager
 
         """;
 
-    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units) =>
-        "#!/bin/sh\n# the machine's state made from the seed on the first install (the registry's paths this installation's) and\n"
-        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units) + "exit 0\n";
+    // the machine's service accounts the services run as (NETWORK SERVICE, LOCAL SERVICE), made where missing, in the
+    // group the state is writable by; the services' logs and caches writable by them
+    private static string Accounts(PackageManifest manifest, string pkg)
+    {
+        var made = manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => x.Account).Distinct()
+            .Where(a => a != ServiceAccount.LocalSystem).ToList();
+        var sb = new System.Text.StringBuilder();
+        foreach (var a in made)
+        {
+            string user = DesktopCommon.SystemAccount(a, mac: false)!;
+            sb.Append($"getent passwd {user} >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid users --comment \"{DesktopCommon.AccountTitle(a)}\" {user} "
+                + $"|| adduser --system --no-create-home --home /nonexistent --shell /usr/sbin/nologin --ingroup users {user}\n");
+        }
+        sb.Append($"mkdir -p /var/log/{pkg} /var/cache/{pkg}\n");
+        sb.Append($"chgrp -R users /var/log/{pkg} /var/cache/{pkg} 2>/dev/null || true\n");
+        sb.Append($"chmod -R g+rwX /var/log/{pkg} /var/cache/{pkg}\n");
+        sb.Append($"find /var/log/{pkg} /var/cache/{pkg} -type d -exec chmod g+s {{}} + 2>/dev/null || true");
+        return sb.ToString();
+    }
 
-    private static string PostInstBody(string root, string state, List<(string Name, bool Enable)> units) => $$"""
+    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units, string accounts) =>
+        "#!/bin/sh\n# the machine's state made from the seed on the first install (the registry's paths this installation's) and\n"
+        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units, accounts) + "exit 0\n";
+
+    private static string PostInstBody(string root, string state, List<(string Name, bool Enable)> units, string accounts) => $$"""
         STATE="{{state}}"
         SEED="{{root}}/seed"
         mkdir -p "$STATE"
@@ -281,6 +302,7 @@ public static class LinuxPackager
         chgrp -R users "$STATE" 2>/dev/null || true
         chmod -R g+rwX "$STATE"
         find "$STATE" -type d -exec chmod g+s {} + 2>/dev/null || true
+        {{accounts}}
         if [ -d /run/systemd/system ]; then
           systemctl daemon-reload || true
         {{string.Concat(units.Where(u => u.Enable).Select(u => $"  systemctl enable --now {u.Name} || true\n"))}}fi

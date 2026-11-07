@@ -102,6 +102,8 @@ public sealed class SetupService
     public string Start { get; set; } = "Auto";
     public List<string> DependsOn { get; set; } = new();
     public Dictionary<string, string> Environment { get; set; } = new();
+    /// <summary>"LocalSystem", "NetworkService" or "LocalService": the account the service runs as.</summary>
+    public string Account { get; set; } = "LocalSystem";
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

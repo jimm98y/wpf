@@ -49,6 +49,17 @@ internal static partial class Program
 
     // ---- install ------------------------------------------------------------------------------------------------
 
+    private static void Grant(string folder, System.Security.Principal.WellKnownSidType account)
+    {
+        var info = new DirectoryInfo(folder);
+        var acl = System.IO.FileSystemAclExtensions.GetAccessControl(info);
+        acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(account, null),
+            System.Security.AccessControl.FileSystemRights.Modify,
+            System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+            System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+        System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
+    }
+
     private static int Install()
     {
         using var self = File.OpenRead(Environment.ProcessPath!);
@@ -110,8 +121,20 @@ internal static partial class Program
             string name = ServiceName(info, service);
             string command = Prepare(root, wpfrunCache, service.Exe, service.Args);
             Services.CreateOrUpdate(name, service.DisplayName.Length > 0 ? service.DisplayName : service.Name, command, service.Start,
-                service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment);
-            Console.WriteLine($"  service {name}");
+                service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment, service.Account);
+            Console.WriteLine($"  service {name}{(service.Account != "LocalSystem" ? $" ({service.Account})" : "")}");
+        }
+        // what a service running as NETWORK SERVICE or LOCAL SERVICE writes -- its data in ProgramData, wpfrun's
+        // caches and logs -- writable by that account, as the product's own installer grants it on Windows
+        var accounts = info.Services.Select(s => s.Account).Where(a => a != "LocalSystem").Distinct().ToList();
+        if (accounts.Count > 0)
+        {
+            var folders = zip.Entries.Where(e => e.FullName.StartsWith("programdata/", StringComparison.Ordinal))
+                .Select(e => e.FullName["programdata/".Length..].Split('/')[0]).Where(f => f.Length > 0).Distinct()
+                .Select(f => Path.Combine(programData, f)).Append(Path.Combine(programData, info.Product)).Where(Directory.Exists);
+            foreach (string folder in folders)
+                foreach (string account in accounts)
+                    Grant(folder, account == "NetworkService" ? System.Security.Principal.WellKnownSidType.NetworkServiceSid : System.Security.Principal.WellKnownSidType.LocalServiceSid);
         }
         foreach (var service in info.Services.Where(s => s.Start == "Auto")) Services.Start(ServiceName(info, service));
 

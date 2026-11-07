@@ -104,7 +104,13 @@ public sealed class ServiceEntry
     /// <summary>Its environment besides the installation's (WPFWEBGPU_OS_IDENTITY=windows for a program that refuses to
     /// start anywhere but on Windows: its own checks are then answered as Windows would answer them).</summary>
     public Dictionary<string, string> Environment { get; set; } = new();
+    /// <summary>The account it runs as, as its Windows service does (its ObjectName): LocalSystem (root), or
+    /// NetworkService / LocalService -- machine accounts the installers make, which the stack takes for Windows' own.</summary>
+    public ServiceAccount Account { get; set; } = ServiceAccount.LocalSystem;
 }
+
+[JsonConverter(typeof(JsonStringEnumConverter<ServiceAccount>))]
+public enum ServiceAccount { LocalSystem, NetworkService, LocalService }
 
 public sealed class PathMapping
 {

@@ -28,6 +28,7 @@ public static class WindowsPackager
             {
                 Name = s.Name, DisplayName = s.DisplayName, Exe = s.Exe, Args = s.Args.ToList(),
                 Start = s.Start.ToString(), DependsOn = s.DependsOn.ToList(), Environment = new Dictionary<string, string>(s.Environment),
+                Account = s.Account.ToString(),
             }).ToList(),
         };
 

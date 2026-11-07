@@ -84,7 +84,7 @@ public static class MacPackager
         File.WriteAllText(Path.Combine(home, "uninstall.sh"), Uninstall(root, product, id, daemons));
         Executable(Path.Combine(home, "uninstall.sh"));
         File.WriteAllText(Path.Combine(scripts, "preinstall"), PreInstall(daemons));
-        File.WriteAllText(Path.Combine(scripts, "postinstall"), PostInstall(root, daemons));
+        File.WriteAllText(Path.Combine(scripts, "postinstall"), PostInstall(root, daemons, Accounts(manifest, product)));
         Executable(Path.Combine(scripts, "preinstall"));
         Executable(Path.Combine(scripts, "postinstall"));
 
@@ -137,6 +137,7 @@ public static class MacPackager
             {string.Concat(ServiceEnvironment(osIdentity, service).Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}
               </dict>
               <key>WorkingDirectory</key><string>{X(root + "/app/" + Path.GetDirectoryName(service.Exe)!.Replace('\\', '/'))}</string>
+              {(DesktopCommon.SystemAccount(service.Account, mac: true) is { } user ? $"<key>UserName</key><string>{user}</string>\n  <key>GroupName</key><string>staff</string>" : "")}
               <key>RunAtLoad</key><{(service.Start == StartType.Auto ? "true" : "false")}/>
               <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
               <key>ThrottleInterval</key><integer>10</integer>
@@ -240,7 +241,36 @@ public static class MacPackager
 
         """;
 
-    private static string PostInstall(string root, List<string> daemons) => $$"""
+    // the machine's service accounts the services run as (NETWORK SERVICE, LOCAL SERVICE): hidden system users made
+    // where missing, in the group the state is writable by (staff); the services' logs and caches writable by them
+    private static string Accounts(PackageManifest manifest, string product)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var a in manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => x.Account).Distinct().Where(a => a != ServiceAccount.LocalSystem))
+        {
+            string user = DesktopCommon.SystemAccount(a, mac: true)!;
+            sb.Append($$"""
+                  if ! dscl . -read "/Users/{{user}}" >/dev/null 2>&1; then
+                    u=300; while dscl . -list /Users UniqueID | awk '{print $2}' | grep -qx "$u"; do u=$((u+1)); done
+                    dscl . -create "/Users/{{user}}"
+                    dscl . -create "/Users/{{user}}" UniqueID "$u"
+                    dscl . -create "/Users/{{user}}" PrimaryGroupID 20
+                    dscl . -create "/Users/{{user}}" UserShell /usr/bin/false
+                    dscl . -create "/Users/{{user}}" NFSHomeDirectory /var/empty
+                    dscl . -create "/Users/{{user}}" RealName "{{DesktopCommon.AccountTitle(a)}}"
+                    dscl . -create "/Users/{{user}}" Password '*'
+                    dscl . -create "/Users/{{user}}" IsHidden 1
+                  fi
+
+                """);
+        }
+        sb.Append($"  mkdir -p \"/Library/Logs/{product}\" \"/Library/Caches/{product}\"\n");
+        sb.Append($"  chgrp -R staff \"/Library/Logs/{product}\" \"/Library/Caches/{product}\" 2>/dev/null || true\n");
+        sb.Append($"  chmod -R g+rwX \"/Library/Logs/{product}\" \"/Library/Caches/{product}\"");
+        return sb.ToString();
+    }
+
+    private static string PostInstall(string root, List<string> daemons, string accounts) => $$"""
         #!/bin/sh
         # The machine's state made from the seed on the first install -- the registry's paths made this installation's --
         # and kept on an upgrade; then the services started. WPFPKG_ROOT: a test's root in place of /.
@@ -268,6 +298,7 @@ public static class MacPackager
         chmod -R g+rwX "$STATE"
         mkdir -p "/Library/Logs/{{Path.GetFileName(root)}}" 2>/dev/null || true
         if [ -z "$WPFPKG_ROOT" ]; then
+        {{accounts}}
         {{string.Concat(daemons.Select(d => $"  launchctl bootstrap system \"/Library/LaunchDaemons/{d}.plist\" 2>/dev/null || true\n"))}}fi
         exit 0
 

@@ -183,6 +183,10 @@ public class HttpSysShimTests
         Assert.Contains("does not let", why);
         Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(0, service, out _));          // an elevated administrator
         Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(501, everyone, out _));       // under the reserved path
+        // the machine's NETWORK SERVICE account, as the installers make it: what the reservation grants
+        Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(450, "_wpfnetworkservice", service, out _));
+        Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(120, "wpf-networkservice", service, out _));
+        Assert.False(WpfWebGpu.HttpSys.UrlAcl.MayRegister(451, "_wpflocalservice", service, out _));
     }
 
     /// <summary>The machine's http.sys service for a test: its own registry folder, started on demand through the

@@ -296,7 +296,9 @@ namespace System.Security.Cryptography
         /// /usr/bin/security, so that no build of an app or of wpfrun is ever asked to be allowed in; keys
         /// an earlier version kept in files are moved there;</item>
         /// <item>else, or when the keychain cannot be used, in a folder of the user's readable by the
-        /// user only.</item>
+        /// user only -- or, for an account with no home (a service's), in the machine's state, its own;</item>
+        /// <item>the machine's key (LocalMachine), where wpfrun gives the machine's state, there: one every
+        /// account of the machine reads, as any account of a Windows machine opens a machine-scoped blob.</item>
         /// </list></summary>
         private static class KeyStore
         {
@@ -313,11 +315,51 @@ namespace System.Security.Cryptography
                 }
             }
 
+            // the machine's state (the registry's folder's parent, as wpfrun and the installed services set it): where
+            // keys every account of the machine shares are kept
+            private static string MachineState()
+            {
+                if (OperatingSystem.IsWindows() || OperatingSystem.IsBrowser()) return null;
+                string registry = Environment.GetEnvironmentVariable("WPFWEBGPU_REGISTRY_DIR");
+                return string.IsNullOrEmpty(registry) ? null : Path.GetDirectoryName(Path.GetFullPath(registry));
+            }
+
+            [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "getuid")] private static extern uint getuid();
+
             private static byte[] Load(DataProtectionScope scope)
             {
                 string file = scope == DataProtectionScope.CurrentUser ? "user.key" : "machine.key";
                 string dir = Environment.GetEnvironmentVariable("WPFWEBGPU_DPAPI_DIR");
                 if (!string.IsNullOrEmpty(dir)) return FromFile(dir, file);
+
+                // the machine's key: one for every account of the machine, as Windows' LocalMachine scope is (a blob a
+                // service protected for the machine is read by any account); the key a user's keychain kept before
+                // adopted, so what was protected with it still opens
+                string state = MachineState();
+                if (scope == DataProtectionScope.LocalMachine && state != null)
+                {
+                    string shared = Path.Combine(state, "dpapi");
+                    if (!File.Exists(Path.Combine(shared, file)) && OperatingSystem.IsMacOS() && FindInKeychain(scope.ToString()) is byte[] earlier)
+                        Write(shared, file, earlier, shared: true);
+                    return FromFile(shared, file, shared: true);
+                }
+                try { return UserKey(scope, file); }
+                catch (Exception e) when (state != null && e is IOException or UnauthorizedAccessException)
+                {
+                    // an account with no keychain and no home of its own (a service's: NETWORK SERVICE's): its key in
+                    // the machine's state, readable by it alone
+                    string users = Path.Combine(state, "dpapi", "users");
+                    if (!Directory.Exists(users))
+                    {
+                        Directory.CreateDirectory(users);
+                        File.SetUnixFileMode(users, (UnixFileMode)Convert.ToInt32("1777", 8));
+                    }
+                    return FromFile(Path.Combine(users, getuid().ToString(System.Globalization.CultureInfo.InvariantCulture)), file);
+                }
+            }
+
+            private static byte[] UserKey(DataProtectionScope scope, string file)
+            {
 
                 string support = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Application Support", "WpfWebGpu");
                 if (OperatingSystem.IsMacOS())
@@ -414,14 +456,38 @@ namespace System.Security.Cryptography
                 }
             }
 
-            private static byte[] FromFile(string dir, string name)
+            // the keychain's key for the account, where it has one; nothing is made
+            private static byte[] FindInKeychain(string account)
             {
-                if (!Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                    if (!OperatingSystem.IsWindows() && !OperatingSystem.IsBrowser())
-                        File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                }
+                var (code, output) = Security(null, "find-generic-password", "-s", Service, "-a", account, "-w");
+                if (code != 0) return null;
+                try { byte[] key = Convert.FromBase64String(output.Trim()); return key.Length == KeySize ? key : null; }
+                catch (FormatException) { return null; }
+            }
+
+            private static void Write(string dir, string name, byte[] key, bool shared)
+            {
+                Folder(dir, shared);
+                var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
+                if (!OperatingSystem.IsWindows() && !OperatingSystem.IsBrowser())
+                    options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | (shared ? UnixFileMode.GroupRead | UnixFileMode.OtherRead : 0);
+                try { using var stream = new FileStream(Path.Combine(dir, name), options); stream.Write(key); }
+                catch (IOException) when (File.Exists(Path.Combine(dir, name))) { }
+            }
+
+            // the key's folder: the user's alone, or (shared) one every account reads
+            private static void Folder(string dir, bool shared)
+            {
+                if (Directory.Exists(dir)) return;
+                Directory.CreateDirectory(dir);
+                if (!OperatingSystem.IsWindows() && !OperatingSystem.IsBrowser())
+                    File.SetUnixFileMode(dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                        | (shared ? UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute : 0));
+            }
+
+            private static byte[] FromFile(string dir, string name, bool shared = false)
+            {
+                Folder(dir, shared);
                 string path = Path.Combine(dir, name);
                 for (int attempt = 0; ; attempt++)
                 {
@@ -439,7 +505,8 @@ namespace System.Security.Cryptography
                     try
                     {
                         var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write };
-                        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsBrowser()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+                        if (!OperatingSystem.IsWindows() && !OperatingSystem.IsBrowser())
+                            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | (shared ? UnixFileMode.GroupRead | UnixFileMode.OtherRead : 0);
                         using (var stream = new FileStream(path, options)) stream.Write(key);
                         if (OperatingSystem.IsBrowser())
                             Console.Error.WriteLine($"WpfWebGpu: a data protection key was made in memory ({path}); what is protected with it cannot be read after the page reloads");

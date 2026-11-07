@@ -6,9 +6,10 @@
 // wildcard, a name itself) and a path the prefix's path lies under. Windows' own default reservation
 // (http://+:80/Temporary_Listen_Addresses/, everyone) is there as on every Windows machine.
 //
-// Accounts are the Principal stand-in's (shims/System.Security.Principal.Windows): root is SYSTEM, uid N the machine
-// account S-1-5-21-<machine>-(N+500); a user's token carries Everyone, Users, Authenticated Users and Interactive --
-// and not Administrators, which an unelevated Windows token carries only to deny.
+// Accounts are the Principal stand-in's (shims/System.Security.Principal.Windows): root is SYSTEM, the machine's
+// service accounts the installers make NETWORK SERVICE and LOCAL SERVICE, uid N the machine account
+// S-1-5-21-<machine>-(N+500); a user's token carries Everyone, Users, Authenticated Users and Interactive -- and not
+// Administrators, which an unelevated Windows token carries only to deny.
 
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -23,7 +24,10 @@ public static partial class UrlAcl
     private static readonly (string Url, string Sddl)[] s_windowsDefaults = { ("http://+:80/Temporary_Listen_Addresses/", "D:(A;;GX;;;WD)") };
 
     /// <summary>Whether the account <paramref name="uid"/> may register <paramref name="prefix"/>; why not, where not.</summary>
-    public static bool MayRegister(uint uid, SharedPrefix prefix, out string why)
+    public static bool MayRegister(uint uid, SharedPrefix prefix, out string why) => MayRegister(uid, UserName(uid), prefix, out why);
+
+    /// <summary>As <see cref="MayRegister(uint, SharedPrefix, out string)"/>, the account's name given.</summary>
+    public static bool MayRegister(uint uid, string? user, SharedPrefix prefix, out string why)
     {
         why = "";
         if (uid == 0) return true;                                  // an elevated administrator
@@ -38,7 +42,7 @@ public static partial class UrlAcl
             why = $"no URL reservation covers {prefix.FullPrefix} (netsh http add urlacl: {Key})";
             return false;
         }
-        var sids = TokenOf(uid);
+        var sids = TokenOf(uid, user);
         bool allowed = best.Value.Descriptor != null ? Allows(best.Value.Descriptor, sids) : AllowsSddl(best.Value.Sddl!, sids);
         if (!allowed) why = $"the URL reservation {best.Value.Url.FullPrefix} does not let {Account(uid)} listen";
         return allowed;
@@ -63,6 +67,17 @@ public static partial class UrlAcl
 
     [LibraryImport("libc")]
     private static partial uint getuid();
+
+    [LibraryImport("libc")]
+    private static partial IntPtr getpwuid(uint uid);
+
+    // struct passwd starts with char *pw_name, on macOS and Linux alike
+    private static string? UserName(uint uid)
+    {
+        if (OperatingSystem.IsWindows()) return null;
+        try { IntPtr p = getpwuid(uid); return p == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(Marshal.ReadIntPtr(p)); }
+        catch (Exception) { return null; }
+    }
 
     [LibraryImport("libSystem.Native", StringMarshalling = StringMarshalling.Utf8)]
     private static unsafe partial int SystemNative_LStat(string path, byte* status);
@@ -115,10 +130,28 @@ public static partial class UrlAcl
 
     // ---- the account's token ----------------------------------------------------------------------------------
 
-    private static string Account(uint uid) => uid == 0 ? "SYSTEM" : $"uid {uid} ({Sid(Domain(uid + 500))})";
+    private static string Account(uint uid) => uid == 0 ? "SYSTEM"
+        : ServiceAccount(UserName(uid)) is { } service ? $"NT AUTHORITY\\{service.Name} (uid {uid})"
+        : $"uid {uid} ({Sid(Domain(uid + 500))})";
 
-    private static HashSet<string> TokenOf(uint uid)
+    /// <summary>The Windows service account a system account stands for (as the Principal stand-in has them):
+    /// NETWORK SERVICE, LOCAL SERVICE.</summary>
+    public static (string Sid, string Name)? ServiceAccount(string? user) => user switch
     {
+        "_wpfnetworkservice" or "wpf-networkservice" => ("S-1-5-20", "NETWORK SERVICE"),
+        "_wpflocalservice" or "wpf-localservice" => ("S-1-5-19", "LOCAL SERVICE"),
+        _ => null,
+    };
+
+    internal static HashSet<string> TokenOf(uint uid) => TokenOf(uid, UserName(uid));
+
+    internal static HashSet<string> TokenOf(uint uid, string? user)
+    {
+        if (uid != 0 && ServiceAccount(user) is { } service)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                service.Sid, "S-1-1-0", "S-1-5-32-545", "S-1-5-6", "S-1-2-1", "S-1-5-11", "S-1-5-15", "S-1-2-0",
+            };
         var sids = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "S-1-1-0",                 // Everyone

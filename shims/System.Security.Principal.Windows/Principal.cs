@@ -520,6 +520,22 @@ namespace System.Security.Principal
                     Sid = new SecurityIdentifier(5, 18), Name = NtAuthority + "\\SYSTEM", Token = s_currentToken,
                     Groups = new[] { new SecurityIdentifier(5, 32, 544), new SecurityIdentifier(1, 0), new SecurityIdentifier(5, 11), new SecurityIdentifier(16, 16384) },
                 };
+            // the machine's service accounts (the installers make them): NETWORK SERVICE, LOCAL SERVICE, as Windows'
+            if (ServiceAccount(Native.UserName(uid)) is (SecurityIdentifier serviceSid, string serviceName))
+                return new Account
+                {
+                    Sid = serviceSid, Name = NtAuthority + "\\" + serviceName, Token = s_currentToken,
+                    Groups = new[]
+                    {
+                        new SecurityIdentifier(1, 0),         // Everyone
+                        new SecurityIdentifier(5, 32, 545),   // BUILTIN\Users
+                        new SecurityIdentifier(5, 6),         // SERVICE
+                        new SecurityIdentifier(2, 1),         // CONSOLE LOGON
+                        new SecurityIdentifier(5, 11),        // Authenticated Users
+                        new SecurityIdentifier(5, 15),        // This Organization
+                        new SecurityIdentifier(2, 0),         // LOCAL
+                    },
+                };
             var groups = new List<SecurityIdentifier>
             {
                 Domain(513),                          // MACHINE\None: a workgroup PC's local users
@@ -539,6 +555,16 @@ namespace System.Security.Principal
                 Groups = groups.ToArray(), Token = s_currentToken,
             };
         }
+
+        /// <summary>The Windows service account a system account of this machine stands for: the installers make
+        /// _wpfnetworkservice / wpf-networkservice (NETWORK SERVICE, S-1-5-20) and _wpflocalservice /
+        /// wpf-localservice (LOCAL SERVICE, S-1-5-19) for the services that run as them on Windows.</summary>
+        internal static (SecurityIdentifier Sid, string Name)? ServiceAccount(string user) => user switch
+        {
+            "_wpfnetworkservice" or "wpf-networkservice" => (new SecurityIdentifier(5, 20), "NETWORK SERVICE"),
+            "_wpflocalservice" or "wpf-localservice" => (new SecurityIdentifier(5, 19), "LOCAL SERVICE"),
+            _ => null,
+        };
 
         internal static Account FromToken(IntPtr token)
             => token == s_currentToken ? Current : token == s_anonymousToken ? Anonymous : null;

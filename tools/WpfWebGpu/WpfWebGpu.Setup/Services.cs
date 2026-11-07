@@ -16,8 +16,10 @@ internal static unsafe class Services
     private const uint SERVICE_CONFIG_FAILURE_ACTIONS = 2;
     private const int ERROR_SERVICE_DOES_NOT_EXIST = 1060, ERROR_SERVICE_ALREADY_RUNNING = 1056, ERROR_SERVICE_NOT_ACTIVE = 1062;
 
-    public static void CreateOrUpdate(string name, string displayName, string command, string start, List<string> dependsOn, Dictionary<string, string> environment)
+    public static void CreateOrUpdate(string name, string displayName, string command, string start, List<string> dependsOn, Dictionary<string, string> environment, string account)
     {
+        // the account it runs as: the manager's names for Windows' own service accounts
+        string user = account switch { "NetworkService" => @"NT AUTHORITY\NetworkService", "LocalService" => @"NT AUTHORITY\LocalService", _ => "LocalSystem" };
         uint startType = start switch { "Manual" => SERVICE_DEMAND_START, "Disabled" => SERVICE_DISABLED, _ => SERVICE_AUTO_START };
         string deps = dependsOn.Count == 0 ? "\0" : string.Concat(dependsOn.Select(d => d + "\0")) + "\0";
         IntPtr scm = OpenSCManagerW(null, null, SC_MANAGER_ALL_ACCESS);
@@ -27,13 +29,13 @@ internal static unsafe class Services
             IntPtr svc = OpenServiceW(scm, name, SERVICE_ALL_ACCESS);
             if (svc != IntPtr.Zero)
             {
-                if (!ChangeServiceConfigW(svc, SERVICE_WIN32_OWN_PROCESS, startType, SERVICE_ERROR_NORMAL, command, null, IntPtr.Zero, deps, null, null, displayName))
+                if (!ChangeServiceConfigW(svc, SERVICE_WIN32_OWN_PROCESS, startType, SERVICE_ERROR_NORMAL, command, null, IntPtr.Zero, deps, user, null, displayName))
                     throw new Win32Exception();
             }
             else
             {
                 svc = CreateServiceW(scm, name, displayName, SERVICE_ALL_ACCESS, SERVICE_WIN32_OWN_PROCESS, startType, SERVICE_ERROR_NORMAL,
-                    command, null, IntPtr.Zero, deps, null, null);
+                    command, null, IntPtr.Zero, deps, user, null);
                 if (svc == IntPtr.Zero) throw new Win32Exception();
             }
             try { RestartOnFailure(svc); }

@@ -43,5 +43,16 @@ internal static class DesktopCommon
         return false;
     }
 
+    /// <summary>The system account a service account is on macOS or Linux (the installers make it where it is
+    /// missing; the stack takes it for Windows' own: NETWORK SERVICE, LOCAL SERVICE); null for LocalSystem (root).</summary>
+    public static string? SystemAccount(ServiceAccount account, bool mac) => account switch
+    {
+        ServiceAccount.NetworkService => mac ? "_wpfnetworkservice" : "wpf-networkservice",
+        ServiceAccount.LocalService => mac ? "_wpflocalservice" : "wpf-localservice",
+        _ => null,
+    };
+
+    public static string AccountTitle(ServiceAccount account) => account == ServiceAccount.LocalService ? "LOCAL SERVICE" : "NETWORK SERVICE";
+
     public static string AppName(AppEntry app) => app.Name.Length > 0 ? app.Name : Path.GetFileNameWithoutExtension(app.Exe);
 }

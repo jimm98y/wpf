@@ -118,6 +118,35 @@ public class PackagerTests
         return request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(1));
     }
 
+    [Fact]
+    public void A_service_s_account_is_taken_from_its_registry_key()
+    {
+        const string reg = """
+            Windows Registry Editor Version 5.00
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\WebHost]
+            "ObjectName"="NT AUTHORITY\\NetworkService"
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Renamed]
+            "ImagePath"="\"C:\\Program Files\\P\\Collector.exe\" -service"
+            "ObjectName"="NT AUTHORITY\\LOCAL SERVICE"
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Machine]
+            "ObjectName"="LocalSystem"
+            """;
+        var manifest = new PackageManifest();
+        manifest.Services.Add(new ServiceEntry { Name = "WebHost", Exe = "Services/WebHost.exe" });
+        manifest.Services.Add(new ServiceEntry { Name = "Collector", Exe = "Services/Collector.exe" });
+        manifest.Services.Add(new ServiceEntry { Name = "Machine", Exe = "Services/Machine.exe" });
+        manifest.Services.Add(new ServiceEntry { Name = "Unknown", Exe = "Services/Unknown.exe" });
+        Scanner.AssignAccounts(manifest, RegText.Parse(reg), null);
+        Assert.Equal(new[] { ServiceAccount.NetworkService, ServiceAccount.LocalService, ServiceAccount.LocalSystem, ServiceAccount.LocalSystem },
+            manifest.Services.Select(x => x.Account));
+        Assert.Equal("wpf-networkservice", WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.NetworkService, mac: false));
+        Assert.Equal("_wpflocalservice", WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.LocalService, mac: true));
+        Assert.Null(WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.LocalSystem, mac: true));
+    }
+
     [Theory]
     [InlineData("**/Logs/**", "11/Logs/Traces/a.log", true)]
     [InlineData("**/Logs/**", "Logs/a.log", true)]
