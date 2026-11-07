@@ -56,6 +56,8 @@ namespace System.Windows.Forms
 			private bool messageloop_started;
 			private bool handling_exception;
 			private int thread_id;
+			// the thread itself: one that has ended runs no loop, whatever its last loop left behind
+			private WeakReference<Thread> thread;
 
 			private static readonly Hashtable threads = new Hashtable();
 
@@ -92,7 +94,7 @@ namespace System.Windows.Forms
 						int loops = 0;
 
 						foreach (MWFThread thread in threads.Values) {
-							if (thread.messageloop_started)
+							if (thread.messageloop_started && thread.IsAlive)
 								loops++;
 						}
 
@@ -110,6 +112,7 @@ namespace System.Windows.Forms
 						if (thread == null) {
 							thread = new MWFThread();
 							thread.thread_id = Thread.CurrentThread.GetHashCode ();
+							thread.thread = new WeakReference<Thread> (Thread.CurrentThread);
 							threads [thread.thread_id] = thread;
 						}
 					}
@@ -121,6 +124,19 @@ namespace System.Windows.Forms
 			#endregion	// Properties
 
 			#region Methods
+
+			private bool IsAlive => thread == null || (thread.TryGetTarget (out Thread t) && t.IsAlive);
+
+			// the threads whose loops keep the application from exiting, for the log
+			private static string RunningLoops ()
+			{
+				var names = new System.Collections.Generic.List<string> ();
+				lock (threads)
+					foreach (MWFThread other in threads.Values)
+						if (other.messageloop_started && other.IsAlive && other.thread != null && other.thread.TryGetTarget (out Thread t))
+							names.Add ($"{t.ManagedThreadId} '{t.Name}'{(other.context?.MainForm is Form f ? " (" + f.GetType ().FullName + ")" : "")}");
+				return string.Join (", ", names);
+			}
 
 			public void Exit ()
 			{
@@ -134,6 +150,8 @@ namespace System.Windows.Forms
 				if (LoopCount == 0) {
 					if (Application.ApplicationExit != null)
 						Application.ApplicationExit (null, EventArgs.Empty);
+				} else {
+					try { (AppContext.GetData ("WpfWebGpu.Log") as Action<string>)?.Invoke ($"winforms: thread {Thread.CurrentThread.ManagedThreadId}'s loop ended; ApplicationExit waits for the loops of {RunningLoops ()}"); } catch { }
 				}
 
 				((MWFThread) threads [thread_id]).MessageLoop = false;
