@@ -48,6 +48,7 @@
     <!-- a web host on UseHttpSys with a DPAPI-protected key ring (HttpSysShimTests): framework members both -->
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.AspNetCore.Server.HttpSys/Microsoft.AspNetCore.Server.HttpSys.csproj" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
+    <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/System.Net.HttpListener/System.Net.HttpListener.csproj" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
@@ -56,7 +57,8 @@
   <Target Name="WpfWebGpuNetShimsOnly" AfterTargets="ResolveTargetingPackAssets">
     <ItemGroup>
       <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'System.Net.Requests' or '%(Filename)' == 'System.Net.WebClient' or '%(Filename)' == 'Microsoft.AspNetCore.Server.HttpSys'
-                                                    or '%(Filename)' == 'System.Diagnostics.EventLog'" />
+                                                    or '%(Filename)' == 'System.Diagnostics.EventLog'
+                                                    or '%(Filename)' == 'System.Net.HttpListener'" />
     </ItemGroup>
   </Target>
 

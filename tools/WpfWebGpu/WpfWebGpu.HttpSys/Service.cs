@@ -25,7 +25,7 @@ namespace WpfWebGpu.HttpSys;
 
 public static partial class HttpSysService
 {
-    public const string ConnectionHeader = "X-WpfWebGpu-HttpSys";
+    public const string ConnectionHeader = HttpSysClient.ConnectionHeader;
     private static readonly TimeSpan OnDemandIdle = TimeSpan.FromSeconds(15), PortIdle = TimeSpan.FromSeconds(10);
 
     private static volatile List<HttpSysRegistry.Server> s_servers = new();
@@ -43,7 +43,7 @@ public static partial class HttpSysService
         FileStream? held = null;
         while (held == null)
         {
-            held = TryLock(folder);
+            held = HttpSysClient.TryLock(folder);
             if (held != null) break;
             if (onDemand) return 0;                       // another serves the ports
             try { await Task.Delay(2000, stop); } catch (OperationCanceledException) { return 0; }
@@ -103,18 +103,6 @@ public static partial class HttpSysService
         try { await app.StopAsync(); await app.DisposeAsync(); } catch (Exception) { }
     }
 
-    private static FileStream? TryLock(string folder)
-    {
-        string path = Path.Combine(folder, "service.lock");
-        try
-        {
-            var f = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            HttpSysRegistry.Mode(path, "666");
-            return f;
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
-    }
-
     // the instance's process, beside its lock (what an administrator, or a test, stops)
     private static void Own(string folder)
     {
@@ -125,13 +113,6 @@ public static partial class HttpSysService
             HttpSysRegistry.Mode(path, "644");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-    }
-
-    /// <summary>Whether an instance serves the machine's prefixes.</summary>
-    public static bool IsRunning()
-    {
-        using var f = TryLock(HttpSysRegistry.EnsureFolder());
-        return f == null;
     }
 
     [LibraryImport("libc")]
@@ -235,64 +216,5 @@ public static partial class HttpSysService
             proxy.Headers.Remove(ConnectionHeader);
             proxy.Headers.TryAddWithoutValidation(ConnectionHeader, facts);
         }
-    }
-
-    // ---- an app's side --------------------------------------------------------------------------------------
-
-    /// <summary>
-    /// For a server that has registered: the machine's instance, started where none runs -- through the launcher the
-    /// app was started by (WPFWEBGPU_LAUNCHER, and WPFWEBGPU_LAUNCHER_DLL where that is the dotnet host) -- and its
-    /// ports waited for, so the prefixes answer once the server has started, as http.sys's do. False where none
-    /// could be started.
-    /// </summary>
-    public static bool EnsureRunning(IEnumerable<int> ports, ILogger log)
-    {
-        if (!IsRunning())
-        {
-            string? launcher = Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER");
-            if (string.IsNullOrEmpty(launcher))
-            {
-                log.LogError("no http.sys service runs, and this app was not started by wpfrun, which would start one: its prefixes are registered but not served");
-                return false;
-            }
-            var command = new List<string> { launcher };
-            if (Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL") is { Length: > 0 } dll) command.Add(dll);
-            command.Add("httpsys");
-            command.Add("--on-demand");
-            Spawn(command, Path.Combine(HttpSysRegistry.Folder, "service.log"));
-        }
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        foreach (int port in ports.Distinct())
-        {
-            while (!Accepts(port))
-            {
-                if (DateTime.UtcNow > deadline) { log.LogWarning("port {Port} is not served yet", port); break; }
-                Thread.Sleep(100);
-            }
-        }
-        return true;
-    }
-
-    // started apart: no handle of the app's inherited, its output to the service's log
-    private static void Spawn(List<string> command, string logFile)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh") { UseShellExecute = false };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add("exec \"$@\" </dev/null >>\"$WPFWEBGPU_HTTPSYS_LOG\" 2>&1");
-        psi.ArgumentList.Add("httpsys");
-        foreach (string a in command) psi.ArgumentList.Add(a);
-        psi.Environment["WPFWEBGPU_HTTPSYS_LOG"] = logFile;
-        using var p = System.Diagnostics.Process.Start(psi);
-    }
-
-    private static bool Accepts(int port)
-    {
-        try
-        {
-            using var s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            s.Connect(IPAddress.Loopback, port);
-            return true;
-        }
-        catch (SocketException) { return false; }
     }
 }

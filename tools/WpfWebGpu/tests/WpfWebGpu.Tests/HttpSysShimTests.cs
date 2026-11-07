@@ -16,6 +16,7 @@ namespace WpfWebGpu.Tests;
 // The web host stand-ins off Windows: UseHttpSys served by Kestrel with http.sys's routing
 // (shims/Microsoft.AspNetCore.Server.HttpSys), and a key ring protected with DPAPI
 // (shims/Microsoft.AspNetCore.Cryptography.Internal).
+[Collection("http.sys")]
 public class HttpSysShimTests
 {
     [Fact]
@@ -189,12 +190,77 @@ public class HttpSysShimTests
         Assert.False(WpfWebGpu.HttpSys.UrlAcl.MayRegister(451, "_wpflocalservice", service, out _));
     }
 
+    [Fact]
+    public async Task An_HttpListener_shares_a_port_with_a_web_host_as_http_sys_clients()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        using var service = Service.Start("httpsys-listener");
+        int port = FreePort();
+        Service.Reserve($"http://+:{port}/", "D:(A;;GX;;;WD)");
+
+        // a web host on UseHttpSys and an HttpListener (with a WebSocket endpoint), the same port
+        var builder = WebApplication.CreateBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.UseHttpSys(o => o.UrlPrefixes.Add($"http://+:{port}/web/"));
+        await using var web = builder.Build();
+        web.Run(c => c.Response.WriteAsync("web"));
+        await web.StartAsync();
+
+        using var listener = new HttpListener();
+        listener.Prefixes.Add($"http://+:{port}/hl/");
+        listener.Start();
+        var serving = Task.Run(async () =>
+        {
+            while (listener.IsListening)
+            {
+                HttpListenerContext c;
+                try { c = await listener.GetContextAsync(); } catch (Exception) { return; }
+                if (c.Request.IsWebSocketRequest)
+                {
+                    var ws = (await c.AcceptWebSocketAsync(null)).WebSocket;
+                    var buffer = new byte[64];
+                    var got = await ws.ReceiveAsync(buffer, default);
+                    await ws.SendAsync(buffer.AsMemory(0, got.Count), System.Net.WebSockets.WebSocketMessageType.Text, true, default);
+                    await ws.ReceiveAsync(buffer, default);          // the client's close
+                    await ws.CloseOutputAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "", default);
+                    continue;
+                }
+                byte[] body = System.Text.Encoding.UTF8.GetBytes($"hl|{c.Request.Url}|{c.Request.IsSecureConnection}|{c.Request.LocalEndPoint!.Port}|{c.Request.RemoteEndPoint!.Address}");
+                c.Response.OutputStream.Write(body);
+                c.Response.Close();
+            }
+        });
+
+        using var client = new HttpClient();
+        Assert.Equal("web", await client.GetStringAsync($"http://127.0.0.1:{port}/web/"));
+        Assert.Equal($"hl|http://127.0.0.1:{port}/hl/x|False|{port}|127.0.0.1", await client.GetStringAsync($"http://127.0.0.1:{port}/hl/x"));
+        using (var ws = new System.Net.WebSockets.ClientWebSocket())
+        {
+            await ws.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/hl/ws"), default);
+            await ws.SendAsync("echo"u8.ToArray(), System.Net.WebSockets.WebSocketMessageType.Text, true, default);
+            var buffer = new byte[64];
+            var got = await ws.ReceiveAsync(buffer, default);
+            Assert.Equal("echo", System.Text.Encoding.UTF8.GetString(buffer, 0, got.Count));
+            await ws.CloseAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure, "", default);
+        }
+
+        // a prefix with no reservation: refused, as by http.sys
+        using var refused = new HttpListener();
+        refused.Prefixes.Add($"http://+:{FreePort()}/nope/");
+        Assert.Equal(5, Assert.Throws<HttpListenerException>(() => refused.Start()).ErrorCode);
+
+        listener.Stop();
+        await serving;
+        await web.StopAsync();
+    }
+
     /// <summary>The machine's http.sys service for a test: its own registry folder, started on demand through the
     /// launcher built beside the tests, and stopped at the end.</summary>
     private sealed class Service : IDisposable
     {
         private readonly string _folder;
-        private Service(string folder) => _folder = folder;
+        private readonly string? _was;
+        private Service(string folder, string? was) { _folder = folder; _was = was; }
         public string Folder => _folder;
 
         /// <summary>A URL reservation, as netsh http add urlacl makes one (its descriptor as SDDL).</summary>
@@ -207,11 +273,9 @@ public class HttpSysShimTests
         public static Service Start(string name)
         {
             string folder = TestEnvironment.NewDirectory(name);
+            string? was = Environment.GetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR");
             Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", folder);
-            string root = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
-            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER", Path.Combine(root, "dotnet"));
-            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL", Path.Combine(AppContext.BaseDirectory, "wpfrun.dll"));
-            return new Service(folder);
+            return new Service(folder, was);
         }
 
         public void Kill()
@@ -224,9 +288,7 @@ public class HttpSysShimTests
         public void Dispose()
         {
             Kill();
-            Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", null);
-            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER", null);
-            Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL", null);
+            Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", _was);
         }
     }
 

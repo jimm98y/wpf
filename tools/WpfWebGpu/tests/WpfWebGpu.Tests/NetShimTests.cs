@@ -1,3 +1,5 @@
+extern alias RegistryShim;
+
 // The browser's System.Net.Requests and System.Net.WebClient (shims/), which this test process runs in place
 // of the framework's, against a local HttpListener. What each test expects is what .NET's own assemblies
 // answer to the same calls on macOS (a probe of both, side by side, agreed on every one of these).
@@ -23,6 +25,12 @@ public sealed class NetShimServer : IDisposable
             try
             {
                 _listener = new HttpListener();
+                // as on Windows, a URL this account may listen on (a reservation, as netsh http add urlacl makes)
+                if (!OperatingSystem.IsWindows())
+                {
+                    using var key = RegistryShim::Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"SYSTEM\CurrentControlSet\Services\HTTP\Parameters\UrlAclInfo");
+                    key.SetValue($"http://127.0.0.1:{Port}/", "D:(A;;GX;;;WD)");
+                }
                 _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
                 _listener.Start();
                 break;
@@ -67,6 +75,7 @@ public sealed class NetShimServer : IDisposable
     public void Dispose() => _listener.Stop();
 }
 
+[Collection("http.sys")]
 public sealed class NetShimTests : IClassFixture<NetShimServer>
 {
     private readonly NetShimServer _s;

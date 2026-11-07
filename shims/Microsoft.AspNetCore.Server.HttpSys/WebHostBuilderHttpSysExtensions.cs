@@ -147,11 +147,11 @@ namespace Microsoft.AspNetCore.Hosting
                     int local = addresses?.Select(a => Uri.TryCreate(a, UriKind.Absolute, out var u) ? u.Port : 0).FirstOrDefault(p => p > 0) ?? 0;
                     if (local == 0) { _logger.LogError("the server's own port is unknown: its prefixes are not registered"); return; }
                     _registration = HttpSysRegistry.Register(local, Prefixes().Select(Shared));
-                    HttpSysService.EnsureRunning(Prefixes().Select(p => p.PortValue), _logger);
+                    HttpSysClient.EnsureRunning(Prefixes().Select(p => p.PortValue), m => _logger.LogWarning("{Message}", m));
                     // an instance started on demand that has gone (no system service restarts it): started again
                     _watch = new Timer(_ =>
                     {
-                        if (!HttpSysService.IsRunning()) HttpSysService.EnsureRunning(Prefixes().Select(p => p.PortValue), _logger);
+                        if (!HttpSysClient.IsRunning()) HttpSysClient.EnsureRunning(Prefixes().Select(p => p.PortValue), m => _logger.LogWarning("{Message}", m));
                     }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
                 });
                 lifetime.ApplicationStopping.Register(() =>
@@ -173,9 +173,9 @@ namespace Microsoft.AspNetCore.Hosting
         {
             var request = context.Request;
             // the connection as the service took it (what http.sys would have told this process)
-            if (request.Headers.TryGetValue(HttpSysService.ConnectionHeader, out var facts) && facts.ToString().Split(';') is { Length: 5 } f)
+            if (request.Headers.TryGetValue(HttpSysClient.ConnectionHeader, out var facts) && facts.ToString().Split(';') is { Length: 5 } f)
             {
-                request.Headers.Remove(HttpSysService.ConnectionHeader);
+                request.Headers.Remove(HttpSysClient.ConnectionHeader);
                 request.Scheme = f[0];
                 var c = context.Connection;
                 if (IPAddress.TryParse(f[1], out var localIp)) c.LocalIpAddress = localIp;

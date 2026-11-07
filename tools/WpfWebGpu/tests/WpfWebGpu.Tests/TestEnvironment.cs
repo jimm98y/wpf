@@ -13,8 +13,17 @@ internal static class TestEnvironment
         Directory.CreateDirectory(Root);
         Environment.SetEnvironmentVariable("WPFWEBGPU_REGISTRY_DIR", Path.Combine(Root, "registry"));
         Environment.SetEnvironmentVariable("WPFWEBGPU_DPAPI_DIR", Path.Combine(Root, "dpapi"));
+        // http.sys's registrations and service: the tests' own, started on demand through the launcher built beside
+        // them (an HttpListener or UseHttpSys server registers its prefixes with it)
+        Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", Path.Combine(Root, "httpsys"));
+        string dotnetRoot = Path.GetFullPath(Path.Combine(System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(), "..", "..", ".."));
+        Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER", Path.Combine(dotnetRoot, "dotnet"));
+        Environment.SetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL", Path.Combine(AppContext.BaseDirectory, "wpfrun.dll"));
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
+            // the tests' http.sys service, where one was started
+            string pid = Path.Combine(Root, "httpsys", "service.pid");
+            try { if (int.TryParse(File.ReadAllText(pid), out int id)) System.Diagnostics.Process.GetProcessById(id).Kill(); } catch { }
             try { Directory.Delete(Root, recursive: true); } catch { }
         };
     }

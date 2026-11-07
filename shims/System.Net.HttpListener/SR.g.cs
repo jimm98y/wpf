@@ -1,0 +1,104 @@
+// The assembly's strings (Runtime/'s Strings.resx), as the runtime's build generates them.
+
+namespace System
+{
+    internal static partial class SR
+    {
+        internal static string Name1 => "this is my long string";
+        internal static string Bitmap1 => "[base64 mime encoded serialized .NET Framework object]";
+        internal static string Icon1 => "[base64 mime encoded string representing a byte array form of the .NET Framework object]";
+        internal static string net_log_listener_delegate_exception => "Sending 500 response, AuthenticationSchemeSelectorDelegate threw an exception: {0}.";
+        internal static string net_log_listener_unsupported_authentication_scheme => "Received a request with an unsupported authentication scheme, Authorization:{0} SupportedSchemes:{1}.";
+        internal static string net_log_listener_unmatched_authentication_scheme => "Received a request with an unmatched or no authentication scheme. AuthenticationSchemes:{0}, Authorization:{1}.";
+        internal static string net_io_invalidasyncresult => "The IAsyncResult object was not returned from the corresponding asynchronous method on this class.";
+        internal static string net_io_invalidendcall => "{0} can only be called once for each asynchronous operation.";
+        internal static string net_io_out_range => "The byte count must not exceed {0} bytes for this stream type.";
+        internal static string net_listener_cannot_set_custom_cbt => "Custom channel bindings are not supported.";
+        internal static string net_listener_detach_error => "Can't detach Url group from request queue. Status code: {0}.";
+        internal static string net_listener_scheme => "Only Uri prefixes starting with 'http://' or 'https://' are supported.";
+        internal static string net_listener_host => "Only Uri prefixes with a valid hostname are supported.";
+        internal static string net_listener_not_supported => "The request is not supported.";
+        internal static string net_listener_mustcall => "Please call the {0} method before calling this method.";
+        internal static string net_listener_slash => "Only Uri prefixes ending in '/' are allowed.";
+        internal static string net_listener_already => "Failed to listen on prefix '{0}' because it conflicts with an existing registration on the machine.";
+        internal static string net_log_listener_no_cbt_disabled => "No channel binding check because extended protection is disabled.";
+        internal static string net_log_listener_no_cbt_http => "No channel binding check for requests without a secure channel.";
+        internal static string net_log_listener_no_cbt_trustedproxy => "No channel binding check for the trusted proxy scenario.";
+        internal static string net_log_listener_cbt => "Channel binding check enabled.";
+        internal static string net_log_listener_no_spn_kerberos => "No explicit service name check because Kerberos authentication already validates the service name.";
+        internal static string net_log_listener_no_spn_disabled => "No service name check because extended protection is disabled.";
+        internal static string net_log_listener_no_spn_cbt => "No service name check because the channel binding was already checked.";
+        internal static string net_log_listener_no_spn_whensupported => "No service name check because the client did not provide a service name and the server was configured for PolicyEnforcement.WhenSupported.";
+        internal static string net_log_listener_no_spn_loopback => "No service name check because the authentication was from a client on the local machine.";
+        internal static string net_log_listener_spn => "Client provided service name '{0}'.";
+        internal static string net_log_listener_spn_passed => "Service name check succeeded.";
+        internal static string net_log_listener_spn_failed => "Service name check failed.";
+        internal static string net_log_listener_spn_failed_always => "Service name check failed because the client did not provide a service name and the server was configured for PolicyEnforcement.Always.";
+        internal static string net_log_listener_spn_failed_empty => "No acceptable service names were configured!";
+        internal static string net_log_listener_spn_failed_dump => "Dumping acceptable service names:";
+        internal static string net_log_listener_spn_add => "Adding default service name '{0}' from prefix '{1}'.";
+        internal static string net_log_listener_spn_not_add => "No default service name added for prefix '{0}'.";
+        internal static string net_log_listener_spn_remove => "Removing default service name '{0}' from prefix '{1}'.";
+        internal static string net_log_listener_spn_not_remove => "No default service name removed for prefix '{0}'.";
+        internal static string net_listener_no_spns => "No service names could be determined from the registered prefixes. Either add prefixes from which default service names can be derived or specify an ExtendedProtectionPolicy object which contains an explicit list of service names.";
+        internal static string net_ssp_dont_support_cbt => "The Security Service Providers don't support extended protection. Please install the latest Security Service Providers update.";
+        internal static string net_PropertyNotImplementedException => "This property is not implemented by this class.";
+        internal static string net_array_too_small => "The target array is too small.";
+        internal static string net_listener_mustcompletecall => "The in-progress method {0} must be completed first.";
+        internal static string net_listener_invalid_cbt_type => "Querying the {0} Channel Binding is not supported.";
+        internal static string net_listener_callinprogress => "Cannot re-call {0} while a previous call is still in progress.";
+        internal static string net_log_listener_cant_create_uri => "Can't create Uri from string '{0}://{1}{2}{3}'.";
+        internal static string net_log_listener_cant_convert_raw_path => "Can't convert Uri path '{0}' using encoding '{1}'.";
+        internal static string net_log_listener_cant_convert_percent_value => "Can't convert percent encoded value '{0}'.";
+        internal static string net_log_listener_cant_convert_to_utf8 => "Can't convert string '{0}' into UTF-8 bytes: {1}";
+        internal static string net_log_listener_cant_convert_bytes => "Can't convert bytes '{0}' into UTF-16 characters: {1}";
+        internal static string net_invalidstatus => "The status code must be exactly three digits.";
+        internal static string net_WebHeaderInvalidControlChars => "Specified value has invalid Control characters.";
+        internal static string net_rspsubmitted => "This operation cannot be performed after the response has been submitted.";
+        internal static string net_nochunkuploadonhttp10 => "Chunked encoding upload is not supported on the HTTP/1.0 protocol.";
+        internal static string net_cookie_exists => "Cookie already exists.";
+        internal static string net_wrongversion => "Only HTTP/1.0 and HTTP/1.1 version requests are currently supported.";
+        internal static string net_noseek => "This stream does not support seek operations.";
+        internal static string net_writeonlystream => "The stream does not support reading.";
+        internal static string net_entitytoobig => "Bytes to be written to the stream exceed the Content-Length bytes size specified.";
+        internal static string net_io_notenoughbyteswritten => "Cannot close stream until all bytes are written.";
+        internal static string net_listener_close_urlgroup_error => "Can't close Url group. Status code: {0}.";
+        internal static string net_WebSockets_NativeSendResponseHeaders => "An error occurred when sending the WebSocket HTTP upgrade response during the {0} operation. The HRESULT returned is '{1}'";
+        internal static string net_WebSockets_ClientAcceptingNoProtocols => "The WebSocket client did not request any protocols, but server attempted to accept '{0}' protocol(s). ";
+        internal static string net_WebSockets_AcceptUnsupportedProtocol => "The WebSocket client request requested '{0}' protocol(s), but server is only accepting '{1}' protocol(s).";
+        internal static string net_WebSockets_AcceptNotAWebSocket => "The {0} operation was called on an incoming request that did not specify a '{1}: {2}' header or the {2} header not contain '{3}'. {2} specified by the client was '{4}'.";
+        internal static string net_WebSockets_AcceptHeaderNotFound => "The {0} operation was called on an incoming WebSocket request without required '{1}' header. ";
+        internal static string net_WebSockets_AcceptUnsupportedWebSocketVersion => "The {0} operation was called on an incoming request with WebSocket version '{1}', expected '{2}'. ";
+        internal static string net_WebSockets_InvalidCharInProtocolString => "The WebSocket protocol '{0}' is invalid because it contains the invalid character '{1}'.";
+        internal static string net_WebSockets_ReasonNotNull => "The close status description '{0}' is invalid. When using close status code '{1}' the description must be null.";
+        internal static string net_WebSockets_InvalidCloseStatusCode => "The close status code '{0}' is reserved for system use only and cannot be specified when calling this method.";
+        internal static string net_WebSockets_InvalidCloseStatusDescription => "The close status description '{0}' is too long. The UTF-8 representation of the status description must not be longer than {1} bytes.";
+        internal static string net_WebSockets_UnsupportedPlatform => "The WebSocket protocol is not supported on this platform.";
+        internal static string net_readonlystream => "The stream does not support writing.";
+        internal static string net_WebSockets_InvalidState_ClosedOrAborted => "The '{0}' instance cannot be used for communication because it has been transitioned into the '{1}' state.";
+        internal static string net_WebSockets_ReceiveAsyncDisallowedAfterCloseAsync => "The WebSocket is in an invalid state for this operation. The '{0}' method has already been called before on this instance. Use '{1}' instead to keep being able to receive data but close the output channel.";
+        internal static string net_Websockets_AlreadyOneOutstandingOperation => "There is already one outstanding '{0}' call for this WebSocket instance. ReceiveAsync and SendAsync can be called simultaneously, but at most one outstanding operation for each of them is allowed at the same time.";
+        internal static string net_WebSockets_InvalidMessageType => "The received message type '{2}' is invalid after calling {0}. {0} should only be used if no more data is expected from the remote endpoint. Use '{1}' instead to keep being able to receive data but close the output channel.";
+        internal static string net_WebSockets_InvalidBufferType => "The buffer type '{0}' is invalid. Valid buffer types are: '{1}', '{2}', '{3}', '{4}', '{5}'.";
+        internal static string net_WebSockets_ArgumentOutOfRange_InternalBuffer => "The byte array must have a length of at least '{0}' bytes.  ";
+        internal static string net_WebSockets_Argument_InvalidMessageType => "The message type '{0}' is not allowed for the '{1}' operation. Valid message types are: '{2}, {3}'. To close the WebSocket, use the '{4}' operation instead. ";
+        internal static string net_securitypackagesupport => "The requested security package is not supported.";
+        internal static string net_log_operation_failed_with_error => "{0} failed with error {1}.";
+        internal static string net_MethodNotImplementedException => "This method is not implemented by this class.";
+        internal static string net_invalid_enum => "The specified value is not valid in the '{0}' enumeration.";
+        internal static string net_auth_message_not_encrypted => "Protocol error: A received message contains a valid signature but it was not encrypted as required by the effective Protection Level.";
+        internal static string SSPIInvalidHandleType => "'{0}' is not a supported handle type.";
+        internal static string net_io_operation_aborted => "I/O operation aborted: '{0}'.";
+        internal static string net_invalid_path => "Invalid path.";
+        internal static string net_listener_auth_errors => "Authentication errors.";
+        internal static string net_listener_close => "Listener closed.";
+        internal static string net_invalid_port => "Invalid port in prefix.";
+        internal static string net_WebSockets_InvalidState => "The WebSocket is in an invalid state ('{0}') for this operation. Valid states are: '{1}'";
+        internal static string SystemNetHttpListener_PlatformNotSupported => "System.Net.HttpListener is not supported on this platform.";
+
+        internal static string Format(string format, object? arg0) => string.Format(format, arg0);
+        internal static string Format(string format, object? arg0, object? arg1) => string.Format(format, arg0, arg1);
+        internal static string Format(string format, object? arg0, object? arg1, object? arg2) => string.Format(format, arg0, arg1, arg2);
+        internal static string Format(string format, params object?[] args) => string.Format(format, args);
+    }
+}

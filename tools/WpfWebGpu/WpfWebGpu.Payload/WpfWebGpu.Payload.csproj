@@ -88,6 +88,8 @@
     <ProjectReference Include="../WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
     <!-- Data Protection's key ring protected with DPAPI (ProtectKeysWithDpapi): crypt32's DPAPI the ProtectedData stand-in's -->
     <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
+    <!-- HttpListener an http.sys client again: its prefixes share ports with every other process's -->
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Net.HttpListener/System.Net.HttpListener.csproj" />
   </ItemGroup>
 
 </Project>

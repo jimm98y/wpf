@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Replacement for the shared framework's System.Net.HttpListener off Windows. On Windows HttpListener is an http.sys
+       client: its prefixes share ports with every other process's, by URL. .NET's managed implementation elsewhere binds
+       each port itself, so a program on HttpListener and the machine's http.sys service (WpfWebGpu.HttpSys) both held
+       port 80, each taking connections meant for the other. This is .NET's own managed implementation (Runtime/,
+       dotnet/runtime v10.0.14, MIT) made an http.sys client again (HttpSysEndpoints.cs): each port's prefixes served
+       on a loopback port of the listener's own and registered with the machine's http.sys service, which forwards to
+       it what they claim. Same identity as the framework assembly at a higher version. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Net.HttpListener</AssemblyName>
+    <RootNamespace>System.Net</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>netcore.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DefineConstants>$(DefineConstants);TARGET_UNIX</DefineConstants>
+    <NoWarn>CA1416;CS8002;SYSLIB0014;SYSLIB0039;SYSLIB0050;SYSLIB0051</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- the machine's prefixes and its http.sys service -->
+    <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.HttpSys/WpfWebGpu.HttpSys.csproj" />
+  </ItemGroup>
+
+  <Target Name="WpfWebGpuShimsOnly" AfterTargets="ResolveTargetingPackAssets">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'System.Net.HttpListener'" />
+    </ItemGroup>
+  </Target>
+
+</Project>
