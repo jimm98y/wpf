@@ -539,6 +539,14 @@ public static class WindowsPaths
         return new Uri(s!, uriKind == UriKind.RelativeOrAbsolute && IsLocalPath(s) ? UriKind.Absolute : uriKind);
     }
 
+    // the same for the URI an app tries: a display saved to a path checked it with TryCreate (RelativeOrAbsolute) and
+    // asked the result for its LocalPath -- "This operation is not supported for a relative URI"
+    public static bool Uri_TryCreate(string? uriString, UriKind uriKind, out Uri? result)
+    {
+        string? s = AsUri(uriString);
+        return Uri.TryCreate(s, uriKind == UriKind.RelativeOrAbsolute && IsLocalPath(s) ? UriKind.Absolute : uriKind, out result);
+    }
+
     private static bool IsLocalPath(string? s)
     {
         if (s_windows || s == null || !s.StartsWith('/') || s.StartsWith("//") || s.Contains(";component/", StringComparison.OrdinalIgnoreCase))

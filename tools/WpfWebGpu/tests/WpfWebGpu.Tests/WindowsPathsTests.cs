@@ -53,6 +53,10 @@ public sealed class WindowsPathsTests
         Assert.True(WindowsPaths.Uri_new(file, UriKind.RelativeOrAbsolute).IsFile);
         Assert.True(WindowsPaths.Uri_new(Path.Combine(dir, "NotYet.gdfx"), UriKind.RelativeOrAbsolute).IsAbsoluteUri);   // in a folder that is
         Assert.False(WindowsPaths.Uri_new("/Telerik.Windows.Controls.RibbonView;component/themes/RibbonWindow.xaml", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
+        // tried rather than made: the same answers
+        Assert.True(WindowsPaths.Uri_TryCreate(Path.Combine(dir, "NotYet.gdfx"), UriKind.RelativeOrAbsolute, out Uri? tried) && tried!.IsFile);
+        Assert.Equal(Path.Combine(dir, "NotYet.gdfx"), tried.LocalPath);
+        Assert.True(WindowsPaths.Uri_TryCreate("Displays/Plant.gdfx", UriKind.RelativeOrAbsolute, out Uri? relative) && !relative!.IsAbsoluteUri);
         Assert.False(WindowsPaths.Uri_new("/Images/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
         Assert.False(WindowsPaths.Uri_new("/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
     }
