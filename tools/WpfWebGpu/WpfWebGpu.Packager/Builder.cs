@@ -6,9 +6,23 @@ namespace WpfWebGpu.Packager;
 
 public static class Builder
 {
+    /// <summary>
+    /// One identity for the whole product, as the scanner gives it: a manifest that tells some of its programs they run
+    /// on Windows (an older scan's, or one edited by hand) tells them all. Programs told apart disagree about what the
+    /// others do -- a service that thinks it is on Windows listens where one that does not never calls it.
+    /// </summary>
+    internal static void ProductIdentity(PackageManifest manifest)
+    {
+        if (manifest.Product.OsIdentity.Length > 0) return;
+        manifest.Product.OsIdentity = manifest.Services
+            .Select(s => s.Environment.GetValueOrDefault("WPFWEBGPU_OS_IDENTITY"))
+            .FirstOrDefault(v => !string.IsNullOrEmpty(v)) ?? "";
+    }
+
     public static List<string> Build(PackageManifest manifest, IReadOnlyList<Target> targets, string outDir, string packsFolder, Action<string> log)
     {
         var made = new List<string>();
+        ProductIdentity(manifest);
         var staged = Staging.Stage(manifest, Path.Combine(outDir, ".work"));
         log($"staged: registry {staged.Keys} keys, ProgramData {staged.ProgramDataFiles.Count} files");
         foreach (var (target, why) in staged.LeftOut) log($"  left out ProgramData/{target}: {why}");

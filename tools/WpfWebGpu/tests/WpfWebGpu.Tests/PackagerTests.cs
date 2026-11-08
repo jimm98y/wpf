@@ -30,6 +30,23 @@ public class PackagerTests
     }
 
     [Fact]
+    public void A_product_some_of_whose_programs_are_told_they_run_on_Windows_tells_them_all()
+    {
+        var manifest = new PackageManifest();
+        manifest.Services.Add(new ServiceEntry { Name = "Server", Exe = "Server.exe" });
+        var told = new ServiceEntry { Name = "Host", Exe = "Host.exe" };
+        told.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
+        manifest.Services.Add(told);
+        Builder.ProductIdentity(manifest);
+        Assert.Equal("windows", manifest.Product.OsIdentity);
+
+        var untold = new PackageManifest();
+        untold.Services.Add(new ServiceEntry { Name = "Server", Exe = "Server.exe" });
+        Builder.ProductIdentity(untold);
+        Assert.Equal("", untold.Product.OsIdentity);
+    }
+
+    [Fact]
     public void Finds_the_installation_s_folder_in_the_registry_s_paths()
     {
         var mappings = Scanner.DetectMappings(RegText.Parse(Reg), Install());
