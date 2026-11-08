@@ -266,6 +266,12 @@ public class HttpSysShimTests
         int clientPort = ((System.Net.IPEndPoint)client.Client.LocalEndPoint!).Port;
         Assert.Equal(WpfWebGpu.HttpSys.UrlAcl.CurrentUid(), WpfWebGpu.HttpSys.LocalPeers.UidOf(System.Net.IPAddress.Loopback, clientPort, serverPort));
         Assert.Null(WpfWebGpu.HttpSys.LocalPeers.UidOf(System.Net.IPAddress.Parse("10.1.2.3"), clientPort, serverPort));   // not on this machine
+        if (OperatingSystem.IsMacOS())
+        {
+            // from the kernel's list of sockets, not lsof's
+            Assert.Equal(WpfWebGpu.HttpSys.UrlAcl.CurrentUid(), WpfWebGpu.HttpSys.LocalPeers.FromKernel(clientPort, serverPort, out bool listed));
+            Assert.True(listed);
+        }
     }
 
     [Fact]
