@@ -675,14 +675,24 @@ namespace System.Windows.Forms.Integration
         {
             if (disposing)
             {
-                EmbeddedScenes.Unregister(this);
-                UnhookKeyboard();
-                if (_source != null)
+                try
                 {
-                    HostedWpfContent.Release(_source.Handle);
-                    Control.UnregisterForeignChild(_source.Handle);
-                    _source.Dispose();
-                    _source = null;
+                    EmbeddedScenes.Unregister(this);
+                    UnhookKeyboard();
+                    if (_source != null)
+                    {
+                        HostedWpfContent.Release(_source.Handle);
+                        Control.UnregisterForeignChild(_source.Handle);
+                        _source.Dispose();
+                        _source = null;
+                    }
+                }
+                finally
+                {
+                    // the hosted element goes with its host, as .NET's ElementHost disposes it: what an app's
+                    // WPF control holds (its connections, the threads they run on) is let go of when the form
+                    // closes -- a control that disposed only there kept the process alive after Main returned
+                    (Child as IDisposable)?.Dispose();
                 }
             }
             base.Dispose(disposing);
