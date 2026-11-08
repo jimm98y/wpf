@@ -43,6 +43,7 @@ internal sealed class Runner
         string rid = HostInfo.Rid;
         string cacheDir = Path.Combine(Locations.CacheRoot, "apps", $"{App.ProgramName}-{Hash(App.Directory)}");
         Directory.CreateDirectory(cacheDir);
+        AppCaches.Use(cacheDir, App.ExeFile ?? App.Dll);
         string logPath = Path.Combine(Locations.LogRoot, $"{App.ProgramName}.log");
 
         var payloadDeps = DepsMerger.ReadJson(Path.Combine(OverlayDir, Locations.PayloadName + ".deps.json"));

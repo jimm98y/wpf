@@ -148,7 +148,9 @@ public sealed class RewriteCacheTests
                 .Invoke(loader, new object[] { "WpfWebGpu.ComRewrite", Path.Combine(dir, "WpfWebGpu.ComRewrite.dll"), WpfWebGpu.ComRewrite.ComImportLoader.Parts.Paths, false });
         }
         string? a = PathFor(one, "ServiceA-1"), b = PathFor(two, "ServiceB-2"), c = PathFor(three, "ServiceC-3");
-        Assert.Equal(Path.Combine(root, "cache", "rewritten"), Path.GetDirectoryName(a));
+        // in the cache's rewritten/, in the folder of this build's generation
+        Assert.Equal(Path.Combine(root, "cache", "rewritten"), Path.GetDirectoryName(Path.GetDirectoryName(a)));
+        Assert.StartsWith("g-", Path.GetFileName(Path.GetDirectoryName(a)));
         Assert.Equal(a, b);
         Assert.NotEqual(a, c);
     }

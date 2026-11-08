@@ -83,9 +83,49 @@ public sealed class ComImportLoader
         if (cacheDir == null) return null;
         string full = Path.GetFullPath(cacheDir).TrimEnd(Path.DirectorySeparatorChar);
         string? apps = Path.GetDirectoryName(full);
-        return apps != null && Path.GetFileName(apps) == "apps" && Path.GetDirectoryName(apps) is { } root
+        string rewritten = apps != null && Path.GetFileName(apps) == "apps" && Path.GetDirectoryName(apps) is { } root
             ? Path.Combine(root, "rewritten")
             : Path.Combine(cacheDir, "rewritten");
+        return Generation(rewritten);
+    }
+
+    // Generations: every image is named by the rewriter and the stack it was made with, so a new build of either
+    // makes all of them anew, and what the previous one made is never read again -- each kept a gigabyte, upgrade
+    // after upgrade. The images of one build are kept in a folder of its own, marked when a process uses it, and a
+    // generation no process has used for a week goes (an older build still running somewhere marks its own).
+    private static readonly TimeSpan s_unusedGeneration = TimeSpan.FromDays(7);
+
+    private static string Generation(string rewritten)
+    {
+        string key = $"{typeof(ComRewriter).Assembly.ManifestModule.ModuleVersionId}|{typeof(Com).Assembly.ManifestModule.ModuleVersionId}";
+        string generation = Path.Combine(rewritten, "g-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..12].ToLowerInvariant());
+        try
+        {
+            Directory.CreateDirectory(generation);
+            Directory.SetLastWriteTimeUtc(generation, DateTime.UtcNow);
+            Prune(rewritten, generation, DateTime.UtcNow - s_unusedGeneration);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return generation;
+    }
+
+    /// <summary>Deletes what in <paramref name="rewritten"/> is not <paramref name="current"/> and was last used before
+    /// <paramref name="before"/>: other generations, and images kept before there were generations.</summary>
+    internal static void Prune(string rewritten, string current, DateTime before)
+    {
+        foreach (string entry in Directory.EnumerateFileSystemEntries(rewritten))
+        {
+            if (string.Equals(entry, current, StringComparison.Ordinal)) continue;
+            try
+            {
+                if (Directory.Exists(entry))
+                {
+                    if (Directory.GetLastWriteTimeUtc(entry) < before) Directory.Delete(entry, recursive: true);
+                }
+                else if (File.GetLastWriteTimeUtc(entry) < before) File.Delete(entry);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     public void Install(AssemblyLoadContext alc)
