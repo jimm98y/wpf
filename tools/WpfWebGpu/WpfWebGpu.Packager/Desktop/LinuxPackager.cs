@@ -246,6 +246,7 @@ public static class LinuxPackager
             Environment=WPFRUN_LOGS=/var/log/{pkg}
             {string.Concat(service.Environment.Concat(manifest.Product.OsIdentity.Length > 0 && !service.Environment.ContainsKey("WPFWEBGPU_OS_IDENTITY")
                 ? new[] { new KeyValuePair<string, string>("WPFWEBGPU_OS_IDENTITY", manifest.Product.OsIdentity) } : Array.Empty<KeyValuePair<string, string>>())
+                .Concat(DesktopCommon.ServiceRuntimeEnvironment.Where(e => !service.Environment.ContainsKey(e.Key)))
                 .Select(e => $"Environment={e.Key}={e.Value}\n"))}
             {(DesktopCommon.SystemAccount(service.Account, mac: false) is { } user
                 ? $"User={user}\nGroup=users\n# a port below 1024, which Windows lets any account listen on\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n" : "")}UMask=0002

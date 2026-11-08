@@ -70,6 +70,8 @@ public class PackagerTests
         Assert.Contains("<key>Crashed</key><true/>", Plist(StartType.Manual, 60));
         Assert.Contains("<key>SuccessfulExit</key><false/>", Plist(StartType.Auto, 60));
         Assert.Contains("<key>RunAtLoad</key><false/>", Plist(StartType.Manual, 60));
+        // the thread pool's idle workers wait without spinning (DesktopCommon.ServiceRuntimeEnvironment)
+        Assert.Contains("<key>DOTNET_ThreadPool_UnfairSemaphoreSpinLimit</key><string>0</string>", Plist(StartType.Auto, 0));
     }
 
     [Fact]

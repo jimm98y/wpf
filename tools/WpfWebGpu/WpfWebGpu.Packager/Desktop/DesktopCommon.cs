@@ -103,6 +103,18 @@ internal static class DesktopCommon
         return config.Sites.Any(s => s.Applications.Any(a => a.VirtualDirectories.Any(v => v.PhysicalPath != null))) ? config.ToJson() : null;
     }
 
+    /// <summary>
+    /// What every service of an installation runs with besides its own environment. The thread pool's idle workers
+    /// wait without spinning first: a server posts a little work often (a client retrying a point manager that is not
+    /// running, its timers), and each time a dozen workers woke and spun, yielding, before they slept again -- a
+    /// tenth of a core on an idle server. Spinning buys a worker picked up a little sooner after a quiet moment,
+    /// which an interactive program wants and a service does not miss.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> ServiceRuntimeEnvironment = new Dictionary<string, string>
+    {
+        ["DOTNET_ThreadPool_UnfairSemaphoreSpinLimit"] = "0",
+    };
+
     public static string FileName(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ':' ? '_' : c));
 
     /// <summary>The app's own icon (its .exe's), else the product's.</summary>

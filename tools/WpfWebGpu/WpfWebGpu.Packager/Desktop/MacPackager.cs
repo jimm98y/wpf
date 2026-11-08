@@ -157,6 +157,7 @@ public static class MacPackager
     {
         var env = new Dictionary<string, string>(service.Environment);
         if (!string.IsNullOrEmpty(osIdentity)) env.TryAdd("WPFWEBGPU_OS_IDENTITY", osIdentity);
+        foreach (var (key, value) in DesktopCommon.ServiceRuntimeEnvironment) env.TryAdd(key, value);
         return env;
     }
 
