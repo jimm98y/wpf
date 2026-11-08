@@ -327,6 +327,17 @@ public class HttpSysShimTests
     }
 
     [Fact]
+    public void Localhost_needs_no_reservation_where_every_other_name_does()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        int port = FreePort();
+        Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(501, WpfWebGpu.HttpSys.SharedPrefix.Parse($"http://localhost:{port}/svc/Ws_Auth/")!, out _));
+        Assert.True(WpfWebGpu.HttpSys.UrlAcl.MayRegister(501, WpfWebGpu.HttpSys.SharedPrefix.Parse($"http://LOCALHOST:{port}/")!, out _));
+        foreach (string host in new[] { "+", "*", "127.0.0.1", "example" })
+            Assert.False(WpfWebGpu.HttpSys.UrlAcl.MayRegister(501, WpfWebGpu.HttpSys.SharedPrefix.Parse($"http://{host}:{port}/svc/")!, out _));
+    }
+
+    [Fact]
     public async Task An_HttpListener_shares_a_port_with_a_web_host_as_http_sys_clients()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");

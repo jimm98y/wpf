@@ -37,6 +37,9 @@ public static partial class UrlAcl
             if (!Covers(r.Url, prefix)) continue;
             if (best == null || Specificity(r.Url) > Specificity(best.Value.Url)) best = r;
         }
+        // http.sys lets any account listen on a loopback-only name, "localhost" itself (not 127.0.0.1, +, * or the
+        // machine's names), with no reservation: it is not reachable from elsewhere
+        if (best == null && string.Equals(prefix.Host, "localhost", StringComparison.OrdinalIgnoreCase)) return true;
         if (best == null)
         {
             why = $"no URL reservation covers {prefix.FullPrefix} (netsh http add urlacl: {Key})";
