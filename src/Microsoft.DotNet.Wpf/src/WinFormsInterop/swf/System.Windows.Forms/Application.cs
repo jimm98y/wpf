@@ -148,6 +148,13 @@ namespace System.Windows.Forms
 					Application.ThreadExit(null, EventArgs.Empty);
 
 				if (LoopCount == 0) {
+					// who is told the application ends (what an app shuts its connections and threads down in): a
+					// process whose foreground threads outlive Main is waiting for one of these to have stopped them
+					try {
+						var handlers = Application.ApplicationExit?.GetInvocationList ();
+						(AppContext.GetData ("WpfWebGpu.Log") as Action<string>)?.Invoke ($"winforms: ApplicationExit to {handlers?.Length ?? 0} handler(s)" +
+							(handlers == null ? "" : ": " + string.Join (", ", System.Linq.Enumerable.Select (handlers, h => h.Method.DeclaringType?.FullName + "." + h.Method.Name))));
+					} catch { }
 					if (Application.ApplicationExit != null)
 						Application.ApplicationExit (null, EventArgs.Empty);
 				} else {
