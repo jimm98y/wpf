@@ -156,11 +156,32 @@ namespace System.ServiceProcess
                     Console.Error.Flush();
                     Environment.Exit(Array.Find(services, s => s.ExitCode != 0)?.ExitCode ?? 0);
                 }
+                // the process's: Run called from Main, on its main thread (a host running services on a thread of
+                // its own -- a test -- goes on)
+                if (Environment.CurrentManagedThreadId == 1) EndAfterStopped(Array.Find(services, s => s.ExitCode != 0)?.ExitCode ?? 0);
             }
             finally
             {
                 foreach (var r in signals) r.Dispose();
             }
+        }
+
+        // A service process whose services have all stopped is done, to the manager: Windows' SCM ends one that lingers
+        // ("after SERVICE_STOPPED ... the service process can be terminated at any time"). A service's own foreground
+        // thread (a cache worker looping on Sleep) kept the process after Main returned; systemd waited out its stop
+        // timeout (30 s per restart) and killed it, and a timer of the stopped service fired in the meantime and
+        // crashed it. The code after Run gets its moment, then the process ends with the services' exit code.
+        private const int LingerAfterStoppedMs = 1000;
+
+        private static void EndAfterStopped(int exitCode)
+        {
+            var end = new Thread(() =>
+            {
+                Thread.Sleep(LingerAfterStoppedMs);
+                Console.Error.Flush();
+                Environment.Exit(exitCode != 0 ? exitCode : Environment.ExitCode);
+            }) { IsBackground = true, Name = "service process end" };
+            end.Start();
         }
 
         /// <summary>Stops the service on a thread of its own, as the manager's control thread does; false when it has
