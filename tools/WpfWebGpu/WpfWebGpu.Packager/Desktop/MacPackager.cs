@@ -291,25 +291,40 @@ public static class MacPackager
     // an upgrade: the services stopped before their files are replaced, and the previous version's programs and app
     // stubs removed, so that what the new version no longer has is gone (as an MSI upgrade removes it); the machine's
     // state stays
-    // (launchctl bootout returns before a slow service has gone, and a label still going cannot be bootstrapped:
-    // each is waited for, up to half a minute)
     // (every daemon of the product, by its label's prefix: a service renamed or no longer installed is stopped and
     // removed with the rest, not left loaded from the previous version)
-    private static string PreInstall(string root, string product, string id) => $$"""
+    // All asked to stop at once and given ten seconds together -- one after another, each waited for, a few dozen
+    // services slow to stop held the installer for many minutes -- then what is left is killed, as a Windows installer
+    // closes the programs holding its files: the services, the stack's own daemons, and the product's programs any
+    // user still has open (each runs from the installation, or its copy of the program in the product's caches).
+    internal static string PreInstall(string root, string product, string id) => $$"""
         #!/bin/sh
-        stop() {
-          launchctl bootout system/"$1" 2>/dev/null || return 0
-          i=0; while launchctl print system/"$1" >/dev/null 2>&1 && [ $i -lt 30 ]; do sleep 1; i=$((i+1)); done
-        }
+        labels=""
         for p in /Library/LaunchDaemons/{{id}}.*.plist; do
           [ -f "$p" ] || continue
-          stop "$(basename "$p" .plist)"
-          rm -f "$p"
+          l="$(basename "$p" .plist)"
+          labels="$labels $l"
+          launchctl bootout system/"$l" >/dev/null 2>&1 &
         done
+        i=0
+        while [ $i -lt 10 ]; do
+          left=""
+          for l in $labels; do launchctl print system/"$l" >/dev/null 2>&1 && left="$left $l"; done
+          [ -z "$left" ] && break
+          sleep 1; i=$((i+1))
+        done
+        pkill -9 -f '{{Ere(root + "/")}}' 2>/dev/null
+        pkill -9 -f '{{Ere("Caches/" + product + "/apps/")}}' 2>/dev/null
+        wait
+        rm -f /Library/LaunchDaemons/{{id}}.*.plist
         rm -rf "{{root}}/app" "{{root}}/runtime" "/Applications/{{product}}"
         exit 0
 
         """;
+
+    // a pattern for pkill (an extended regular expression) matching the text itself, quoted for a single-quoted word
+    private static string Ere(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @"[.\[\]{}()*+?^$|\\]", @"\$0").Replace("'", "'\\''");
 
     // the machine's service accounts the services run as (NETWORK SERVICE, LOCAL SERVICE): hidden system users made
     // where missing, in the group the state is writable by (staff); the services' logs and caches writable by them

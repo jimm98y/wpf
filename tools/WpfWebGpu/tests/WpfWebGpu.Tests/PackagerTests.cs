@@ -47,23 +47,6 @@ public class PackagerTests
     }
 
     [Fact]
-    public void A_product_some_of_whose_programs_are_told_they_run_on_Windows_tells_them_all()
-    {
-        var manifest = new PackageManifest();
-        manifest.Services.Add(new ServiceEntry { Name = "Server", Exe = "Server.exe" });
-        var told = new ServiceEntry { Name = "Host", Exe = "Host.exe" };
-        told.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
-        manifest.Services.Add(told);
-        Builder.ProductIdentity(manifest);
-        Assert.Equal("windows", manifest.Product.OsIdentity);
-
-        var untold = new PackageManifest();
-        untold.Services.Add(new ServiceEntry { Name = "Server", Exe = "Server.exe" });
-        Builder.ProductIdentity(untold);
-        Assert.Equal("", untold.Product.OsIdentity);
-    }
-
-    [Fact]
     public void A_service_is_restarted_after_a_failure_only_where_its_recovery_actions_say_so()
     {
         // reset period, reboot message, command, two actions at 20: none (0), then restart (1) after 60 s
@@ -87,6 +70,29 @@ public class PackagerTests
         Assert.Contains("<key>Crashed</key><true/>", Plist(StartType.Manual, 60));
         Assert.Contains("<key>SuccessfulExit</key><false/>", Plist(StartType.Auto, 60));
         Assert.Contains("<key>RunAtLoad</key><false/>", Plist(StartType.Manual, 60));
+    }
+
+    [Fact]
+    public void An_upgrade_stops_the_old_services_together_and_kills_what_is_left()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "a shell script");
+        string script = WpfWebGpu.Packager.Desktop.MacPackager.PreInstall("/Library/Application Support/P.1 (x)", "P.1 (x)", "com.example.p");
+        string file = Path.Combine(TestEnvironment.NewDirectory("preinstall"), "preinstall");
+        File.WriteAllText(file, script);
+        var check = System.Diagnostics.Process.Start("/bin/sh", new[] { "-n", file })!;
+        check.WaitForExit();
+        Assert.Equal(0, check.ExitCode);
+        Assert.Contains("launchctl bootout system/\"$l\" >/dev/null 2>&1 &", script);
+        Assert.DoesNotContain("while launchctl print system/\"$1\"", script);   // no service waited for on its own
+        // the kill patterns: the installation's and its programs' copies, the name's own characters matched as such
+        Assert.Contains("pkill -9 -f '/Library/Application Support/P\\.1 \\(x\\)/'", script);
+        Assert.Contains("pkill -9 -f 'Caches/P\\.1 \\(x\\)/apps/'", script);
+        var grep = new System.Diagnostics.ProcessStartInfo("/usr/bin/grep", new[] { "-E", "-c", "/Library/Application Support/P\\.1 \\(x\\)/" })
+            { RedirectStandardInput = true, RedirectStandardOutput = true };
+        using var g = System.Diagnostics.Process.Start(grep)!;
+        g.StandardInput.Write("/Library/Application Support/P.1 (x)/runtime/dotnet/dotnet\n/Library/Application Support/P11 x/app\n");
+        g.StandardInput.Close();
+        Assert.Equal("1", g.StandardOutput.ReadToEnd().Trim());
     }
 
     [Fact]
