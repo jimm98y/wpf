@@ -1319,6 +1319,17 @@ namespace System.Windows.Forms
 			else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
+			// A top-level window is no larger than its maximum tracking size (WM_GETMINMAXINFO's ptMaxTrackSize,
+			// by default the screen and a sizing frame), as Windows clamps it here. An app restoring a placement
+			// saved on a larger screen (a form 3774x1168 on a 1760x919 desktop) kept it: the compositor maximized
+			// the window it could not show, and the ribbon form, laying itself out from the old size, left a
+			// white band under its content.
+			if (hwnd.parent == null)
+			{
+				Size max = MaxWindowTrackSize;
+				if (max.Width > 0 && width > max.Width) width = max.Width;
+				if (max.Height > 0 && height > max.Height) height = max.Height;
+			}
 			Padding frame = FrameOf(handle);
 			// Win32 asks a framed window for its frame again whenever it is sized: a form that draws
 			// its own caption answers differently maximized.

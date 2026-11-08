@@ -8,7 +8,9 @@ namespace System.Windows.Forms {
 		internal override void ShutdownDriver(IntPtr token) {  }
 		internal override int CaptionHeight { get { return default(int); } }
 		internal override Size FrameBorderSize { get { return default(Size); } }
-		internal override Size MaxWindowTrackSize { get { return default(Size); } }
+		// SM_CXMAXTRACK/SM_CYMAXTRACK: the virtual screen and a sizing frame (SM_CXSIZEFRAME + SM_CXPADDEDBORDER at
+		// 96 dpi) on each side -- the largest a top-level window is sized (SetWindowPos clamps to it)
+		internal override Size MaxWindowTrackSize { get { Rectangle v = VirtualScreen; return new Size(v.Width + 2 * (4 + 4), v.Height + 2 * (4 + 4)); } }
 		// False here meant Control.show_focus_cues started false and nothing ever set it, so no
 		// button, check box or radio button drew a focus rectangle -- ShouldPaintFocusRectangle
 		// asks for ShowFocusCues and never got it -- and no menu mnemonic was ever underlined.

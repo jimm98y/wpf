@@ -2519,6 +2519,13 @@ namespace System.Windows.Forms {
 			// activation, which focuses the first control, landed after Shown and undid it. The host
 			// says when its window is up (HostWindowShown).
 			if (value && !shown_raised) {
+				// The state set while the form was not yet shown (an app restoring its placement in Load) is the
+				// window's from its first show, as .NET's SetVisibleCore shows it maximized or minimized
+				// (ShowWindow SW_SHOWMAXIMIZED): stored only, the driver never heard of it, and a form saved
+				// maximized came up at its restore bounds -- larger than the screen, the compositor maximized it
+				// behind the form's back and its layout kept the old size.
+				if (XplatUI.RunningWebGpuDriver && IsHandleCreated && window_state != FormWindowState.Normal && window_manager == null)
+					XplatUI.SetWindowState (Handle, window_state);
 				shown_raised = true;
 				if (XplatUI.RunningWebGpuDriver && PresentationHost.TracksActivation (this) && !host_window_up)
 					shown_pending = true;

@@ -78,6 +78,7 @@ namespace System.Windows.Forms
 			double perDevice = PerMonitor || ScaleHelper.HostSourceDpi <= 0 ? 1 : 96.0 / ScaleHelper.HostSourceDpi * WaylandWindow.PrimaryScale ();
 			var bounds = new Rectangle ((int)Math.Round (left / perDevice), (int)Math.Round (top / perDevice),
 				Math.Max (1, (int)Math.Round ((right - left) / perDevice)), Math.Max (1, (int)Math.Round ((bottom - top) / perDevice)));
+			if (s_trace) Console.WriteLine ($"[wayland form] screen: output ({left},{top})-({right},{bottom}) perMonitor={PerMonitor} hostDpi={ScaleHelper.HostSourceDpi} scale={WaylandWindow.PrimaryScale ()} -> {bounds}");
 			return new[] { new Screen (true, "DISPLAY1", bounds, bounds) };
 		}
 
@@ -323,8 +324,13 @@ namespace System.Windows.Forms
 				_window.SetChromeless (true);
 			_sizedTo = client;
 			_window.SetContentSize (Math.Max (1, (int)Math.Round (client.Width / _k)), Math.Max (1, (int)Math.Round (client.Height / _k)));
-			// the state the form was given before it had a window (an app that starts maximized)
+			// the state the form was given before it had a window (an app that starts maximized): set before
+			// the form was shown -- in its Load, restoring a saved placement -- it is only the form's own
+			// (Form.window_state), which Windows makes the window's at creation (WS_MAXIMIZE); the driver
+			// hears of a state set after
 			FormWindowState initial = _driver.GetWindowState (_form.Handle);
+			if (initial == FormWindowState.Normal)
+				initial = _form.window_state;
 			if (initial == FormWindowState.Maximized)
 				_window.SetWindowState (3);
 			// No NonClientHitTest for the window layer: a press on the frame goes to the form as Windows

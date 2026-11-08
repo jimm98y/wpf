@@ -590,6 +590,11 @@ internal sealed class CocoaHost : IWinFormsHost
         _form.VisibleChanged += OnFormVisibleChanged;
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
+        // the state the form was given before it had a window (an app that restores its placement in Load):
+        // only the form's own then (Form.window_state), which Windows makes the window's at creation
+        // (WS_MAXIMIZE, WS_MINIMIZE); the driver hears of a state set after (ApplyWindowState)
+        if (_form.window_state == FormWindowState.Maximized) SendVoidPtr(win, Sel("zoom:"), IntPtr.Zero);
+        else if (_form.window_state == FormWindowState.Minimized) SendVoidPtr(win, Sel("miniaturize:"), IntPtr.Zero);
 
         // WebGPU present path (on unless WF_WEBGPU=0): create a wgpu context, then a CAMetalLayer surface over
         // this NSView (the mac branch of the cross-platform surface abstraction; Windows would use an
