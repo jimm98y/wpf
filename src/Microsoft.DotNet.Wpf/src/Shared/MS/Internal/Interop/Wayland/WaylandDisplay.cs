@@ -220,6 +220,12 @@ namespace MS.Internal.Interop.Wayland
 
                 InitializeDecor();
 
+                // The clipboard's data device from the start, as Windows' clipboard is there from the start:
+                // the compositor tells a client what the clipboard holds (wl_data_device.selection) as its
+                // window gains the keyboard and as the clipboard changes -- to a client with a device then.
+                // Opened at the first paste, it had missed both, knew of no offer, and Ctrl+V pasted nothing.
+                try { WaylandClipboard.EnsureDevice(); } catch { }
+
                 LogSink?.Invoke($"connected: compositor={Compositor != IntPtr.Zero} xdg_wm_base={XdgWmBase != IntPtr.Zero} " +
                                 $"seat=v{SeatVersion} viewporter={Viewporter != IntPtr.Zero} " +
                                 $"fractional={FractionalScaleManager != IntPtr.Zero} cursorShape={CursorShapeManager != IntPtr.Zero} dialog={WmDialog != IntPtr.Zero} gtkShell={GtkShell != IntPtr.Zero} " +

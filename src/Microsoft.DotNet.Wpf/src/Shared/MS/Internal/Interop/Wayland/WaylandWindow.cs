@@ -680,6 +680,8 @@ namespace MS.Internal.Interop.Wayland
                     ch = w._contentH;
                 }
 
+                if (cw != w._contentW || ch != w._contentH)
+                    WaylandDisplay.LogSink?.Invoke($"window 0x{w._surface:x}: compositor configure {cw}x{ch} (was {w._contentW}x{w._contentH})");
                 w._contentW = Math.Max(1, cw);
                 w._contentH = Math.Max(1, ch);
                 if (WlDecor.libdecor_configuration_get_window_state(configuration, out LibdecorWindowState state))
@@ -928,6 +930,7 @@ namespace MS.Internal.Interop.Wayland
 
         public void SetContentSize(int width, int height)
         {
+            LogSize("SetContentSize", width, height);
             _contentW = Math.Max(1, width);
             _contentH = Math.Max(1, height);
             CommitSize();
@@ -935,11 +938,20 @@ namespace MS.Internal.Interop.Wayland
 
         public void SetContentSizePixels(int cx, int cy)
         {
+            LogSize("SetContentSizePixels", cx, cy);
             double scale = GetBackingScale();
             NonClientInsetsDips(out double ncW, out double ncH);
             _contentW = Math.Max(1, (int)Math.Round(cx / scale - ncW));
             _contentH = Math.Max(1, (int)Math.Round(cy / scale - ncH));
             CommitSize();
+        }
+
+        private void LogSize(string what, int w, int h)
+        {
+            if (WaylandDisplay.LogSink is not { } log) return;
+            string[] frames = Environment.StackTrace.Split('\n');
+            log($"window 0x{_surface:x}: {what}({w},{h}) content was {_contentW}x{_contentH} chromeless={_chromeless} <- "
+                + string.Join(" <- ", System.Linq.Enumerable.Take(System.Linq.Enumerable.Skip(frames, 3), 6)).Replace("\r", "").Replace("   at ", ""));
         }
 
         private void CommitSize()
@@ -1086,9 +1098,16 @@ namespace MS.Internal.Interop.Wayland
         {
             WaylandDisplay.LogSink?.Invoke($"window 0x{_surface:x}: chromeless {chromeless} (was {_chromeless}, frame {(_frame != IntPtr.Zero)})");
             if (_frame == IntPtr.Zero || chromeless == _chromeless) return;
+            // The client area becomes the whole window (WindowChrome's WM_NCCALCSIZE), as CocoaWindow's
+            // SetChromeless: the outer size WPF gave the window stays and is now the client size, with no
+            // non-client frame emulated around it. Kept as the content size, the frame's caption and side
+            // frame were lost from it: a WindowChrome wizard of 800x540 came up 790x503 with its bottom row
+            // (Back, Next) cut off. A maximized window is the compositor's to size.
+            GetWindowPixelSize(out int outerW, out int outerH);
             _chromeless = chromeless;
             WlDecor.libdecor_frame_set_visibility(_frame, !chromeless);
-            CommitSize();
+            if ((_windowState & (LibdecorWindowState.Maximized | LibdecorWindowState.Fullscreen)) == 0) SetContentSizePixels(outerW, outerH);
+            else CommitSize();
             WaylandDisplay.Flush();
         }
 
