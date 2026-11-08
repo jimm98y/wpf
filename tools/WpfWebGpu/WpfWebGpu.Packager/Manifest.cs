@@ -88,6 +88,9 @@ public sealed class AppEntry
     public bool Mobile { get; set; }
     /// <summary>Built for the browser and served by the desktop installations.</summary>
     public bool Web { get; set; }
+    /// <summary>Where the desktop installations serve its page (a URL path on the machine's web server, port 80);
+    /// empty: /webassembly/&lt;its name in lower case&gt;.</summary>
+    public string WebPath { get; set; } = "";
     /// <summary>A desktop shortcut / Start-menu / Applications entry.</summary>
     public bool Shortcut { get; set; }
     /// <summary>Why it may not run off Windows (32-bit only, mixed-mode C++/CLI, native code); informative.</summary>

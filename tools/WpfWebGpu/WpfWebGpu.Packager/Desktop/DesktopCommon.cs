@@ -67,9 +67,10 @@ internal static class DesktopCommon
     /// each virtual directory's folder where the installation (under <paramref name="root"/>) or its ProgramData
     /// (under <paramref name="state"/>) puts it; null where there is none to serve.
     /// </summary>
-    public static string? IisConfiguration(PackageManifest manifest, string root, string state)
+    public static string? IisConfiguration(PackageManifest manifest, string root, string state, IReadOnlyList<WebPages.Page>? pages = null)
     {
-        if (manifest.Inputs.IisConfig.Length == 0 || !File.Exists(manifest.Inputs.IisConfig)) return null;
+        bool hasIis = manifest.Inputs.IisConfig.Length > 0 && File.Exists(manifest.Inputs.IisConfig);
+        if (!hasIis && (pages == null || pages.Count == 0)) return null;
         var mapper = new PathMapper(manifest.PathMappings);
         string? Local(string windows)
         {
@@ -79,7 +80,26 @@ internal static class DesktopCommon
             if (mapped.StartsWith(PathTokens.ProgramData, StringComparison.Ordinal)) return state + "/ProgramData" + rest(PathTokens.ProgramData);
             return null;
         }
-        var config = WpfWebGpu.Services.IisConfiguration.Parse(File.ReadAllText(manifest.Inputs.IisConfig), Local);
+        var config = hasIis ? WpfWebGpu.Services.IisConfiguration.Parse(File.ReadAllText(manifest.Inputs.IisConfig), Local) : new WpfWebGpu.Services.IisConfiguration();
+        // the apps' pages: applications of the site that serves port 80 (IIS's Default Web Site), made where there is none
+        if (pages is { Count: > 0 })
+        {
+            var site = config.Sites.FirstOrDefault(s => s.Bindings.Any(b => b.Protocol == "http" && b.Port == 80));
+            if (site == null)
+            {
+                site = new WpfWebGpu.Services.IisSite { Name = "Default Web Site", Id = config.Sites.Count == 0 ? 1 : config.Sites.Max(s => s.Id) + 1 };
+                site.Bindings.Add(new WpfWebGpu.Services.IisBinding { Protocol = "http", Address = "*", Port = 80 });
+                config.Sites.Add(site);
+            }
+            if (!config.Pools.Any(p => p.Name == "DefaultAppPool")) config.Pools.Add(new WpfWebGpu.Services.IisPool { Name = "DefaultAppPool" });
+            foreach (var page in pages)
+            {
+                site.Applications.RemoveAll(a => a.Path.Equals(page.UrlPath, StringComparison.OrdinalIgnoreCase));
+                var app = new WpfWebGpu.Services.IisApplication { Path = page.UrlPath, Pool = "DefaultAppPool" };
+                app.VirtualDirectories.Add(new WpfWebGpu.Services.IisVirtualDirectory { Path = "/", PhysicalPath = root + "/web/" + page.Folder });
+                site.Applications.Add(app);
+            }
+        }
         return config.Sites.Any(s => s.Applications.Any(a => a.VirtualDirectories.Any(v => v.PhysicalPath != null))) ? config.ToJson() : null;
     }
 

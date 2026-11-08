@@ -36,6 +36,10 @@ public static class Builder
             foreach (var app in mobile)
                 made.Add(AndroidPackager.Build(manifest, app, staged, pack, Path.Combine(outDir, "android"), log));
         }
+        // the apps' pages for the browser, made once and served by every desktop installation
+        var pages = targets.Any(t => t is Target.MacOS or Target.Linux or Target.Windows) && manifest.Apps.Any(a => a.Web)
+            ? Desktop.WebPages.Build(manifest, staged, packsFolder, Path.Combine(outDir, ".work"), log)
+            : new List<Desktop.WebPages.Page>();
         if (targets.Contains(Target.MacOS))
         {
             // a package per architecture the packs folder has a runtime for
@@ -44,7 +48,7 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-osx-<arch>.pack in {packsFolder}: the macOS runtime is not installed");
             foreach (string rid in rids)
-                made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log));
+                made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log, pages));
         }
         if (targets.Contains(Target.Linux))
         {
@@ -53,7 +57,7 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-linux-<arch>.pack in {packsFolder}: the Linux runtime is not installed");
             foreach (string rid in rids)
-                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log));
+                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log, pages));
         }
         if (targets.Contains(Target.Windows))
         {
@@ -73,6 +77,12 @@ public static class Builder
         }
         foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows or Target.IOS)))
             log($"{t}: not made yet by this Packager");
+        // the pages are in the packages now: a gigabyte or more each, not left in the work folder
+        foreach (string dir in new[] { "web", "web-work" })
+        {
+            string path = Path.Combine(outDir, ".work", dir);
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        }
         return made;
     }
 }

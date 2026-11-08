@@ -26,7 +26,8 @@ namespace WpfWebGpu.Packager.Desktop;
 
 public static class MacPackager
 {
-    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log)
+    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
+        IReadOnlyList<WebPages.Page>? pages = null)
     {
         if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (productbuild)");
         string product = manifest.Product.Name;
@@ -78,7 +79,10 @@ public static class MacPackager
 
         // the installation's web sites, as IIS serves them on its machine: their configuration (iis.json, installed into
         // the machine's state on every install) and the web server's daemon, root, which claims their URLs from http.sys
-        string? iis = DesktopCommon.IisConfiguration(manifest, root, root + "/state");
+        // the apps' pages for the browser, which the web server serves (web/<folder>, one application each)
+        foreach (var page in pages ?? Array.Empty<WebPages.Page>())
+            CloneTree(page.Built, Path.Combine(home, "web", page.Folder), new GlobSet(Array.Empty<string>()));
+        string? iis = DesktopCommon.IisConfiguration(manifest, root, root + "/state", pages);
         if (iis != null)
         {
             File.WriteAllText(Path.Combine(home, "iis.json"), iis);
@@ -317,7 +321,7 @@ public static class MacPackager
         pkill -9 -f '{{Ere("Caches/" + product + "/apps/")}}' 2>/dev/null
         wait
         rm -f /Library/LaunchDaemons/{{id}}.*.plist
-        rm -rf "{{root}}/app" "{{root}}/runtime" "/Applications/{{product}}"
+        rm -rf "{{root}}/app" "{{root}}/runtime" "{{root}}/web" "/Applications/{{product}}"
         exit 0
 
         """;

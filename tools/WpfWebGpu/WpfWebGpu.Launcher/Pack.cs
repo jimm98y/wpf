@@ -3,6 +3,8 @@
 //
 //   android.pack   the Android/Quest host APK (both activities, the OpenXR loader), every assembly kept whole,
 //                  and those assemblies (refs/) for the rewrite of an app's onto the stack.
+//   browser.pack   the browser head's page with no app in it (site/: the page, the runtime, the stack, nothing
+//                  trimmed), and its assemblies (refs/) for the rewrite of an app's onto the stack.
 //   desktop-<rid>.pack   runtime/: what runs an installation's programs on that OS with nothing installed --
 //                  a private .NET (with ASP.NET Core, which servers use), wpfrun (launcher/, overlay/ from
 //                  artifacts/wpfrun/<rid>, made by build.sh -r <rid>) and `run`, which starts a program with them.
@@ -19,7 +21,7 @@ internal static class Pack
     public static int Run(string[] args)
     {
         string? outDir = null, feed = null;
-        bool android = false, verbose = false, ios = false;
+        bool android = false, verbose = false, ios = false, browser = false;
         var desktop = new List<string>();
         var setup = new List<string>();
         string? wpfrunBuilds = null;
@@ -31,6 +33,7 @@ internal static class Pack
                 case "--feed": feed = args[++i]; break;
                 case "--android": android = true; break;
                 case "--ios": ios = true; break;
+                case "--browser": browser = true; break;
                 case "--desktop": desktop.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
                 case "--setup": setup.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
@@ -38,7 +41,7 @@ internal static class Pack
                 default: throw new UserError($"unknown option '{args[i]}'.");
             }
         }
-        if (!android && !ios && desktop.Count == 0 && setup.Count == 0) throw new UserError("which template? --android, --desktop <rid>[,<rid>...], --setup <win-rid>[,...]");
+        if (!android && !ios && !browser && desktop.Count == 0 && setup.Count == 0) throw new UserError("which template? --android, --ios, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...]");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)
@@ -51,14 +54,67 @@ internal static class Pack
             int code = PackSetup(outDir, rid, verbose);
             if (code != 0) return code;
         }
-        if (!android && !ios) return 0;
+        if (!android && !ios && !browser) return 0;
         feed = Path.GetFullPath(feed ?? Bundle.FindFeedForPack() ?? throw new UserError("no package feed with WpfWebGpu.Sdk found beside wpfrun; pass --feed <folder>."));
+        if (browser)
+        {
+            int code = PackBrowser(outDir, feed, verbose);
+            if (code != 0 || (!android && !ios)) return code;
+        }
         if (ios)
         {
             int code = PackIos(outDir, feed, verbose);
             if (code != 0 || !android) return code;
         }
         return PackAndroid(outDir, feed, verbose);
+    }
+
+    // ---- the browser ------------------------------------------------------------------------------------------
+
+    private static int PackBrowser(string outDir, string feed, bool verbose)
+    {
+        string project = Path.Combine(Locations.CacheRoot, "bundles", "template-browser");
+        if (Directory.Exists(project)) Directory.Delete(project, recursive: true);
+        Directory.CreateDirectory(project);
+        Bundle.WriteBrowserTemplateProject(project, feed);
+        string csproj = Path.Combine(project, "Bundle.csproj");
+        Console.WriteLine($"wpfrun pack: building the browser template in {project}");
+        // the host page first (the SDK scaffolds it into wwwroot/, which the web SDK reads when the project is)
+        int code = Bundle.DotnetForPack(verbose, "msbuild", csproj, "-restore", "-t:WpfWebGpuScaffoldWeb", "-p:WpfPlatform=browser", "-p:Configuration=Release", "-nologo");
+        if (code != 0) return code;
+        string published = Path.Combine(project, "published");
+        code = Bundle.DotnetForPack(verbose, "publish", csproj, "-c", "Release", "-p:WpfPlatform=browser", "-o", published, "-nologo");
+        if (code != 0) return code;
+        string site = Directory.Exists(Path.Combine(published, "wwwroot")) ? Path.Combine(published, "wwwroot") : published;
+        string framework = Path.Combine(site, "_framework");
+        if (!File.Exists(Path.Combine(site, "index.html")) || !Directory.Exists(framework))
+            throw new UserError($"the publish made no page in {site}");
+
+        string pack = Path.Combine(outDir, "browser.pack");
+        if (File.Exists(pack)) File.Delete(pack);
+        using (var zip = ZipFile.Open(pack, ZipArchiveMode.Create))
+        {
+            var info = new Dictionary<string, object>
+            {
+                ["kind"] = "browser",
+                ["version"] = typeof(Pack).Assembly.GetName().Version?.ToString() ?? "0",
+                ["built"] = DateTime.UtcNow.ToString("O"),
+            };
+            using (var w = new StreamWriter(zip.CreateEntry("pack.json").Open()))
+                w.Write(JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
+            // the page, without the precompressed copies (a server compresses what it serves, or not)
+            int files = 0;
+            foreach (string f in Directory.EnumerateFiles(site, "*", SearchOption.AllDirectories))
+            {
+                if (f.EndsWith(".gz", StringComparison.Ordinal) || f.EndsWith(".br", StringComparison.Ordinal)) continue;
+                zip.CreateEntryFromFile(f, "site/" + Path.GetRelativePath(site, f).Replace('\\', '/'), CompressionLevel.Optimal);
+                files++;
+            }
+            var refs = Directory.EnumerateFiles(framework, "*.dll").Where(f => !f.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach (string r in refs) zip.CreateEntryFromFile(r, "refs/" + Path.GetFileName(r), CompressionLevel.Optimal);
+            Console.WriteLine($"wpfrun pack: {pack}: the page ({files} files) and {refs.Count} assemblies");
+        }
+        return 0;
     }
 
     // ---- iOS ----------------------------------------------------------------------------------------------

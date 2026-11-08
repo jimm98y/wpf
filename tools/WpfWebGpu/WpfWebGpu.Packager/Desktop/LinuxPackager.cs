@@ -20,7 +20,8 @@ namespace WpfWebGpu.Packager.Desktop;
 
 public static class LinuxPackager
 {
-    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log)
+    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
+        IReadOnlyList<WebPages.Page>? pages = null)
     {
         string product = manifest.Product.Name;
         string rid = runtimePack["rid"];
@@ -64,7 +65,11 @@ public static class LinuxPackager
 
             // the installation's web sites, as IIS serves them on its machine (iis.json, installed into the machine's state
             // on every install), and the web server's daemon, root, which claims their URLs from http.sys
-            string? iis = DesktopCommon.IisConfiguration(manifest, root, state);
+            // the apps' pages for the browser, which the web server serves (web/<folder>, one application each)
+            foreach (var page in pages ?? Array.Empty<WebPages.Page>())
+                foreach (string f in Directory.EnumerateFiles(page.Built, "*", SearchOption.AllDirectories))
+                    installedBytes += tar.AddFile(f, $"{root}/web/{page.Folder}/{Path.GetRelativePath(page.Built, f).Replace('\\', '/')}", executable: false);
+            string? iis = DesktopCommon.IisConfiguration(manifest, root, state, pages);
             if (iis != null)
             {
                 tar.AddText($"{root}/iis.json", iis, executable: false);
