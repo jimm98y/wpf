@@ -60,6 +60,19 @@ public sealed class WindowsPathsTests
         Assert.False(WindowsPaths.Uri_new("/Images/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
         Assert.False(WindowsPaths.Uri_new("/a.png", UriKind.RelativeOrAbsolute).IsAbsoluteUri);
     }
+
+    [Fact]
+    public void A_URL_of_the_machine_s_own_name_is_addressed_as_its_local_name()
+    {
+        string name = Environment.MachineName;
+        Assert.SkipUnless(OperatingSystem.IsMacOS() && !name.Contains('.'), "the Mac's Bonjour name");
+        Assert.Equal($"http://{name}.local/AnyGlass/PubDisplay/Display1.gdfx?auto-reload",
+            WindowsPaths.LocalName($"http://{name}/AnyGlass/PubDisplay/Display1.gdfx?auto-reload"));
+        Assert.Equal($"\"https://{name.ToLowerInvariant()}.local:8443/x\" --new-window", WindowsPaths.LocalName($"\"https://{name.ToLowerInvariant()}:8443/x\" --new-window"));
+        Assert.Equal($"http://{name}.local/", WindowsPaths.LocalName($"http://{name}.local/"));                  // already
+        Assert.Equal($"http://{name}x/", WindowsPaths.LocalName($"http://{name}x/"));                            // another machine
+        Assert.Equal($"C:\\{name}\\file.txt", WindowsPaths.LocalName($"C:\\{name}\\file.txt"));           // not a URL
+    }
 }
 
 // The OS questions an assembly asks, rewritten onto WindowsPaths (and so answered as Windows under

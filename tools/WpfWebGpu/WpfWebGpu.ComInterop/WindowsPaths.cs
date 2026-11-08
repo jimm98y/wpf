@@ -334,6 +334,7 @@ public static class WindowsPaths
     private static System.Diagnostics.ProcessStartInfo Launchable(System.Diagnostics.ProcessStartInfo psi)
     {
         if (s_windows || psi == null || string.IsNullOrEmpty(psi.FileName)) return psi!;
+        AddressByLocalName(psi);
         string? launcher = Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER");
         string exe = Disk(psi.FileName)!;
         bool managed = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && File.Exists(exe) && IsManagedExecutable(exe);
@@ -359,6 +360,28 @@ public static class WindowsPaths
         else psi.WorkingDirectory = Disk(psi.WorkingDirectory)!;
         psi.UseShellExecute = false;
         return psi;
+    }
+
+    // An app makes the machine's own address of its name (Environment.MachineName: http://<name>/...), which Windows
+    // resolves on any machine (NetBIOS, LLMNR); macOS does not resolve the bare name at all -- the machine is
+    // <name>.local there (Bonjour), on this machine and on the others of its network. A URL a program is started with
+    // (the browser opening a display) is addressed by that name. The machine name itself stays what the app asks for:
+    // it is the machine's identity as much as its address.
+    private static void AddressByLocalName(System.Diagnostics.ProcessStartInfo psi)
+    {
+        if (!OperatingSystem.IsMacOS()) return;
+        psi.FileName = LocalName(psi.FileName);
+        if (!string.IsNullOrEmpty(psi.Arguments)) psi.Arguments = LocalName(psi.Arguments);
+        for (int i = 0; i < psi.ArgumentList.Count; i++) psi.ArgumentList[i] = LocalName(psi.ArgumentList[i]);
+    }
+
+    /// <summary><paramref name="text"/> with the URLs whose host is this machine's bare name addressed as name.local.</summary>
+    public static string LocalName(string text)
+    {
+        string name = Environment.MachineName;
+        if (string.IsNullOrEmpty(text) || name.Length == 0 || name.Contains('.') || text.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) return text;
+        return System.Text.RegularExpressions.Regex.Replace(text, @"(?<=\b(?:https?|wss?)://)" + System.Text.RegularExpressions.Regex.Escape(name) + @"(?=[:/?#""'\s]|$)",
+            m => m.Value + ".local", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
     }
 
     // A .NET program: a PE image with a CLR header (a .NET Framework .exe), or the native host .NET builds
