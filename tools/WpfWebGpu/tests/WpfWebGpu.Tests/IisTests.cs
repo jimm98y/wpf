@@ -65,6 +65,36 @@ public class IisTests
     }
 
     [Fact]
+    public void A_folder_s_web_config_gives_its_files_headers_and_types_as_IIS_merges_them()
+    {
+        string root = TestEnvironment.NewDirectory("iis-static");
+        Directory.CreateDirectory(Path.Combine(root, "sub"));
+        File.WriteAllText(Path.Combine(root, "web.config"), WpfWebGpu.Packager.Desktop.WebPages.WebConfig);
+        File.WriteAllText(Path.Combine(root, "sub", "web.config"), """
+            <configuration><system.webServer>
+              <httpProtocol><customHeaders><remove name="Cross-Origin-Resource-Policy" /><add name="X-Sub" value="1" /></customHeaders></httpProtocol>
+              <staticContent><remove fileExtension=".dll" /><mimeMap fileExtension=".gdfx" mimeType="application/xml" /></staticContent>
+            </system.webServer></configuration>
+            """);
+        var page = StaticSettings.For(root, Path.Combine(root, "index.html"));
+        Assert.Contains(("Cross-Origin-Opener-Policy", "same-origin"), page.Headers);
+        Assert.Contains(("Cross-Origin-Embedder-Policy", "require-corp"), page.Headers);
+        Assert.Equal("application/wasm", page.Types[".wasm"]);
+        var sub = StaticSettings.For(root, Path.Combine(root, "sub", "a.gdfx"));
+        Assert.DoesNotContain(sub.Headers, h => h.Name == "Cross-Origin-Resource-Policy");   // removed below
+        Assert.Contains(("X-Sub", "1"), sub.Headers);
+        Assert.Contains(("Cross-Origin-Opener-Policy", "same-origin"), sub.Headers);          // inherited
+        Assert.False(sub.Types.ContainsKey(".dll"));
+        Assert.Equal("application/xml", sub.Types[".gdfx"]);
+        // request filtering's defaults: configuration files and the applications' own folders
+        Assert.True(StaticSettings.Refused("web.config"));
+        Assert.True(StaticSettings.Refused("payload/App.dll.config"));
+        Assert.True(StaticSettings.Refused("bin/App.dll"));
+        Assert.False(StaticSettings.Refused("_framework/App.dll"));
+        Assert.False(StaticSettings.Refused("payload/000001.bin"));
+    }
+
+    [Fact]
     public async Task The_web_server_serves_a_site_s_files_through_http_sys()
     {
         if (OperatingSystem.IsWindows()) return;

@@ -175,13 +175,22 @@ internal sealed class IisHost
         string full = System.IO.Path.GetFullPath(System.IO.Path.Combine(dir.PhysicalPath!, rest));
         string folder = System.IO.Path.GetFullPath(dir.PhysicalPath!);
         if (!full.StartsWith(folder, StringComparison.Ordinal)) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+        // the folders' web.config files, from the virtual directory's down to the file's: its headers on every response
+        var settings = StaticSettings.For(folder, full);
+        foreach (var (name, value) in settings.Headers) context.Response.Headers[name] = value;
+        // what IIS's request filtering refuses by default (404.7, 404.8): its configuration files and its folders' own
+        if (StaticSettings.Refused(rest)) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
         if (Directory.Exists(full))
         {
             if (!path.EndsWith('/')) { context.Response.Redirect(path + "/" + context.Request.QueryString, permanent: true); return; }
             full = s_defaultDocuments.Select(d => System.IO.Path.Combine(full, d)).FirstOrDefault(File.Exists) ?? "";
         }
         if (!File.Exists(full)) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
-        context.Response.ContentType = s_types.TryGetContentType(full, out string? type) ? type : "application/octet-stream";
+        // the type the folders' mimeMaps give it, else the server's own; IIS serves no file of a type it does not know (404.3)
+        string? type = settings.Types.TryGetValue(System.IO.Path.GetExtension(full), out string? mapped) ? mapped
+            : s_types.TryGetContentType(full, out string? known) ? known : null;
+        if (type == null) { context.Response.StatusCode = StatusCodes.Status404NotFound; return; }
+        context.Response.ContentType = type;
         context.Response.ContentLength = new FileInfo(full).Length;
         if (HttpMethods.IsHead(context.Request.Method)) return;
         await context.Response.SendFileAsync(full, context.RequestAborted);
