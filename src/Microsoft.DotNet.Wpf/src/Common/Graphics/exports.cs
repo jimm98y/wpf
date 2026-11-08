@@ -219,6 +219,14 @@ namespace System.Windows.Media.Composition
         /// and slips a whole frame.
         /// </param>
         bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime);
+
+        /// <summary>
+        /// Whether the last frame left a window without its picture: the backend had nothing to present
+        /// into (a window just shown, whose surface the system is not yet showing), so the frame was
+        /// dropped. Milcore keeps such a frame and presents it once the window shows; a backend that
+        /// composites only when WPF commits needs WPF to commit again.
+        /// </summary>
+        bool PresentIncomplete(int channelId);
     }
 
     /// <summary>
@@ -517,6 +525,8 @@ namespace System.Windows.Media.Composition
                     presentationTime = 0;
                     return false;
                 }
+
+                public bool PresentIncomplete(int channelId) => !IsDisposed && _impl.PresentIncomplete(channelId);
             }
 
             /// <summary>
@@ -840,6 +850,8 @@ namespace System.Windows.Media.Composition
                 presentationTime = 0;
                 return false;
             }
+
+            public bool PresentIncomplete(int channelId) => false;
         }
 
         /// <summary>
@@ -878,6 +890,7 @@ namespace System.Windows.Media.Composition
             private readonly Func<int, uint, byte[]> _readbackTarget;
             private readonly Func<int, uint, System.Threading.Tasks.Task<byte[]>> _readbackTargetAsync;   // optional
             private readonly TryDequeuePresentedFn _tryDequeuePresented;
+            private readonly Func<int, bool> _presentIncomplete;   // optional
 
             internal ReflectionMilCompositionSink(object impl)
             {
@@ -903,6 +916,8 @@ namespace System.Windows.Media.Composition
                 if (t.GetMethod("ReadbackTargetAsync") != null)
                     _readbackTargetAsync = Bind<Func<int, uint, System.Threading.Tasks.Task<byte[]>>>(impl, t, "ReadbackTargetAsync");
                 _tryDequeuePresented = Bind<TryDequeuePresentedFn>(impl, t, "TryDequeuePresented");
+                // Optional: a backend without it never drops a frame it was given.
+                if (t.GetMethod("PresentIncomplete") != null) _presentIncomplete = Bind<Func<int, bool>>(impl, t, "PresentIncomplete");
             }
 
             private static readonly string[] s_shape =
@@ -978,6 +993,8 @@ namespace System.Windows.Media.Composition
 
             public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime) =>
                 _tryDequeuePresented(channelId, out windowHandle, out presentationTime);
+
+            public bool PresentIncomplete(int channelId) => _presentIncomplete != null && _presentIncomplete(channelId);
         }
 
         /// <summary>
@@ -1974,6 +1991,8 @@ namespace System.Windows.Media.Composition
             /// <returns>
             /// True if a message was retrieved, false otherwise.
             /// </returns>
+            internal bool PresentIncomplete => _sink != null && _sink.PresentIncomplete(_managedId);
+
             internal bool PeekNextMessage(out MilMessage.Message message)
             {
                 if (_sink != null)

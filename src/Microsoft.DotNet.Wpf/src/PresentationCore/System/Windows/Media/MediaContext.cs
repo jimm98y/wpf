@@ -2267,6 +2267,7 @@ namespace System.Windows.Media
                 if (DUCE.ManagedComposition.IsEnabled)
                 {
                     NotifyChannelMessage();
+                    RetryMissedPresent();
                 }
 
                 if (_commitPendingAfterRender)
@@ -2795,6 +2796,38 @@ namespace System.Windows.Media
         private DispatcherOperationCallback _animRenderMessage;
         private DispatcherOperationCallback _inputMarkerMessage;
         private DispatcherOperationCallback _renderModeMessage;
+        /// <summary>
+        /// The managed backend presents inside Commit and drops a frame it has nothing to present into
+        /// (a window just shown, whose surface the window server is not yet showing). Milcore keeps such
+        /// a frame and presents it once the window shows -- the window is never left blank -- so here WPF
+        /// renders again, soon at first and then less often (a window that stays hidden costs one frame a
+        /// second), until every window has its picture.
+        /// </summary>
+        private void RetryMissedPresent()
+        {
+            if (!Channel.PresentIncomplete)
+            {
+                _missedPresentDelay = 0;
+                return;
+            }
+            _missedPresentDelay = _missedPresentDelay == 0 ? 16 : Math.Min(_missedPresentDelay * 2, 1000);
+            if (_missedPresentTimer == null)
+            {
+                _missedPresentTimer = new DispatcherTimer(DispatcherPriority.Render, Dispatcher);
+                _missedPresentTimer.Tick += (sender, e) =>
+                {
+                    _missedPresentTimer.Stop();
+                    PostRender();
+                };
+            }
+            _missedPresentTimer.Stop();
+            _missedPresentTimer.Interval = TimeSpan.FromMilliseconds(_missedPresentDelay);
+            _missedPresentTimer.Start();
+        }
+
+        private DispatcherTimer _missedPresentTimer;
+        private int _missedPresentDelay;
+
         private DispatcherTimer _promoteRenderOpToInput;
         private DispatcherTimer _promoteRenderOpToRender;
 

@@ -65,6 +65,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// created, immune to the skip.
         /// </summary>
         private bool _presentedAllTargets;
+        // The last frame rendered left a window without its picture (see PresentIncomplete).
+        private volatile bool _presentMissed;
 
         private static readonly bool s_skipUnchanged =
             Environment.GetEnvironmentVariable("WPF_WEBGPU_SKIP_UNCHANGED") != "0";
@@ -209,6 +211,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // Written by whichever thread presents (the render thread, with WPF_RENDER_THREAD) and read by
         // WPF's scheduler on the UI thread.
         private readonly object _presentLock = new();
+
+        /// <summary>
+        /// Whether the last frame rendered left a window without its picture -- nothing to present into
+        /// yet (a window just ordered in, its layer not yet shown by the window server, hands back no
+        /// drawable). Milcore keeps such a frame and presents it when the window shows; this sink draws
+        /// only when WPF commits, so WPF asks again (MediaContext) until every window has its frame.
+        /// Without that, a window whose first frames came too early stayed blank until something in it
+        /// changed or it was resized. See IMilCompositionSink.
+        /// </summary>
+        public bool PresentIncomplete(int channelId) => _presentMissed;
 
         /// <summary>Reports the last present to WPF's scheduler. See IMilCompositionSink.</summary>
         public bool TryDequeuePresented(int channelId, out long windowHandle, out long presentationTime)
@@ -646,6 +658,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _statsRendered++;
             _engine.ClearDirty();
             _presentedAllTargets = presentedEvery;
+            _presentMissed = !presentedEvery;
 
             _perfCommitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             if (++_perfFrames >= 60 && (s_logPath != null || s_perfToConsole))

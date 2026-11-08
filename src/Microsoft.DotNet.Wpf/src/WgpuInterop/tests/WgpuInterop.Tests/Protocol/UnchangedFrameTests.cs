@@ -59,6 +59,21 @@ namespace WgpuInterop.Tests.Protocol
             Assert.True(sink.Engine.Dirty);
         }
 
+        /// <summary>
+        /// Nothing has been dropped before anything was drawn: WPF is asked to render again only for a
+        /// frame that left a window without its picture (PresentIncomplete), never merely for a window
+        /// that has had none yet -- a headless sink, which draws nothing, would otherwise be asked
+        /// forever.
+        /// </summary>
+        [Fact]
+        public void AFreshSinkHasDroppedNoFrame()
+        {
+            using var sink = new WpfCompositionSink { UseRenderThread = false };
+            Assert.False(sink.PresentIncomplete(0));
+            sink.Commit(0);
+            Assert.False(sink.PresentIncomplete(0));
+        }
+
         [Fact]
         public void ClearingLeavesItClean()
         {
