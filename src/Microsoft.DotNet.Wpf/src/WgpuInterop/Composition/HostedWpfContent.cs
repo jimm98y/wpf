@@ -96,6 +96,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 h.Height = height;
                 h.Version++;
             }
+            // the host may be asleep until something happens (its message loop's wait): a new frame is something
+            Published?.Invoke();
         }
+
+        /// <summary>Called on every publish (from the publishing thread): the embedder's loop is told there is a
+        /// frame to present, as an invalidated window posts its WM_PAINT.</summary>
+        public static Action? Published;
     }
 }

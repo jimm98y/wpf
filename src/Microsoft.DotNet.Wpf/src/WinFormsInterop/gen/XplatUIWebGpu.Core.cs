@@ -172,6 +172,8 @@ namespace System.Windows.Forms
 			lock (q.Messages) q.Messages.Enqueue(msg);
 			q.Posted.Set();
 			WakeWpfLoop(q);
+			// a loop asleep in AppKit's wait (macOS) is woken by an event, not by the handle
+			if (OperatingSystem.IsMacOS()) CocoaHost.WakeLoop();
 		}
 
 		private static bool TryDequeue(MsgQueue q, out MSG msg)

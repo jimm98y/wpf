@@ -585,6 +585,8 @@ internal sealed class CocoaHost : IWinFormsHost
         }
         ObserveLiveResize();
         s_live.Add(this);
+        // a hosted WPF frame is something to present: it ends the loop's wait
+        Microsoft.Wpf.Interop.WebGpu.Composition.HostedWpfContent.Published = WakeLoop;
         _form.VisibleChanged += OnFormVisibleChanged;
         SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
         Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
@@ -1638,8 +1640,66 @@ internal sealed class CocoaHost : IWinFormsHost
         return true;
     }
 
+    // ---- the loop's wait ------------------------------------------------------------------
+    //
+    // The message loop sleeps as a Cocoa application does, in AppKit's event wait, until there is
+    // something to do: an event (input, a window's own), the next WinForms timer, a message posted from
+    // another thread, or a new frame of hosted WPF content -- not a few milliseconds at a time, polling
+    // (125 times a second, an idle app took 8% of a core). The run loop turns the whole time, so the WPF
+    // dispatcher of the thread (an ElementHost's content) runs while the loop waits.
+
+    // CocoaWindow's wake: an application-defined event of its subtype, which either pump drops
+    private const nuint NSApplicationDefined = 15;
+    private const short WakeSubtype = 0x5750;
+    private static int s_wakePending;
+
+    /// <summary>Whether a form is on screen through this host: its loop then waits in AppKit.</summary>
+    internal static bool Active { get { lock (s_live) return s_live.Count > 0; } }
+
+    /// <summary>Ends the main thread's <see cref="WaitForEvent"/>: from any thread (posting an event is
+    /// AppKit's one thread-safe way into the main thread's wait).</summary>
+    internal static void WakeLoop()
+    {
+        if (!Active || Interlocked.Exchange(ref s_wakePending, 1) == 1) return;
+        IntPtr pool = objc_autoreleasePoolPush();
+        try
+        {
+            IntPtr evt = SendOtherEvent(Cls("NSEvent"),
+                Sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"),
+                NSApplicationDefined, default, 0, 0, 0, IntPtr.Zero, WakeSubtype, 0, 0);
+            if (evt == IntPtr.Zero) { Volatile.Write(ref s_wakePending, 0); return; }
+            SendVoidPtrBool(App(), Sel("postEvent:atStart:"), evt, false);
+        }
+        finally { objc_autoreleasePoolPop(pool); }
+    }
+
+    /// <summary>Waits on the main thread until an event is queued (left for the pump to take), up to
+    /// <paramref name="milliseconds"/>, the run loop running meanwhile.</summary>
+    internal static void WaitForEvent(int milliseconds)
+    {
+        if (pthread_main_np() == 0) { Thread.Sleep(milliseconds); return; }
+        IntPtr until = SendPtrDouble(Cls("NSDate"), Sel("dateWithTimeIntervalSinceNow:"), milliseconds / 1000.0);
+        SendNextEvent(App(), Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+            unchecked((nuint)ulong.MaxValue), until, NSStr("kCFRunLoopDefaultMode"), false);
+        // whoever takes the wake off the queue, this wait is over: the next wake is a new one
+        Volatile.Write(ref s_wakePending, 0);
+    }
+
+    private static bool IsWake(IntPtr evt) =>
+        (nuint)(nint)Send(evt, Sel("type")) == NSApplicationDefined && (short)(nint)Send(evt, Sel("subtype")) == WakeSubtype;
+
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static extern IntPtr SendOtherEvent(IntPtr receiver, IntPtr selector, nuint type, NSPoint location, nuint flags,
+                                                double timestamp, nint windowNumber, IntPtr context, short subtype, nint data1, nint data2);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+    private static extern void SendVoidPtrBool(IntPtr receiver, IntPtr selector, IntPtr a, [MarshalAs(UnmanagedType.I1)] bool b);
+    [DllImport(ObjC)] private static extern IntPtr objc_autoreleasePoolPush();
+    [DllImport(ObjC)] private static extern void objc_autoreleasePoolPop(IntPtr pool);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrDouble(IntPtr r, IntPtr s, double d);
+
     private static void Route(IntPtr evt)
     {
+        if (IsWake(evt)) { Volatile.Write(ref s_wakePending, 0); return; }   // its work was the waking
         if (KeyTrace.On && (nint)Send(evt, Sel("type")) is 10 or 11)
         {
             IntPtr w = Send(evt, Sel("window"));

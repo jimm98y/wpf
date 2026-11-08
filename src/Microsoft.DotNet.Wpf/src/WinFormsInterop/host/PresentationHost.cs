@@ -526,6 +526,16 @@ namespace System.Windows.Forms
         internal static void Idle(int nextTimerMs, WaitHandle posted)
         {
             const int MaxIdle = 8;      // ~120Hz polling: input stays responsive, idle CPU stays low
+            // macOS: the wait is AppKit's event wait, which input, a posted message and a hosted WPF frame end
+            // (CocoaHost.WakeLoop); the cap is only for what the host still looks at by itself
+            if (OperatingSystem.IsMacOS() && CocoaHost.Active)
+            {
+                const int MaxWait = 250;
+                if (posted != null && posted.WaitOne(0)) return;
+                CocoaHost.WaitForEvent(nextTimerMs < 0 ? MaxWait : Math.Min(nextTimerMs, MaxWait));
+                posted?.WaitOne(0);
+                return;
+            }
             int ms = nextTimerMs < 0 ? MaxIdle : Math.Min(nextTimerMs, MaxIdle);
             // iOS: the main thread's wait is UIKit's run loop, as AppKit's event wait is on macOS -- a
             // managed wait there left UIKit without the thread: no touch arrived, and no frame after the
