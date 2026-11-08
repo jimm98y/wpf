@@ -131,19 +131,40 @@ try {
     // SAME relative path they occupy next to the .exe on the desktop. AppContext.BaseDirectory is "/"
     // here, so an app doing Path.Combine(AppContext.BaseDirectory, "Plugins") and loading assemblies
     // from it works unchanged. The build stages these (see _WpfWebGpuBrowserDropNestedPayloads) and
-    // writes payload/index.json, because a directory cannot be listed over HTTP.
+    // writes payload/index.json, because a directory cannot be listed over HTTP. An entry is the file's path, or
+    // { path, file }: its path in the file system and the file it is served as -- a server that serves only the
+    // types it knows and refuses some names (IIS: *.config, bin/) gets every file as a blob of a type it serves.
     try {
         const manifest = await fetch('./payload/index.json');
         if (manifest.ok) {
             const entries = await manifest.json();
             if (entries.length) {
                 status.innerText = 'loading app payload…';
-                await Promise.all(entries.map(async (rel) => {
-                    const resp = await fetch(`./payload/${rel}`);
-                    if (!resp.ok) { console.error(`payload fetch failed: ${rel}`); return; }
-                    const path = `/${rel}`;
-                    Module.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
-                    Module.FS.writeFile(path, new Uint8Array(await resp.arrayBuffer()));
+                // a few at a time: a browser refuses thousands of requests at once (ERR_INSUFFICIENT_RESOURCES),
+                // and an app's folder and its machine's data are thousands of files
+                const mount = async (entry) => {
+                    const rel = typeof entry === 'string' ? entry : entry.path;
+                    const served = typeof entry === 'string' ? entry : entry.file;
+                    for (let attempt = 0; ; attempt++) {
+                        try {
+                            const resp = await fetch(`./payload/${served}`);
+                            if (!resp.ok) { console.error(`payload fetch failed: ${rel} (${resp.status})`); return; }
+                            const path = `/${rel}`;
+                            Module.FS.mkdirTree(path.slice(0, path.lastIndexOf('/')));
+                            Module.FS.writeFile(path, new Uint8Array(await resp.arrayBuffer()));
+                            return;
+                        } catch (e) {
+                            if (attempt >= 3) { console.error(`payload fetch failed: ${rel}: ${e}`); return; }
+                            await new Promise(r => setTimeout(r, 200 * (attempt + 1)));
+                        }
+                    }
+                };
+                let next = 0, done = 0;
+                await Promise.all(Array.from({ length: Math.min(24, entries.length) }, async () => {
+                    while (next < entries.length) {
+                        await mount(entries[next++]);
+                        if (++done % 100 === 0) status.innerText = `loading app payload… ${done} / ${entries.length}`;
+                    }
                 }));
                 console.log(`WpfWebGpu: mounted ${entries.length} app payload files`);
             }
