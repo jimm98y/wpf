@@ -80,6 +80,32 @@ public sealed class WindowsPathsTests
 // gets that system's answers; the unit is the method.
 public sealed class OSIdentityRewriteTests
 {
+    [Fact]
+    public void An_ASP_NET_app_s_served_folder_is_found_as_Windows_finds_it()
+    {
+        var subs = WpfWebGpu.ComRewrite.PathSubstitutions.For(new[] { AppContext.BaseDirectory })!;
+        var module = Mono.Cecil.ModuleDefinition.CreateModule("WebApp", Mono.Cecil.ModuleKind.Dll);
+        var type = new Mono.Cecil.TypeDefinition("Fixture", "Startup", Mono.Cecil.TypeAttributes.Public | Mono.Cecil.TypeAttributes.Abstract | Mono.Cecil.TypeAttributes.Sealed, module.TypeSystem.Object);
+        module.Types.Add(type);
+        var scope = new Mono.Cecil.AssemblyNameReference("Microsoft.Extensions.FileProviders.Physical", new Version(10, 0, 0, 0));
+        module.AssemblyReferences.Add(scope);
+        var provider = new Mono.Cecil.TypeReference("Microsoft.Extensions.FileProviders", "PhysicalFileProvider", module, scope);
+        var ctor = new Mono.Cecil.MethodReference(".ctor", module.TypeSystem.Void, provider) { HasThis = true };
+        ctor.Parameters.Add(new Mono.Cecil.ParameterDefinition(module.TypeSystem.String));
+        var method = new Mono.Cecil.MethodDefinition("Map", Mono.Cecil.MethodAttributes.Public | Mono.Cecil.MethodAttributes.Static, module.TypeSystem.Object);
+        type.Methods.Add(method);
+        var il = method.Body.GetILProcessor();
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ldstr, @"C:\ProgramData\Vendor\AnyCache\cache\");
+        il.Emit(Mono.Cecil.Cil.OpCodes.Newobj, ctor);
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
+
+        subs.Apply(module);
+        var call = (Mono.Cecil.MethodReference)method.Body.Instructions[1].Operand;
+        Assert.Equal(Mono.Cecil.Cil.OpCodes.Call, method.Body.Instructions[1].OpCode);
+        Assert.Equal("WindowsPaths", call.DeclaringType.Name);
+        Assert.Equal("PhysicalFileProvider_new", call.Name);
+    }
+
     [Theory]
     [InlineData(false, -1)]     // a program written for Windows: the plain stand-in
     [InlineData(true, 1)]       // a library that asks about macOS: the variant told it knows macOS (bit 1)

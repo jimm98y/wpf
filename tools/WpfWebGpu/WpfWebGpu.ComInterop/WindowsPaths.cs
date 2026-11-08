@@ -358,9 +358,73 @@ public static class WindowsPaths
         // Explorer starts an .exe in its own folder unless told otherwise; the launcher runs it there too.
         if (string.IsNullOrEmpty(psi.WorkingDirectory)) psi.WorkingDirectory = Path.GetDirectoryName(exe)!;
         else psi.WorkingDirectory = Disk(psi.WorkingDirectory)!;
+        bool elevate = psi.UseShellExecute && string.Equals(psi.Verb, "runas", StringComparison.OrdinalIgnoreCase);
         psi.UseShellExecute = false;
+        if (elevate) Elevated(psi);
         return psi;
     }
+
+    // The "runas" verb (ShellExecute's elevation: the UAC prompt, then the program as an administrator), as Linux has
+    // it: polkit's pkexec, whose agent (GNOME's) asks for an administrator's password, then the program as root. It
+    // is started with the session's display and the installation's settings (pkexec gives it a clean environment),
+    // its own cache and logs under root's home where they were under the user's (an administrator's files are not
+    // the user's to share), in the folder it was to start in. Already root, or with no polkit, it starts as it is --
+    // as UAC does not ask an administrator who is elevated already.
+    private static void Elevated(System.Diagnostics.ProcessStartInfo psi)
+    {
+        if (!OperatingSystem.IsLinux() || Environment.UserName == "root" || geteuid() == 0) return;
+        string? pkexec = new[] { "/usr/bin/pkexec", "/bin/pkexec" }.FirstOrDefault(File.Exists);
+        if (pkexec == null) return;
+        string home = Environment.GetEnvironmentVariable("HOME") ?? "";
+        var env = new List<string>();
+        foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
+        {
+            string name = (string)e.Key, value = (string?)e.Value ?? "";
+            if (!(name.StartsWith("WPF", StringComparison.Ordinal) || name.StartsWith("DOTNET_", StringComparison.Ordinal)
+                || name is "WAYLAND_DISPLAY" or "XDG_RUNTIME_DIR" or "DISPLAY" or "XAUTHORITY" or "LANG" || name.StartsWith("LC_", StringComparison.Ordinal)))
+                continue;
+            if (name is "WPFRUN_CACHE" or "WPFRUN_LOGS" && home.Length > 1 && value.StartsWith(home + "/", StringComparison.Ordinal))
+                value = "/root" + value[home.Length..];
+            env.Add(name + "=" + value);
+        }
+        var prefix = new List<string> { "/usr/bin/env" };
+        prefix.AddRange(env);
+        // pkexec starts it in root's home: the folder it was to start in, first
+        prefix.AddRange(new[] { "/bin/sh", "-c", "cd \"$0\" && exec \"$@\"", psi.WorkingDirectory, psi.FileName });
+        if (psi.ArgumentList.Count > 0)
+            for (int i = prefix.Count - 1; i >= 0; i--) psi.ArgumentList.Insert(0, prefix[i]);
+        else
+            psi.Arguments = string.Join(" ", prefix.Select(QuoteArgument)) + (string.IsNullOrEmpty(psi.Arguments) ? "" : " " + psi.Arguments);
+        // pkexec refuses a caller that has gone (its parent the init process), and the program asking for elevation
+        // often ends as it starts the elevated one (a client starting its setup): a shell that stays, and waits for
+        // pkexec, is the parent it checks -- its exit code pkexec's, which is the program's
+        var head = new[] { "-c", "\"$@\"; exit $?", "sh", pkexec };
+        if (psi.ArgumentList.Count > 0)
+            for (int i = head.Length - 1; i >= 0; i--) psi.ArgumentList.Insert(0, head[i]);
+        else
+            psi.Arguments = string.Join(" ", head.Select(QuoteArgument)) + " " + psi.Arguments;
+        psi.FileName = "/bin/sh";
+        if (s_traceProcess) Console.Error.WriteLine($"[process] elevated through {pkexec}");
+    }
+
+    // an argument as .NET parses a command line (Windows' rules): quoted where it has to be
+    private static string QuoteArgument(string a)
+    {
+        if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"', '\'' }) < 0) return a;
+        // a backslash is itself only before a quote: those doubled, and the quote escaped
+        var sb = new StringBuilder("\"");
+        int slashes = 0;
+        foreach (char c in a)
+        {
+            if (c == '\\') { slashes++; continue; }
+            sb.Append('\\', c == '"' ? slashes * 2 + 1 : slashes).Append(c);
+            slashes = 0;
+        }
+        return sb.Append('\\', slashes * 2).Append('"').ToString();
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc")]
+    private static extern uint geteuid();
 
     // An app makes the machine's own address of its name (Environment.MachineName: http://<name>/...), which Windows
     // resolves on any machine (NetBIOS, LLMNR); macOS does not resolve the bare name at all -- the machine is
@@ -500,6 +564,25 @@ public static class WindowsPaths
     public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize) => new FileStream(Disk(path)!, mode, access, share, bufferSize);
     public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, bool useAsync) => new FileStream(Disk(path)!, mode, access, share, bufferSize, useAsync);
     public static FileStream FileStream_new(string path, FileMode mode, FileAccess access, FileShare share, int bufferSize, FileOptions options) => new FileStream(Disk(path)!, mode, access, share, bufferSize, options);
+    // the machine's certificate stores, the ones the system has none of from the machine's folder (MachineCertificateStore)
+    public static void X509Store_Open(System.Security.Cryptography.X509Certificates.X509Store store, System.Security.Cryptography.X509Certificates.OpenFlags flags)
+        => MachineCertificateStore.Open(store, flags);
+    public static System.Security.Cryptography.X509Certificates.X509Store X509Store_new(System.Security.Cryptography.X509Certificates.StoreName storeName, System.Security.Cryptography.X509Certificates.StoreLocation storeLocation, System.Security.Cryptography.X509Certificates.OpenFlags flags)
+    {
+        var store = new System.Security.Cryptography.X509Certificates.X509Store(storeName, storeLocation);
+        MachineCertificateStore.Open(store, flags);
+        return store;
+    }
+    public static System.Security.Cryptography.X509Certificates.X509Store X509Store_new(string storeName, System.Security.Cryptography.X509Certificates.StoreLocation storeLocation, System.Security.Cryptography.X509Certificates.OpenFlags flags)
+    {
+        var store = new System.Security.Cryptography.X509Certificates.X509Store(storeName, storeLocation);
+        MachineCertificateStore.Open(store, flags);
+        return store;
+    }
+
+    // an ASP.NET app's folder it serves files from (a cache under ProgramData named in another case than the app's)
+    public static Microsoft.Extensions.FileProviders.PhysicalFileProvider PhysicalFileProvider_new(string root) => new(Disk(root)!);
+    public static Microsoft.Extensions.FileProviders.PhysicalFileProvider PhysicalFileProvider_new(string root, Microsoft.Extensions.FileProviders.Physical.ExclusionFilters filters) => new(Disk(root)!, filters);
     public static StreamReader StreamReader_new(string path) => new StreamReader(Disk(path)!);
     public static StreamReader StreamReader_new(string path, bool detectEncodingFromByteOrderMarks) => new StreamReader(Disk(path)!, detectEncodingFromByteOrderMarks);
     public static StreamReader StreamReader_new(string path, Encoding encoding) => new StreamReader(Disk(path)!, encoding);

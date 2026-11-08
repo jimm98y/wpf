@@ -15,4 +15,10 @@
     <Compile Include="../WpfWebGpu.Packager/AppHost.cs" Link="Shared/AppHost.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- the types of a stand-in's signature only (an ASP.NET app's PhysicalFileProvider): an app that calls one has
+         the assembly (its shared framework), and no other app loads it -->
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Physical" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

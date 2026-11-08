@@ -23,7 +23,9 @@ public sealed class PathSubstitutions
         "System.Xml.XmlDocument", "System.Xml.XmlReader", "System.Xml.XmlWriter", "System.Xml.XmlTextReader", "System.Xml.XmlTextWriter",
         "System.Xml.Linq.XDocument", "System.Xml.Linq.XElement", "System.Reflection.Assembly", "System.Uri",
         "System.Diagnostics.Process", "System.Environment", "System.IO.MemoryMappedFiles.MemoryMappedFile",
-        "System.Threading.Thread",
+        "System.Threading.Thread", "Microsoft.Extensions.FileProviders.PhysicalFileProvider",
+        // the machine's certificate stores (WindowsPaths: MachineCertificateStore)
+        "System.Security.Cryptography.X509Certificates.X509Store",
         // COM classes by ProgID or CLSID (WindowsPaths: the registry's, and the servers run here)
         "System.Type",
         // the operating system as the app asks about it (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
