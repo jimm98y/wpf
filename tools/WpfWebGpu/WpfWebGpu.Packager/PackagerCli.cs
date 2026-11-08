@@ -9,8 +9,9 @@ public static class PackagerCli
                                         a first manifest: the installation's apps, services and registry paths
         package stage <x.wpfpkg.json> [--work <folder>] [--copy]
                                         its registry as hive files, its ProgramData listed (--copy: copied)
-        package build <x.wpfpkg.json> [--target <android|quest|ios|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>]
+        package build <x.wpfpkg.json> [--target <android|quest|ios|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>] [--fast]
                                         the packages: one app per "mobile" app for a phone or headset; the whole installation for macOS, Linux and Windows
+                                        (--fast: nothing compressed, for testing)
         """;
 
     public static int Run(string[] args, TextWriter? output = null)
@@ -105,12 +106,14 @@ public static class PackagerCli
     {
         string? manifestPath = null, outDir = null, packs = null;
         var targets = new List<Target>();
+        bool fast = false;
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
                 case "--out" or "-o": outDir = Value(args, ref i); break;
                 case "--packs": packs = Value(args, ref i); break;
+                case "--fast": fast = true; break;
                 case "--target" or "-t":
                     foreach (string t in Value(args, ref i).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                         targets.Add(Enum.TryParse<Target>(t, ignoreCase: true, out var target) ? target : throw new PackagerError($"unknown target '{t}'"));
@@ -123,6 +126,7 @@ public static class PackagerCli
         }
         if (manifestPath == null) throw new PackagerError("usage:\n" + Usage);
         var manifest = PackageManifest.Load(manifestPath);
+        if (fast) manifest.Output.Fast = true;
         if (targets.Count == 0) targets = manifest.Output.Targets;
         if (targets.Count == 0) throw new PackagerError("which targets? --target, or output.targets in the manifest");
         outDir = Path.GetFullPath(outDir ?? (manifest.Output.Directory.Length > 0 ? manifest.Output.Directory

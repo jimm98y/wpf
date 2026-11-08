@@ -15,7 +15,8 @@
 // its data, as a Windows installer leaves ProgramData and HKLM's values. It is writable by every user of the Mac
 // (group staff), as ProgramData is by every user of a Windows machine.
 //
-// The package is made with pkgbuild and productbuild, which come with macOS: a Mac needs nothing installed.
+// The component package is written here (MacComponent: its payload compressed on every core, which pkgbuild does on
+// one), the product archive by productbuild; with mkbom and pkgutil, they come with macOS: a Mac needs nothing installed.
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -27,7 +28,7 @@ public static class MacPackager
 {
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log)
     {
-        if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (pkgbuild)");
+        if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (productbuild)");
         string product = manifest.Product.Name;
         // the folders an upgrade clears are named by it: never /Applications itself
         if (product.Trim().Length == 0 || product.Contains('/') || product is "." or "..")
@@ -120,18 +121,13 @@ public static class MacPackager
         Executable(Path.Combine(scripts, "preinstall"));
         Executable(Path.Combine(scripts, "postinstall"));
 
-        // pkgbuild takes the folder's permissions as the installed files': readable by all, the scripts runnable
+        // the package takes the folder's permissions as the installed files': readable by all, the scripts runnable
         Run("/bin/chmod", "-R", "u+rwX,go+rX,go-w", payload);
         string component = Path.Combine(work, "component.pkg");
-        log("  pkgbuild (compressing the payload takes a while)");
-        // the app stubs installed where they belong: pkgbuild makes a bundle relocatable, and the installer then
-        // updates whatever copy of it it finds instead (another folder, or <App>.localized/ beside the old one)
-        string components = Path.Combine(work, "components.plist");
-        Run("/usr/bin/pkgbuild", "--analyze", "--root", payload, components);
-        File.WriteAllText(components, System.Text.RegularExpressions.Regex.Replace(File.ReadAllText(components),
-            @"(<key>BundleIsRelocatable</key>\s*)<true/>", "$1<false/>"));
-        Run("/usr/bin/pkgbuild", "--root", payload, "--component-plist", components, "--scripts", scripts, "--identifier", id,
-            "--version", manifest.Product.Version, "--install-location", "/", "--ownership", "recommended", component);
+        // what pkgbuild makes, with the payload compressed on every core (MacComponent); the app stubs installed
+        // where they belong, not relocatable: the installer would otherwise update whatever copy of a bundle it
+        // finds instead (another folder, or <App>.localized/ beside the old one)
+        MacComponent.Write(payload, scripts, id, manifest.Product.Version, compress: !manifest.Output.Fast, component, log);
 
         Directory.CreateDirectory(outDir);
         string pkg = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-macos-{arch}.pkg");
@@ -428,7 +424,7 @@ public static class MacPackager
     [DllImport("libc", SetLastError = true)]
     private static extern int clonefile(string src, string dst, int flags);
 
-    // APFS: a clone shares the source's blocks, so the payload costs no time and no space until pkgbuild reads it
+    // APFS: a clone shares the source's blocks, so the payload costs no time and no space until it is packaged
     private static void Clone(string source, string target)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);

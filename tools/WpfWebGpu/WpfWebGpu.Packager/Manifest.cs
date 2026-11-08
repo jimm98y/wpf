@@ -146,6 +146,8 @@ public sealed class OutputSection
     public List<Target> Targets { get; set; } = new();
     /// <summary>Ahead-of-time compiled builds with the real toolchains, where they are installed.</summary>
     public bool Aot { get; set; }
+    /// <summary>Packages for testing: nothing compressed, made as fast as they can be written.</summary>
+    public bool Fast { get; set; }
 }
 
 public sealed class SigningSection
