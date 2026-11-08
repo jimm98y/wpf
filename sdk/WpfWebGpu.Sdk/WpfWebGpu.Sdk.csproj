@@ -303,6 +303,23 @@
     <Warning Condition="!Exists('$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll')"
              Text="The browser renderer is not built ($(WgpuInteropDir)Browser/bin/Release/net10.0/) — packing WITHOUT the WebAssembly head. Needs the wasm-tools workload; see eng/build-sdk.proj." />
 
+    <!-- A head's renderer older than the renderer's sources is a renderer without their fixes: the desktop one is
+         built with the stack, the browser's and iOS's apart (eng/build-sdk.proj), and a pack that skipped those
+         shipped a browser head a day behind the desktop one (a fixed arc drawn wrong in the page only). -->
+    <PropertyGroup>
+      <_WgpuDesktopDll>$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll</_WgpuDesktopDll>
+      <_WgpuBrowserDll>$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll</_WgpuBrowserDll>
+      <_WgpuIosDll>$(WgpuInteropDir)Ios/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll</_WgpuIosDll>
+    </PropertyGroup>
+    <ItemGroup>
+      <_WgpuSource Include="$(WgpuInteropDir)**/*.cs" Exclude="$(WgpuInteropDir)**/bin/**;$(WgpuInteropDir)**/obj/**;$(WgpuInteropDir)tests/**" />
+      <_WgpuNewerSource Include="@(_WgpuSource)" Condition="$([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WgpuDesktopDll)').Ticks)" Head="desktop" />
+      <_WgpuNewerSource Include="@(_WgpuSource)" Condition="Exists('$(_WgpuBrowserDll)') and $([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WgpuBrowserDll)').Ticks)" Head="browser" />
+      <_WgpuNewerSource Include="@(_WgpuSource)" Condition="Exists('$(_WgpuIosDll)') and $([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WgpuIosDll)').Ticks)" Head="ios" />
+    </ItemGroup>
+    <Error Condition="'@(_WgpuNewerSource)' != ''"
+           Text="A head's renderer is older than its sources -- rebuild it before packing (eng/build-sdk.proj builds every head): @(_WgpuNewerSource->'%(Head): %(Filename)%(Extension)', ', ')" />
+
     <Error Condition="!Exists('$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll')"
            Text="PresentationBuildTasks not packaged: missing artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll." />
   </Target>
