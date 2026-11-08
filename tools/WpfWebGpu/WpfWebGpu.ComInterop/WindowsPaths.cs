@@ -360,21 +360,27 @@ public static class WindowsPaths
         else psi.WorkingDirectory = Disk(psi.WorkingDirectory)!;
         bool elevate = psi.UseShellExecute && string.Equals(psi.Verb, "runas", StringComparison.OrdinalIgnoreCase);
         psi.UseShellExecute = false;
-        if (elevate) Elevated(psi);
+        if (elevate) Elevated(psi, exe);
         return psi;
     }
 
-    // The "runas" verb (ShellExecute's elevation: the UAC prompt, then the program as an administrator), as Linux has
-    // it: polkit's pkexec, whose agent (GNOME's) asks for an administrator's password, then the program as root. It
-    // is started with the session's display and the installation's settings (pkexec gives it a clean environment),
-    // its own cache and logs under root's home where they were under the user's (an administrator's files are not
-    // the user's to share), in the folder it was to start in. Already root, or with no polkit, it starts as it is --
-    // as UAC does not ask an administrator who is elevated already.
-    private static void Elevated(System.Diagnostics.ProcessStartInfo psi)
+    // The "runas" verb (ShellExecute's elevation: the UAC prompt, then the program as an administrator), as the system
+    // has it: an administrator's password asked by its own prompt, then the program as root -- Linux's polkit
+    // (pkexec, whose agent is GNOME's), macOS's authorization (AppleScript's administrator privileges, the dialog
+    // every installer shows). It is started with the installation's settings (the elevated command gets a clean
+    // environment), its own cache and logs under root's home where they were under the user's (an administrator's
+    // files are not the user's to share), in the folder it was to start in. Already root, or with no way to elevate,
+    // it starts as it is -- as UAC does not ask an administrator who is elevated already.
+    private static void Elevated(System.Diagnostics.ProcessStartInfo psi, string program)
     {
-        if (!OperatingSystem.IsLinux() || Environment.UserName == "root" || geteuid() == 0) return;
-        string? pkexec = new[] { "/usr/bin/pkexec", "/bin/pkexec" }.FirstOrDefault(File.Exists);
-        if (pkexec == null) return;
+        if (Environment.UserName == "root" || geteuid() == 0) return;
+        if (OperatingSystem.IsLinux()) ElevatedLinux(psi);
+        else if (OperatingSystem.IsMacOS()) ElevatedMacOS(psi, program);
+    }
+
+    // what the elevated program is started with: the installation's settings and the session's display
+    private static List<string> ElevatedEnvironment(string rootHome)
+    {
         string home = Environment.GetEnvironmentVariable("HOME") ?? "";
         var env = new List<string>();
         foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
@@ -384,27 +390,66 @@ public static class WindowsPaths
                 || name is "WAYLAND_DISPLAY" or "XDG_RUNTIME_DIR" or "DISPLAY" or "XAUTHORITY" or "LANG" || name.StartsWith("LC_", StringComparison.Ordinal)))
                 continue;
             if (name is "WPFRUN_CACHE" or "WPFRUN_LOGS" && home.Length > 1 && value.StartsWith(home + "/", StringComparison.Ordinal))
-                value = "/root" + value[home.Length..];
+                value = rootHome + value[home.Length..];
             env.Add(name + "=" + value);
         }
+        return env;
+    }
+
+    // the arguments put before the program's own (both forms a start info has them in)
+    private static void Prepend(System.Diagnostics.ProcessStartInfo psi, IReadOnlyList<string> head)
+    {
+        if (psi.ArgumentList.Count > 0)
+            for (int i = head.Count - 1; i >= 0; i--) psi.ArgumentList.Insert(0, head[i]);
+        else
+            psi.Arguments = string.Join(" ", head.Select(QuoteArgument)) + (string.IsNullOrEmpty(psi.Arguments) ? "" : " " + psi.Arguments);
+    }
+
+    private static void ElevatedLinux(System.Diagnostics.ProcessStartInfo psi)
+    {
+        string? pkexec = new[] { "/usr/bin/pkexec", "/bin/pkexec" }.FirstOrDefault(File.Exists);
+        if (pkexec == null) return;
         var prefix = new List<string> { "/usr/bin/env" };
-        prefix.AddRange(env);
+        prefix.AddRange(ElevatedEnvironment("/root"));
         // pkexec starts it in root's home: the folder it was to start in, first
         prefix.AddRange(new[] { "/bin/sh", "-c", "cd \"$0\" && exec \"$@\"", psi.WorkingDirectory, psi.FileName });
-        if (psi.ArgumentList.Count > 0)
-            for (int i = prefix.Count - 1; i >= 0; i--) psi.ArgumentList.Insert(0, prefix[i]);
-        else
-            psi.Arguments = string.Join(" ", prefix.Select(QuoteArgument)) + (string.IsNullOrEmpty(psi.Arguments) ? "" : " " + psi.Arguments);
+        Prepend(psi, prefix);
         // pkexec refuses a caller that has gone (its parent the init process), and the program asking for elevation
         // often ends as it starts the elevated one (a client starting its setup): a shell that stays, and waits for
         // pkexec, is the parent it checks -- its exit code pkexec's, which is the program's
-        var head = new[] { "-c", "\"$@\"; exit $?", "sh", pkexec };
-        if (psi.ArgumentList.Count > 0)
-            for (int i = head.Length - 1; i >= 0; i--) psi.ArgumentList.Insert(0, head[i]);
-        else
-            psi.Arguments = string.Join(" ", head.Select(QuoteArgument)) + " " + psi.Arguments;
+        Prepend(psi, new[] { "-c", "\"$@\"; exit $?", "sh", pkexec });
         psi.FileName = "/bin/sh";
         if (s_traceProcess) Console.Error.WriteLine($"[process] elevated through {pkexec}");
+    }
+
+    // macOS: the administrator's prompt names the program, as UAC's does; AppleScript quotes each argument for the
+    // shell it runs as root, so the command is never re-parsed. The program runs in the user's session (it shows its
+    // windows, as a program started with sudo does); osascript waits for it, and fails when the prompt is cancelled.
+    private const string ElevateScript = """
+        on run argv
+          set cmd to "cd " & quoted form of (item 2 of argv) & " && exec"
+          repeat with i from 3 to count of argv
+            set cmd to cmd & " " & quoted form of (item i of argv)
+          end repeat
+          do shell script cmd & " </dev/null >/dev/null 2>&1" with prompt (item 1 of argv) with administrator privileges
+        end run
+        """;
+
+    private static void ElevatedMacOS(System.Diagnostics.ProcessStartInfo psi, string program)
+    {
+        const string osascript = "/usr/bin/osascript";
+        if (!File.Exists(osascript)) return;
+        string name = Path.GetFileNameWithoutExtension(program);
+        var head = new List<string>();
+        foreach (string line in ElevateScript.Split('\n')) { head.Add("-e"); head.Add(line); }
+        head.Add(name + " wants to make changes to this Mac.");
+        head.Add(psi.WorkingDirectory);
+        head.Add("/usr/bin/env");
+        head.AddRange(ElevatedEnvironment("/var/root"));
+        head.Add(psi.FileName);
+        Prepend(psi, head);
+        psi.FileName = osascript;
+        if (s_traceProcess) Console.Error.WriteLine($"[process] elevated through {osascript}");
     }
 
     // an argument as .NET parses a command line (Windows' rules): quoted where it has to be

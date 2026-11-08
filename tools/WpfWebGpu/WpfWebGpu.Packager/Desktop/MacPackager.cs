@@ -403,9 +403,14 @@ public static class MacPackager
         # the service manager's database and the web server's sites: this version's, replaced on every install
         [ -f "$ROOT/services.json" ] && cp "$ROOT/services.json" "$STATE/services.json"
         [ -f "$ROOT/iis.json" ] && cp "$ROOT/iis.json" "$STATE/iis.json"
-        # every user's, as Windows' ProgramData and HKLM are writable by its users' programs
+        # every user's, as Windows' ProgramData and HKLM are writable by its users' programs: an inherited access list
+        # (as the product's own folder has on Windows), so what any account makes there -- a file the elevated setup
+        # writes as root, a display a user saves -- stays every user's whatever its mode
         chgrp -R staff "$STATE" 2>/dev/null || true
         chmod -R g+rwX "$STATE"
+        chmod -R -N "$STATE" 2>/dev/null || true
+        find "$STATE" -type d -exec chmod +a "group:staff allow list,add_file,search,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit" {} + 2>/dev/null || true
+        find "$STATE" -type f -exec chmod +a "group:staff allow read,write,append,delete,readattr,writeattr,readextattr,writeextattr,readsecurity" {} + 2>/dev/null || true
         mkdir -p "/Library/Logs/{{Path.GetFileName(root)}}" 2>/dev/null || true
         # a service started, again while launchd is still letting go of the previous version's (up to ten seconds)
         start() {
