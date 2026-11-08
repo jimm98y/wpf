@@ -310,15 +310,22 @@
       <_WgpuDesktopDll>$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll</_WgpuDesktopDll>
       <_WgpuBrowserDll>$(WgpuInteropDir)Browser/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll</_WgpuBrowserDll>
       <_WgpuIosDll>$(WgpuInteropDir)Ios/bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll</_WgpuIosDll>
+      <_WinFormsDll>$(WinFormsInteropDir)bin/Release/net10.0/System.Windows.Forms.dll</_WinFormsDll>
+      <_IntegrationDll>$(WinFormsInteropDir)integration/bin/Release/net10.0/WindowsFormsIntegration.dll</_IntegrationDll>
     </PropertyGroup>
     <ItemGroup>
       <_WgpuSource Include="$(WgpuInteropDir)**/*.cs" Exclude="$(WgpuInteropDir)**/bin/**;$(WgpuInteropDir)**/obj/**;$(WgpuInteropDir)tests/**" />
       <_WgpuNewerSource Include="@(_WgpuSource)" Condition="$([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WgpuDesktopDll)').Ticks)" Head="desktop" />
       <_WgpuNewerSource Include="@(_WgpuSource)" Condition="Exists('$(_WgpuBrowserDll)') and $([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WgpuBrowserDll)').Ticks)" Head="browser" />
       <_WgpuNewerSource Include="@(_WgpuSource)" Condition="Exists('$(_WgpuIosDll)') and $([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WgpuIosDll)').Ticks)" Head="ios" />
+      <!-- WinForms and its WPF integration, built apart from the stack likewise -->
+      <_WinFormsSource Include="$(WinFormsInteropDir)swf/**/*.cs;$(WinFormsInteropDir)host/**/*.cs;$(WinFormsInteropDir)shims/**/*.cs;$(WinFormsInteropDir)gpuraster/**/*.cs;$(WinFormsInteropDir)web/**/*.cs" Exclude="$(WinFormsInteropDir)**/bin/**;$(WinFormsInteropDir)**/obj/**" />
+      <_IntegrationSource Include="$(WinFormsInteropDir)integration/**/*.cs" Exclude="$(WinFormsInteropDir)integration/bin/**;$(WinFormsInteropDir)integration/obj/**" />
+      <_WgpuNewerSource Include="@(_WinFormsSource)" Condition="Exists('$(_WinFormsDll)') and $([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_WinFormsDll)').Ticks)" Head="winforms" />
+      <_WgpuNewerSource Include="@(_IntegrationSource)" Condition="Exists('$(_IntegrationDll)') and $([System.IO.File]::GetLastWriteTime('%(FullPath)').Ticks) &gt; $([System.IO.File]::GetLastWriteTime('$(_IntegrationDll)').Ticks)" Head="winforms integration" />
     </ItemGroup>
     <Error Condition="'@(_WgpuNewerSource)' != ''"
-           Text="A head's renderer is older than its sources -- rebuild it before packing (eng/build-sdk.proj builds every head): @(_WgpuNewerSource->'%(Head): %(Filename)%(Extension)', ', ')" />
+           Text="A build the SDK packs is older than its sources -- rebuild it before packing (eng/build-sdk.proj builds every head): @(_WgpuNewerSource->'%(Head): %(Filename)%(Extension)', ', ')" />
 
     <Error Condition="!Exists('$(WpfRepoRoot)artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll')"
            Text="PresentationBuildTasks not packaged: missing artifacts/packaging/Release/Microsoft.NET.Sdk.WindowsDesktop/tools/net10.0/PresentationBuildTasks.dll." />
