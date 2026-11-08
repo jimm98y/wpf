@@ -204,7 +204,15 @@ public static class ServiceControl
         {
             string plist = Plist(service), target = "system/" + service.Unit;
             if (File.Exists(plist))
-                ServiceManager.Run("/usr/libexec/PlistBuddy", "-c", $"Set :RunAtLoad {(start == ServiceStart.Auto ? "true" : "false")}", plist);
+            {
+                const string buddy = "/usr/libexec/PlistBuddy";
+                ServiceManager.Run(buddy, "-c", $"Set :RunAtLoad {(start == ServiceStart.Auto ? "true" : "false")}", plist);
+                // a service its recovery actions restart: kept alive after any failure when automatic, after a crash
+                // otherwise -- launchd's keeping alive after an unsuccessful exit starts the job at load as well
+                if (ServiceManager.Run(buddy, "-c", "Print :KeepAlive", plist).Exit == 0)
+                    ServiceManager.Run(buddy, "-c", "Delete :KeepAlive", "-c", "Add :KeepAlive dict", "-c",
+                        start == ServiceStart.Auto ? "Add :KeepAlive:SuccessfulExit bool false" : "Add :KeepAlive:Crashed bool true", plist);
+            }
             if (start == ServiceStart.Disabled) ServiceManager.Run("/bin/launchctl", "disable", target);
             else
             {

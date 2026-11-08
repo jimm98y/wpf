@@ -244,9 +244,7 @@ public static class LinuxPackager
                 .Select(e => $"Environment={e.Key}={e.Value}\n"))}
             {(DesktopCommon.SystemAccount(service.Account, mac: false) is { } user
                 ? $"User={user}\nGroup=users\n# a port below 1024, which Windows lets any account listen on\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n" : "")}UMask=0002
-            Restart=on-failure
-            RestartSec=10
-            TimeoutStopSec=30
+            {(service.RestartAfterFailure > 0 ? $"Restart=on-failure\nRestartSec={service.RestartAfterFailure}\n" : "")}TimeoutStopSec=30
             SyslogIdentifier={Path.GetFileNameWithoutExtension(service.Exe)}
 
             [Install]

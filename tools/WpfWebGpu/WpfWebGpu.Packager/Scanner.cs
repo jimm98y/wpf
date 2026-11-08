@@ -208,6 +208,7 @@ public static class Scanner
                 DelayedAutoStart = v.GetValueOrDefault("DelayedAutostart") is int d && d != 0,
                 StartName = v.GetValueOrDefault("ObjectName") as string ?? "LocalSystem",
                 Security = v.GetValueOrDefault("\\Security") is byte[] sd ? Convert.ToBase64String(sd) : "",
+                RestartAfterFailure = v.GetValueOrDefault("FailureActions") is byte[] fa ? RestartDelay(fa) : 0,
             };
             service.Account = AccountFor(service.StartName, name, log);
             // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
@@ -230,6 +231,19 @@ public static class Scanner
     // the account a service runs as here, for the one it is registered with: Windows' own service accounts are the
     // machine accounts the installers make; a virtual account (NT SERVICE\name), which reaches the network as the
     // machine does, runs as NETWORK SERVICE; any other (a user's) as the system, as before
+    /// <summary>The seconds after which a service's recovery actions restart it (at least one), 0 where they never do:
+    /// SERVICE_FAILURE_ACTIONS as the registry keeps it -- reset period, reboot message, command, the count of actions
+    /// and where they are (32-bit each), then each action's type (SC_ACTION_RESTART: 1) and delay in milliseconds.</summary>
+    internal static int RestartDelay(byte[] failureActions)
+    {
+        if (failureActions.Length < 20) return 0;
+        int count = BitConverter.ToInt32(failureActions, 12);
+        for (int i = 0, at = 20; i < count && at + 8 <= failureActions.Length; i++, at += 8)
+            if (BitConverter.ToInt32(failureActions, at) == 1)
+                return Math.Max(1, BitConverter.ToInt32(failureActions, at + 4) / 1000);
+        return 0;
+    }
+
     private static ServiceAccount AccountFor(string objectName, string service, Action<string>? log)
     {
         string bare = objectName.Replace(" ", "");

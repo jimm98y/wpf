@@ -160,7 +160,7 @@ public static class MacPackager
         return env;
     }
 
-    private static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity)
+    internal static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity)
     {
         var args = new List<string> { root + "/runtime/run", root + "/app/" + service.Exe };
         args.AddRange(service.Args);
@@ -184,8 +184,7 @@ public static class MacPackager
               <key>WorkingDirectory</key><string>{X(root + "/app/" + Path.GetDirectoryName(service.Exe)!.Replace('\\', '/'))}</string>
               {(DesktopCommon.SystemAccount(service.Account, mac: true) is { } user ? $"<key>UserName</key><string>{user}</string>\n  <key>GroupName</key><string>staff</string>" : "")}
               <key>RunAtLoad</key><{(service.Start == StartType.Auto ? "true" : "false")}/>
-              <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-              <key>ThrottleInterval</key><integer>10</integer>
+              {KeepAlive(service)}<key>ThrottleInterval</key><integer>{(service.RestartAfterFailure > 0 ? service.RestartAfterFailure : 10)}</integer>
               <key>ExitTimeOut</key><integer>30</integer>
               <key>Umask</key><integer>2</integer>
               <key>StandardOutPath</key><string>{X(log)}</string>
@@ -194,6 +193,14 @@ public static class MacPackager
             </plist>
             """;
     }
+
+    // started again after a failure only where its recovery actions say so, as Windows does: a service without them is
+    // left stopped. launchd's KeepAlive on an unsuccessful exit implies RunAtLoad (the job has to have run to have an
+    // exit status), which started every manual service with the system; a manual one is kept alive only after a crash
+    private static string KeepAlive(ServiceEntry service) =>
+        service.RestartAfterFailure <= 0 || service.Start == StartType.Disabled ? ""
+        : service.Start == StartType.Auto ? "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n  "
+        : "<key>KeepAlive</key><dict><key>Crashed</key><true/></dict>\n  ";
 
     // a daemon of the stack's own (wpfrun <command>: the http.sys service, the service manager, the web server), root,
     // always running; the programs it starts (the web server's workers, under their pools' accounts) take the

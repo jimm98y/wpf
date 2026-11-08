@@ -121,6 +121,9 @@ public sealed class ServiceEntry
     /// <summary>Who may query, start, stop or change it: its security descriptor (the service key's Security value),
     /// base64; empty for Windows' default (administrators and the system control it, users query it).</summary>
     public string Security { get; set; } = "";
+    /// <summary>Started again when it fails, after this many seconds: its recovery actions (the key's FailureActions)
+    /// restart it. 0: it is not, as a service without recovery actions is not on Windows.</summary>
+    public int RestartAfterFailure { get; set; }
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ServiceAccount>))]

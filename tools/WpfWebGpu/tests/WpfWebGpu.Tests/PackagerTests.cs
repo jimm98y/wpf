@@ -47,6 +47,49 @@ public class PackagerTests
     }
 
     [Fact]
+    public void A_product_some_of_whose_programs_are_told_they_run_on_Windows_tells_them_all()
+    {
+        var manifest = new PackageManifest();
+        manifest.Services.Add(new ServiceEntry { Name = "Server", Exe = "Server.exe" });
+        var told = new ServiceEntry { Name = "Host", Exe = "Host.exe" };
+        told.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
+        manifest.Services.Add(told);
+        Builder.ProductIdentity(manifest);
+        Assert.Equal("windows", manifest.Product.OsIdentity);
+
+        var untold = new PackageManifest();
+        untold.Services.Add(new ServiceEntry { Name = "Server", Exe = "Server.exe" });
+        Builder.ProductIdentity(untold);
+        Assert.Equal("", untold.Product.OsIdentity);
+    }
+
+    [Fact]
+    public void A_service_is_restarted_after_a_failure_only_where_its_recovery_actions_say_so()
+    {
+        // reset period, reboot message, command, two actions at 20: none (0), then restart (1) after 60 s
+        byte[] restart = new byte[36];
+        BitConverter.GetBytes(86400).CopyTo(restart, 0);
+        BitConverter.GetBytes(2).CopyTo(restart, 12);
+        BitConverter.GetBytes(20).CopyTo(restart, 16);
+        BitConverter.GetBytes(1).CopyTo(restart, 28);
+        BitConverter.GetBytes(60000).CopyTo(restart, 32);
+        Assert.Equal(60, Scanner.RestartDelay(restart));
+        byte[] nothing = (byte[])restart.Clone();
+        BitConverter.GetBytes(0).CopyTo(nothing, 28);
+        Assert.Equal(0, Scanner.RestartDelay(nothing));
+
+        string Plist(StartType start, int restartAfter) => WpfWebGpu.Packager.Desktop.MacPackager.Daemon("com.example.p.svc", "/Library/Application Support/P", "P",
+            new ServiceEntry { Name = "Svc", Exe = "Services/Svc.exe", Start = start, RestartAfterFailure = restartAfter }, "");
+        // launchd starts a job kept alive after an unsuccessful exit at load, whatever RunAtLoad says
+        Assert.DoesNotContain("KeepAlive", Plist(StartType.Manual, 0));
+        Assert.DoesNotContain("KeepAlive", Plist(StartType.Auto, 0));
+        Assert.DoesNotContain("SuccessfulExit", Plist(StartType.Manual, 60));
+        Assert.Contains("<key>Crashed</key><true/>", Plist(StartType.Manual, 60));
+        Assert.Contains("<key>SuccessfulExit</key><false/>", Plist(StartType.Auto, 60));
+        Assert.Contains("<key>RunAtLoad</key><false/>", Plist(StartType.Manual, 60));
+    }
+
+    [Fact]
     public void Finds_the_installation_s_folder_in_the_registry_s_paths()
     {
         var mappings = Scanner.DetectMappings(RegText.Parse(Reg), Install());
