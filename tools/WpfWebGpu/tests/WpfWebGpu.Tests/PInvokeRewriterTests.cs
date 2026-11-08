@@ -52,6 +52,14 @@ public sealed class PInvokeRewriterTests
         catch (TargetInvocationException e) { throw e.InnerException!; }
     }
 
+    [Fact]
+    public void A_CoreFoundation_string_import_missing_its_allocator_and_encoding_is_repaired()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "CoreFoundation");
+        Assert.Equal(21L, Call("MalformedCFString"));                       // "kCFRunLoopDefaultMode", not NULL
+        Assert.Contains(s_off.Value.Result.Workarounds, w => w.Contains("CFStringCreateWithCString"));
+    }
+
     [Fact] public void Counts() => Assert.True(s_off.Value.Result.Win32Implemented >= 15, s_off.Value.Result.Win32Summary);
 
     [Fact] public void Unicode_import_finds_the_W_function() => Assert.Equal(5, Call("UnicodeString"));

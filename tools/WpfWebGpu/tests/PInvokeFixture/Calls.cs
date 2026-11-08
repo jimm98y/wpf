@@ -69,4 +69,17 @@ public static class Calls
     public static string Arity() => $"{TwoArgs(1, 2, 3)} {OneArg(4)}";
     public static int Routed(IntPtr hwnd) => WindowValue(hwnd);
     public static int AnsiBridge() => Bridge("xyz");
+
+    // declared wrongly, as the testing app declares it: the function takes an allocator, the string and an encoding
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")] private static extern IntPtr CFStringCreateWithCString(string str);
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")] private static extern long CFStringGetLength(IntPtr s);
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")] private static extern void CFRelease(IntPtr o);
+    public static long MalformedCFString()
+    {
+        IntPtr s = CFStringCreateWithCString("kCFRunLoopDefaultMode");
+        if (s == IntPtr.Zero) return -1;
+        long length = CFStringGetLength(s);
+        CFRelease(s);
+        return length;
+    }
 }

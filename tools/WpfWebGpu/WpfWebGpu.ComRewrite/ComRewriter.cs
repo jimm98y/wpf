@@ -43,13 +43,16 @@ public sealed class RewriteResult
     /// <summary>Windows P/Invokes whose signature the rewriter cannot marshal (they throw by name when called; on
     /// Windows they stay on the real function).</summary>
     public List<string> Win32Unsupported { get; } = new();
+    /// <summary>The imports repaired for the testing app (ComRewriter.Workarounds).</summary>
+    public List<string> Workarounds { get; } = new();
     /// <summary>Calls of members that take a path, onto WindowsPaths (PathSubstitutions).</summary>
     public int PathCalls;
     public string PathSummary => $"{PathCalls} calls taking a path";
 
     public string Win32Summary => Win32Implemented + Win32Unimplemented + Win32Missing + Win32Routed + Win32Unsupported.Count == 0 ? "no Windows P/Invokes"
         : (Win32Routed > 0 ? $"{Win32Routed} Windows P/Invokes routed for the stack's windows" : $"Windows P/Invokes: {Win32Implemented} implemented, {Win32Unimplemented} unimplemented, {Win32Missing} not exported")
-          + (Win32Unsupported.Count == 0 ? "" : $"; {Win32Unsupported.Count} unsupported: {string.Join("; ", Win32Unsupported.Take(6))}{(Win32Unsupported.Count > 6 ? $" (+{Win32Unsupported.Count - 6} more)" : "")}");
+          + (Win32Unsupported.Count == 0 ? "" : $"; {Win32Unsupported.Count} unsupported: {string.Join("; ", Win32Unsupported.Take(6))}{(Win32Unsupported.Count > 6 ? $" (+{Win32Unsupported.Count - 6} more)" : "")}")
+          + (Workarounds.Count == 0 ? "" : $"; repaired (workaround for the testing app): {string.Join("; ", Workarounds)}");
 
     public override string ToString() => !UsesComImport ? "no ComImport"
         : $"{Interfaces} interfaces ({Methods} methods), {PInvokes} P/Invokes, {Delegates} delegates, {CallSites} call sites" + (EventInterfaces > 0 ? $", {EventInterfaces} event interfaces" : "") +

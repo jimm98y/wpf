@@ -39,6 +39,7 @@ public static partial class ComRewriter
                 var m = md.GetMethodDefinition(h);
                 var import = m.GetImport();
                 if (import.Module.IsNil) continue;
+                if (!windows && HasWorkaround(md, m)) return true;
                 if (!catalog.IsWindowsModule(Win32Catalog.Normalize(md.GetString(md.GetModuleReference(import.Module).Name)))) continue;
                 if (!windows) return true;
                 string ep = import.Name.IsNil ? md.GetString(m.Name) : md.GetString(import.Name);
@@ -102,6 +103,7 @@ public static partial class ComRewriter
                     foreach (var p in t.Methods.ToList())
                         if (p.IsPInvokeImpl && p.PInvokeInfo?.Module != null && !p.HasGenericParameters)
                         {
+                            if (!windows && ApplyWorkaround(p)) continue;
                             string module = Win32Catalog.Normalize(p.PInvokeInfo.Module.Name);
                             if (cat.IsWindowsModule(module)) RewriteWin32(p, module, windows);
                         }
