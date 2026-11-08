@@ -107,7 +107,10 @@ public static class LinuxPackager
             foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             {
                 string id = pkg + "-" + DesktopCommon.Segment(DesktopCommon.ProgramName(app));
-                tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, id, root, state, manifest.Product.OsIdentity), executable: false);
+                string launcher = $"{root}/bin/{id}";
+                tar.AddText(launcher, Launcher(DesktopCommon.AppName(app), pkg, state, manifest.Product.OsIdentity,
+                    $"exec {Quote(root + "/runtime/run")} {Quote(root + "/app/" + app.Exe)} \"$@\""), executable: true);
+                tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, id, launcher, WindowClass(manifest, app)), executable: false);
                 if (DesktopCommon.Icon(manifest, app) is { } image)
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
             }
@@ -116,7 +119,9 @@ public static class LinuxPackager
             if (httpSys) named.Insert(0, ("HTTP", $"{pkg}-httpsys.service"));
             tar.AddText($"{root}/services.sh", DesktopCommon.ServicesScript(manifest.Product.Name, named, mac: false), executable: true);
             // at log-on, what the apps put in the Startup folders, as Explorer starts it
-            tar.AddText($"/etc/xdg/autostart/{pkg}-startup.desktop", Autostart(manifest, root, state), executable: false);
+            tar.AddText($"{root}/bin/{pkg}-startup", Launcher(manifest.Product.Name + " startup programs", pkg, state, manifest.Product.OsIdentity,
+                $"exec {Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} startup"), executable: true);
+            tar.AddText($"/etc/xdg/autostart/{pkg}-startup.desktop", Autostart(manifest, $"{root}/bin/{pkg}-startup"), executable: false);
             tar.Finish();
         }
 
@@ -128,8 +133,9 @@ public static class LinuxPackager
             var tar = new TarTree(gz, directories: false);
             tar.AddText("./control", Control(manifest, pkg, arch, installedBytes), executable: false);
             tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
-            tar.AddText("./prerm", PreRm(units), executable: true);
-            tar.AddText("./postrm", PostRm(state, units), executable: true);
+            tar.AddText("./preinst", PreInst(pkg), executable: true);
+            tar.AddText("./prerm", PreRm(units, root), executable: true);
+            tar.AddText("./postrm", PostRm(state, units, pkg), executable: true);
             tar.Finish();
         }
 
@@ -259,22 +265,44 @@ public static class LinuxPackager
             """;
     }
 
-    private static string Desktop(AppEntry app, string id, string root, string state, string osIdentity) => $"""
+    // what a user starts of the installation: the machine's state, and the user's own files of this product under its
+    // name (XDG's cache and state folders), where an upgrade and the removal find them
+    private static string Launcher(string what, string pkg, string state, string osIdentity, string exec) => $$"""
+        #!/bin/sh
+        # {{what}}: the Windows program run on this machine (WPF and WinForms on WebGPU)
+        export WPFRUN_STATE="{{state}}"{{(osIdentity.Length > 0 ? $"\nexport WPFWEBGPU_OS_IDENTITY={osIdentity}" : "")}}
+        export WPFRUN_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/{{pkg}}"
+        export WPFRUN_LOGS="${XDG_STATE_HOME:-$HOME/.local/state}/{{pkg}}"
+        {{exec}}
+
+        """;
+
+    // the app id its windows give the compositor (WaylandWindow.AppId: the app's assembly name, as AppDomain.FriendlyName
+    // has it), by which GNOME finds the entry -- its icon, its name -- for a window; without it the dock showed a
+    // generic gear for every app
+    private static string WindowClass(PackageManifest manifest, AppEntry app)
+    {
+        string exe = Path.Combine(manifest.Inputs.InstallDir, app.Exe);
+        return Path.GetFileNameWithoutExtension(AppHost.AppDll(exe) ?? exe).Replace(' ', '-');
+    }
+
+    private static string Desktop(AppEntry app, string id, string launcher, string windowClass) => $"""
         [Desktop Entry]
         Type=Application
         Name={DesktopCommon.AppName(app)}
-        Exec=env WPFRUN_STATE={state}{(osIdentity.Length > 0 ? " WPFWEBGPU_OS_IDENTITY=" + osIdentity : "")} {Quote(root + "/runtime/run")} {Quote(root + "/app/" + app.Exe)}
+        Exec={Quote(launcher)}
         Icon={id}
+        StartupWMClass={windowClass}
         Terminal=false
         Categories=Utility;
 
         """;
 
-    private static string Autostart(PackageManifest manifest, string root, string state) => $"""
+    private static string Autostart(PackageManifest manifest, string launcher) => $"""
         [Desktop Entry]
         Type=Application
         Name={manifest.Product.Name} startup programs
-        Exec=env WPFRUN_STATE={state}{(manifest.Product.OsIdentity.Length > 0 ? " WPFWEBGPU_OS_IDENTITY=" + manifest.Product.OsIdentity : "")} {Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} startup
+        Exec={Quote(launcher)}
         NoDisplay=true
         Terminal=false
         X-GNOME-Autostart-enabled=true
@@ -287,7 +315,7 @@ public static class LinuxPackager
         Architecture: {arch}
         Maintainer: {(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : manifest.Product.Name)} <noreply@localhost>
         Installed-Size: {Math.Max(1, bytes / 1024)}
-        Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu74 | libicu72 | libicu70 | libicu67 | libicu66
+        Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu74 | libicu72 | libicu70 | libicu67 | libicu66, acl
         Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1
         Section: misc
         Priority: optional
@@ -336,10 +364,18 @@ public static class LinuxPackager
         # the service manager's database: the services this version registers, replaced on every install
         if [ -f "{{root}}/services.json" ]; then cp "{{root}}/services.json" "$STATE/services.json"; fi
         if [ -f "{{root}}/iis.json" ]; then cp "{{root}}/iis.json" "$STATE/iis.json"; fi
-        # every user's, as Windows' ProgramData and HKLM are writable by its users' programs
+        # every user's, as Windows' ProgramData and HKLM are writable by its users' programs: an inherited access list
+        # (as the product's own folder has on Windows), so what any account makes there -- a display a user saves, a
+        # file the elevated setup writes -- stays every account's whatever its umask. Ubuntu puts no desktop user in
+        # group users, so the group alone left a user's save denied. Without ACLs, the files as they are.
         chgrp -R users "$STATE" 2>/dev/null || true
         chmod -R g+rwX "$STATE"
         find "$STATE" -type d -exec chmod g+s {} + 2>/dev/null || true
+        if command -v setfacl >/dev/null 2>&1 && setfacl -R -m u::rwX,g::rwX,o::rwX "$STATE" 2>/dev/null; then
+          find "$STATE" -type d -exec setfacl -d -m u::rwX,g::rwX,o::rwX {} + 2>/dev/null || true
+        else
+          chmod -R o+rwX "$STATE"
+        fi
         {{accounts}}
         if [ -d /run/systemd/system ]; then
           systemctl daemon-reload || true
@@ -353,22 +389,47 @@ public static class LinuxPackager
 
         """;
 
-    private static string PreRm(List<(string Name, bool Enable)> units) => $"""
+    // the product's caches: the machine's (its services') and each user's (its apps'), which a new version would only
+    // make again beside the old ones
+    private static string Caches(string pkg) => $$"""
+        rm -rf "/var/cache/{{pkg}}"
+        for h in /root /home/*; do [ -d "$h/.cache/{{pkg}}" ] && rm -rf "$h/.cache/{{pkg}}"; done
+        """;
+
+    private static string PreInst(string pkg) => $$"""
         #!/bin/sh
-        # the services stopped before their files go (an upgrade starts them again in postinst)
-        if [ -d /run/systemd/system ]; then
-        {string.Concat(units.Select(u => $"  systemctl stop {u.Name} || true\n"))}fi
+        # an upgrade: what the previous version prepared for its programs goes
+        if [ "$1" = upgrade ]; then
+        {{Caches(pkg)}}
+        fi
         exit 0
 
         """;
 
-    private static string PostRm(string state, List<(string Name, bool Enable)> units) => $"""
+    private static string PreRm(List<(string Name, bool Enable)> units, string root) => $"""
         #!/bin/sh
-        # remove keeps the machine's state (the registry, ProgramData), as Windows keeps ProgramData; purge removes it
+        # the services stopped before their files go (an upgrade starts them again in postinst), and what users still
+        # run of the installation ended: asked first, then made to
+        if [ -d /run/systemd/system ]; then
+        {string.Concat(units.Select(u => $"  systemctl stop --no-block {u.Name} || true\n"))}fi
+        pkill -TERM -f "{root}/runtime/" 2>/dev/null
+        for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "{root}/runtime/" >/dev/null || break; sleep 0.5; done
+        pkill -KILL -f "{root}/runtime/" 2>/dev/null
+        exit 0
+
+        """;
+
+    private static string PostRm(string state, List<(string Name, bool Enable)> units, string pkg) => $"""
+        #!/bin/sh
+        # remove takes the caches and logs (the machine's and every user's) and keeps the machine's state (the registry,
+        # ProgramData), as Windows keeps ProgramData; purge removes that too
         if [ "$1" = remove ] || [ "$1" = purge ]; then
           if [ -d /run/systemd/system ]; then
         {string.Concat(units.Select(u => $"    systemctl disable {u.Name} >/dev/null 2>&1 || true\n"))}    systemctl daemon-reload || true
           fi
+        {Caches(pkg)}
+          rm -rf "/var/log/{pkg}"
+          for h in /root /home/*; do [ -d "$h/.local/state/{pkg}" ] && rm -rf "$h/.local/state/{pkg}"; done
         fi
         if [ "$1" = purge ]; then rm -rf "{Path.GetDirectoryName(state)}" "/etc/sysctl.d/60-{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}.conf"; fi
         exit 0

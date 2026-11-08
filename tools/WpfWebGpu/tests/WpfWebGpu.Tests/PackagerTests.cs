@@ -171,6 +171,41 @@ public class PackagerTests
     }
 
     [Fact]
+    public void Http_sys_s_reservations_are_staged_and_other_products_services_are_not()
+    {
+        string work = TestEnvironment.NewDirectory("work");
+        string reg = Path.Combine(work, "services.reg");
+        File.WriteAllText(reg, """
+            Windows Registry Editor Version 5.00
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\HTTP]
+            "Start"=dword:00000003
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\HTTP\Parameters\UrlAclInfo]
+            "http://+:80/server/"="D:(A;;GX;;;NS)"
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Mine]
+            "Start"=dword:00000002
+
+            [HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Theirs]
+            "Start"=dword:00000002
+
+            """);
+        var manifest = new PackageManifest();
+        manifest.Inputs.InstallDir = Install();
+        manifest.Inputs.Registry.Add(reg);
+        manifest.Services.Add(new ServiceEntry { Name = "Mine", Exe = "Mine.exe" });
+
+        var staged = Staging.Stage(manifest, work);
+        string hive = File.ReadAllText(Path.Combine(staged.RegistryDir, "HKEY_LOCAL_MACHINE.reg"));
+        Assert.Contains("[SYSTEM\\CurrentControlSet\\Services\\HTTP\\Parameters\\UrlAclInfo]\n", hive);
+        Assert.Contains("\"http://+:80/server/\"=str:D:(A;;GX;;;NS)\n", hive);
+        Assert.Contains("[SYSTEM\\CurrentControlSet\\Services\\Mine]\n", hive);
+        Assert.DoesNotContain("Theirs", hive);
+        Assert.DoesNotContain("\"Start\"=dword:3", hive);                  // http.sys's own registration: Windows'
+    }
+
+    [Fact]
     public void A_machine_s_own_certificate_is_left_out_of_the_seed_and_a_peer_s_kept()
     {
         string data = TestEnvironment.NewDirectory("pki"), work = TestEnvironment.NewDirectory("work");

@@ -59,12 +59,15 @@ public static class Staging
     }
 
     // A service registration that is not one of the package's: an export of the machine's services holds Windows' own
-    // and every other product's, which are that machine's, not the installation's.
+    // and every other product's, which are that machine's, not the installation's. http.sys's configuration is kept
+    // (Services\HTTP\Parameters: the URL reservations and certificate bindings `netsh http add` writes there), which the
+    // installation's programs need to listen as on Windows.
     private static bool OthersService(RegEntry e, HashSet<string> services)
     {
         const string Key = @"SYSTEM\CurrentControlSet\Services\";
         if (!e.Hive.Equals("HKEY_LOCAL_MACHINE", StringComparison.OrdinalIgnoreCase) || !e.Key.StartsWith(Key, StringComparison.OrdinalIgnoreCase)) return false;
         string rest = e.Key[Key.Length..];
+        if (rest.Equals(@"HTTP\Parameters", StringComparison.OrdinalIgnoreCase) || rest.StartsWith(@"HTTP\Parameters\", StringComparison.OrdinalIgnoreCase)) return false;
         int slash = rest.IndexOf('\\');
         return rest.Length > 0 && !services.Contains(slash < 0 ? rest : rest[..slash]);
     }
