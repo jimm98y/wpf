@@ -9,6 +9,13 @@ namespace System.Net
     {
         private TimeSpan _drainEntityBody = TimeSpan.Zero;
         private TimeSpan _idleConnection = TimeSpan.Zero;
+        // http.sys keeps these for the request queue; here the machine's http.sys service, in front, applies its own
+        // limits, and they are kept as http.sys keeps them -- set and read back -- rather than refused: a server that
+        // sets them (a point manager's host sets MinSendBytesPerSecond) started on Windows and must start here
+        private TimeSpan _entityBody = TimeSpan.Zero;
+        private TimeSpan _headerWait = TimeSpan.Zero;
+        private long _minSendBytesPerSecond;
+        private TimeSpan _requestQueue = TimeSpan.Zero;
 
         internal HttpListenerTimeoutManager(HttpListener _) { }
 
@@ -38,46 +45,42 @@ namespace System.Net
 
         public TimeSpan EntityBody
         {
-            get => TimeSpan.Zero;
-            [SupportedOSPlatform("windows")]
+            get => _entityBody;
             set
             {
                 ValidateTimeout(value);
-                throw new PlatformNotSupportedException(); // low usage, not currently implemented
+                _entityBody = value;
             }
         }
 
         public TimeSpan HeaderWait
         {
-            get => TimeSpan.Zero;
-            [SupportedOSPlatform("windows")]
+            get => _headerWait;
             set
             {
                 ValidateTimeout(value);
-                throw new PlatformNotSupportedException(); // low usage, not currently implemented
+                _headerWait = value;
             }
         }
 
         public long MinSendBytesPerSecond
         {
-            get => 0;
-            [SupportedOSPlatform("windows")]
+            get => _minSendBytesPerSecond;
             set
             {
                 ArgumentOutOfRangeException.ThrowIfNegative(value);
                 ArgumentOutOfRangeException.ThrowIfGreaterThan(value, uint.MaxValue);
-                throw new PlatformNotSupportedException(); // low usage, not currently implemented
+                _minSendBytesPerSecond = value;
             }
         }
 
         public TimeSpan RequestQueue
         {
-            get => TimeSpan.Zero;
-            [SupportedOSPlatform("windows")]
+            get => _requestQueue;
             set
             {
                 ValidateTimeout(value);
-                throw new PlatformNotSupportedException(); // low usage, not currently implemented
+                _requestQueue = value;
             }
         }
 

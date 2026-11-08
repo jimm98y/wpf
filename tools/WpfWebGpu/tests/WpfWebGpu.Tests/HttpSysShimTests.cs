@@ -237,6 +237,23 @@ public class HttpSysShimTests
     }
 
     [Fact]
+    public void A_listener_s_timeouts_are_kept_as_http_sys_keeps_them()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
+        // a point manager's host sets MinSendBytesPerSecond before it listens: refused, it never listened
+        using var listener = new System.Net.HttpListener();
+        var t = listener.TimeoutManager;
+        t.MinSendBytesPerSecond = 150;
+        t.EntityBody = TimeSpan.FromMinutes(2);
+        t.HeaderWait = TimeSpan.FromSeconds(30);
+        t.RequestQueue = TimeSpan.FromSeconds(60);
+        t.DrainEntityBody = TimeSpan.FromSeconds(10);
+        t.IdleConnection = TimeSpan.FromMinutes(1);
+        Assert.Equal((150L, TimeSpan.FromMinutes(2), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60)), (t.MinSendBytesPerSecond, t.EntityBody, t.HeaderWait, t.RequestQueue));
+        Assert.Throws<ArgumentOutOfRangeException>(() => t.MinSendBytesPerSecond = -1);
+    }
+
+    [Fact]
     public void The_account_behind_a_loopback_connection_is_found()
     {
         Assert.SkipWhen(!OperatingSystem.IsMacOS() && !OperatingSystem.IsLinux(), "the machine's own sockets");
