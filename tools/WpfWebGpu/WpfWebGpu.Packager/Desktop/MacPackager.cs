@@ -266,6 +266,9 @@ public static class MacPackager
             #!/bin/sh
             # {name}: the Windows program run on this Mac (WPF and WinForms on WebGPU)
             export WPFRUN_STATE="{root}/state"{(manifest.Product.OsIdentity.Length > 0 ? $"\nexport WPFWEBGPU_OS_IDENTITY={manifest.Product.OsIdentity}" : "")}
+            # the user's files of this product, under its name: an upgrade and the uninstall find them there
+            export WPFRUN_CACHE="$HOME/Library/Caches/{Path.GetFileName(root)}"
+            export WPFRUN_LOGS="$HOME/Library/Logs/{Path.GetFileName(root)}"
             exec "{root}/runtime/run" "{root}/app/{app.Exe}" "$@"
 
             """);
@@ -303,6 +306,17 @@ public static class MacPackager
     // user still has open (each runs from the installation, or its copy of the program in the product's caches).
     internal static string PreInstall(string root, string product, string id) => $$"""
         #!/bin/sh
+        {{StopAll(root, product, id)}}
+        rm -rf "{{root}}/app" "{{root}}/runtime" "{{root}}/web" "/Applications/{{product}}"
+        # what the previous version prepared for its programs, which this one would only prepare again beside it
+        {{Caches(product)}}
+        exit 0
+
+        """;
+
+    // every daemon of the product asked to stop at once, ten seconds for them all, then what is left killed, and their
+    // job files removed (see PreInstall)
+    private static string StopAll(string root, string product, string id) => $$"""
         labels=""
         for p in /Library/LaunchDaemons/{{id}}.*.plist; do
           [ -f "$p" ] || continue
@@ -321,9 +335,12 @@ public static class MacPackager
         pkill -9 -f '{{Ere("Caches/" + product + "/apps/")}}' 2>/dev/null
         wait
         rm -f /Library/LaunchDaemons/{{id}}.*.plist
-        rm -rf "{{root}}/app" "{{root}}/runtime" "{{root}}/web" "/Applications/{{product}}"
-        exit 0
+        """;
 
+    // the product's caches: the machine's (its services') and each user's (its apps')
+    private static string Caches(string product) => $$"""
+        rm -rf "/Library/Caches/{{product}}"
+        for h in /Users/*; do [ -d "$h/Library/Caches/{{product}}" ] && rm -rf "$h/Library/Caches/{{product}}"; done
         """;
 
     // a pattern for pkill (an extended regular expression) matching the text itself, quoted for a single-quoted word
@@ -406,22 +423,25 @@ public static class MacPackager
 
         """;
 
-    private static string Uninstall(string root, string product, string id, List<string> daemons) => $"""
+    internal static string Uninstall(string root, string product, string id, List<string> daemons) => $$"""
         #!/bin/sh
-        # Removes {product}: its services, its apps and its files. The machine's state (state/: the registry and
-        # ProgramData) is kept unless --all is given, as Windows keeps ProgramData after an uninstall.
+        # Removes {{product}}: its services, its apps, its files, and its caches and logs (the machine's and each user's).
+        # The machine's state (state/: the registry and ProgramData) is kept unless --all is given, as Windows keeps
+        # ProgramData after an uninstall.
         if [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
-        for p in /Library/LaunchDaemons/{id}.*.plist; do
-          [ -f "$p" ] || continue
-          launchctl bootout system/"$(basename "$p" .plist)" 2>/dev/null || true
-          rm -f "$p"
-        done
-        rm -f "/Library/LaunchAgents/{id}.startup.plist"
-        rm -rf "/Applications/{product}"
-        rm -rf "{root}/app" "{root}/runtime" "{root}/seed"
-        if [ "$1" = "--all" ]; then rm -rf "{root}" "/Library/Logs/{product}"; fi
-        pkgutil --forget "{id}" >/dev/null 2>&1 || true
-        echo "{product} removed"
+        {{StopAll(root, product, id)}}
+        rm -f "/Library/LaunchAgents/{{id}}.startup.plist"
+        rm -rf "/Applications/{{product}}"
+        {{Caches(product)}}
+        rm -rf "/Library/Logs/{{product}}"
+        for h in /Users/*; do [ -d "$h/Library/Logs/{{product}}" ] && rm -rf "$h/Library/Logs/{{product}}"; done
+        if [ "$1" = "--all" ]; then
+          rm -rf "{{root}}"
+        else
+          find "{{root}}" -mindepth 1 -maxdepth 1 ! -name state -exec rm -rf {} +
+        fi
+        pkgutil --forget "{{id}}" >/dev/null 2>&1 || true
+        echo "{{product}} removed"
 
         """;
 

@@ -96,6 +96,30 @@ public class PackagerTests
     }
 
     [Fact]
+    public void Upgrade_and_uninstall_leave_no_caches_logs_or_files_but_the_machine_s_state()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "shell scripts");
+        string root = "/Library/Application Support/P", product = "P", id = "com.example.p";
+        string pre = WpfWebGpu.Packager.Desktop.MacPackager.PreInstall(root, product, id);
+        string un = WpfWebGpu.Packager.Desktop.MacPackager.Uninstall(root, product, id, new List<string>());
+        foreach (string script in new[] { pre, un })
+        {
+            string file = Path.Combine(TestEnvironment.NewDirectory("script"), "s.sh");
+            File.WriteAllText(file, script);
+            var check = System.Diagnostics.Process.Start("/bin/sh", new[] { "-n", file })!;
+            check.WaitForExit();
+            Assert.Equal(0, check.ExitCode);
+            // the machine's caches and each user's
+            Assert.Contains("rm -rf \"/Library/Caches/P\"", script);
+            Assert.Contains("$h/Library/Caches/P", script);
+        }
+        Assert.Contains("rm -rf \"/Library/Logs/P\"", un);
+        Assert.Contains("$h/Library/Logs/P", un);
+        Assert.Contains("! -name state", un);                       // everything of the installation but its state
+        Assert.Contains("rm -rf \"/Library/Application Support/P\"", un);   // --all: the state too
+    }
+
+    [Fact]
     public void Finds_the_installation_s_folder_in_the_registry_s_paths()
     {
         var mappings = Scanner.DetectMappings(RegText.Parse(Reg), Install());
