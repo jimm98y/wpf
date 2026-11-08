@@ -1717,7 +1717,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (blitView != IntPtr.Zero)
                 {
                     if (encoder == IntPtr.Zero) encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
-                    RecordBlit(encoder, blitView, blitFormat, blitBindGroup);
+                    RecordBlit(encoder, blitView, blitFormat, blitBindGroup, width, height);
                 }
                 if (encoder != IntPtr.Zero)
                 {
@@ -1790,15 +1790,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         // ---- blit --------------------------------------------------------------------------------
 
+        // The pixel copied is found from a coordinate the vertex stage hands down and the target's size, not
+        // from the fragment's position (@builtin(position), GL's gl_FragCoord): on the GL backend of the
+        // Linux/virgl head that position came out shifted by the height difference between this window
+        // and the last other window drawn -- a message box over a wizard left the wizard showing a strip
+        // as tall as the box at its bottom (the rest transparent), a maximized box pushed its picture up
+        // over a black band; and a combo's drop-down, earlier, a black strip over its owner.
         private const string BlitWgsl = @"
 @group(0) @binding(0) var src : texture_2d<f32>;
-@vertex fn vs_main(@builtin(vertex_index) i : u32) -> @builtin(position) vec4<f32> {
+@group(1) @binding(0) var<uniform> size : vec4<f32>;
+struct VsOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) i : u32) -> VsOut {
     let x = f32((i << 1u) & 2u) * 2.0 - 1.0;
     let y = f32(i & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
+    var o : VsOut;
+    o.pos = vec4<f32>(x, y, 0.0, 1.0);
+    o.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
+    return o;
 }
-@fragment fn fs_main(@builtin(position) p : vec4<f32>) -> @location(0) vec4<f32> {
-    return textureLoad(src, vec2<i32>(floor(p.xy)), 0);
+@fragment fn fs_main(v : VsOut) -> @location(0) vec4<f32> {
+    return textureLoad(src, vec2<i32>(floor(v.uv * size.xy)), 0);
 }
 ";
         private IntPtr _blitModule, _blitIndices;
@@ -1877,13 +1888,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private const string ShiftWgsl = @"
 @group(0) @binding(0) var src : texture_2d<f32>;
 @group(0) @binding(1) var<uniform> off : vec4<i32>;
-@vertex fn vs_main(@builtin(vertex_index) i : u32) -> @builtin(position) vec4<f32> {
+struct VsOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs_main(@builtin(vertex_index) i : u32) -> VsOut {
     let x = f32((i << 1u) & 2u) * 2.0 - 1.0;
     let y = f32(i & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
+    var o : VsOut;
+    o.pos = vec4<f32>(x, y, 0.0, 1.0);
+    o.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
+    return o;
 }
-@fragment fn fs_main(@builtin(position) p : vec4<f32>) -> @location(0) vec4<f32> {
-    return textureLoad(src, vec2<i32>(floor(p.xy)) - off.xy, 0);
+// source and target are textures of one size (the target's and its scratch): the pixel from the
+// coordinate handed down, as the blit (BlitWgsl) finds it
+@fragment fn fs_main(v : VsOut) -> @location(0) vec4<f32> {
+    return textureLoad(src, vec2<i32>(floor(v.uv * vec2<f32>(textureDimensions(src)))) - off.xy, 0);
 }
 ";
         private IntPtr _shiftModule;
@@ -1988,11 +2005,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return bg;
         }
 
-        private void RecordBlit(IntPtr encoder, IntPtr view, WGPUTextureFormat format, IntPtr bindGroup)
+        // the size of the view a blit draws into (BlitWgsl's group 1), for the draw it is made for
+        private IntPtr BlitSizeGroup(WGPUTextureFormat format, int width, int height)
         {
+            ReadOnlySpan<float> size = stackalloc float[] { width, height, 0, 0 };
+            IntPtr buf = _ctx.CreateBufferMapped(System.Runtime.InteropServices.MemoryMarshal.AsBytes(size), WGPUBufferUsage.Uniform);
+            IntPtr layout = wgpuRenderPipelineGetBindGroupLayout(BlitPipeline(format), 1);
+            var entries = stackalloc WGPUBindGroupEntry[1];
+            entries[0] = new WGPUBindGroupEntry { binding = 0, buffer = buf, offset = 0, size = 16 };
+            var desc = new WGPUBindGroupDescriptor { layout = layout, entryCount = 1, entries = entries };
+            IntPtr bg = wgpuDeviceCreateBindGroup(_ctx.Device, &desc);
+            wgpuBindGroupLayoutRelease(layout);
+            DeferReleaseBindGroup(bg);
+            DeferReleaseBuffer(buf);
+            return bg;
+        }
+
+        private void RecordBlit(IntPtr encoder, IntPtr view, WGPUTextureFormat format, IntPtr bindGroup, int width, int height)
+        {
+            IntPtr sizeGroup = BlitSizeGroup(format, width, height);
             IntPtr pass = BeginClearPass(encoder, view, new RgbaColor(0, 0, 0, 0));
             wgpuRenderPassEncoderSetPipeline(pass, BlitPipeline(format));
             wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+            wgpuRenderPassEncoderSetBindGroup(pass, 1, sizeGroup, 0, null);
             // Indexed only because that is the one draw call every binding (the browser's included)
             // has; the three indices are the triangle's three vertices.
             if (_blitIndices == IntPtr.Zero)
@@ -2008,16 +2043,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         /// <summary>Copy the top-left <paramref name="w"/> x <paramref name="h"/> of a persistent target to a
         /// presentable view, the rest cleared to <paramref name="background"/>, and submit.</summary>
-        internal void BlitToViewClipped(IntPtr view, WGPUTextureFormat format, IntPtr bindGroup, RgbaColor background, int w, int h)
+        internal void BlitToViewClipped(IntPtr view, WGPUTextureFormat format, IntPtr bindGroup, RgbaColor background, int w, int h, int viewWidth, int viewHeight)
         {
             try
             {
+                IntPtr sizeGroup = BlitSizeGroup(format, viewWidth, viewHeight);
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
                 IntPtr pass = BeginClearPass(encoder, view, background);
                 if (w > 0 && h > 0)
                 {
                     wgpuRenderPassEncoderSetPipeline(pass, BlitPipeline(format));
                     wgpuRenderPassEncoderSetBindGroup(pass, 0, bindGroup, 0, null);
+                    wgpuRenderPassEncoderSetBindGroup(pass, 1, sizeGroup, 0, null);
                     if (_blitIndices == IntPtr.Zero)
                     {
                         ReadOnlySpan<uint> idx = stackalloc uint[] { 0, 1, 2, 0 };
@@ -2040,12 +2077,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         /// <summary>Copy a persistent target to a presentable view and submit.</summary>
-        internal void BlitToView(IntPtr view, WGPUTextureFormat format, IntPtr bindGroup)
+        internal void BlitToView(IntPtr view, WGPUTextureFormat format, IntPtr bindGroup, int width, int height)
         {
             try
             {
                 IntPtr encoder = wgpuDeviceCreateCommandEncoder(_ctx.Device, IntPtr.Zero);
-                RecordBlit(encoder, view, format, bindGroup);
+                RecordBlit(encoder, view, format, bindGroup, width, height);
                 IntPtr commandBuffer = wgpuCommandEncoderFinish(encoder, IntPtr.Zero);
                 IntPtr* cmds = stackalloc IntPtr[1];
                 cmds[0] = commandBuffer;
@@ -2195,12 +2232,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             internal bool PresentLast(IntPtr view, WGPUTextureFormat viewFormat, int width, int height, RgbaColor background)
             {
                 if (!Enabled || _tex == IntPtr.Zero || !_valid || _blitBg == IntPtr.Zero || _blitFmt != viewFormat) return false;
-                _r.BlitToViewClipped(view, viewFormat, _blitBg, background, Math.Min(_w, width), Math.Min(_h, height));
+                _r.BlitToViewClipped(view, viewFormat, _blitBg, background, Math.Min(_w, width), Math.Min(_h, height), width, height);
                 return true;
             }
 
             /// <summary>The next frame is drawn in full (contents lost, surface recreated, ...).</summary>
             internal void Invalidate() => _valid = false;
+
 
             /// <summary>Render <paramref name="root"/> and copy it into <paramref name="view"/>.</summary>
             internal void Render(SceneVisual root, IntPtr view, WGPUTextureFormat viewFormat, int width, int height,
@@ -2285,7 +2323,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     _r.RenderFrameDamaged(root, _view, fmt, width, height, background, transparentTarget, damage, _tracker.Stamp,
                         shift: shift, scratchView: _sView);
                     VerifyAgainstFull(root, width, height, background, transparentTarget, damage);
-                    _r.BlitToView(view, viewFormat, _blitBg);
+                    _r.BlitToView(view, viewFormat, _blitBg, width, height);
                     return;
                 }
                 long r0 = System.Diagnostics.Stopwatch.GetTimestamp(), c0 = PerfCollectTicks, e0 = PerfEncodeTicks, su0 = PerfSubmitTicks;

@@ -1527,7 +1527,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 viewFormatCount = renderFmt != ts.Format ? (nuint)1 : 0,
                 viewFormats = renderFmt != ts.Format ? &renderFmt : null,
             };
-            Log($"CONFIGURE surface {ts.Width}x{ts.Height} present={mode} transparent={ts.Transparent} alpha={alpha}");
+            Log($"CONFIGURE surface hwnd=0x{ts.Hwnd:x} {ts.Width}x{ts.Height} present={mode} transparent={ts.Transparent} alpha={alpha}");
             wgpuSurfaceConfigure(ts.Surface, &config);
 
             // Keep the native layer's contents/backing scale in step with the surface's device-pixel
