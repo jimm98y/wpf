@@ -210,6 +210,16 @@ namespace System.Windows.Interop
                 case CursorType.ScrollNS:
                 case CursorType.ScrollN:
                 case CursorType.ScrollS:  return "resizeUpDownCursor";
+                // the diagonals: AppKit's frame-resize cursors (macOS 15), a corner's position (top 1, left 2, right 8)
+                case CursorType.SizeNWSE:
+                case CursorType.ScrollNW:
+                case CursorType.ScrollSE: return "frameResize:3";
+                case CursorType.SizeNESW:
+                case CursorType.ScrollNE:
+                case CursorType.ScrollSW: return "frameResize:9";
+                // a move: the open hand, as the WinForms host shows SizeAll
+                case CursorType.SizeAll:
+                case CursorType.ScrollAll: return "openHandCursor";
                 default:                  return "arrowCursor";
             }
         }

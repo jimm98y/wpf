@@ -2278,6 +2278,10 @@ internal sealed class CocoaHost : IWinFormsHost
 
     private void ApplyCursor()
     {
+        // over a WPF window embedded in the form (an ElementHost's child window) the cursor is WPF's: on Windows the
+        // child window under the pointer answers WM_SETCURSOR. Set here as well, the form's -- the ElementHost's
+        // default arrow -- replaced WPF's on every move, and a display's resize handles never showed theirs.
+        if (PointerOverEmbeddedWindow()) return;
         int id = _driver.GetActiveCursor();
         // set on every move, not only when it changes: an embedded WPF window sets its own over itself
         if (s_traceCursor && id != s_cursorShown) Console.WriteLine($"[cocoa cursor] StdCursor {id}");
@@ -2300,6 +2304,23 @@ internal sealed class CocoaHost : IWinFormsHost
     }
 
     private static IntPtr Public(string name) => Send(Cls("NSCursor"), Sel(name));
+
+    private bool PointerOverEmbeddedWindow()
+    {
+        if (_window == IntPtr.Zero) return false;
+        IntPtr children = Send(_window, Sel("childWindows"));
+        nint count = children == IntPtr.Zero ? 0 : (nint)Send(children, Sel("count"));
+        if (count == 0) return false;
+        NSPoint mouse = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));   // the screen's, as window frames are
+        for (nint i = 0; i < count; i++)
+        {
+            IntPtr child = SendPtrNUInt(children, Sel("objectAtIndex:"), (nuint)i);
+            if (child == _popupWindow || (nint)Send(child, Sel("isVisible")) == 0) continue;
+            NSRect f = SendRectRet(child, Sel("frame"));
+            if (mouse.x >= f.x && mouse.x < f.x + f.w && mouse.y >= f.y && mouse.y < f.y + f.h) return true;
+        }
+        return false;
+    }
 
     private static IntPtr FrameResize(nuint position)
     {

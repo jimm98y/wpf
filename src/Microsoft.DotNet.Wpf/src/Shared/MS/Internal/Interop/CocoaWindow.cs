@@ -3577,9 +3577,24 @@ namespace MS.Internal.Interop
             if (string.IsNullOrEmpty(nsCursorSelector)) return;
             IntPtr cls = objc_getClass("NSCursor");
             if (cls == IntPtr.Zero) return;
-            IntPtr cursor = Send(cls, Sel(nsCursorSelector));
+            IntPtr cursor;
+            // "frameResize:<position>": a corner's resize cursor, where AppKit has them (macOS 15; the arrow before)
+            if (nsCursorSelector.StartsWith("frameResize:", StringComparison.Ordinal))
+            {
+                IntPtr sel = Sel("frameResizeCursorFromPosition:inDirections:");
+                cursor = nuint.TryParse(nsCursorSelector.AsSpan("frameResize:".Length), out nuint position) && RespondsToClassSelector(cls, sel)
+                    ? SendPtrNUIntNUInt(cls, sel, position, 3 /* NSCursorFrameResizeDirectionsAll */)
+                    : Send(cls, Sel("arrowCursor"));
+            }
+            else cursor = Send(cls, Sel(nsCursorSelector));
             if (cursor != IntPtr.Zero) Send(cursor, Sel("set"));
         }
+
+        private static bool RespondsToClassSelector(IntPtr cls, IntPtr sel) => class_respondsToSelector(object_getClass(cls), sel);
+
+        [DllImport(ObjC)] private static extern IntPtr object_getClass(IntPtr obj);
+        [DllImport(ObjC)] [return: MarshalAs(UnmanagedType.I1)] private static extern bool class_respondsToSelector(IntPtr cls, IntPtr sel);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUIntNUInt(IntPtr r, IntPtr s, nuint a, nuint b);
 
         // ---- helpers ----------------------------------------------------------------
 
