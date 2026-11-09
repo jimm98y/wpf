@@ -138,6 +138,7 @@ public static partial class LinuxPackager
             echo "{{sql.Engine}} for {{manifest.Product.Name}}: 127.0.0.1,{{manifest.SqlServer.Port}} (login sa)"
             if [ -n "$NEW" ]; then echo "  sa password: $PW"; fi
             echo "  the password is kept in $ENVFILE (readable by root)"
+            echo "  point {{manifest.Product.Name}}'s SQL configuration at 127.0.0.1,{{manifest.SqlServer.Port}} with that login"
 
             """;
     }

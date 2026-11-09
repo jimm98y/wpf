@@ -150,10 +150,15 @@ public static partial class MacPackager
         synthesize.Add(distribution);
         Run("/usr/bin/productbuild", synthesize.ToArray());
         var dist = System.Xml.Linq.XDocument.Load(distribution);
-        if (sqlPack != null) SqlServerChoices(dist, product, id, sqlPack["package"]);
+        if (sqlPack != null)
+        {
+            SqlServerChoices(dist, product, id, sqlPack["package"]);
+            SqlServerConclusion(dist, manifest, root, Path.Combine(work, "resources"));
+        }
         dist.Root!.AddFirst(new System.Xml.Linq.XElement("title", product));
         dist.Save(distribution);
         var args = new List<string> { "--distribution", distribution, "--package-path", work, "--identifier", id, "--version", manifest.Product.Version };
+        if (sqlPack != null) { args.Add("--resources"); args.Add(Path.Combine(work, "resources")); }
         if (manifest.Signing.DeveloperIdInstaller.Length > 0) { args.Add("--sign"); args.Add(manifest.Signing.DeveloperIdInstaller); }
         args.Add(pkg);
         Run("/usr/bin/productbuild", args.ToArray());

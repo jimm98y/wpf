@@ -158,4 +158,25 @@ public static partial class MacPackager
                 new XElement("pkg-ref", new XAttribute("id", containerPkgId)),
                 new XElement("pkg-ref", new XAttribute("id", id + ".sqlserver"))));
     }
+
+    /// <summary>The installer's last page: where SQL Server is and its login, for the product's own SQL configuration,
+    /// which on Windows connects to its instance with Windows authentication -- not something a container's SQL Server
+    /// takes.</summary>
+    private static void SqlServerConclusion(XDocument dist, PackageManifest manifest, string root, string resources)
+    {
+        string product = manifest.Product.Name;
+        Directory.CreateDirectory(resources);
+        File.WriteAllText(Path.Combine(resources, "conclusion.html"), $"""
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"></head>
+            <body>
+            <p>{X(product)} is installed.</p>
+            <p>If {X(SqlServerImage.X64.Engine)} was installed with it, it starts in the background now; downloading it
+            the first time takes a few minutes. Point {X(product)}'s SQL configuration at it:</p>
+            <p>server <code>127.0.0.1,{manifest.SqlServer.Port}</code>, SQL Server authentication, login <code>sa</code>,
+            its password in <code>{X(root)}/sqlserver/sqlserver.txt</code> (readable by administrators).</p>
+            </body></html>
+            """);
+        dist.Root!.Add(new XElement("conclusion", new XAttribute("file", "conclusion.html"), new XAttribute("mime-type", "text/html")));
+    }
 }
