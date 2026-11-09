@@ -115,7 +115,9 @@ public static class AndroidPackager
             return seg.Length == 0 || char.IsAsciiDigit(seg[0]) ? "app" + seg : seg;
         }
         string prefix = string.Join('.', manifest.Product.IdPrefix.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(Segment));
-        return (prefix.Length > 0 ? prefix + "." : "") + Segment(Path.GetFileNameWithoutExtension(entry.Exe));
+        // the app's own name: the assembly its .exe starts (App for App_ARM64.exe), not the file's architecture variant
+        string exe = Path.Combine(manifest.Inputs.InstallDir, entry.Exe);
+        return (prefix.Length > 0 ? prefix + "." : "") + Segment(Path.GetFileNameWithoutExtension(AppHost.AppDll(exe) ?? exe));
     }
 
     private static (byte[] Rgba, int Width, int Height)? Icon(PackageManifest manifest, AppEntry entry)
