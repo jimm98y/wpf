@@ -141,6 +141,12 @@ internal static partial class Bundle
 
                 <!-- the template for devices: signed by the Packager, with the app's certificate and profile -->
                 <EnableCodeSigning>false</EnableCodeSigning>
+            """ : "")}{(template && rid.Contains("simulator") ? """
+
+                <!-- the simulator's entitlements are the executable's own (linked in): a placeholder App Group the
+                     Packager makes the installation's, in place -->
+                <CodesignEntitlements>Entitlements.plist</CodesignEntitlements>
+                <CodesignKey>-</CodesignKey>
             """ : "")}
                 <Nullable>disable</Nullable>
                 <ImplicitUsings>disable</ImplicitUsings>
@@ -169,6 +175,19 @@ internal static partial class Bundle
 
             </Project>
             """);
+        if (template && rid.Contains("simulator"))
+            File.WriteAllText(Path.Combine(dir, "Entitlements.plist"), $"""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                <plist version="1.0">
+                <dict>
+                    <key>com.apple.security.application-groups</key>
+                    <array>
+                        <string>{WpfWebGpu.Packager.Apple.IosPackager.SimulatorGroupPlaceholder}</string>
+                    </array>
+                </dict>
+                </plist>
+                """);
         File.WriteAllText(Path.Combine(dir, "Info.plist"), """
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -245,6 +264,10 @@ internal static partial class Bundle
                     // (WPFRUN_ARGS, '|' between arguments; SIMCTL_CHILD_WPFRUN_ARGS on a simulator launch)
                     if (Environment.GetEnvironmentVariable("WPFRUN_ARGS") is { Length: > 0 } passed)
                         Args = passed.Split('|');
+                    // the machine's registry and data before anything reads them: the stack reads the registry as
+                    // it starts (UIKit's start included), and a store opened before it is where it is stays there
+                    SeedRegistry(bundle, AppContext.BaseDirectory);
+                    SeedState(bundle);
                     UIApplication.Main(args, null, typeof(WpfRunAppDelegate));
                 }
 
@@ -271,8 +294,8 @@ internal static partial class Bundle
                         };
                     string root = AppContext.BaseDirectory;
                     string name = Info["name"];
-                    SeedRegistry(Bundle, root);
-                    SeedState(Bundle);
+                    // Process.Start of another app of the installation: that app, as Windows starts its process
+                    AppContext.SetData("WPFWEBGPU_START_APP", (Func<string, string, bool>)StartApp);
                     // the app's assemblies the bundle was not built with (a template's app: all of them) are its folder's,
                     // as on Windows: there, and a culture's satellites in the culture's folder
                     System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (context, asked) =>
@@ -320,11 +343,72 @@ internal static partial class Bundle
                     win32.GetType("WpfWebGpu.Win32.Exports")?.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, new object[] { logOnce });
                 }
 
-                /// <summary>The machine's folders (ProgramData), the bundle's copy put once into the app's Library:
-                /// where the app's machine-wide folders are (WPFWEBGPU_STATE_DIR).</summary>
+                /// <summary>Where the machine's state is: the installation's App Group container (WpfRunAppGroup in
+                /// Info.plist), shared by every app of the installation as the machine's folders are on Windows -- or
+                /// the app's own Library when it has none.</summary>
+                internal static string MachineRoot()
+                {
+                    if (NSBundle.MainBundle.ObjectForInfoDictionary("WpfRunAppGroup") is NSString group && group.ToString().Length > 0
+                        && NSFileManager.DefaultManager.GetContainerUrl(group.ToString()) is { Path: { Length: > 0 } shared })
+                        return Path.Combine(shared, "wpf-webgpu");
+                    return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "wpf-webgpu");
+                }
+
+                /// <summary>Another app of the installation, by the .exe the app starts: that app, opened by its URL
+                /// scheme (WpfRunInstallationApps in Info.plist: each .exe's), with the command line -- as Windows starts
+                /// the program's process. False for a program that is not one of them.</summary>
+                internal static bool StartApp(string exe, string commandLine)
+                {
+                    if (NSBundle.MainBundle.ObjectForInfoDictionary("WpfRunInstallationApps") is not NSDictionary apps) return false;
+                    string file = Path.GetFileName(exe.Replace('\\', '/')).ToLowerInvariant();
+                    if (apps[file] is not NSString scheme) return false;
+                    string url = scheme + "://open" + (string.IsNullOrEmpty(commandLine) ? "" : "?args=" + Uri.EscapeDataString(commandLine));
+                    NSRunLoop.Main.BeginInvokeOnMainThread(() =>
+                        UIApplication.SharedApplication.OpenUrl(new NSUrl(url), new UIApplicationOpenUrlOptions(), null));
+                    return true;
+                }
+
+                /// <summary>The command line an app of the installation opened this one with (its URL's args).</summary>
+                internal static void TakeUrlArgs(NSUrl url)
+                {
+                    if (url?.Query is not { Length: > 0 } query) return;
+                    foreach (string pair in query.Split('&'))
+                        if (pair.StartsWith("args=", StringComparison.Ordinal))
+                            Args = SplitCommandLine(Uri.UnescapeDataString(pair[5..]));
+                }
+
+                /// <summary>A command line as Windows splits it (CommandLineToArgvW's rules).</summary>
+                private static string[] SplitCommandLine(string commandLine)
+                {
+                    var args = new System.Collections.Generic.List<string>();
+                    var sb = new System.Text.StringBuilder();
+                    bool quoted = false, any = false;
+                    for (int i = 0; i < commandLine.Length; i++)
+                    {
+                        char c = commandLine[i];
+                        if (c == '\\')
+                        {
+                            int slashes = 0;
+                            while (i < commandLine.Length && commandLine[i] == '\\') { slashes++; i++; }
+                            if (i < commandLine.Length && commandLine[i] == '"') { sb.Append('\\', slashes / 2); if (slashes % 2 == 1) sb.Append('"'); else quoted = !quoted; }
+                            else { sb.Append('\\', slashes); i--; }
+                            any = true;
+                            continue;
+                        }
+                        if (c == '"') { quoted = !quoted; any = true; continue; }
+                        if (!quoted && (c == ' ' || c == '\t')) { if (any) { args.Add(sb.ToString()); sb.Clear(); any = false; } continue; }
+                        sb.Append(c);
+                        any = true;
+                    }
+                    if (any) args.Add(sb.ToString());
+                    return args.ToArray();
+                }
+
+                /// <summary>The machine's folders (ProgramData), the bundle's copy put once into the machine's state
+                /// (MachineRoot): where the app's machine-wide folders are (WPFWEBGPU_STATE_DIR).</summary>
                 private static void SeedState(string root)
                 {
-                    string state = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "wpf-webgpu", "state");
+                    string state = Path.Combine(MachineRoot(), "state");
                     AppContext.SetData("WPFWEBGPU_STATE_DIR", state);
                     string seed = Path.Combine(root, "wpfrun-state");
                     string done = Path.Combine(state, ".seeded");
@@ -343,21 +427,22 @@ internal static partial class Bundle
                 /// where the registry shim reads and writes it from then on.</summary>
                 private static void SeedRegistry(string root, string appFolder)
                 {
-                    string store = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "wpf-webgpu", "registry");
+                    string store = Path.Combine(MachineRoot(), "registry");
                     Environment.SetEnvironmentVariable("WPFWEBGPU_REGISTRY_DIR", store);
+                    // the installation's paths, as the Packager left them (PathTokens), kept so in the store the
+                    // installation's apps share: each app's bundle holds the installation, so each reads them as
+                    // its own bundle's (and a reinstall, which moves the bundle, keeps them right)
+                    Environment.SetEnvironmentVariable("WPFWEBGPU_REGISTRY_TOKENS", string.Join("\n",
+                        "${WPFRUN_APPDIR}=" + appFolder.TrimEnd('/'),
+                        "${WPFRUN_PROGRAMDATA}=" + Path.Combine(MachineRoot(), "state", "ProgramData"),
+                        "${WPFRUN_INSTALLDIR}=" + Path.Combine(root, "install")));
                     string seed = Path.Combine(root, "wpfrun-registry");
                     if (!Directory.Exists(seed)) return;
                     Directory.CreateDirectory(store);
                     foreach (string hive in Directory.EnumerateFiles(seed, "*.reg"))
                     {
                         string to = Path.Combine(store, Path.GetFileName(hive));
-                        if (File.Exists(to)) continue;
-                        // the installation's paths, as the Packager left them (PathTokens): where they are here
-                        string state = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "wpf-webgpu", "state");
-                        File.WriteAllText(to, File.ReadAllText(hive)
-                            .Replace("${WPFRUN_APPDIR}", appFolder.TrimEnd('/'))
-                            .Replace("${WPFRUN_PROGRAMDATA}", Path.Combine(state, "ProgramData"))
-                            .Replace("${WPFRUN_INSTALLDIR}", Path.Combine(root, "install")));
+                        if (!File.Exists(to)) File.Copy(hive, to);
                     }
                 }
             }
@@ -400,6 +485,9 @@ internal static partial class Bundle
                     Window.MakeKeyAndVisible();
                     // the screen the app's windows are views of
                     MS.Internal.Interop.UIKitWindow.RootView = vc.View!.Handle;
+                    // opened by another app of the installation (StartApp): its command line
+                    foreach (UIOpenUrlContext context in connectionOptions.UrlContexts ?? new NSSet<UIOpenUrlContext>())
+                        WpfRunBundleHost.TakeUrlArgs(context.Url);
                     if (s_started) return;
                     s_started = true;
                     // after the scene has connected: the app's Main does not return until it ends

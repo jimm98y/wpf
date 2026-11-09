@@ -83,6 +83,139 @@ public static class AndroidPackager
         return apk;
     }
 
+    /// <summary>The installation's mobile apps as one APK: each app a slot of the template (its own launcher icon,
+    /// process and task), its folder where it is in the installation (install/&lt;folder&gt;), the registry and
+    /// ProgramData once, shared by them all as the machine's are on Windows; a file the apps have alike stored once.
+    /// Process.Start of one app's .exe by another starts that app (the host's StartApp, through wpfrun-apps.txt).</summary>
+    public static string BuildInstallation(PackageManifest manifest, IReadOnlyList<AppEntry> entries, StagedState staged, PackFile pack, string outDir, Action<string> log)
+    {
+        string work = Path.Combine(outDir, ".work", "android-installation");
+        Directory.CreateDirectory(work);
+        string refs = Path.Combine(pack.Directory, "refs");
+        var provided = new HashSet<string>(Directory.EnumerateFiles(refs, "*.dll").Select(Path.GetFileNameWithoutExtension).OfType<string>(), StringComparer.OrdinalIgnoreCase);
+        string ns = pack["templateNamespace"];
+        var apps = new List<(int Slot, AppEntry Entry, MobileApp App, string Label)>();
+        foreach (var entry in entries)
+        {
+            var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, Path.Combine(work, Path.GetFileNameWithoutExtension(entry.Exe)), log);
+            log($"{app.Name}: {app.Files.Count} files in {app.Folder}{(app.LeftOut.Count > 0 ? $" ({app.LeftOut.Count} left out)" : "")}");
+            apps.Add((apps.Count + 1, entry, app, entry.Name.Length > 0 ? entry.Name : app.Name));
+        }
+
+        string id = InstallationId(manifest);
+        string stamp = Guid.NewGuid().ToString("N");
+        string unsigned = Path.Combine(work, "unsigned.apk");
+        long cdOffset;
+        var assets = new List<string>();
+        using (var template = new ZipReader(Path.Combine(pack.Directory, "template.apk")))
+        using (var file = File.Create(unsigned))
+        {
+            var zip = new ZipWriter(file);
+            var icons = apps.ToDictionary(a => a.Slot, a => Icon(manifest, a.Entry));
+            foreach (var e in template.Entries)
+            {
+                if (e.Name.StartsWith("META-INF/", StringComparison.Ordinal) && IsSignatureFile(e.Name)) continue;
+                if (e.Name.StartsWith("assets/wpfrun-app", StringComparison.Ordinal) || e.Name == "assets/wpfrun-assets.txt") continue;
+                if (e.Name == "AndroidManifest.xml")
+                {
+                    zip.Add(e.Name, InstallationManifest(template.Read(e), pack, ns, id, apps.Select(a => (a.Slot, a.Label)).ToList(), manifest.Product.Version), compress: true);
+                    continue;
+                }
+                // a slot's icon: res/mipmap-<density>/appicon<slot>.png (the first slot's appicon.png)
+                if (e.Name.StartsWith("res/mipmap-", StringComparison.Ordinal) && System.Text.RegularExpressions.Regex.Match(e.Name, @"/appicon(\d*)\.png$") is { Success: true } m)
+                {
+                    int slot = m.Groups[1].Value.Length == 0 ? 1 : int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+                    if (icons.TryGetValue(slot, out var image) && image != null
+                        && Icons.AndroidMipmaps.FirstOrDefault(mm => e.Name.StartsWith("res/mipmap-" + mm.Density + "-", StringComparison.Ordinal) || e.Name.StartsWith("res/mipmap-" + mm.Density + "/", StringComparison.Ordinal)) is { Size: > 0 } mip)
+                    {
+                        zip.Add(e.Name, Icons.PngAt(image.Value, mip.Size), compress: false);
+                        continue;
+                    }
+                }
+                zip.CopyFrom(template, e);
+            }
+
+            // each distinct file once; another path with the same bytes names the stored one
+            // (a file two apps both use -- a shared assembly -- is the installation's one file, put in once)
+            var stored = new Dictionary<(long, string), string>();
+            var paths = new HashSet<string>(StringComparer.Ordinal);
+            void Asset(string source, string path)
+            {
+                if (!paths.Add(path)) return;
+                var info = new FileInfo(source);
+                string hash;
+                using (var h = File.OpenRead(source)) hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(h));
+                if (stored.TryGetValue((info.Length, hash), out string? first)) { assets.Add(path + "\t" + first); return; }
+                using var s = File.OpenRead(source);
+                zip.Add("assets/" + path, s, compress: !s_stored.Contains(Path.GetExtension(path)));
+                stored[(info.Length, hash)] = path;
+                assets.Add(path);
+            }
+            foreach (var a in apps)
+            {
+                string folder = a.App.Folder == "." ? "" : a.App.Folder.Trim('/') + "/";
+                foreach (var (source, target) in a.App.Files) Asset(source, "install/" + folder + target);
+            }
+            // the installation's registry as staged: its paths under the installation (install/) are every app's
+            foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg"))
+            {
+                zip.Add("assets/registry/" + Path.GetFileName(hive), File.ReadAllBytes(hive), compress: true);
+                assets.Add("registry/" + Path.GetFileName(hive));
+            }
+            var mobileExcludes = new GlobSet(manifest.MobileExclude);
+            foreach (var (source, target) in staged.ProgramDataFiles)
+                if (!mobileExcludes.Matches(target)) Asset(source, "state/ProgramData/" + target);
+
+            zip.Add("assets/wpfrun-assets.txt", Encoding.UTF8.GetBytes(string.Join("\n", assets) + "\n"), compress: true);
+            foreach (var a in apps)
+            {
+                string folder = a.App.Folder == "." ? "" : a.App.Folder.Trim('/');
+                zip.Add(a.Slot == 1 ? "assets/wpfrun-app.txt" : $"assets/wpfrun-app{a.Slot}.txt",
+                    Encoding.UTF8.GetBytes($"name={a.App.Name}\nexe={a.App.Exe}\nfolder={folder}\nstamp={stamp}\nosidentity={manifest.Product.OsIdentity}\n"), compress: false);
+            }
+            zip.Add("assets/wpfrun-apps.txt", Encoding.UTF8.GetBytes(string.Concat(apps.Select(a =>
+                $"{a.Slot}\t{(a.App.Folder == "." ? "" : a.App.Folder.Trim('/'))}\t{a.App.Exe}\n"))), compress: false);
+            cdOffset = zip.Finish();
+        }
+
+        Directory.CreateDirectory(outDir);
+        string apk = Path.Combine(outDir, FileName(manifest.Product.Name) + ".apk");
+        ApkSigner.Sign(unsigned, cdOffset, ApkSigner.LoadKey(manifest.Signing.AndroidKeystore, manifest.Signing.AndroidKeyAlias), apk);
+        File.Delete(unsigned);
+        log($"{apk} ({new FileInfo(apk).Length / (1024 * 1024)} MB, {id}: {string.Join(", ", apps.Select(a => a.Label))})");
+        return apk;
+    }
+
+    private static byte[] InstallationManifest(byte[] axml, PackFile pack, string ns, string id, IReadOnlyList<(int Slot, string Label)> apps, string version)
+    {
+        var m = new Axml(axml);
+        if (m.ReplacePrefix(pack["templateId"], id) == 0) throw new PackagerError("the template's manifest does not name its package id");
+        foreach (var (slot, label) in apps)
+        {
+            if (slot == 1) { m.ReplaceWithin(pack["templateLabel"], label); continue; }
+            if (m.ReplaceWithin("wpfrun-slot-" + slot, label) == 0 || !m.EnableElement($"{ns}.WpfRunApp{slot}"))
+                throw new PackagerError($"the Android template has no slot {slot} for {label}: rebuild android.pack (wpfrun pack --android)");
+        }
+        m.SetIntAttribute("versionCode", VersionCode(version));
+        for (int i = 0; i < m.Strings.Count; i++)
+            if (m.Strings[i] == "1.0") m.Strings[i] = version;
+        return m.ToArray();
+    }
+
+    /// <summary>The installation's package id: the id prefix and the product's name.</summary>
+    public static string InstallationId(PackageManifest manifest)
+    {
+        string Segment(string s)
+        {
+            var sb = new StringBuilder();
+            foreach (char c in s.ToLowerInvariant()) if (char.IsAsciiLetterOrDigit(c) || c == '_') sb.Append(c);
+            string seg = sb.ToString();
+            return seg.Length == 0 || char.IsAsciiDigit(seg[0]) ? "app" + seg : seg;
+        }
+        string prefix = string.Join('.', manifest.Product.IdPrefix.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(Segment));
+        return (prefix.Length > 0 ? prefix + "." : "") + Segment(manifest.Product.Name);
+    }
+
     private static bool IsSignatureFile(string name) =>
         name == "META-INF/MANIFEST.MF" || name.EndsWith(".SF", StringComparison.Ordinal) || name.EndsWith(".RSA", StringComparison.Ordinal)
         || name.EndsWith(".DSA", StringComparison.Ordinal) || name.EndsWith(".EC", StringComparison.Ordinal);

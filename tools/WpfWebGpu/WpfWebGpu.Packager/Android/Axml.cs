@@ -12,7 +12,7 @@ public sealed class Axml
 {
     private const ushort ResXml = 0x0003, ResStringPool = 0x0001, ResXmlStartElement = 0x0102;
     private const uint Utf8Flag = 1 << 8;
-    private const byte TypeIntDec = 0x10, TypeIntHex = 0x11;
+    private const byte TypeIntDec = 0x10, TypeIntHex = 0x11, TypeIntBoolean = 0x12;
 
     private readonly byte[] _rest;          // the chunks after the string pool, as they were
     private readonly byte[] _styles;        // the pool's style data, unparsed (a manifest has none in practice)
@@ -131,6 +131,45 @@ public sealed class Axml
             p += size;
         }
         return n;
+    }
+
+    /// <summary>The element whose name attribute is <paramref name="name"/> (an activity: android:name) made enabled:
+    /// its boolean enabled attribute set true. False when there is no such element or it has no enabled attribute.</summary>
+    public bool EnableElement(string name)
+    {
+        int nameAttr = Strings.IndexOf("name"), enabledAttr = Strings.IndexOf("enabled"), value = Strings.IndexOf(name);
+        if (nameAttr < 0 || enabledAttr < 0 || value < 0) return false;
+        int p = 0;
+        while (p + 8 <= _rest.Length)
+        {
+            ushort type = BinaryPrimitives.ReadUInt16LittleEndian(_rest.AsSpan(p));
+            int headerSize = BinaryPrimitives.ReadUInt16LittleEndian(_rest.AsSpan(p + 2));
+            int size = BinaryPrimitives.ReadInt32LittleEndian(_rest.AsSpan(p + 4));
+            if (size <= 0) break;
+            if (type == ResXmlStartElement)
+            {
+                int ext = p + headerSize;
+                int attrStart = BinaryPrimitives.ReadUInt16LittleEndian(_rest.AsSpan(ext + 8));
+                int attrSize = BinaryPrimitives.ReadUInt16LittleEndian(_rest.AsSpan(ext + 10));
+                int attrCount = BinaryPrimitives.ReadUInt16LittleEndian(_rest.AsSpan(ext + 12));
+                bool named = false;
+                int enabledAt = -1;
+                for (int a = 0; a < attrCount; a++)
+                {
+                    int at = ext + attrStart + a * attrSize;
+                    int attrName = BinaryPrimitives.ReadInt32LittleEndian(_rest.AsSpan(at + 4));
+                    if (attrName == nameAttr && BinaryPrimitives.ReadInt32LittleEndian(_rest.AsSpan(at + 8)) == value) named = true;
+                    else if (attrName == enabledAttr && _rest[at + 15] == TypeIntBoolean) enabledAt = at;
+                }
+                if (named && enabledAt >= 0)
+                {
+                    BinaryPrimitives.WriteInt32LittleEndian(_rest.AsSpan(enabledAt + 16), -1);
+                    return true;
+                }
+            }
+            p += size;
+        }
+        return false;
     }
 
     public byte[] ToArray()

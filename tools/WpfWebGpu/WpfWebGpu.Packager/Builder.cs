@@ -33,8 +33,9 @@ public static class Builder
         {
             if (mobile.Count == 0) throw new PackagerError("no app is marked \"mobile\": nothing to make for Android or Quest");
             var pack = PackFile.Open(packsFolder, "android");
-            foreach (var app in mobile)
-                made.Add(AndroidPackager.Build(manifest, app, staged, pack, Path.Combine(outDir, "android"), log));
+            // several apps: one package, its apps sharing the machine's state and starting each other, as on Windows
+            if (mobile.Count > 1) made.Add(AndroidPackager.BuildInstallation(manifest, mobile, staged, pack, Path.Combine(outDir, "android"), log));
+            else made.Add(AndroidPackager.Build(manifest, mobile[0], staged, pack, Path.Combine(outDir, "android"), log));
         }
         // the apps' pages for the browser, made once and served by every desktop installation
         var pages = targets.Any(t => t is Target.MacOS or Target.Linux or Target.Windows) && manifest.Apps.Any(a => a.Web)
@@ -73,7 +74,7 @@ public static class Builder
             if (mobile.Count == 0) throw new PackagerError("no app is marked \"mobile\": nothing to make for iOS");
             var pack = PackFile.Open(packsFolder, "ios");
             foreach (var app in mobile)
-                made.AddRange(Apple.IosPackager.Build(manifest, app, staged, pack, outDir, log));
+                made.AddRange(Apple.IosPackager.Build(manifest, app, mobile, staged, pack, outDir, log));
         }
         foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows or Target.IOS)))
             log($"{t}: not made yet by this Packager");

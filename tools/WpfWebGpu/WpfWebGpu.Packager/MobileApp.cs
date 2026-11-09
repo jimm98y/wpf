@@ -62,6 +62,10 @@ public sealed class MobileApp
             files.Add((rewrittenNames.Contains(file) ? Path.Combine(rewritten, file) : a, file));
         }
 
+        // the app's .exe, where it is on Windows: what another app of the installation finds (File.Exists) and
+        // starts -- Process.Start of it opens this app -- though nothing runs it here
+        files.Add((exe, Path.GetFileName(exe)));
+
         // the data: the folder's other files, and its folders that are not a native runtime's
         foreach (string f in Directory.EnumerateFiles(dir))
         {
