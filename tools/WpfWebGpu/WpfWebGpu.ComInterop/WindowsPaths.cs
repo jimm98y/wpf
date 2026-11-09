@@ -309,27 +309,47 @@ public static class WindowsPaths
     }
 
     public static System.Diagnostics.Process? Process_Start(string fileName)
-        => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName)));
+        => Process_Start(new System.Diagnostics.ProcessStartInfo(fileName));
 
     public static System.Diagnostics.Process? Process_Start(string fileName, string arguments)
-        => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName, arguments)));
+        => Process_Start(new System.Diagnostics.ProcessStartInfo(fileName, arguments));
 
     public static System.Diagnostics.Process? Process_Start(string fileName, IEnumerable<string> arguments)
-        => System.Diagnostics.Process.Start(Launchable(new System.Diagnostics.ProcessStartInfo(fileName, arguments)));
+        => Process_Start(new System.Diagnostics.ProcessStartInfo(fileName, arguments));
 
     public static System.Diagnostics.Process? Process_Start(System.Diagnostics.ProcessStartInfo startInfo)
-        => System.Diagnostics.Process.Start(Launchable(startInfo));
+        => StartedAsApp(startInfo) ? null : System.Diagnostics.Process.Start(Launchable(startInfo));
 
     public static bool Process_Start(System.Diagnostics.Process process)
     {
+        if (StartedAsApp(process.StartInfo)) return true;
         Launchable(process.StartInfo);
         return process.Start();
+    }
+
+    // Another program of the installation where each program is an app of its own (a phone's, a tablet's): the head
+    // starts that app (WPFWEBGPU_START_APP: Android's activity of the package, iOS's app by its URL scheme), as
+    // Windows starts the program's process -- a process of its own, its own window, the machine's state shared. No
+    // Process object comes back, as from a ShellExecute that started none of its own.
+    private static bool StartedAsApp(System.Diagnostics.ProcessStartInfo psi)
+    {
+        if (s_windows || psi == null || string.IsNullOrEmpty(psi.FileName)
+            || AppContext.GetData("WPFWEBGPU_START_APP") is not Func<string, string, bool> start
+            || !psi.FileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            return false;
+        string args = psi.ArgumentList.Count > 0 ? string.Join(" ", psi.ArgumentList.Select(QuoteArgument)) : psi.Arguments;
+        string exe = Path.GetFullPath(Native(psi.FileName)!, string.IsNullOrEmpty(psi.WorkingDirectory) ? Directory.GetCurrentDirectory() : Native(psi.WorkingDirectory)!);
+        if (s_traceProcess) Console.Error.WriteLine($"[process] start '{psi.FileName}' ({exe}) {args}");
+        bool started = start(exe, args);
+        if (s_traceProcess) Console.Error.WriteLine($"[process] start '{psi.FileName}' as an app of the installation: {(started ? "started" : "not one of them")}");
+        return started;
     }
 
     /// <summary>The start info made to run a Windows .NET executable through the launcher; any other
     /// unchanged.</summary>
     // WF_TRACE_PROCESS=1: each start an app makes, and whether it goes through the launcher.
-    private static readonly bool s_traceProcess = Environment.GetEnvironmentVariable("WF_TRACE_PROCESS") == "1";
+    // (read at each use: a host sets its diagnostics' variables after this type may be first used)
+    private static bool s_traceProcess => Environment.GetEnvironmentVariable("WF_TRACE_PROCESS") == "1";
 
     private static System.Diagnostics.ProcessStartInfo Launchable(System.Diagnostics.ProcessStartInfo psi)
     {
@@ -503,7 +523,14 @@ public static class WindowsPaths
 
     // ---- System.IO.File ----
 
-    public static bool File_Exists(string? path) => File.Exists(Disk(path));
+    public static bool File_Exists(string? path)
+    {
+        bool exists = File.Exists(Disk(path));
+        // a program the app checks for before it starts it
+        if (s_traceProcess && path != null && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            Console.Error.WriteLine($"[process] '{path}' ({Disk(path)}) {(exists ? "exists" : "does not exist")}");
+        return exists;
+    }
     public static void File_Delete(string path) => File.Delete(Disk(path)!);
     public static void File_Copy(string sourceFileName, string destFileName) => File.Copy(Disk(sourceFileName)!, Disk(destFileName)!);
     public static void File_Copy(string sourceFileName, string destFileName, bool overwrite) => File.Copy(Disk(sourceFileName)!, Disk(destFileName)!, overwrite);

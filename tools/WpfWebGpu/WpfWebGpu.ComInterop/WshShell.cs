@@ -314,7 +314,7 @@ internal interface IWshShortcut
     [DispId(2000)] void Load(string PathLink);
     [DispId(2001)] void Save();
 
-    public static unsafe class ComCcw
+    public static unsafe class ComCcw_IWshShortcut
     {
         public static IntPtr Vtable()
         {
@@ -405,7 +405,7 @@ internal interface IWshURLShortcut
     [DispId(2000)] void Load(string PathLink);
     [DispId(2001)] void Save();
 
-    public static unsafe class ComCcw
+    public static unsafe class ComCcw_IWshURLShortcut
     {
         public static IntPtr Vtable()
         {
