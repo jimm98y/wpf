@@ -320,8 +320,12 @@ namespace System.Windows.Forms
 			int w = _form.Width, h = _form.Height;
 			if (IsScreenWindow) {
 				_window.GetPixelSize (out int pw, out int ph);
-				w = (int)Math.Round (pw / _scale);
-				h = (int)Math.Round (ph / _scale);
+				Padding over = MaximizedOverhang;
+				_syncedOverhang = over;
+				x -= over.Left;
+				y -= over.Top;
+				w = (int)Math.Round (pw / _scale) + over.Horizontal;
+				h = (int)Math.Round (ph / _scale) + over.Vertical;
 			}
 			var bounds = new Rectangle (x, y, w, h);
 			if (bounds.Width > 0 && bounds.Height > 0 && _form.Bounds != bounds)
@@ -341,6 +345,20 @@ namespace System.Windows.Forms
 		}
 
 		private bool IsScreenWindow => _window != null && !_window.IsSecondary && !_window.IsBorderless;
+		private Padding _syncedOverhang;
+
+		/// <summary>How far a maximized form reaches past the screen it fills: as Windows maximizes a window --
+		/// the screen's size and its sizing borders past each edge (WM_GETMINMAXINFO's default position), so
+		/// what shows is the client and the caption, not the frame's edges, resize margin and shadow. A form
+		/// left normal in the screen's window keeps its frame on screen, as a normal window that size has.</summary>
+		private Padding MaximizedOverhang {
+			get {
+				if (!IsScreenWindow || !_chrome.HasFrame || _driver.GetWindowState (_form.Handle) != FormWindowState.Maximized)
+					return Padding.Empty;
+				Padding f = _chrome.Frame;
+				return new Padding (f.Left, f.Bottom, f.Right, f.Bottom);
+			}
+		}
 
 		private void OnVisibleChanged (object sender, EventArgs e)
 		{
@@ -391,9 +409,22 @@ namespace System.Windows.Forms
 			if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk)
 				return;
 
+			// maximized or restored since it was placed (the caption's buttons, Form.WindowState): placed again
+			if (IsScreenWindow && MaximizedOverhang != _syncedOverhang)
+				SyncFromWindow ();
 			var scenes = GetScenes (out int ox, out int oy, out int needW, out int needH);
 			if (_chrome.HasFrame)
 				scenes.Insert (0, (_chrome.Paint (_form.Size, Form.ActiveForm == _form), 0, 0));
+			// a maximized form reaches past the screen's window (MaximizedOverhang): drawn where it is in it
+			Padding over = MaximizedOverhang;
+			if (over != Padding.Empty) {
+				for (int i = 0; i < scenes.Count; i++)
+					scenes [i] = (scenes [i].Item1, scenes [i].Item2 - over.Left, scenes [i].Item3 - over.Top);
+				ox += over.Left;
+				oy += over.Top;
+				needW -= over.Horizontal;
+				needH -= over.Vertical;
+			}
 			if (needW != _surfaceW || needH != _surfaceH) {
 				// a drop-down reaching past the form: the view grows to hold it (shrinks back after)
 				_surfaceW = needW;
