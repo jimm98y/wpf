@@ -34,12 +34,26 @@ namespace Microsoft.Win32
 {
     internal sealed class FileRegistryStore
     {
-        private readonly string _path;
+        private readonly string _hiveName;
+        private string _path;
+        private bool _resolved;
         private readonly object _gate = new object();
         private bool _broken;           // one failed write is enough; stop trying and stay in memory
 
         internal FileRegistryStore(string hiveName)
         {
+            _hiveName = hiveName;
+        }
+
+        // Where the hive is, decided when it is first read or written, not when the hives are made: they are
+        // made by Registry's static initializer, on the first touch of anything registry-shaped -- which can be
+        // before a host has said where the machine's registry is (WPFWEBGPU_REGISTRY_DIR), and a store that
+        // decided then read an empty registry from the default place for the rest of the process.
+        private void Resolve()
+        {
+            if (_resolved) return;
+            _resolved = true;
+            _tokens = Tokens();
             string dir = null;
             try
             {
@@ -59,7 +73,7 @@ namespace Microsoft.Win32
                 if (!string.IsNullOrEmpty(dir))
                 {
                     Directory.CreateDirectory(dir);
-                    _path = Path.Combine(dir, hiveName + ".reg");
+                    _path = Path.Combine(dir, _hiveName + ".reg");
                 }
                 else
                 {
@@ -72,7 +86,14 @@ namespace Microsoft.Win32
             }
         }
 
-        internal bool Available => !_broken && _path != null;
+        internal bool Available
+        {
+            get
+            {
+                lock (_gate) Resolve();
+                return !_broken && _path != null;
+            }
+        }
 
         // ---- reading ------------------------------------------------------------------------
 
@@ -125,7 +146,7 @@ namespace Microsoft.Win32
             }
         }
 
-        private static bool TryParse(string kind, string payload, out object value)
+        private bool TryParse(string kind, string payload, out object value)
         {
             value = null;
             try
@@ -134,7 +155,7 @@ namespace Microsoft.Win32
                 {
                     case "str":
                     case "expand":
-                        value = Unescape(payload);
+                        value = Expand(Unescape(payload));
                         return true;
                     case "dword":
                         value = unchecked((int)Convert.ToUInt32(payload, 16));
@@ -143,7 +164,7 @@ namespace Microsoft.Win32
                         value = unchecked((long)Convert.ToUInt64(payload, 16));
                         return true;
                     case "multi":
-                        value = Unescape(payload).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+                        value = Expand(Unescape(payload)).Split('\0', StringSplitOptions.RemoveEmptyEntries);
                         return true;
                     case "bin":
                         value = Convert.FromBase64String(payload);
@@ -191,7 +212,7 @@ namespace Microsoft.Win32
             }
         }
 
-        private static void Write(StringBuilder sb, RegistryKey key, string path)
+        private void Write(StringBuilder sb, RegistryKey key, string path)
         {
             string[] valueNames = key.LoadedValueNames();
             if (valueNames.Length > 0 || path.Length > 0)
@@ -212,15 +233,50 @@ namespace Microsoft.Win32
             }
         }
 
-        private static string Format(object v) =>
+        private string Format(object v) =>
             v switch
             {
                 int i => "dword:" + unchecked((uint)i).ToString("x8"),
                 long l => "qword:" + unchecked((ulong)l).ToString("x16"),
                 byte[] b => "bin:" + Convert.ToBase64String(b),
-                string[] m => "multi:" + Escape(string.Join("\0", m)),
-                _ => "str:" + Escape(Convert.ToString(v)),
+                string[] m => "multi:" + Escape(Contract(string.Join("\0", m))),
+                _ => "str:" + Escape(Contract(Convert.ToString(v))),
             };
+
+        // A store several programs share whose paths differ for each: the apps of an installation that is one
+        // bundle per app (an iPad's), each with the installation in its own bundle. The store keeps the
+        // installation's paths as tokens (${WPFRUN_INSTALLDIR}\...), and each program reads them as its own
+        // paths and writes its own paths back as the tokens (WPFWEBGPU_REGISTRY_TOKENS: "TOKEN=path" lines).
+        private (string Token, string Path)[] _tokens = Array.Empty<(string, string)>();
+
+        private static (string, string)[] Tokens()
+        {
+            string table = Environment.GetEnvironmentVariable("WPFWEBGPU_REGISTRY_TOKENS");
+            if (string.IsNullOrEmpty(table)) return Array.Empty<(string, string)>();
+            var tokens = new List<(string Token, string Path)>();
+            foreach (string line in table.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int eq = line.IndexOf('=');
+                if (eq > 0 && eq < line.Length - 1) tokens.Add((line[..eq], line[(eq + 1)..]));
+            }
+            // the longest path first: one inside another is its own token's
+            tokens.Sort((x, y) => y.Path.Length.CompareTo(x.Path.Length));
+            return tokens.ToArray();
+        }
+
+        private string Expand(string s)
+        {
+            if (_tokens.Length == 0 || string.IsNullOrEmpty(s) || s.IndexOf("${", StringComparison.Ordinal) < 0) return s;
+            foreach (var (token, path) in _tokens) s = s.Replace(token, path, StringComparison.Ordinal);
+            return s;
+        }
+
+        private string Contract(string s)
+        {
+            if (_tokens.Length == 0 || string.IsNullOrEmpty(s)) return s;
+            foreach (var (token, path) in _tokens) s = s.Replace(path, token, StringComparison.Ordinal);
+            return s;
+        }
 
         // Percent-escaping, so that a newline, a quote or a NUL inside a value cannot end the line
         // it lives on. Kept to the few characters that would break the format rather than escaping

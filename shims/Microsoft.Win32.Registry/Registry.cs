@@ -461,7 +461,16 @@ namespace Microsoft.Win32
             }
         }
 
+        // WF_TRACE_REGISTRY=1: each value read by its key's full name, and what it was
+
         public static object GetValue(string keyName, string valueName, object defaultValue)
+        {
+            object value = Read(keyName, valueName, defaultValue);
+            if (Environment.GetEnvironmentVariable("WF_TRACE_REGISTRY") == "1") Console.Error.WriteLine($"[registry] {keyName} '{valueName}' = {value ?? "(none)"}");
+            return value;
+        }
+
+        private static object Read(string keyName, string valueName, object defaultValue)
         {
             var h = FromPath(keyName, out var rest);
             if (h == null) return defaultValue;
