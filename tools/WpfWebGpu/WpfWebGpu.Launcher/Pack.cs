@@ -5,8 +5,9 @@
 //                  and those assemblies (refs/) for the rewrite of an app's onto the stack.
 //   browser.pack   the browser head's page with no app in it (site/: the page, the runtime, the stack, nothing
 //                  trimmed), and its assemblies (refs/) for the rewrite of an app's onto the stack.
-//   sqlserver-win-x64.pack   the SQL Server a Windows installation brings, optional (SqlServerPacks): Microsoft's
-//                  SQL Server 2025 Express setup. (Linux and macOS pull SQL Server's image when installing.)
+//   sqlserver-<target>.pack  the SQL Server a Windows or Mac installation brings, optional (SqlServerPacks): Microsoft's
+//                  SQL Server 2025 Express setup (win-x64), Apple's container installer (macos: SQL Server's image
+//                  is pulled when installing, as on Linux).
 //   desktop-<rid>.pack   runtime/: what runs an installation's programs on that OS with nothing installed --
 //                  a private .NET (with ASP.NET Core, which servers use), wpfrun (launcher/, overlay/ from
 //                  artifacts/wpfrun/<rid>, made by build.sh -r <rid>) and `run`, which starts a program with them.
@@ -46,7 +47,7 @@ internal static class Pack
             }
         }
         if (!android && !ios && !browser && desktop.Count == 0 && setup.Count == 0 && sqlServer.Count == 0)
-            throw new UserError("which template? --android, --ios, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64");
+            throw new UserError("which template? --android, --ios, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64,macos");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)

@@ -49,7 +49,8 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-osx-<arch>.pack in {packsFolder}: the macOS runtime is not installed");
             foreach (string rid in rids)
-                made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log, pages));
+                made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log, pages,
+                    rid == "osx-arm64" ? SqlServerPack(manifest, packsFolder, "macos") : null));
         }
         if (targets.Contains(Target.Linux))
         {

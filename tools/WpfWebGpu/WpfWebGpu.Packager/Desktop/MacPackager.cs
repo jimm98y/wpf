@@ -24,10 +24,10 @@ using System.Security;
 
 namespace WpfWebGpu.Packager.Desktop;
 
-public static class MacPackager
+public static partial class MacPackager
 {
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
-        IReadOnlyList<WebPages.Page>? pages = null)
+        IReadOnlyList<WebPages.Page>? pages = null, PackFile? sqlPack = null)
     {
         if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (productbuild)");
         string product = manifest.Product.Name;
@@ -113,7 +113,7 @@ public static class MacPackager
         foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             WriteAppStub(Path.Combine(payload, "Applications", product), root, id, app, manifest, image);
 
-        File.WriteAllText(Path.Combine(home, "uninstall.sh"), Uninstall(root, product, id, daemons));
+        File.WriteAllText(Path.Combine(home, "uninstall.sh"), Uninstall(root, product, id, daemons, sqlPack != null));
         Executable(Path.Combine(home, "uninstall.sh"));
         // the services by their Windows names, through launchd
         var named = manifest.Services.Select(x => (x.Name, id + "." + DesktopCommon.Segment(x.Name))).ToList();
@@ -138,8 +138,19 @@ public static class MacPackager
         // the product archive's Distribution, with the product's name as its title (what Installer and `installer`
         // show; productbuild --package alone writes none)
         string distribution = Path.Combine(work, "distribution.xml");
-        Run("/usr/bin/productbuild", "--synthesize", "--package", component, distribution);
+        // with SQL Server: Apple's container, as signed, and the daemon that runs SQL Server in it, a choice of their own
+        var synthesize = new List<string> { "--synthesize", "--package", component };
+        if (sqlPack != null)
+        {
+            string container = Path.Combine(work, "container.pkg");
+            File.Copy(Path.Combine(sqlPack.Directory, "container.pkg"), container);
+            synthesize.AddRange(new[] { "--package", container, "--package", BuildSqlServerComponent(manifest, id, root, work, log) });
+            log($"  {sqlPack["engine"]}: a choice, chosen by default (its image downloaded when installing)");
+        }
+        synthesize.Add(distribution);
+        Run("/usr/bin/productbuild", synthesize.ToArray());
         var dist = System.Xml.Linq.XDocument.Load(distribution);
+        if (sqlPack != null) SqlServerChoices(dist, product, id, sqlPack["package"]);
         dist.Root!.AddFirst(new System.Xml.Linq.XElement("title", product));
         dist.Save(distribution);
         var args = new List<string> { "--distribution", distribution, "--package-path", work, "--identifier", id, "--version", manifest.Product.Version };
@@ -429,12 +440,13 @@ public static class MacPackager
 
         """;
 
-    internal static string Uninstall(string root, string product, string id, List<string> daemons) => $$"""
+    internal static string Uninstall(string root, string product, string id, List<string> daemons, bool sqlServer = false) => $$"""
         #!/bin/sh
         # Removes {{product}}: its services, its apps, its files, and its caches and logs (the machine's and each user's).
         # The machine's state (state/: the registry and ProgramData) is kept unless --all is given, as Windows keeps
         # ProgramData after an uninstall.
         if [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
+        {{(sqlServer ? SqlServerUninstall(id, root) : "")}}
         {{StopAll(root, product, id)}}
         rm -f "/Library/LaunchAgents/{{id}}.startup.plist"
         rm -rf "/Applications/{{product}}"
@@ -444,7 +456,7 @@ public static class MacPackager
         if [ "$1" = "--all" ]; then
           rm -rf "{{root}}"
         else
-          find "{{root}}" -mindepth 1 -maxdepth 1 ! -name state -exec rm -rf {} +
+          find "{{root}}" -mindepth 1 -maxdepth 1 ! -name state ! -name sqlserver -exec rm -rf {} +
         fi
         pkgutil --forget "{{id}}" >/dev/null 2>&1 || true
         echo "{{product}} removed"

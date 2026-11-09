@@ -1,7 +1,8 @@
 // The SQL Server a Windows installation brings, optional and chosen by default, as the pack that carries it
 // (sqlserver-win-x64.pack, made by `wpfrun pack --sqlserver win-x64`): Microsoft SQL Server 2025 Express's own setup
 // (SQLEXPR_x64_ENU.exe), run unattended by Setup.exe -- on Windows on Arm, under Windows' x64 emulation. Linux and
-// macOS pull SQL Server's container image when installing instead (SqlServerImages): it is not carried.
+// macOS pull SQL Server's container image when installing instead (SqlServerImages): it is not carried. What a Mac
+// runs it with is (sqlserver-macos.pack): Apple's container (Apache 2.0), its signed installer as Apple publishes it.
 
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -12,11 +13,15 @@ namespace WpfWebGpu.Packager.SqlServer;
 public static class SqlServerPacks
 {
     /// <summary>The targets a pack is made for.</summary>
-    public static readonly string[] Targets = { "win-x64" };
+    public static readonly string[] Targets = { "win-x64", "macos" };
 
     // Microsoft's SQL Server 2025 Express (Core: the engine), 17.0.1000.7, from its Download Center
     private const string ExpressUrl = "https://download.microsoft.com/download/dea8c210-c44a-4a9d-9d80-0c81578860c5/ENU/SQLEXPR_x64_ENU.exe";
     private const string ExpressSha256 = "74aa90c11202a5524e769b9bc22531baef22d91e9b2d2e8c3cb99e89a65c5297";
+
+    // Apple's container 1.7.1, its installer signed by Apple and notarized, from its GitHub release
+    private const string ContainerUrl = "https://github.com/apple/container/releases/download/1.7.1/container-1.7.1-installer-signed.pkg";
+    private const string ContainerSha256 = "b6739caf3d47ca53a78f1a7edf32521420a75c7941838c3cefa75f30b80f5a97";
 
     /// <summary>The pack's kind for a target (its file is &lt;kind&gt;.pack).</summary>
     public static string Kind(string target) => "sqlserver-" + target;
@@ -38,6 +43,14 @@ public static class SqlServerPacks
                 info["engine"] = "SQL Server 2025 Express";
                 info["version"] = "17.0.1000.7";
                 info["instance"] = "SQLEXPRESS";
+                break;
+            case "macos":
+                payload = Path.Combine(cache, "container-" + ContainerSha256[..12] + ".pkg");
+                if (!File.Exists(payload)) Download(ContainerUrl, ContainerSha256, payload, log);
+                payloadName = "container.pkg";
+                info["engine"] = SqlServerImage.X64.Engine;
+                info["runtime"] = "Apple container 1.7.1";
+                info["package"] = "com.apple.container-installer";
                 break;
             default:
                 throw new PackagerError($"no SQL Server for {target} (one of {string.Join(", ", Targets)})");
