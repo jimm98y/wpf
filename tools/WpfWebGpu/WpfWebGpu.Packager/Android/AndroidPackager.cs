@@ -22,7 +22,7 @@ public static class AndroidPackager
         Directory.CreateDirectory(work);
         string refs = Path.Combine(pack.Directory, "refs");
         var provided = new HashSet<string>(Directory.EnumerateFiles(refs, "*.dll").Select(Path.GetFileNameWithoutExtension).OfType<string>(), StringComparer.OrdinalIgnoreCase);
-        var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, work, log);
+        var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, work, log, Path.Combine(pack.Directory, "frameworks"));
         log($"{app.Name}: {app.Files.Count} files{(app.LeftOut.Count > 0 ? $" ({app.LeftOut.Count} left out: {string.Join(", ", app.LeftOut.Take(6))}{(app.LeftOut.Count > 6 ? ", ..." : "")})" : "")}");
 
         string id = PackageId(manifest, entry);
@@ -97,7 +97,7 @@ public static class AndroidPackager
         var apps = new List<(int Slot, AppEntry Entry, MobileApp App, string Label)>();
         foreach (var entry in entries)
         {
-            var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, Path.Combine(work, Path.GetFileNameWithoutExtension(entry.Exe)), log);
+            var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, Path.Combine(work, Path.GetFileNameWithoutExtension(entry.Exe)), log, Path.Combine(pack.Directory, "frameworks"));
             log($"{app.Name}: {app.Files.Count} files in {app.Folder}{(app.LeftOut.Count > 0 ? $" ({app.LeftOut.Count} left out)" : "")}");
             apps.Add((apps.Count + 1, entry, app, entry.Name.Length > 0 ? entry.Name : app.Name));
         }

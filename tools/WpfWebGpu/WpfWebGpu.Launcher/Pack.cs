@@ -112,6 +112,7 @@ internal static class Pack
             }
             var refs = Directory.EnumerateFiles(framework, "*.dll").Where(f => !f.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase)).ToList();
             foreach (string r in refs) zip.CreateEntryFromFile(r, "refs/" + Path.GetFileName(r), CompressionLevel.Optimal);
+            AddSharedFrameworks(zip);
             Console.WriteLine($"wpfrun pack: {pack}: the page ({files} files) and {refs.Count} assemblies");
         }
         return 0;
@@ -159,6 +160,7 @@ internal static class Pack
             foreach (string dll in Directory.EnumerateFiles(apps["device"], "*.dll", SearchOption.AllDirectories)
                 .Where(f => !f.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase)))
                 zip.CreateEntryFromFile(dll, "refs/" + Path.GetFileName(dll), CompressionLevel.Optimal);
+            AddSharedFrameworks(zip);
         }
         Console.WriteLine($"wpfrun pack: {pack} ({new FileInfo(pack).Length / (1024 * 1024)} MB)");
         return 0;
@@ -326,6 +328,26 @@ internal static class Pack
         }
     }
 
+    /// <summary>The shared frameworks beyond .NET's own that an installation's programs may run on (ASP.NET
+    /// Core's), which Windows has installed: their assemblies as the .NET this runs on has them
+    /// (frameworks/&lt;name&gt;/), for an app whose runtimeconfig names one (the Packager's MobileApp).</summary>
+    private static void AddSharedFrameworks(ZipArchive zip)
+    {
+        // <dotnet>/shared/Microsoft.NETCore.App/<version>: its sibling frameworks of the same version, or the latest
+        string netcore = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        string shared = Path.GetDirectoryName(Path.GetDirectoryName(netcore)!)!;
+        foreach (string name in new[] { "Microsoft.AspNetCore.App" })
+        {
+            string root = Path.Combine(shared, name);
+            string? dir = Directory.Exists(Path.Combine(root, Path.GetFileName(netcore))) ? Path.Combine(root, Path.GetFileName(netcore))
+                : Directory.Exists(root) ? Directory.EnumerateDirectories(root).OrderBy(d => Version.TryParse(Path.GetFileName(d).Split('-')[0], out var v) ? v : new Version()).LastOrDefault()
+                : null;
+            if (dir == null) throw new UserError($"the .NET this runs on has no {name} (in {shared}): a program that runs on it would find none");
+            foreach (string dll in Directory.EnumerateFiles(dir, "*.dll"))
+                zip.CreateEntryFromFile(dll, $"frameworks/{name}/{Path.GetFileName(dll)}", CompressionLevel.Optimal);
+        }
+    }
+
     private static int PackAndroid(string outDir, string feed, bool verbose)
     {
         string project = Path.Combine(Locations.CacheRoot, "bundles", "template-android");
@@ -362,6 +384,7 @@ internal static class Pack
                 w.Write(JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = true }));
             zip.CreateEntryFromFile(apk, "template.apk", CompressionLevel.NoCompression);
             foreach (string r in refs) zip.CreateEntryFromFile(r, "refs/" + Path.GetFileName(r), CompressionLevel.Optimal);
+            AddSharedFrameworks(zip);
             Console.WriteLine($"wpfrun pack: {pack}: the template APK ({new FileInfo(apk).Length / (1024 * 1024)} MB) and {refs.Count} assemblies");
         }
         return 0;

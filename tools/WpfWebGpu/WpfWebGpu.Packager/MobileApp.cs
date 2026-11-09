@@ -24,7 +24,10 @@ public sealed class MobileApp
 
     /// <param name="provided">the assemblies the template holds (the stack's, the runtime's): never the app's copy</param>
     /// <param name="references">the folders holding them, where the app's references resolve</param>
-    public static MobileApp Prepare(string installDir, AppEntry entry, ISet<string> provided, IReadOnlyList<string> references, string workDir, Action<string> log)
+    /// <param name="frameworks">the pack's shared frameworks (frameworks/&lt;name&gt;/), beyond .NET's and the
+    /// stack's: the ones the app's runtimeconfig names are the app's, as Windows' installed ones are</param>
+    public static MobileApp Prepare(string installDir, AppEntry entry, ISet<string> provided, IReadOnlyList<string> references, string workDir, Action<string> log,
+        string? frameworks = null)
     {
         string exe = Path.Combine(installDir, entry.Exe);
         string dir = Path.GetDirectoryName(exe)!;
@@ -46,12 +49,30 @@ public sealed class MobileApp
         if (!assemblies.Any(a => Path.GetFileNameWithoutExtension(a).Equals(name, StringComparison.OrdinalIgnoreCase)))
             throw new PackagerError($"{entry.Exe}: its assembly {name}.dll is not one a bundle can run");
 
+        // the shared frameworks it runs on beside .NET's own (ASP.NET Core's), which Windows has installed: their
+        // assemblies the template does not hold, beside the app's own (they are .NET's, not rewritten)
+        var framework = new List<string>();
+        var search = references.Append(dir).ToList();
+        foreach (string shared in SharedFrameworks(Path.Combine(dir, name + ".runtimeconfig.json")))
+        {
+            string? from = frameworks == null ? null : Path.Combine(frameworks, shared);
+            if (from == null || !Directory.Exists(from)) { log($"  {entry.Exe}: runs on {shared}, which the pack does not hold"); continue; }
+            search.Add(from);
+            foreach (string dll in Directory.EnumerateFiles(from, "*.dll").Order(StringComparer.OrdinalIgnoreCase))
+            {
+                string n = Path.GetFileNameWithoutExtension(dll);
+                if (provided.Contains(n) || assemblies.Any(a => Path.GetFileNameWithoutExtension(a).Equals(n, StringComparison.OrdinalIgnoreCase))) continue;
+                framework.Add(dll);
+                files.Add((dll, Path.GetFileName(dll)));
+            }
+        }
+
         // placeholders for what they reference and nothing provides, then their Windows calls onto the stack
         string placeholders = Path.Combine(workDir, "placeholders"), rewritten = Path.Combine(workDir, "rewrite");
         foreach (string d in new[] { placeholders, rewritten })
             if (Directory.Exists(d)) Directory.Delete(d, recursive: true);
-        var search = references.Append(dir).ToList();
-        var made = RewriteSteps.Placeholders(assemblies, provided.Concat(assemblies.Select(Path.GetFileNameWithoutExtension)).OfType<string>(), search, placeholders, log);
+        var known = provided.Concat(assemblies.Concat(framework).Select(Path.GetFileNameWithoutExtension)).OfType<string>();
+        var made = RewriteSteps.Placeholders(assemblies, known, search, placeholders, log);
         var inputs = assemblies.Concat(made).ToList();
         if (Directory.Exists(placeholders)) search.Add(placeholders);
         var done = RewriteSteps.Rewrite(inputs, search, rewritten, primitives: null, log);
@@ -95,6 +116,21 @@ public sealed class MobileApp
             Files = files,
             LeftOut = leftOut,
         };
+    }
+
+    /// <summary>The shared frameworks a runtimeconfig names beyond .NET's and the desktop's (the stack's).</summary>
+    private static IEnumerable<string> SharedFrameworks(string runtimeConfig)
+    {
+        if (!File.Exists(runtimeConfig)) yield break;
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(runtimeConfig), new System.Text.Json.JsonDocumentOptions { CommentHandling = System.Text.Json.JsonCommentHandling.Skip, AllowTrailingCommas = true });
+        if (!doc.RootElement.TryGetProperty("runtimeOptions", out var options)) yield break;
+        var names = new List<string>();
+        if (options.TryGetProperty("frameworks", out var list) && list.ValueKind == System.Text.Json.JsonValueKind.Array)
+            foreach (var f in list.EnumerateArray())
+                if (f.TryGetProperty("name", out var n) && n.GetString() is { } s) names.Add(s);
+        if (options.TryGetProperty("framework", out var one) && one.TryGetProperty("name", out var m) && m.GetString() is { } t) names.Add(t);
+        foreach (string name in names)
+            if (name is not ("Microsoft.NETCore.App" or "Microsoft.WindowsDesktop.App")) yield return name;
     }
 
     /// <summary>A staged hive file for this app: paths into its own folder made the app's folder's

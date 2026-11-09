@@ -27,7 +27,7 @@ public static class IosPackager
         Directory.CreateDirectory(work);
         string refs = Path.Combine(pack.Directory, "refs");
         var provided = new HashSet<string>(Directory.EnumerateFiles(refs, "*.dll").Select(Path.GetFileNameWithoutExtension).OfType<string>(), StringComparer.OrdinalIgnoreCase);
-        var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, work, log);
+        var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, work, log, Path.Combine(pack.Directory, "frameworks"));
         string label = entry.Name.Length > 0 ? entry.Name : app.Name;
         string id = BundleId(manifest, entry);
         string group = AppGroup(manifest);

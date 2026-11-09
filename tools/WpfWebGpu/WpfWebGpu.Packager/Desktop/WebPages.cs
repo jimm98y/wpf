@@ -51,7 +51,7 @@ public static class WebPages
             string folder = url.Trim('/').Replace('/', '-');
             string built = Path.Combine(workDir, "web", folder);
             if (Directory.Exists(built)) Directory.Delete(built, recursive: true);
-            var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, Path.Combine(workDir, "web-work", folder), log);
+            var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, Path.Combine(workDir, "web-work", folder), log, Path.Combine(pack.Directory, "frameworks"));
 
             foreach (string f in Directory.EnumerateFiles(site, "*", SearchOption.AllDirectories))
                 Copy(f, Path.Combine(built, Path.GetRelativePath(site, f)));
