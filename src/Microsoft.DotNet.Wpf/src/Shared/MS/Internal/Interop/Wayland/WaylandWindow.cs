@@ -154,8 +154,13 @@ namespace MS.Internal.Interop.Wayland
         /// waited on it for good and the app hung.
         /// A popup, too, only while what it is placed against is: the compositor shows nothing of a
         /// popup whose parent it does not show.
-        internal bool IsVisible => !_destroyed && !_hidden && IsMapped && (_windowState & LibdecorWindowState.Suspended) == 0
+        internal bool IsVisible => ShowableButSuspended && (_windowState & LibdecorWindowState.Suspended) == 0;
+
+        /// <summary><see cref="IsVisible"/> but for the compositor's suspended state.</summary>
+        private bool ShowableButSuspended => !_destroyed && !_hidden && IsMapped
             && (_xdgPopup == IntPtr.Zero || _popupParent is not { } parent || (parent._xdgPopup != IntPtr.Zero ? parent._onScreen && parent.IsVisible : parent.IsVisible));
+
+        private bool _shown;    // a frame has been let through since the window was made or last hidden
 
         /// <summary>
         /// Whether a frame may be presented now (asked once a frame by the compositor of WPF's windows).
@@ -167,6 +172,17 @@ namespace MS.Internal.Interop.Wayland
         /// </summary>
         internal bool CanPresent()
         {
+            // The frame that first shows the window waits on nothing (there is no frame before it whose
+            // callback a swap could wait for), so the compositor's "suspended" does not hold it back: GNOME
+            // marks a toplevel it has nothing of yet suspended, a while after it was made -- a dialog whose
+            // first content came late (a busy UI thread, a frame that had nothing in it to show) then
+            // never showed at all.
+            if (!_shown && ShowableButSuspended && !_framePending)
+            {
+                _shown = true;
+                _framePending = true;
+                return true;
+            }
             if (!IsVisible) return false;
             if (_outputsEntered > 0) return true;
             if (_framePending) return false;
@@ -685,7 +701,11 @@ namespace MS.Internal.Interop.Wayland
                 w._contentW = Math.Max(1, cw);
                 w._contentH = Math.Max(1, ch);
                 if (WlDecor.libdecor_configuration_get_window_state(configuration, out LibdecorWindowState state))
+                {
+                    if (state != w._windowState)
+                        WaylandDisplay.LogSink?.Invoke($"window 0x{w._surface:x}: compositor state {w._windowState} -> {state}");
                     w._windowState = state;
+                }
 
                 IntPtr decorState = WlDecor.libdecor_state_new(w._contentW, w._contentH);
                 WlDecor.libdecor_frame_commit(frame, decorState, configuration);
@@ -1058,6 +1078,7 @@ namespace MS.Internal.Interop.Wayland
                 // off every output now, and shown again only by the next frame (see CanPresent)
                 _outputsEntered = 0;
                 _framePending = false;
+                _shown = false;
                 Wl.Request(_surface, WL_SURFACE_ATTACH,
                     WlArgument.Ptr(IntPtr.Zero), WlArgument.Int(0), WlArgument.Int(0));
                 Wl.Request(_surface, WL_SURFACE_COMMIT);

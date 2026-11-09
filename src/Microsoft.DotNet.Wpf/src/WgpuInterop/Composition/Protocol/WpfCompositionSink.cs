@@ -240,7 +240,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // compositor flush vs. a frame inside a continuous animation burst (which composites on its own).
         private readonly System.Collections.Generic.Dictionary<ulong, long> _lastPresentTicks = new();
         private readonly System.Collections.Generic.Dictionary<ulong, int> _targetPresentCount = new();
-        /// <summary>The windows already shown after their first frame with content (Windows only).</summary>
+        /// <summary>The windows already shown after their first frame with content (Windows; Wayland: see
+        /// NativePlatform.ShownByFirstFrame).</summary>
         private readonly System.Collections.Generic.HashSet<ulong> _uncloaked = new();
 
         /// <summary>Whether a scene draws anything at all: a primitive anywhere in it.</summary>
@@ -644,6 +645,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 s.Value.Partial = null;
                 if (s.Value.Surface != IntPtr.Zero) wgpuSurfaceRelease(s.Value.Surface);
                 s.Value.Surface = IntPtr.Zero;
+                _uncloaked.Remove((ulong)s.Value.Hwnd);   // a later window given the same handle is new
                 (gone ??= new List<uint>()).Add(s.Key);
             }
             if (gone != null)
@@ -793,6 +795,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // the compositor has stopped scheduling BLOCKS -- on the UI thread, until the window is
             // visible again -- so this check has to come before the acquire, not after. Asked once a
             // frame: the windowing layer counts the frames it lets through to a surface not yet shown.
+            // Not a window's frames before it has anything in them, where its first frame is what shows it
+            // (Wayland): it appears with its content, as Windows uncloaks it below. Asked before whether the
+            // window may be presented to, which lets a surface not yet shown have one frame -- this one would
+            // have been it, and the window would never have shown. The frame is as presented as Windows'
+            // into a cloaked window is: WPF hears of it (ContentRendered), as an app filling its window
+            // only then waits to.
+            if (Platform.NativePlatform.ShownByFirstFrame && !_uncloaked.Contains((ulong)t.Hwnd))
+            {
+                if (!HasContent(root))
+                {
+                    NotePresented(t.Hwnd);
+                    return;
+                }
+                _uncloaked.Add((ulong)t.Hwnd);
+            }
             bool visible = Platform.NativePlatform.IsWindowVisible((IntPtr)t.Hwnd);
             if (s_tracePresent)
                 System.Console.Error.WriteLine($"[present] hwnd=0x{t.Hwnd:x} {t.Width}x{t.Height} visible={visible}");

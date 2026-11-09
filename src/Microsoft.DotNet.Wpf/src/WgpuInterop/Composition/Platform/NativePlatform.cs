@@ -183,6 +183,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             => Current != PlatformKind.IOS || IosInterop.CanPresentTo(nativeWindow);
 
         /// <summary>
+        /// Whether a window is first shown by its first frame: a Wayland surface is mapped when a buffer
+        /// is first committed to it, so a frame presented before WPF has given the window anything to draw
+        /// shows it empty -- its title bar around a see-through hole until its content comes. Windows keeps
+        /// such a window cloaked until then (WpfCompositionSink); here it is simply not presented yet.
+        /// </summary>
+        public static bool ShownByFirstFrame => Current == PlatformKind.Linux;
+
+        /// <summary>
         /// Whether this window is a popup, on a head that draws popups into their owner's surface.
         /// False everywhere else, including where popups are real windows of their own.
         /// </summary>
