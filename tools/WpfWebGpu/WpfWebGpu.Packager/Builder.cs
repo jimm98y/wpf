@@ -58,7 +58,8 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-linux-<arch>.pack in {packsFolder}: the Linux runtime is not installed");
             foreach (string rid in rids)
-                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log, pages));
+                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log, pages,
+                    SqlServerPack(manifest, packsFolder, rid.EndsWith("arm64", StringComparison.Ordinal) ? "linux-arm64" : "linux-x64")));
         }
         if (targets.Contains(Target.Windows))
         {
@@ -67,7 +68,8 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-win-<arch>.pack in {packsFolder}: the Windows runtime is not installed");
             foreach (string rid in rids)
-                made.Add(Desktop.WindowsPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log));
+                made.Add(Desktop.WindowsPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log,
+                    SqlServerPack(manifest, packsFolder, "win-x64")));
         }
         if (targets.Contains(Target.IOS))
         {
@@ -86,4 +88,9 @@ public static class Builder
         }
         return made;
     }
+
+    /// <summary>The SQL Server the installation brings for <paramref name="target"/> (sqlserver-&lt;target&gt;.pack),
+    /// or none where the manifest does not ask for it.</summary>
+    private static PackFile? SqlServerPack(PackageManifest manifest, string packsFolder, string target) =>
+        manifest.SqlServer.Include ? PackFile.Open(packsFolder, SqlServer.SqlServerPacks.Kind(target)) : null;
 }

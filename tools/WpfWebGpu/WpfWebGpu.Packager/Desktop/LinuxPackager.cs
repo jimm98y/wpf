@@ -18,10 +18,12 @@ using System.Text;
 
 namespace WpfWebGpu.Packager.Desktop;
 
-public static class LinuxPackager
+public static partial class LinuxPackager
 {
+    /// <param name="sqlPack">the SQL Server the installation brings (sqlserver-linux-&lt;arch&gt;.pack), or none:
+    /// a package of its own the installation's recommends, and in the .tar.gz a part install.sh offers</param>
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
-        IReadOnlyList<WebPages.Page>? pages = null)
+        IReadOnlyList<WebPages.Page>? pages = null, PackFile? sqlPack = null)
     {
         string product = manifest.Product.Name;
         string rid = runtimePack["rid"];
@@ -131,7 +133,7 @@ public static class LinuxPackager
         using (var gz = new GZipStream(file, CompressionLevel.Optimal))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes), executable: false);
+            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlPack != null), executable: false);
             tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
             tar.AddText("./preinst", PreInst(pkg), executable: true);
             tar.AddText("./prerm", PreRm(units, root), executable: true);
@@ -149,6 +151,7 @@ public static class LinuxPackager
             using (var d = File.OpenRead(data)) ArMember(output, "data.tar.gz", d);
         }
         log($"{deb} ({new FileInfo(deb).Length / (1024 * 1024)} MB)");
+        if (sqlPack != null) BuildSqlServer(manifest, sqlPack, arch, outDir, log);
 
         // the same for a Linux without dpkg (Fedora, RHEL, SUSE, Arch): the files as they are in the .deb, and
         // install.sh / uninstall.sh doing what its maintainer scripts do
@@ -158,9 +161,17 @@ public static class LinuxPackager
         using (var gz = new GZipStream(output, CompressionLevel.Fastest))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
-            tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units), executable: true);
+            tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg),
+                sqlPack == null ? "" : SqlServerInstallStep(manifest, sqlPack, pkg)), executable: true);
+            tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units,
+                sqlPack == null ? "" : SqlServerUninstallStep(sqlPack, pkg)), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
+            if (sqlPack != null)
+            {
+                string sqlFiles = Path.Combine(work, "sqlserver.tar");
+                using (var f = File.Create(sqlFiles)) WriteSqlServerFiles(f, manifest, sqlPack);
+                tar.AddFile(sqlFiles, $"./{folder}/sqlserver.tar", executable: false);
+            }
             tar.Finish();
         }
         Directory.Delete(work, recursive: true);
@@ -168,7 +179,8 @@ public static class LinuxPackager
         return deb;
     }
 
-    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts) => $$"""
+    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
+        string sqlServerStep) => $$"""
         #!/bin/sh
         # Installs {{pkg}} on a Linux without dpkg: its files into / (the list kept for uninstall.sh), then as the .deb's
         # postinst does -- the machine's state on the first install, the services enabled and started.
@@ -186,17 +198,19 @@ public static class LinuxPackager
         cp uninstall.sh "{{root}}/uninstall.sh"
         chmod 755 "{{root}}/uninstall.sh"
         {{PostInstBody(root, state, units, masked, accounts)}}
+        {{sqlServerStep}}
         echo "{{pkg}} installed into {{root}}"
 
         """;
 
-    private static string UninstallScript(string pkg, string root, string state, List<(string Name, bool Enable)> units) => $$"""
+    private static string UninstallScript(string pkg, string root, string state, List<(string Name, bool Enable)> units, string sqlServerStep) => $$"""
         #!/bin/sh
         # Removes {{pkg}} as installed by install.sh. The machine's state ({{state}}) is kept unless --all is given,
         # as Windows keeps ProgramData.
         [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
         if [ -d /run/systemd/system ]; then
         {{string.Concat(units.Select(u => $"  systemctl disable --now {u.Name} 2>/dev/null || true\n"))}}fi
+        {{sqlServerStep}}
         if [ -f "{{root}}/installed-files.txt" ]; then
           while IFS= read -r f; do [ -f "$f" ] && rm -f "$f"; done < "{{root}}/installed-files.txt"
         fi
@@ -309,14 +323,14 @@ public static class LinuxPackager
 
         """;
 
-    private static string Control(PackageManifest manifest, string pkg, string arch, long bytes) => $"""
+    private static string Control(PackageManifest manifest, string pkg, string arch, long bytes, bool sqlServer) => $"""
         Package: {pkg}
         Version: {DebVersion(manifest.Product.Version)}
         Architecture: {arch}
         Maintainer: {(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : manifest.Product.Name)} <noreply@localhost>
         Installed-Size: {Math.Max(1, bytes / 1024)}
         Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu74 | libicu72 | libicu70 | libicu67 | libicu66, acl
-        Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1
+        Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1{(sqlServer ? ", " + SqlServerPackageName(pkg) : "")}
         Section: misc
         Priority: optional
         Description: {manifest.Product.Name}

@@ -5,6 +5,8 @@
 //                  and those assemblies (refs/) for the rewrite of an app's onto the stack.
 //   browser.pack   the browser head's page with no app in it (site/: the page, the runtime, the stack, nothing
 //                  trimmed), and its assemblies (refs/) for the rewrite of an app's onto the stack.
+//   sqlserver-<target>.pack   the SQL Server an installation brings, optional (SqlServerPacks): SQL Server 2025
+//                  Express for win-x64 and (as a container image, also a Mac's) linux-x64, Azure SQL Edge for linux-arm64.
 //   desktop-<rid>.pack   runtime/: what runs an installation's programs on that OS with nothing installed --
 //                  a private .NET (with ASP.NET Core, which servers use), wpfrun (launcher/, overlay/ from
 //                  artifacts/wpfrun/<rid>, made by build.sh -r <rid>) and `run`, which starts a program with them.
@@ -24,6 +26,7 @@ internal static class Pack
         bool android = false, verbose = false, ios = false, browser = false;
         var desktop = new List<string>();
         var setup = new List<string>();
+        var sqlServer = new List<string>();
         string? wpfrunBuilds = null;
         for (int i = 0; i < args.Length; i++)
         {
@@ -37,11 +40,13 @@ internal static class Pack
                 case "--desktop": desktop.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
                 case "--setup": setup.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
+                case "--sqlserver": sqlServer.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "-v" or "--verbose": verbose = true; break;
                 default: throw new UserError($"unknown option '{args[i]}'.");
             }
         }
-        if (!android && !ios && !browser && desktop.Count == 0 && setup.Count == 0) throw new UserError("which template? --android, --ios, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...]");
+        if (!android && !ios && !browser && desktop.Count == 0 && setup.Count == 0 && sqlServer.Count == 0)
+            throw new UserError("which template? --android, --ios, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64,linux-x64,linux-arm64");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)
@@ -54,6 +59,8 @@ internal static class Pack
             int code = PackSetup(outDir, rid, verbose);
             if (code != 0) return code;
         }
+        foreach (string target in sqlServer)
+            WpfWebGpu.Packager.SqlServer.SqlServerPacks.Make(target, outDir, Path.Combine(Locations.CacheRoot, "sqlserver"), m => Console.WriteLine("wpfrun pack: " + m));
         if (!android && !ios && !browser) return 0;
         feed = Path.GetFullPath(feed ?? Bundle.FindFeedForPack() ?? throw new UserError("no package feed with WpfWebGpu.Sdk found beside wpfrun; pass --feed <folder>."));
         if (browser)

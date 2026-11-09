@@ -5,7 +5,8 @@
 //
 //   Setup.exe                 install (or upgrade)
 //   Setup.exe /uninstall      remove; ProgramData and the registry's values are kept, as Windows keeps them
-//   /quiet                    no prompt at the end
+//   /quiet                    no prompt at the end, nor the question below (its default taken)
+//   /sql, /nosql              the SQL Server it brings installed, or left out, without asking (SqlServer.cs)
 
 using System.ComponentModel;
 using System.Diagnostics;
@@ -19,10 +20,12 @@ namespace WpfWebGpu.Setup;
 internal static partial class Program
 {
     private static bool s_quiet;
+    private static string[] s_args = Array.Empty<string>();
 
     private static int Main(string[] args)
     {
         s_quiet = args.Any(a => a.Equals("/quiet", StringComparison.OrdinalIgnoreCase));
+        s_args = args;
         try
         {
             if (!OperatingSystem.IsWindows()) throw new InvalidOperationException("Setup.exe installs on Windows.");
@@ -112,6 +115,9 @@ internal static partial class Program
             values += RegistryImport.Import(Path.GetFileNameWithoutExtension(e.Name), reader.ReadToEnd(), tokens);
         }
         Console.WriteLine($"  registry: {values} values");
+
+        // the database server the services keep their configuration in, before they start
+        SqlServer.Install(zip, info, s_args, s_quiet);
 
         // the services: each program run as the service control manager's own process (wpfrun prepare: the dotnet
         // exec command wpfrun would run it with), so its ServiceBase talks to the manager itself

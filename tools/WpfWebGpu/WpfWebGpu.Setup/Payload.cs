@@ -12,6 +12,7 @@
 //   runtime/...      what runs it (desktop-win-<arch>.pack)
 //   programdata/...  ProgramData, put where it is not yet
 //   registry/*.reg   the registry, one file per hive, its paths as tokens
+//   sqlserver/...    the SQL Server it brings, optional (SqlServer.cs): Microsoft's SQL Server Express setup
 
 using System.Buffers.Binary;
 using System.Text.Json;
@@ -80,6 +81,8 @@ public sealed class SetupInfo
     public string Id { get; set; } = "";
     public List<SetupApp> Apps { get; set; } = new();
     public List<SetupService> Services { get; set; } = new();
+    /// <summary>The SQL Server it brings (sqlserver/ in the payload), or none.</summary>
+    public SetupSqlServer? SqlServer { get; set; }
 
     public static SetupInfo Read(Stream s) => JsonSerializer.Deserialize(s, SetupJson.Default.SetupInfo) ?? new SetupInfo();
     public void Write(Stream s) => JsonSerializer.Serialize(s, this, SetupJson.Default.SetupInfo);
@@ -110,6 +113,16 @@ public sealed class SetupService
     public bool DelayedAutoStart { get; set; }
     /// <summary>Its security descriptor as registered (self-relative, base64); empty: Windows' default.</summary>
     public string Security { get; set; } = "";
+}
+
+public sealed class SetupSqlServer
+{
+    /// <summary>What it is ("SQL Server 2025 Express").</summary>
+    public string Engine { get; set; } = "";
+    /// <summary>Its setup's file name in sqlserver/.</summary>
+    public string Media { get; set; } = "";
+    /// <summary>The instance it installs (SQLEXPRESS).</summary>
+    public string Instance { get; set; } = "SQLEXPRESS";
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

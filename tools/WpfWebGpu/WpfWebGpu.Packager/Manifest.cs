@@ -26,6 +26,9 @@ public sealed class PackageManifest
     public List<string> MobileExclude { get; set; } = new();
     public OutputSection Output { get; set; } = new();
     public SigningSection Signing { get; set; } = new();
+    /// <summary>The SQL Server the installation brings for its databases: an optional part of each desktop
+    /// installer, chosen unless the person installing leaves it out (SqlServer.SqlServerPacks).</summary>
+    public SqlServerSection SqlServer { get; set; } = new();
 
     public static PackageManifest Load(string path)
     {
@@ -151,6 +154,14 @@ public sealed class OutputSection
     public bool Aot { get; set; }
     /// <summary>Packages for testing: nothing compressed, made as fast as they can be written.</summary>
     public bool Fast { get; set; }
+}
+
+public sealed class SqlServerSection
+{
+    /// <summary>Whether the desktop installers carry SQL Server at all (each offers it, chosen, to install).</summary>
+    public bool Include { get; set; }
+    /// <summary>The TCP port it listens on (the default instance's).</summary>
+    public int Port { get; set; } = 1433;
 }
 
 public sealed class SigningSection

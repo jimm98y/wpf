@@ -11,7 +11,10 @@ namespace WpfWebGpu.Packager.Desktop;
 
 public static class WindowsPackager
 {
-    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, PackFile setupPack, string outDir, Action<string> log)
+    /// <param name="sqlPack">the SQL Server the installation brings (sqlserver-win-x64.pack; on Arm too, emulated), or
+    /// none: Setup offers it, chosen by default</param>
+    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, PackFile setupPack, string outDir, Action<string> log,
+        PackFile? sqlPack = null)
     {
         string product = manifest.Product.Name;
         string arch = runtimePack["rid"].Split('-')[1];
@@ -31,6 +34,10 @@ public static class WindowsPackager
                 Account = s.Account.ToString(),
                 StartName = s.StartName, Description = s.Description, DelayedAutoStart = s.DelayedAutoStart, Security = s.Security,
             }).ToList(),
+            SqlServer = sqlPack == null ? null : new SetupSqlServer
+            {
+                Engine = sqlPack["engine"], Media = "SQLEXPR_x64_ENU.exe", Instance = sqlPack["instance"],
+            },
         };
 
         Directory.CreateDirectory(outDir);
@@ -56,6 +63,11 @@ public static class WindowsPackager
                     Add(zip, f, "runtime/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
                 foreach (var (source, target) in staged.ProgramDataFiles) Add(zip, source, "programdata/" + target);
                 foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg")) Add(zip, hive, "registry/" + Path.GetFileName(hive));
+                if (sqlPack != null)
+                {
+                    Add(zip, Path.Combine(sqlPack.Directory, "SQLEXPR_x64_ENU.exe"), "sqlserver/SQLEXPR_x64_ENU.exe", stored: true);
+                    log($"  {sqlPack["engine"]}, offered (chosen) by Setup");
+                }
                 log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData, {info.Services.Count} services, {info.Apps.Count} Start menu entries");
             }
             output.Write(Payload.Trailer(zipOffset));
@@ -67,9 +79,9 @@ public static class WindowsPackager
     // already compressed: stored
     private static readonly HashSet<string> s_stored = new(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif", ".zip", ".gz", ".br", ".mp4", ".nupkg", ".woff2" };
 
-    private static void Add(ZipArchive zip, string source, string name)
+    private static void Add(ZipArchive zip, string source, string name, bool stored = false)
     {
-        var entry = zip.CreateEntry(name, s_stored.Contains(Path.GetExtension(source)) ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
+        var entry = zip.CreateEntry(name, stored || s_stored.Contains(Path.GetExtension(source)) ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
         entry.LastWriteTime = File.GetLastWriteTime(source);
         using var to = entry.Open();
         using var from = File.OpenRead(source);
