@@ -35,6 +35,38 @@ internal static class Program
         """;
 
     /// <summary>An argument quoted as CommandLineToArgvW reads it back.</summary>
+    // A SIGCHLD the process was started with ignored, or blocked, stays so across exec (POSIX), and .NET's Process
+    // then never learns that a child ended: WaitForExit waits for good. macOS's authorization helper starts an
+    // elevated program so (runas: AppleScript's administrator privileges), and the launcher hung on the
+    // codesign it waits for, the program never shown. An ignored SIGCHLD is the default again here, and a
+    // blocked one unblocked (this thread's mask, which a process it starts inherits), for the launcher and the
+    // programs it starts; a handler is left as it is.
+    private static unsafe void DefaultChildSignal()
+    {
+        if (OperatingSystem.IsWindows() || OperatingSystem.IsBrowser()) return;
+        try
+        {
+            bool apple = OperatingSystem.IsMacOS() || OperatingSystem.IsIOS();
+            int sigchld = apple ? 20 : 17;
+            IntPtr old = signal(sigchld, IntPtr.Zero);              // SIG_DFL
+            if (old != (IntPtr)1) signal(sigchld, old);              // not SIG_IGN: as it was
+            byte* set = stackalloc byte[128];                       // sigset_t: 4 bytes on macOS, 128 on Linux
+            sigemptyset(set);
+            sigaddset(set, sigchld);
+            pthread_sigmask(apple ? 2 : 1, set, null);              // SIG_UNBLOCK
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "signal")]
+    private static extern IntPtr signal(int sig, IntPtr handler);
+    [System.Runtime.InteropServices.DllImport("libc")]
+    private static extern unsafe int sigemptyset(byte* set);
+    [System.Runtime.InteropServices.DllImport("libc")]
+    private static extern unsafe int sigaddset(byte* set, int sig);
+    [System.Runtime.InteropServices.DllImport("libc")]
+    private static extern unsafe int pthread_sigmask(int how, byte* set, byte* oldSet);
+
     internal static string WindowsQuote(string a)
     {
         if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\t', '"' }) < 0) return a;
@@ -52,6 +84,7 @@ internal static class Program
 
     public static int Main(string[] args)
     {
+        DefaultChildSignal();
         try
         {
             if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
