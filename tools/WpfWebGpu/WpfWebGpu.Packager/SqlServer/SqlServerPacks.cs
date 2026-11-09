@@ -1,15 +1,7 @@
-// The SQL Server an installation can bring with it, optional and chosen by default, as the packs that carry it
-// (sqlserver-<target>.pack, made by `wpfrun pack --sqlserver <target>[,...]`):
-//
-//   sqlserver-win-x64.pack     Microsoft SQL Server 2025 Express's own setup (SQLEXPR_x64_ENU.exe), run unattended
-//                              by Setup.exe -- on Windows on Arm, under Windows' x64 emulation.
-//   sqlserver-linux-x64.pack   SQL Server 2025 (Express) as Microsoft publishes it for containers, an OCI image
-//                              archive: run by Podman on Linux and by Apple's container on a Mac (in Rosetta).
-//   sqlserver-linux-arm64.pack Azure SQL Edge, the SQL Server engine Microsoft built for Arm Linux: SQL Server itself
-//                              is published for x64 only and does not run in qemu's emulation (it crashes as it
-//                              starts), so an Arm Linux machine runs SQL Edge.
-//
-// Each pack.json says what it holds (engine, image, MSSQL_PID) for the installer that runs it.
+// The SQL Server a Windows installation brings, optional and chosen by default, as the pack that carries it
+// (sqlserver-win-x64.pack, made by `wpfrun pack --sqlserver win-x64`): Microsoft SQL Server 2025 Express's own setup
+// (SQLEXPR_x64_ENU.exe), run unattended by Setup.exe -- on Windows on Arm, under Windows' x64 emulation. Linux and
+// macOS pull SQL Server's container image when installing instead (SqlServerImages): it is not carried.
 
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -20,7 +12,7 @@ namespace WpfWebGpu.Packager.SqlServer;
 public static class SqlServerPacks
 {
     /// <summary>The targets a pack is made for.</summary>
-    public static readonly string[] Targets = { "win-x64", "linux-x64", "linux-arm64" };
+    public static readonly string[] Targets = { "win-x64" };
 
     // Microsoft's SQL Server 2025 Express (Core: the engine), 17.0.1000.7, from its Download Center
     private const string ExpressUrl = "https://download.microsoft.com/download/dea8c210-c44a-4a9d-9d80-0c81578860c5/ENU/SQLEXPR_x64_ENU.exe";
@@ -46,26 +38,6 @@ public static class SqlServerPacks
                 info["engine"] = "SQL Server 2025 Express";
                 info["version"] = "17.0.1000.7";
                 info["instance"] = "SQLEXPRESS";
-                break;
-            case "linux-x64":
-                payload = Path.Combine(cache, "mssql-server-2025-amd64.tar");
-                ContainerImage.Pull("mcr.microsoft.com", "mssql/server", "2025-latest", "amd64", "mcr.microsoft.com/mssql/server:2025-latest", payload, log);
-                payloadName = "image.tar";
-                info["engine"] = "SQL Server 2025 Express";
-                info["image"] = "mcr.microsoft.com/mssql/server:2025-latest";
-                info["pid"] = "Express";
-                info["eula"] = "Y";
-                info["architecture"] = "amd64";
-                break;
-            case "linux-arm64":
-                payload = Path.Combine(cache, "azure-sql-edge-arm64.tar");
-                ContainerImage.Pull("mcr.microsoft.com", "azure-sql-edge", "latest", "arm64", "mcr.microsoft.com/azure-sql-edge:latest", payload, log);
-                payloadName = "image.tar";
-                info["engine"] = "Azure SQL Edge";
-                info["image"] = "mcr.microsoft.com/azure-sql-edge:latest";
-                info["pid"] = "Developer";
-                info["eula"] = "1";
-                info["architecture"] = "arm64";
                 break;
             default:
                 throw new PackagerError($"no SQL Server for {target} (one of {string.Join(", ", Targets)})");

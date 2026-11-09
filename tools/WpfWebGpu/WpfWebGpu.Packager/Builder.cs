@@ -58,8 +58,7 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-linux-<arch>.pack in {packsFolder}: the Linux runtime is not installed");
             foreach (string rid in rids)
-                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log, pages,
-                    SqlServerPack(manifest, packsFolder, rid.EndsWith("arm64", StringComparison.Ordinal) ? "linux-arm64" : "linux-x64")));
+                made.Add(Desktop.LinuxPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "linux"), log, pages));
         }
         if (targets.Contains(Target.Windows))
         {

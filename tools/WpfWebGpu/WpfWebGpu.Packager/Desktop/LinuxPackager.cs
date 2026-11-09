@@ -20,11 +20,12 @@ namespace WpfWebGpu.Packager.Desktop;
 
 public static partial class LinuxPackager
 {
-    /// <param name="sqlPack">the SQL Server the installation brings (sqlserver-linux-&lt;arch&gt;.pack), or none:
-    /// a package of its own the installation's recommends, and in the .tar.gz a part install.sh offers</param>
+    /// <remarks>Where the manifest asks for SQL Server (manifest.SqlServer), a package of its own the installation's
+    /// recommends (LinuxPackager.SqlServer.cs), and in the .tar.gz a part install.sh offers.</remarks>
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
-        IReadOnlyList<WebPages.Page>? pages = null, PackFile? sqlPack = null)
+        IReadOnlyList<WebPages.Page>? pages = null)
     {
+        bool sqlServer = manifest.SqlServer.Include;
         string product = manifest.Product.Name;
         string rid = runtimePack["rid"];
         string arch = rid.EndsWith("arm64", StringComparison.Ordinal) ? "arm64" : "amd64";
@@ -133,7 +134,7 @@ public static partial class LinuxPackager
         using (var gz = new GZipStream(file, CompressionLevel.Optimal))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlPack != null), executable: false);
+            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlServer), executable: false);
             tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
             tar.AddText("./preinst", PreInst(pkg), executable: true);
             tar.AddText("./prerm", PreRm(units, root), executable: true);
@@ -151,7 +152,7 @@ public static partial class LinuxPackager
             using (var d = File.OpenRead(data)) ArMember(output, "data.tar.gz", d);
         }
         log($"{deb} ({new FileInfo(deb).Length / (1024 * 1024)} MB)");
-        if (sqlPack != null) BuildSqlServer(manifest, sqlPack, arch, outDir, log);
+        if (sqlServer) BuildSqlServer(manifest, arch, outDir, log);
 
         // the same for a Linux without dpkg (Fedora, RHEL, SUSE, Arch): the files as they are in the .deb, and
         // install.sh / uninstall.sh doing what its maintainer scripts do
@@ -162,14 +163,14 @@ public static partial class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg),
-                sqlPack == null ? "" : SqlServerInstallStep(manifest, sqlPack, pkg)), executable: true);
+                sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : ""), executable: true);
             tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units,
-                sqlPack == null ? "" : SqlServerUninstallStep(sqlPack, pkg)), executable: true);
+                sqlServer ? SqlServerUninstallStep(arch, pkg) : ""), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
-            if (sqlPack != null)
+            if (sqlServer)
             {
                 string sqlFiles = Path.Combine(work, "sqlserver.tar");
-                using (var f = File.Create(sqlFiles)) WriteSqlServerFiles(f, manifest, sqlPack);
+                using (var f = File.Create(sqlFiles)) WriteSqlServerFiles(f, manifest, arch);
                 tar.AddFile(sqlFiles, $"./{folder}/sqlserver.tar", executable: false);
             }
             tar.Finish();
