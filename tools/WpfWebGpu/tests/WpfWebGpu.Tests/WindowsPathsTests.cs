@@ -81,30 +81,16 @@ public sealed class WindowsPathsTests
 public sealed class OSIdentityRewriteTests
 {
     [Fact]
-    public void Runas_on_macOS_asks_the_administrator_prompt_and_runs_the_command_as_given()
+    public void Runas_on_macOS_runs_the_program_as_the_user()
     {
-        Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS's authorization");
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS");
         var psi = new System.Diagnostics.ProcessStartInfo("/opt/p/runtime/dotnet",
-            "\"/opt/p/launcher/wpfrun.dll\" run \"/opt/p/app/Set up/Setup_ARM64.exe\" run=Workbench") { WorkingDirectory = "/opt/p/app/Set up" };
+            "\"/opt/p/launcher/wpfrun.dll\" run \"/opt/p/app/Setup_ARM64.exe\" run=Workbench") { WorkingDirectory = "/opt/p/app" };
         typeof(WpfWebGpu.ComInterop.WindowsPaths).GetMethod("Elevated", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
-            .Invoke(null, new object[] { psi, "/opt/p/app/Set up/Setup_ARM64.exe" });
-        Assert.Equal("/usr/bin/osascript", psi.FileName);
-
-        // the arguments as osascript gets them (.NET parses the command line)
-        string dump = Path.Combine(TestEnvironment.NewDirectory("argv"), "argv.sh");
-        File.WriteAllText(dump, "#!/bin/sh\nfor a; do printf '%s\\0' \"$a\"; done\n");
-        File.SetUnixFileMode(dump, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(dump, psi.Arguments) { RedirectStandardOutput = true })!;
-        string[] argv = p.StandardOutput.ReadToEnd().TrimEnd('\0').Split('\0');
-        p.WaitForExit();
-
-        int script = Array.LastIndexOf(argv, "-e") + 2;
-        Assert.Contains("with administrator privileges", string.Join("\n", argv[..script]));
-        Assert.Equal("Setup_ARM64 wants to make changes to this Mac.", argv[script]);
-        Assert.Equal("/opt/p/app/Set up", argv[script + 1]);
-        Assert.Equal("/usr/bin/env", argv[script + 2]);
-        Assert.Equal(new[] { "/opt/p/runtime/dotnet", "/opt/p/launcher/wpfrun.dll", "run", "/opt/p/app/Set up/Setup_ARM64.exe", "run=Workbench" }, argv[^5..]);
-        Assert.All(argv[(script + 3)..^5], e => Assert.Contains('=', e));
+            .Invoke(null, new object[] { psi });
+        // no prompt, no root: a GUI program run as root is outside what the Dock lists
+        Assert.Equal("/opt/p/runtime/dotnet", psi.FileName);
+        Assert.Equal("\"/opt/p/launcher/wpfrun.dll\" run \"/opt/p/app/Setup_ARM64.exe\" run=Workbench", psi.Arguments);
     }
 
     [Fact]

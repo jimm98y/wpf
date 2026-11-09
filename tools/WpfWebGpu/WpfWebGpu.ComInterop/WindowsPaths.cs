@@ -360,22 +360,23 @@ public static class WindowsPaths
         else psi.WorkingDirectory = Disk(psi.WorkingDirectory)!;
         bool elevate = psi.UseShellExecute && string.Equals(psi.Verb, "runas", StringComparison.OrdinalIgnoreCase);
         psi.UseShellExecute = false;
-        if (elevate) Elevated(psi, exe);
+        if (elevate) Elevated(psi);
         return psi;
     }
 
     // The "runas" verb (ShellExecute's elevation: the UAC prompt, then the program as an administrator), as the system
-    // has it: an administrator's password asked by its own prompt, then the program as root -- Linux's polkit
-    // (pkexec, whose agent is GNOME's), macOS's authorization (AppleScript's administrator privileges, the dialog
-    // every installer shows). It is started with the installation's settings (the elevated command gets a clean
-    // environment), its own cache and logs under root's home where they were under the user's (an administrator's
-    // files are not the user's to share), in the folder it was to start in. Already root, or with no way to elevate,
-    // it starts as it is -- as UAC does not ask an administrator who is elevated already.
-    private static void Elevated(System.Diagnostics.ProcessStartInfo psi, string program)
+    // has it. Linux: polkit's pkexec, whose agent (GNOME's) asks for an administrator's password, then the program as
+    // root, started with the installation's settings (pkexec gives it a clean environment), its own cache and logs
+    // under root's home where they were under the user's (an administrator's files are not the user's to share), in
+    // the folder it was to start in. macOS: the program as the user -- a GUI program run as root there is outside
+    // what the Dock lists (no icon, no minimize, a window that stayed gray for seconds), and the machine's state the
+    // installation's tools write is every user's (its inherited access list) as ProgramData is on Windows. Already
+    // root, or with no way to elevate, it starts as it is -- as UAC does not ask an administrator who is elevated
+    // already.
+    private static void Elevated(System.Diagnostics.ProcessStartInfo psi)
     {
-        if (Environment.UserName == "root" || geteuid() == 0) return;
-        if (OperatingSystem.IsLinux()) ElevatedLinux(psi);
-        else if (OperatingSystem.IsMacOS()) ElevatedMacOS(psi, program);
+        if (!OperatingSystem.IsLinux() || Environment.UserName == "root" || geteuid() == 0) return;
+        ElevatedLinux(psi);
     }
 
     // what the elevated program is started with: the installation's settings and the session's display
@@ -420,36 +421,6 @@ public static class WindowsPaths
         Prepend(psi, new[] { "-c", "\"$@\"; exit $?", "sh", pkexec });
         psi.FileName = "/bin/sh";
         if (s_traceProcess) Console.Error.WriteLine($"[process] elevated through {pkexec}");
-    }
-
-    // macOS: the administrator's prompt names the program, as UAC's does; AppleScript quotes each argument for the
-    // shell it runs as root, so the command is never re-parsed. The program runs in the user's session (it shows its
-    // windows, as a program started with sudo does); osascript waits for it, and fails when the prompt is cancelled.
-    private const string ElevateScript = """
-        on run argv
-          set cmd to "cd " & quoted form of (item 2 of argv) & " && exec"
-          repeat with i from 3 to count of argv
-            set cmd to cmd & " " & quoted form of (item i of argv)
-          end repeat
-          do shell script cmd & " </dev/null >/dev/null 2>&1" with prompt (item 1 of argv) with administrator privileges
-        end run
-        """;
-
-    private static void ElevatedMacOS(System.Diagnostics.ProcessStartInfo psi, string program)
-    {
-        const string osascript = "/usr/bin/osascript";
-        if (!File.Exists(osascript)) return;
-        string name = Path.GetFileNameWithoutExtension(program);
-        var head = new List<string>();
-        foreach (string line in ElevateScript.Split('\n')) { head.Add("-e"); head.Add(line); }
-        head.Add(name + " wants to make changes to this Mac.");
-        head.Add(psi.WorkingDirectory);
-        head.Add("/usr/bin/env");
-        head.AddRange(ElevatedEnvironment("/var/root"));
-        head.Add(psi.FileName);
-        Prepend(psi, head);
-        psi.FileName = osascript;
-        if (s_traceProcess) Console.Error.WriteLine($"[process] elevated through {osascript}");
     }
 
     // an argument as .NET parses a command line (Windows' rules): quoted where it has to be
