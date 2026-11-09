@@ -1,8 +1,10 @@
 // The SQL Server the installation brings (sqlserver/ in the payload: Microsoft's SQL Server Express setup), installed
 // unless the person installing says no -- asked, chosen by default; /sql or /nosql answer it, /quiet takes the default
 // -- and not where the instance is there already (an upgrade, a machine that has one). Unattended: the database
-// engine only, the instance named as the original installation expects it, TCP on, Windows and SQL logins with the
-// machine's Administrators as its sysadmins and an sa password made here (kept where only administrators read it).
+// engine only, the instance named as the installation's configuration expects it (the one its registry registered),
+// TCP on, Windows and SQL logins -- its sysadmins the machine's Administrators and the accounts the installation's
+// services run as, whose configuration connects with Windows authentication -- and an sa password made here (kept
+// where only administrators read it).
 // On Windows on Arm the same x64 setup runs, in Windows' emulation.
 
 using System.Diagnostics;
@@ -17,7 +19,7 @@ namespace WpfWebGpu.Setup;
 internal static class SqlServer
 {
     /// <summary>Installs it from <paramref name="zip"/> if the installation carries it and it is wanted.</summary>
-    public static void Install(ZipArchive zip, SetupInfo info, string[] args, bool quiet)
+    public static void Install(ZipArchive zip, SetupInfo info, string[] args, bool quiet, IEnumerable<string> serviceAccounts)
     {
         if (info.SqlServer is not { } sql) return;
         ZipArchiveEntry? media = zip.GetEntry("sqlserver/" + sql.Media);
@@ -44,10 +46,14 @@ internal static class SqlServer
             Run(exe, $"/q /x:\"{extracted}\"", "unpacking");
 
             string password = Password();
+            string sysadmins = string.Join(" ", serviceAccounts
+                .Select(a => a.Replace(" ", "") is var bare && (bare.Equals("LocalSystem", StringComparison.OrdinalIgnoreCase)
+                    || bare.Equals(@".\LocalSystem", StringComparison.OrdinalIgnoreCase)) ? @"NT AUTHORITY\SYSTEM" : a)
+                .Prepend(@"BUILTIN\Administrators").Distinct(StringComparer.OrdinalIgnoreCase).Select(a => $"\"{a}\""));
             Console.WriteLine($"  {sql.Engine}: installing instance {sql.Instance} (this takes several minutes)");
             Run(Path.Combine(extracted, "SETUP.EXE"),
                 "/Q /ACTION=Install /FEATURES=SQLEngine /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE /UPDATEENABLED=0 "
-                + $"/INSTANCENAME={sql.Instance} /SQLSYSADMINACCOUNTS=\"BUILTIN\\Administrators\" /SECURITYMODE=SQL /SAPWD=\"{password}\" "
+                + $"/INSTANCENAME={sql.Instance} /SQLSYSADMINACCOUNTS={sysadmins}/SECURITYMODE=SQL /SAPWD=\"{password}\" "
                 + "/TCPENABLED=1 /BROWSERSVCSTARTUPTYPE=Automatic /SQLSVCSTARTUPTYPE=Automatic",
                 "installing");
             string kept = Keep(info, sql, password);

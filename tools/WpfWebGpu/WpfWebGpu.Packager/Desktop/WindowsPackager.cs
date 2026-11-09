@@ -36,7 +36,7 @@ public static class WindowsPackager
             }).ToList(),
             SqlServer = sqlPack == null ? null : new SetupSqlServer
             {
-                Engine = sqlPack["engine"], Media = "SQLEXPR_x64_ENU.exe", Instance = sqlPack["instance"],
+                Engine = sqlPack["engine"], Media = "SQLEXPR_x64_ENU.exe", Instance = manifest.SqlServer.Instance,
             },
         };
 

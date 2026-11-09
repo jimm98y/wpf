@@ -162,6 +162,9 @@ public sealed class SqlServerSection
     public bool Include { get; set; }
     /// <summary>The TCP port it listens on (the default instance's).</summary>
     public int Port { get; set; } = 1433;
+    /// <summary>The instance Windows installs, named as the installation's configuration names it (the scanner takes
+    /// it from the registry's MSSQL$&lt;instance&gt; service).</summary>
+    public string Instance { get; set; } = "SQLEXPRESS";
 }
 
 public sealed class SigningSection

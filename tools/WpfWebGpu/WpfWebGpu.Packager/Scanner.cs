@@ -133,6 +133,16 @@ public static class Scanner
                 service.Environment["WPFWEBGPU_OS_IDENTITY"] = "windows";
         }
 
+        // the SQL Server instance the machine ran (its service, MSSQL$<instance>): the installation's databases were
+        // in it, so the installers bring one by that name
+        if (entries.Select(e => e.Key).FirstOrDefault(k => k.StartsWith(ServicesKey + "MSSQL$", StringComparison.OrdinalIgnoreCase)) is { } sqlKey)
+        {
+            string instance = sqlKey[(ServicesKey.Length + "MSSQL$".Length)..].Split('\\')[0];
+            manifest.SqlServer.Include = true;
+            manifest.SqlServer.Instance = instance;
+            log?.Invoke($"SQL Server: instance {instance}");
+        }
+
         manifest.Product.Name = Path.GetFileName(installDir);
         // programs that check for Windows: the product is told it runs on it, every program of it alike
         if (manifest.Services.Any(s => s.Environment.ContainsKey("WPFWEBGPU_OS_IDENTITY"))) manifest.Product.OsIdentity = "windows";

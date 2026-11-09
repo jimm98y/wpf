@@ -116,9 +116,6 @@ internal static partial class Program
         }
         Console.WriteLine($"  registry: {values} values");
 
-        // the database server the services keep their configuration in, before they start
-        SqlServer.Install(zip, info, s_args, s_quiet);
-
         // the services: each program run as the service control manager's own process (wpfrun prepare: the dotnet
         // exec command wpfrun would run it with), so its ServiceBase talks to the manager itself
         string wpfrunCache = Path.Combine(programData, info.Product, "wpfrun");
@@ -143,6 +140,15 @@ internal static partial class Program
                 foreach (string account in accounts)
                     Grant(folder, account == "NetworkService" ? System.Security.Principal.WellKnownSidType.NetworkServiceSid : System.Security.Principal.WellKnownSidType.LocalServiceSid);
         }
+        // the database server the services keep their configuration in, before they start; the accounts they run as
+        // (which exist now, a service's virtual account with it) log in to it as Windows users, as on the machine the
+        // installation was made on
+        SqlServer.Install(zip, info, s_args, s_quiet, info.Services.Select(s => s.StartName.Length > 0 ? s.StartName : s.Account switch
+        {
+            "NetworkService" => @"NT AUTHORITY\NETWORK SERVICE",
+            "LocalService" => @"NT AUTHORITY\LOCAL SERVICE",
+            _ => "LocalSystem",
+        }));
         foreach (var service in info.Services.Where(s => s.Start == "Auto")) Services.Start(ServiceName(info, service));
 
         string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), info.Product);
