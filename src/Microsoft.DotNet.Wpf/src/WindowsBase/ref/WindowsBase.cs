@@ -162,6 +162,9 @@ namespace MS.Internal.Interop
     {
         public void TakeKeyboard() { }
         public BrowserWindow() { }
+        public int FrameStyle { get { throw null; } set { } }
+        public event System.Action<System.IntPtr> Closed { add { } remove { } }
+        public void GetWindowScreenOriginPixels(out int x, out int y) { throw null; }
         public System.IntPtr Handle { get { throw null; } }
         public bool IsBorderless { get { throw null; } }
         public bool IsSecondary { get { throw null; } }
@@ -247,6 +250,7 @@ namespace MS.Internal.Interop
     public sealed partial class CocoaWindow : MS.Internal.Interop.IPlatformWindow
     {
         public void TakeKeyboard() { }
+        public void SetOwner(System.IntPtr owner) { }
         public static System.IntPtr MouseCaptureHandle;
         public static System.Func<System.IntPtr, bool> ForeignEventHandler;
         public static void EnterAppKitCallback() { }
@@ -477,6 +481,7 @@ namespace MS.Internal.Interop
     public partial interface IPlatformWindow
     {
         bool IsBorderless { get; }
+        void SetOwner(System.IntPtr owner) { }
         event System.Action<double> ScaleChanged;
         void SetVisible(bool visible);
         void SetVisible(bool visible, bool activate) { }

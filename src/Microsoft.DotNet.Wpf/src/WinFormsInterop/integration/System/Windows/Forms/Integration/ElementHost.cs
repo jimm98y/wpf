@@ -219,7 +219,10 @@ namespace System.Windows.Forms.Integration
                 // waiting, so under a moving pointer this frame sat in a nested loop until the pointer
                 // stopped, every move handled and presented one by one inside it. Lower-priority work
                 // runs as the dispatcher's own messages come round, as in any WPF application.
-                _dispatcher?.Invoke(() => { }, DispatcherPriority.Loaded);
+                // Only when there is such work: an invoke into an idle dispatcher wakes this very loop
+                // again (Dispatcher.HasQueuedWork), and an idle window kept a core busy.
+                if (_dispatcher != null && HasQueuedWork(_dispatcher, DispatcherPriority.Loaded))
+                    _dispatcher.Invoke(() => { }, DispatcherPriority.Loaded);
             }
             catch (Exception ex)
             {
@@ -233,6 +236,20 @@ namespace System.Windows.Forms.Integration
                 ReportAppException(ex);
             }
         }
+
+        // Dispatcher.HasQueuedWork: WindowsBase's, internal (this assembly builds against its public surface)
+        private static readonly Func<Dispatcher, DispatcherPriority, bool> s_hasQueuedWork = BindHasQueuedWork();
+
+        private static Func<Dispatcher, DispatcherPriority, bool> BindHasQueuedWork()
+        {
+            MethodInfo m = typeof(Dispatcher).GetMethod("HasQueuedWork", BindingFlags.Instance | BindingFlags.NonPublic);
+            return m == null ? null : (Func<Dispatcher, DispatcherPriority, bool>)m.CreateDelegate(typeof(Func<Dispatcher, DispatcherPriority, bool>));
+        }
+
+        /// <summary>Whether <paramref name="dispatcher"/> has work at <paramref name="priority"/> or above;
+        /// true where that cannot be asked (the frame is then pumped, as before).</summary>
+        private static bool HasQueuedWork(Dispatcher dispatcher, DispatcherPriority priority)
+            => s_hasQueuedWork?.Invoke(dispatcher, priority) ?? true;
 
         /// <summary>An exception from application code run by this host: handled as WinForms' message
         /// loop handles one from a window procedure.</summary>

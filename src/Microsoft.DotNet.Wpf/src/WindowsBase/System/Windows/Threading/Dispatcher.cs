@@ -2539,6 +2539,21 @@ namespace System.Windows.Threading
         }
 
 
+        /// <summary>
+        /// Whether work at <paramref name="priority"/> or above is waiting in the queue. A host that runs
+        /// this dispatcher's work from a loop of its own (ElementHost, from the WinForms present loop) asks
+        /// first: invoking into an idle dispatcher only to run nothing posts it a processing request, which
+        /// wakes that loop at once, which invokes again -- a full core spent on an idle window.
+        /// </summary>
+        internal bool HasQueuedWork(DispatcherPriority priority)
+        {
+            lock (_instanceLock)
+            {
+                DispatcherPriority max = _queue.MaxPriority;
+                return max != DispatcherPriority.Invalid && max >= priority;
+            }
+        }
+
         private bool RequestProcessing()
         {
             return CriticalRequestProcessing(false);
