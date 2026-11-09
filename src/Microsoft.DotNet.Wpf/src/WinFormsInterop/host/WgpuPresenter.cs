@@ -600,11 +600,16 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     /// <summary>How long the last surface configure took (traces).</summary>
     internal double LastConfigureMs { get; private set; }
 
+    /// <summary>Where a surface is configured, when not on the presenting thread: iOS, whose layers UIKit lets only its
+    /// main thread change (a form's thread is another; configured there, every form logged "Modifying properties of a
+    /// view's layer off the main thread is not allowed"). Set by the host; it runs the work and waits for it.</summary>
+    internal static Action<Action>? ConfigureOn;
+
     private void ConfigureNow()
     {
         if (_disposed || _surface == IntPtr.Zero) return;
         long cfg0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        try { ConfigureCore(); }
+        try { if (ConfigureOn is { } on) on(ConfigureCore); else ConfigureCore(); }
         finally { LastConfigureMs = (System.Diagnostics.Stopwatch.GetTimestamp() - cfg0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency; }
     }
 

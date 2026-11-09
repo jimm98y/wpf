@@ -95,6 +95,8 @@ namespace System.Windows.Forms
 			// its splash screen waits on a thread of its own for the view the main thread makes: WPF's
 			// dispatcher and the assembly loader keep the work other threads queue for it moving (MainWork)
 			if (AppContext.GetData ("WinFormsWebGpu.DrainMainWork") == null) AppContext.SetData ("WinFormsWebGpu.DrainMainWork", (Action)DrainMainWork);
+			// a form's Metal layer is UIKit's: its surface configured on the main thread (WgpuPresenter.ConfigureOn)
+			WgpuPresenter.ConfigureOn ??= OnMainAndWait;
 			XplatUIWebGpu.CaptureChanged += OnCaptureChanged;
 		}
 
@@ -223,6 +225,17 @@ namespace System.Windows.Forms
 			s_mainWork.Enqueue (work);
 			GCHandle handle = GCHandle.Alloc (work);
 			dispatch_async_f (s_mainQueue, GCHandle.ToIntPtr (handle), (IntPtr)(delegate* unmanaged<IntPtr, void>)&RunQueued);
+		}
+
+		/// <summary>Runs <paramref name="action"/> on the main thread and waits for it: now if this is it.</summary>
+		private static void OnMainAndWait (Action action)
+		{
+			if (pthread_main_np () != 0) { action (); return; }
+			using var done = new ManualResetEventSlim ();
+			Exception failed = null;
+			OnMain (() => { try { action (); } catch (Exception e) { failed = e; } finally { done.Set (); } });
+			done.Wait ();
+			if (failed != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture (failed).Throw ();
 		}
 
 		/// <summary>On the main thread, runs the work other threads have queued for it (see MainWork).</summary>
