@@ -1,4 +1,5 @@
-// DPAPI's contract on a machine without DPAPI: macOS and the browser.
+// DPAPI's contract on a machine without DPAPI: macOS, Linux and the browser. On Windows, DPAPI itself
+// (WindowsDpapi): this assembly is one of the Windows Desktop Runtime's, which an installation does not need.
 //
 // A blob is laid out as Windows lays out a DPAPI blob (DPAPI_BLOB: version 1, the provider
 // df9d8cd0-1501-11d1-8c7a-00c04fc297eb, the master key's GUID, flags, description, AES-256, salt,
@@ -44,6 +45,11 @@ namespace System.Security.Cryptography
 
         public static byte[] Protect(ReadOnlySpan<byte> userData, DataProtectionScope scope, ReadOnlySpan<byte> optionalEntropy = default)
         {
+            if (OperatingSystem.IsWindows())
+            {
+                CheckScope(scope);
+                return WindowsDpapi.Protect(userData, scope, optionalEntropy);
+            }
             var result = new byte[ProtectedLength(userData.Length)];
             ProtectCore(userData, scope, optionalEntropy, result);
             return result;
@@ -58,6 +64,15 @@ namespace System.Security.Cryptography
 
         public static bool TryProtect(ReadOnlySpan<byte> userData, DataProtectionScope scope, Span<byte> destination, out int bytesWritten, ReadOnlySpan<byte> optionalEntropy = default)
         {
+            if (OperatingSystem.IsWindows())
+            {
+                // DPAPI says how long its blob is only once it has made it
+                byte[] blob = Protect(userData, scope, optionalEntropy);
+                bytesWritten = blob.Length <= destination.Length ? blob.Length : 0;
+                if (bytesWritten == 0) return false;
+                blob.CopyTo(destination);
+                return true;
+            }
             int length = ProtectedLength(userData.Length);
             if (destination.Length < length)
             {
@@ -78,6 +93,7 @@ namespace System.Security.Cryptography
         public static byte[] Unprotect(ReadOnlySpan<byte> encryptedData, DataProtectionScope scope, ReadOnlySpan<byte> optionalEntropy = default)
         {
             CheckScope(scope);
+            if (OperatingSystem.IsWindows()) return WindowsDpapi.Unprotect(encryptedData, scope, optionalEntropy);
             return UnprotectCore(encryptedData, optionalEntropy);
         }
 

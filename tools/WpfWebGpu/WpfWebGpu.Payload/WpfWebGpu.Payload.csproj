@@ -70,25 +70,24 @@
   <!-- Every OS, Windows included: ServiceController forwards to the service control manager there
        (WpfWebGpu.Services) and answers from the installed services elsewhere; EventLog writes to and reads
        the OS's log (the Event Log, journald, the unified log); PerformanceCounter publishes an app's
-       categories as metrics (System.Diagnostics.Metrics) on every OS alike. -->
+       categories as metrics (System.Diagnostics.Metrics) on every OS alike; ProtectedData is DPAPI on Windows;
+       Threading.AccessControl makes the kernel's objects with their lists on Windows. These four are the Windows
+       Desktop Runtime's, which an installation does not need; what .NET's own runtime has stays its own there. -->
   <ItemGroup>
     <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />
     <!-- the service manager it is the client of, named here: restore prunes a package's dependencies otherwise (NU1511) -->
     <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
-  <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfWebGpuExtrasVersion)" />
-  </ItemGroup>
   <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('win'))">
     <ProjectReference Include="$(_WpfWebGpuShims)System.Management/System.Management.csproj" />
-    <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
     <!-- A framework member, not a package: at its higher version it wins over the shared framework's copy. -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" />
     <!-- access control lists (a mutex's, a file's, a registry key's), kept and read back, not enforced -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.AccessControl/System.Security.AccessControl.csproj" />
-    <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />
     <!-- a web host serving through http.sys (UseHttpSys): served by Kestrel, its URL prefixes routed as http.sys routes them -->
     <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Server.HttpSys/Microsoft.AspNetCore.Server.HttpSys.csproj" />
     <!-- the machine's prefixes it registers with, named here: restore prunes a framework member's dependencies (NU1511) -->

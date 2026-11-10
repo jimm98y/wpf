@@ -1,10 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Replacement for the System.Threading.AccessControl package off Windows, whose non-Windows build throws
-       PlatformNotSupportedException: a mutex, event or semaphore made with an access control list (a licence
-       tool's global mutex). Microsoft's own security classes (Runtime/, dotnet/runtime, MIT) on the
-       System.Security.AccessControl stand-in; the objects made and opened by name as .NET makes them (Acl.cs),
-       their security kept as that stand-in keeps it. Same identity as the package, at a higher version. -->
+  <!-- Replacement for the System.Threading.AccessControl package, a Windows Desktop Runtime member, on every OS: a
+       mutex, event or semaphore made with an access control list (a licence tool's global mutex). On Windows the
+       kernel's own objects with the list as their security descriptor (WindowsAcl.cs); elsewhere, where the
+       package throws PlatformNotSupportedException, made and opened by name as .NET makes them, the list kept
+       with the System.Security.AccessControl stand-in (not enforced). Microsoft's own security classes
+       (Runtime/, dotnet/runtime, MIT), compiled against the framework's System.Security.AccessControl (on
+       Windows the framework's own, which is not replaced there). Same identity as the package, at a higher
+       version. -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>System.Threading.AccessControl</AssemblyName>
@@ -26,16 +29,5 @@
     <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
   </PropertyGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="../System.Security.AccessControl/System.Security.AccessControl.csproj" />
-    <ProjectReference Include="../System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" />
-  </ItemGroup>
-
-  <Target Name="WpfWebGpuShimsOnly" AfterTargets="ResolveTargetingPackAssets">
-    <ItemGroup>
-      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'System.Security.Principal.Windows' or '%(Filename)' == 'System.Security.AccessControl'" />
-    </ItemGroup>
-  </Target>
 
 </Project>
