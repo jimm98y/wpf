@@ -1,10 +1,14 @@
 // Where logs, sources and entries live.
 //
 // Logs and sources: HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<log>\<source>, as on Windows,
-// through Microsoft.Win32.Registry; when no registry is available, in memory. Entries: in memory,
-// per log, for this process; each one also goes to wpfrun's compatibility log.
+// through Microsoft.Win32.Registry; when no registry is available, in memory. Entries: the OS's log (OsLog:
+// the Event Log, journald, the unified log), written there and read back from there, so a log holds what
+// every program wrote; where the OS keeps none, in memory, per log, for this process. Each also goes to
+// wpfrun's compatibility log. A log the OS keeps cannot lose one program's entries but on Windows: a cleared
+// log is one whose entries before its clearing (kept with its registration, for every process) are left out.
 
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.Win32;
 
@@ -25,6 +29,9 @@ namespace System.Diagnostics
         internal sealed class LogData
         {
             private readonly List<EventLogEntry> _entries = new List<EventLogEntry>();
+            private readonly string _name;
+
+            public LogData(string name) => _name = name;
             private int _next = 1;
 
             public long MaximumKilobytes = 20480;
@@ -33,6 +40,7 @@ namespace System.Diagnostics
 
             public EventLogEntry[] Snapshot()
             {
+                if (OsLog.Keeps) return OsLog.Read(_name, SourcesOf(_name), ClearedAt(_name));
                 lock (_entries) return _entries.ToArray();
             }
 
@@ -48,7 +56,9 @@ namespace System.Diagnostics
 
             public void Clear()
             {
-                lock (_entries) _entries.Clear();
+                if (OperatingSystem.IsWindows()) WindowsEventLog.Clear(_name);
+                else if (OsLog.Keeps) SetClearedAt(_name, DateTime.Now);
+                else lock (_entries) _entries.Clear();
             }
         }
 
@@ -59,7 +69,7 @@ namespace System.Diagnostics
                 if (!s_logs.TryGetValue(name, out LogData log))
                 {
                     if (!create && !LogExists(name)) throw new InvalidOperationException($"The event log '{name}' on computer '.' does not exist.");
-                    s_logs[name] = log = new LogData();
+                    s_logs[name] = log = new LogData(name);
                 }
                 return log;
             }
@@ -105,6 +115,10 @@ namespace System.Diagnostics
             {
                 using RegistryKey logKey = root.CreateSubKey(log);
                 using RegistryKey sourceKey = logKey.CreateSubKey(source);
+                // Windows: the message file Event Viewer formats the entries with -- .NET's, whose every id is "%1"
+                // (the entry's text), as dotnet/runtime's EventLog registers it
+                if (OperatingSystem.IsWindows() && MessagesDll() is { } messages && sourceKey.GetValue("EventMessageFile") == null)
+                    sourceKey.SetValue("EventMessageFile", messages, RegistryValueKind.ExpandString);
                 // The log's own name is also a source of it, as Windows registers it.
                 using RegistryKey self = logKey.CreateSubKey(log);
             }, () =>
@@ -116,6 +130,14 @@ namespace System.Diagnostics
                     s_memorySources[log] = log;
                 }
             });
+        }
+
+        private static string MessagesDll()
+        {
+            string dir = Path.GetDirectoryName(typeof(EventLog).Assembly.Location);
+            if (string.IsNullOrEmpty(dir)) dir = AppContext.BaseDirectory;
+            string file = Path.Combine(dir, "System.Diagnostics.EventLog.Messages.dll");
+            return File.Exists(file) ? file : null;
         }
 
         public static bool DeleteSource(string source)
@@ -148,7 +170,10 @@ namespace System.Diagnostics
 
         public static void Append(string log, string source, string machine, EventLogEntryType type, long instanceId, short category, byte[] data, string[] strings, string message)
         {
-            EventLogEntry entry = Log(log, create: true).Add(index => new EventLogEntry(index, source, machine, type, instanceId, category, data, strings, message));
+            OsLog.Write(log, source, type, instanceId, category, data, strings, message);
+            EventLogEntry entry = OsLog.Keeps
+                ? new EventLogEntry(0, source, machine, type, instanceId, category, data, strings, message)
+                : Log(log, create: true).Add(index => new EventLogEntry(index, source, machine, type, instanceId, category, data, strings, message));
             try
             {
                 (AppContext.GetData("WpfWebGpu.Log") as Action<string>)?.Invoke($"EventLog {log}/{source} {type} {instanceId}: {message}");
@@ -165,6 +190,51 @@ namespace System.Diagnostics
                     .Where(l => l != null && string.Equals(l.ListenedLog, log, StringComparison.OrdinalIgnoreCase)).ToArray();
             }
             foreach (EventLog l in listeners) l.OnEntryWritten(entry);
+        }
+
+        /// <summary>The sources registered in the log (its own name one of them).</summary>
+        public static IReadOnlyCollection<string> SourcesOf(string log)
+        {
+            var sources = new List<string> { log };
+            WithRegistry(root =>
+            {
+                using RegistryKey k = root.OpenSubKey(log);
+                if (k != null) foreach (string s in k.GetSubKeyNames()) if (!sources.Contains(s, StringComparer.OrdinalIgnoreCase)) sources.Add(s);
+            }, () =>
+            {
+                lock (s_gate) sources.AddRange(s_memorySources.Where(p => string.Equals(p.Value, log, StringComparison.OrdinalIgnoreCase) && !sources.Contains(p.Key, StringComparer.OrdinalIgnoreCase)).Select(p => p.Key));
+            });
+            return sources;
+        }
+
+        // when a log the OS keeps was cleared: a value of its registration
+        private const string ClearedValue = "WpfWebGpuCleared";
+        private static readonly Dictionary<string, DateTime> s_memoryCleared = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
+        private static DateTime? ClearedAt(string log)
+        {
+            DateTime? at = null;
+            WithRegistry(root =>
+            {
+                using RegistryKey k = root.OpenSubKey(log);
+                if (k?.GetValue(ClearedValue) is string text && DateTime.TryParse(text, Globalization.CultureInfo.InvariantCulture, Globalization.DateTimeStyles.RoundtripKind, out DateTime t)) at = t;
+            }, () =>
+            {
+                lock (s_gate) if (s_memoryCleared.TryGetValue(log, out DateTime t)) at = t;
+            });
+            return at;
+        }
+
+        private static void SetClearedAt(string log, DateTime at)
+        {
+            WithRegistry(root =>
+            {
+                using RegistryKey k = root.CreateSubKey(log);
+                k.SetValue(ClearedValue, at.ToString("o", Globalization.CultureInfo.InvariantCulture));
+            }, () =>
+            {
+                lock (s_gate) s_memoryCleared[log] = at;
+            });
         }
 
         public static void Listen(EventLog log)

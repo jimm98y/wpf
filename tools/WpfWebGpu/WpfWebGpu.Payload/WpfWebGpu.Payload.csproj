@@ -67,20 +67,21 @@
   <PropertyGroup>
     <_WpfWebGpuShims>$(MSBuildThisFileDirectory)../../../shims/</_WpfWebGpuShims>
   </PropertyGroup>
-  <!-- Every OS, Windows included: the shim forwards to the service control manager there (WpfWebGpu.Services),
-       and answers from the installed services elsewhere. -->
+  <!-- Every OS, Windows included: ServiceController forwards to the service control manager there
+       (WpfWebGpu.Services) and answers from the installed services elsewhere; EventLog writes to and reads
+       the OS's log (the Event Log, journald, the unified log); PerformanceCounter publishes an app's
+       categories as metrics (System.Diagnostics.Metrics) on every OS alike. -->
   <ItemGroup>
     <ProjectReference Include="$(_WpfWebGpuShims)System.ServiceProcess.ServiceController/System.ServiceProcess.ServiceController.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <!-- the service manager it is the client of, named here: restore prunes a package's dependencies otherwise (NU1511) -->
     <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
   <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('win'))">
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="$(WpfWebGpuExtrasVersion)" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="$(WpfWebGpuExtrasVersion)" />
   </ItemGroup>
   <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('win'))">
-    <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
-    <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Management/System.Management.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
     <!-- A framework member, not a package: at its higher version it wins over the shared framework's copy. -->

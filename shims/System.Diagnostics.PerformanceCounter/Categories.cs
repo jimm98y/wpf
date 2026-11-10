@@ -33,6 +33,8 @@ namespace System.Diagnostics
     internal sealed class CustomCategory : Category
     {
         public readonly List<(string Name, string Help, PerformanceCounterType Type)> Definitions = new();
+        // its counters as metrics (CounterMetrics)
+        public Metrics.Meter Meter;
         // (counter, instance) -> raw value; an instance exists once one of its counters was written.
         public readonly Dictionary<(string, string), long> Values = new(new KeyComparer());
 
@@ -277,6 +279,7 @@ namespace System.Diagnostics
             {
                 if (Find(c.Name) != null) throw new InvalidOperationException($"Cannot create Performance Category '{c.Name}' because it already exists.");
                 s_custom.Add(c);
+                c.Meter = CounterMetrics.Publish(c);
             }
         }
 
@@ -288,6 +291,7 @@ namespace System.Diagnostics
                 if (c == null) throw new InvalidOperationException("Category does not exist.");
                 if (!c.IsCustom) throw new InvalidOperationException("Only categories created with PerformanceCounterCategory.Create can be deleted.");
                 s_custom.Remove((CustomCategory)c);
+                ((CustomCategory)c).Meter?.Dispose();
             }
         }
 

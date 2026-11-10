@@ -348,7 +348,7 @@ namespace System.Diagnostics
         private readonly DateTime _time;
         private readonly int _index;
 
-        internal EventLogEntry(int index, string source, string machine, EventLogEntryType type, long instanceId, short category, byte[] data, string[] strings, string message)
+        internal EventLogEntry(int index, string source, string machine, EventLogEntryType type, long instanceId, short category, byte[] data, string[] strings, string message, DateTime? time = null)
         {
             _index = index;
             _source = source;
@@ -359,7 +359,7 @@ namespace System.Diagnostics
             _data = data ?? Array.Empty<byte>();
             _strings = strings ?? Array.Empty<string>();
             _message = message;
-            _time = DateTime.Now;
+            _time = time ?? DateTime.Now;
         }
 
         public string Category => _category == 0 ? "None" : "(" + _category.ToString(CultureInfo.InvariantCulture) + ")";
