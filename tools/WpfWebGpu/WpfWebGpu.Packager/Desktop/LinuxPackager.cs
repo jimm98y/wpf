@@ -340,7 +340,8 @@ public static partial class LinuxPackager
         """;
 
     // the machine's service accounts the services run as (NETWORK SERVICE, LOCAL SERVICE), made where missing, in the
-    // group the state is writable by; the services' logs and caches writable by them
+    // group the state is writable by and the one the system journal is readable by; the services' logs and caches
+    // writable by them
     private static string Accounts(PackageManifest manifest, string pkg)
     {
         var made = manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => x.Account).Distinct()
@@ -351,6 +352,9 @@ public static partial class LinuxPackager
             string user = DesktopCommon.SystemAccount(a, mac: false)!;
             sb.Append($"getent passwd {user} >/dev/null || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin --gid users --comment \"{DesktopCommon.AccountTitle(a)}\" {user} "
                 + $"|| adduser --system --no-create-home --home /nonexistent --shell /usr/sbin/nologin --ingroup users {user}\n");
+            // the machine's log readable by it, as every account reads Windows' Application log (the event log's
+            // entries are journald's: EventLog reads them back from there)
+            sb.Append($"getent group systemd-journal >/dev/null && usermod -a -G systemd-journal {user} || true\n");
         }
         sb.Append($"mkdir -p /var/log/{pkg} /var/cache/{pkg}\n");
         sb.Append($"chgrp -R users /var/log/{pkg} /var/cache/{pkg} 2>/dev/null || true\n");
