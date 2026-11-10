@@ -22,6 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- CMS for Authenticode (Microsoft's, MIT) -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- the stack's PNG decoder (every colour type, every filter), for the icons -->
     <Compile Include="$(WpfWebGpuRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/Composition/PngReader.cs" Link="Shared/PngReader.cs" />
     <!-- Setup.exe's payload format, which the Windows packager writes and Setup reads -->

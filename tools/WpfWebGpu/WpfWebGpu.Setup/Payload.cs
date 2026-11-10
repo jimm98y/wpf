@@ -1,7 +1,10 @@
 // Setup.exe's payload: the installer program, then the installation as a zip, then a trailer saying where the zip
 // starts --
 //
-//   [Setup.exe][zip ... ][offset of the zip: 8 bytes, little endian]["WPFPKG01"]
+//   [Setup.exe][zip ... ][offset of the zip: 8 bytes, little endian]["WPFPKG01"][Authenticode signature]
+//
+// The signature, where the Packager signs it, covers what is before it and is the PE file's certificate table, which
+// the header's directory finds.
 //
 // The zip is written and read as a stream of its own (OffsetStream), so its offsets are from its own start and it
 // is read with ZipArchive as it was written; zip64 where it passes 4 GB. Shared by the Packager, which writes it
@@ -36,14 +39,41 @@ public static class Payload
     /// <summary>Where the zip starts in <paramref name="file"/>, and how long it is; null when it has none.</summary>
     public static (long Offset, long Length)? Find(FileStream file)
     {
-        if (file.Length < TrailerSize) return null;
+        long end = SignedEnd(file);
+        if (end < TrailerSize) return null;
         var t = new byte[TrailerSize];
-        file.Position = file.Length - TrailerSize;
+        file.Position = end - TrailerSize;
         file.ReadExactly(t);
-        if (!t.AsSpan(8).SequenceEqual(Magic)) return null;
+        if (!t.AsSpan(8).SequenceEqual(Magic))
+        {
+            // the signature's table starts 8-byte aligned: the trailer may be followed by up to 7 bytes of padding
+            for (int pad = 1; pad < 8 && end - pad >= TrailerSize; pad++)
+            {
+                file.Position = end - pad - TrailerSize;
+                file.ReadExactly(t);
+                if (t.AsSpan(8).SequenceEqual(Magic)) { end -= pad; break; }
+            }
+            if (!t.AsSpan(8).SequenceEqual(Magic)) return null;
+        }
         long offset = BinaryPrimitives.ReadInt64LittleEndian(t);
-        if (offset <= 0 || offset > file.Length - TrailerSize) return null;
-        return (offset, file.Length - TrailerSize - offset);
+        if (offset <= 0 || offset > end - TrailerSize) return null;
+        return (offset, end - TrailerSize - offset);
+    }
+
+    // where the file's own bytes end: its Authenticode signature's table, when it has one at its end
+    private static long SignedEnd(FileStream file)
+    {
+        var head = new byte[1024];
+        file.Position = 0;
+        int n = file.Read(head);
+        if (n < 0x40 || head[0] != 'M' || head[1] != 'Z') return file.Length;
+        int pe = BinaryPrimitives.ReadInt32LittleEndian(head.AsSpan(0x3C));
+        if (pe <= 0 || pe + 24 + 136 > n || BinaryPrimitives.ReadUInt32LittleEndian(head.AsSpan(pe)) != 0x00004550) return file.Length;
+        int optional = pe + 24;
+        int security = optional + (BinaryPrimitives.ReadUInt16LittleEndian(head.AsSpan(optional)) == 0x20B ? 112 : 96) + 4 * 8;
+        uint offset = BinaryPrimitives.ReadUInt32LittleEndian(head.AsSpan(security));
+        uint size = BinaryPrimitives.ReadUInt32LittleEndian(head.AsSpan(security + 4));
+        return size > 0 && offset > 0 && offset + (long)size == file.Length ? offset : file.Length;
     }
 }
 

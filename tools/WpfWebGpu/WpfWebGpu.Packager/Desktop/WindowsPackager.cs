@@ -43,6 +43,7 @@ public static class WindowsPackager
         Directory.CreateDirectory(outDir);
         string setup = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-windows-{arch}-Setup.exe");
         log($"Windows ({arch}): {setup}");
+        using var certificate = Authenticode.Certificate(manifest);
         using (var output = File.Create(setup))
         {
             using (var stub = File.OpenRead(Path.Combine(setupPack.Directory, "Setup.exe"))) stub.CopyTo(output);
@@ -60,7 +61,7 @@ public static class WindowsPackager
                 }
                 string runtime = Path.Combine(runtimePack.Directory, "runtime");
                 foreach (string f in Directory.EnumerateFiles(runtime, "*", SearchOption.AllDirectories))
-                    Add(zip, f, "runtime/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
+                    Add(zip, Signed(f, certificate, manifest.Signing.TimestampUrl, outDir), "runtime/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
                 foreach (var (source, target) in staged.ProgramDataFiles) Add(zip, source, "programdata/" + target);
                 foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg")) Add(zip, hive, "registry/" + Path.GetFileName(hive));
                 if (sqlPack != null)
@@ -72,8 +73,36 @@ public static class WindowsPackager
             }
             output.Write(Payload.Trailer(zipOffset));
         }
+        if (certificate != null)
+        {
+            Authenticode.Sign(setup, certificate, manifest.Signing.TimestampUrl);
+            log($"  signed: {certificate.Subject}{(manifest.Signing.TimestampUrl.Length > 0 ? ", time-stamped" : "")}");
+        }
         log($"{setup} ({new FileInfo(setup).Length / (1024 * 1024)} MB)");
         return setup;
+    }
+
+    // a program of the runtime that is not signed, or no longer is (dotnetw.exe: dotnet.exe made a window program),
+    // signed with the installation's certificate -- a copy, in the work folder. Programs only: the libraries are
+    // others' as they were published (an unsigned one is not the installation's to sign).
+    private static string Signed(string file, System.Security.Cryptography.X509Certificates.X509Certificate2? certificate, string timestampUrl, string outDir)
+    {
+        if (certificate == null || !file.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return file;
+        if (Authenticode.HasValidHash(file) || !IsPe(file)) return file;
+        string folder = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(file)))[..16];
+        string copy = Path.Combine(outDir, ".work", "signed", folder, Path.GetFileName(file));
+        Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+        File.Copy(file, copy, overwrite: true);
+        Authenticode.Sign(copy, certificate, timestampUrl);
+        return copy;
+    }
+
+    // a native or managed PE file (an assembly's reference-only stub or a resource-only file is one too)
+    private static bool IsPe(string file)
+    {
+        using var s = File.OpenRead(file);
+        var head = new byte[2];
+        return s.Read(head) == 2 && head[0] == 'M' && head[1] == 'Z';
     }
 
     // already compressed: stored

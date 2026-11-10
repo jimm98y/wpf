@@ -179,7 +179,12 @@ public sealed class SigningSection
     /// <summary>The keychain identity a macOS package is signed with ("Developer ID Installer: Name (TEAM)").</summary>
     public string DeveloperIdInstaller { get; set; } = "";
     public string NotaryKey { get; set; } = "";
+    /// <summary>The .pfx Windows programs are signed with (Setup.exe, and the runtime's programs that are not signed
+    /// already); its password WPFPKG_AUTHENTICODE_PASSWORD.</summary>
     public string AuthenticodeCertificate { get; set; } = "";
+    /// <summary>The RFC 3161 time-stamp server an Authenticode signature is stamped by (it then stays valid after the
+    /// certificate expires); none: not stamped.</summary>
+    public string TimestampUrl { get; set; } = "";
     // passwords are never stored: WPFPKG_*_PASSWORD environment variables, or asked for
 }
 
