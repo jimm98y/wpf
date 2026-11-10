@@ -3,10 +3,11 @@
 //
 // .NET ships no visionOS runtime, but needs none: visionOS is iOS's arm64 Darwin, with the same UIKit and
 // Metal the iOS head uses, and its loader takes an iOS binary as its own once the binary says it is one.
-// So the iOS simulator build is taken as it is and each Mach-O in it -- the host, Mono, the runtime's
-// native libraries -- is marked for the visionOS simulator (LC_BUILD_VERSION platform 12), the bundle's
-// Info.plist for Vision (device family 7, the XRSimulator platform), and every binary signed again, since
-// the mark changes what was signed. A visionOS app is what can later open an immersive space for stereo
+// So the iOS build is taken as it is and each Mach-O in it -- the host, Mono, the runtime's native
+// libraries -- is marked for visionOS (LC_BUILD_VERSION platform 12, the simulator's, from the iOS
+// simulator build; 11, a device's, from the iOS device build), the bundle's Info.plist for Vision (device
+// family 7, the XRSimulator or XROS platform), and every binary signed again, since the mark changes what
+// was signed (or left for the Packager to sign: visionos.pack, `wpfrun pack --visionos`). A visionOS app is what can later open an immersive space for stereo
 // content, which an iPad app in its compatibility window cannot.
 
 using System.Diagnostics;
@@ -15,13 +16,17 @@ namespace WpfWebGpu;
 
 internal static partial class Bundle
 {
+    private const int VisionOsPlatform = 11;            // PLATFORM_XROS
     private const int VisionOsSimulatorPlatform = 12;   // PLATFORM_XROS_SIMULATOR
     private const int VisionDeviceFamily = 7;
 
-    private static int RetagForVisionOs(string appDir)
+    /// <summary>An iOS .app (the simulator's, or with <paramref name="device"/> a device's) made a visionOS one; signed
+    /// ad hoc unless <paramref name="sign"/> is false (the Packager's template, which it signs as it fills).</summary>
+    internal static int RetagForVisionOs(string appDir, bool device = false, bool sign = true)
     {
-        string sdk = Tool("xcrun", "--sdk", "xrsimulator", "--show-sdk-version").Trim();
-        if (string.IsNullOrEmpty(sdk)) throw new UserError("no visionOS simulator SDK (xcrun --sdk xrsimulator); install the visionOS platform in Xcode.");
+        string sdkName = device ? "xros" : "xrsimulator";
+        string sdk = Tool("xcrun", "--sdk", sdkName, "--show-sdk-version").Trim();
+        if (string.IsNullOrEmpty(sdk)) throw new UserError($"no visionOS SDK (xcrun --sdk {sdkName}); install the visionOS platform in Xcode.");
         string minimum = sdk.Split('.')[0] + ".0";
 
         var binaries = new List<string>();
@@ -30,13 +35,13 @@ internal static partial class Bundle
         foreach (string bin in binaries)
         {
             string retagged = bin + ".visionos";
-            int code = Run("xcrun", "vtool", "-set-build-version", VisionOsSimulatorPlatform.ToString(), minimum, sdk, "-replace", "-output", retagged, bin);
+            int code = Run("xcrun", "vtool", "-set-build-version", (device ? VisionOsPlatform : VisionOsSimulatorPlatform).ToString(), minimum, sdk, "-replace", "-output", retagged, bin);
             if (code != 0) return code;
             File.Move(retagged, bin, overwrite: true);
         }
 
         // the immersive space a 3D view fills the eyes in (WpfImmersive.swift below), before the binaries are listed
-        int shim = BuildImmersiveShim(appDir, sdk, minimum);
+        int shim = BuildImmersiveShim(appDir, sdkName, minimum, device);
         if (shim != 0) return shim;
         binaries.Add(Path.Combine(appDir, "Frameworks", ImmersiveShim));
 
@@ -44,14 +49,15 @@ internal static partial class Bundle
         foreach (string command in new[]
         {
             "Delete :UIDeviceFamily", "Add :UIDeviceFamily array", $"Add :UIDeviceFamily:0 integer {VisionDeviceFamily}",
-            "Delete :CFBundleSupportedPlatforms", "Add :CFBundleSupportedPlatforms array", "Add :CFBundleSupportedPlatforms:0 string XRSimulator",
+            "Delete :CFBundleSupportedPlatforms", "Add :CFBundleSupportedPlatforms array", "Add :CFBundleSupportedPlatforms:0 string " + (device ? "XROS" : "XRSimulator"),
             "Delete :MinimumOSVersion", $"Add :MinimumOSVersion string {minimum}",
-            "Delete :DTPlatformName", "Add :DTPlatformName string xrsimulator",
+            "Delete :DTPlatformName", "Add :DTPlatformName string " + sdkName,
             // an immersive space is a scene of its own, beside the window's
             "Set :UIApplicationSceneManifest:UIApplicationSupportsMultipleScenes true",
         })
             Run("/usr/libexec/PlistBuddy", "-c", command, plist);   // a Delete of what is not there fails, and is meant to
 
+        if (!sign) return 0;
         // the libraries first, the bundle (its executable and seal) last
         foreach (string bin in binaries.OrderByDescending(b => b.Length))
         {
@@ -73,7 +79,7 @@ internal static partial class Bundle
 
     private const string ImmersiveShim = "libWpfImmersive.dylib";
 
-    private static int BuildImmersiveShim(string appDir, string sdk, string minimum)
+    private static int BuildImmersiveShim(string appDir, string sdkName, string minimum, bool device)
     {
         string frameworks = Path.Combine(appDir, "Frameworks");
         Directory.CreateDirectory(frameworks);
@@ -81,9 +87,9 @@ internal static partial class Bundle
         Directory.CreateDirectory(work);
         string source = Path.Combine(work, "WpfImmersive.swift");
         File.WriteAllText(source, ImmersiveSwift);
-        string sdkPath = Tool("xcrun", "--sdk", "xrsimulator", "--show-sdk-path").Trim();
-        int code = Run("xcrun", "--sdk", "xrsimulator", "swiftc", "-parse-as-library", "-emit-library",
-            "-target", $"arm64-apple-xros{minimum}-simulator", "-sdk", sdkPath, "-O",
+        string sdkPath = Tool("xcrun", "--sdk", sdkName, "--show-sdk-path").Trim();
+        int code = Run("xcrun", "--sdk", sdkName, "swiftc", "-parse-as-library", "-emit-library",
+            "-target", $"arm64-apple-xros{minimum}{(device ? "" : "-simulator")}", "-sdk", sdkPath, "-O",
             "-module-name", "WpfImmersive", "-Xlinker", "-install_name", "-Xlinker", "@rpath/" + ImmersiveShim,
             "-o", Path.Combine(frameworks, ImmersiveShim), source);
         try { Directory.Delete(work, recursive: true); } catch (IOException) { }

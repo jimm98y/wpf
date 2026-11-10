@@ -34,8 +34,20 @@ public static class Builder
             if (mobile.Count == 0) throw new PackagerError("no app is marked \"mobile\": nothing to make for Android or Quest");
             var pack = PackFile.Open(packsFolder, "android");
             // several apps: one package, its apps sharing the machine's state and starting each other, as on Windows
-            if (mobile.Count > 1) made.Add(AndroidPackager.BuildInstallation(manifest, mobile, staged, pack, Path.Combine(outDir, "android"), log));
-            else made.Add(AndroidPackager.Build(manifest, mobile[0], staged, pack, Path.Combine(outDir, "android"), log));
+            string folder = Path.Combine(outDir, targets.Contains(Target.Android) ? "android" : "quest");
+            string apk = mobile.Count > 1
+                ? AndroidPackager.BuildInstallation(manifest, mobile, staged, pack, folder, log)
+                : AndroidPackager.Build(manifest, mobile[0], staged, pack, folder, log);
+            made.Add(apk);
+            // a headset's is the same package (Meta's devices named in it, the immersive activity a headset starts)
+            if (targets.Contains(Target.Android) && targets.Contains(Target.Quest))
+            {
+                string quest = Path.Combine(outDir, "quest", Path.GetFileName(apk));
+                Directory.CreateDirectory(Path.GetDirectoryName(quest)!);
+                File.Copy(apk, quest, overwrite: true);
+                log($"{quest} (the same package)");
+                made.Add(quest);
+            }
         }
         // the apps' pages for the browser, made once and served by every desktop installation
         var pages = targets.Any(t => t is Target.MacOS or Target.Linux or Target.Windows) && manifest.Apps.Any(a => a.Web)
@@ -78,7 +90,14 @@ public static class Builder
             foreach (var app in mobile)
                 made.AddRange(Apple.IosPackager.Build(manifest, app, mobile, staged, pack, outDir, log));
         }
-        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows or Target.IOS)))
+        if (targets.Contains(Target.VisionOS))
+        {
+            if (mobile.Count == 0) throw new PackagerError("no app is marked \"mobile\": nothing to make for Apple Vision Pro");
+            var pack = PackFile.Open(packsFolder, "visionos");
+            foreach (var app in mobile)
+                made.AddRange(Apple.IosPackager.Build(manifest, app, mobile, staged, pack, outDir, log, visionOs: true));
+        }
+        foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows or Target.IOS or Target.VisionOS)))
             log($"{t}: not made yet by this Packager");
         // the pages are in the packages now: a gigabyte or more each, not left in the work folder
         foreach (string dir in new[] { "web", "web-work" })

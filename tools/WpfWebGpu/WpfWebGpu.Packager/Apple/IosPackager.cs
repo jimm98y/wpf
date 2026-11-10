@@ -6,6 +6,9 @@
 //
 //   simulator   <App>.app, signed ad hoc (codesign: the simulator is a Mac's)
 //   device      <App>.ipa, signed with the manifest's identity and provisioning profile (codesign, on a Mac)
+//
+// Apple Vision Pro the same way, from visionos.pack: the same host made a visionOS app (visionos-simulator/,
+// visionos/), its windows in the Shared Space and a 3D view able to fill the eyes in an immersive space.
 
 using System.Diagnostics;
 using System.IO.Compression;
@@ -20,10 +23,12 @@ public static class IosPackager
         ("AppIcon60x60@2x.png", 120), ("AppIcon60x60@3x.png", 180), ("AppIcon76x76@2x~ipad.png", 152), ("AppIcon83.5x83.5@2x~ipad.png", 167),
     };
 
-    public static List<string> Build(PackageManifest manifest, AppEntry entry, IReadOnlyList<AppEntry> installation, StagedState staged, PackFile pack, string outDir, Action<string> log)
+    public static List<string> Build(PackageManifest manifest, AppEntry entry, IReadOnlyList<AppEntry> installation, StagedState staged, PackFile pack, string outDir, Action<string> log,
+        bool visionOs = false)
     {
         var made = new List<string>();
-        string work = Path.Combine(outDir, ".work", "ios-" + Path.GetFileNameWithoutExtension(entry.Exe));
+        string platform = visionOs ? "visionos" : "ios";
+        string work = Path.Combine(outDir, ".work", platform + "-" + Path.GetFileNameWithoutExtension(entry.Exe));
         Directory.CreateDirectory(work);
         string refs = Path.Combine(pack.Directory, "refs");
         var provided = new HashSet<string>(Directory.EnumerateFiles(refs, "*.dll").Select(Path.GetFileNameWithoutExtension).OfType<string>(), StringComparer.OrdinalIgnoreCase);
@@ -34,13 +39,17 @@ public static class IosPackager
         var apps = installation.ToDictionary(a => Path.GetFileName(a.Exe).ToLowerInvariant(), a => (object)Scheme(BundleId(manifest, a)));
 
         // the simulator's
-        string sim = Path.Combine(outDir, "ios-simulator", FileName(label) + ".app");
+        string sim = Path.Combine(outDir, platform + "-simulator", FileName(label) + ".app");
         Fill(Path.Combine(pack.Directory, "simulator", "WpfRunBundle.app"), sim, manifest, entry, staged, app, id, label, group, apps, installation);
         // ad hoc, with the installation's App Group (the simulator gives a group's container to an app that claims it)
         string simEntitlements = Path.Combine(work, "simulator.entitlements");
         File.WriteAllBytes(simEntitlements, Plist.WriteXml(new PlistDict { new("com.apple.security.application-groups", new List<object> { group }) }));
         LinkedGroup(Path.Combine(sim, "WpfRunBundle"), group);
-        if (OperatingSystem.IsMacOS()) Run("/usr/bin/codesign", "--force", "--sign", "-", "--entitlements", simEntitlements, "--timestamp=none", sim);
+        if (OperatingSystem.IsMacOS())
+        {
+            foreach (string nested in NestedCode(sim)) Run("/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", nested);
+            Run("/usr/bin/codesign", "--force", "--sign", "-", "--entitlements", simEntitlements, "--timestamp=none", sim);
+        }
         log($"{sim} ({id}; xcrun simctl install booted \"{sim}\")");
         made.Add(sim);
 
@@ -60,12 +69,10 @@ public static class IosPackager
         string entitlements = Path.Combine(work, "entitlements.plist");
         File.WriteAllBytes(entitlements, Entitlements(signing.AppleProvisioningProfile, id, group, log));
         // what the bundle holds that is code of its own first (frameworks, dylibs), then the bundle
-        foreach (string nested in Directory.EnumerateFileSystemEntries(device, "*", SearchOption.AllDirectories)
-                     .Where(p => p.EndsWith(".dylib", StringComparison.Ordinal) || p.EndsWith(".framework", StringComparison.Ordinal))
-                     .OrderByDescending(p => p.Length))
+        foreach (string nested in NestedCode(device))
             Run("/usr/bin/codesign", "--force", "--sign", signing.AppleSigningIdentity, "--timestamp=none", nested);
         Run("/usr/bin/codesign", "--force", "--sign", signing.AppleSigningIdentity, "--entitlements", entitlements, "--timestamp=none", device);
-        string ipa = Path.Combine(outDir, "ios", FileName(label) + ".ipa");
+        string ipa = Path.Combine(outDir, platform, FileName(label) + ".ipa");
         Directory.CreateDirectory(Path.GetDirectoryName(ipa)!);
         if (File.Exists(ipa)) File.Delete(ipa);
         ZipFile.CreateFromDirectory(payload, ipa, CompressionLevel.Optimal, includeBaseDirectory: true);
@@ -73,6 +80,12 @@ public static class IosPackager
         made.Add(ipa);
         return made;
     }
+
+    // the code a bundle holds of its own (frameworks, dylibs), deepest first: signed before the bundle that seals them
+    private static IEnumerable<string> NestedCode(string bundle) =>
+        Directory.EnumerateFileSystemEntries(bundle, "*", SearchOption.AllDirectories)
+            .Where(p => p.EndsWith(".dylib", StringComparison.Ordinal) || p.EndsWith(".framework", StringComparison.Ordinal))
+            .OrderByDescending(p => p.Length).ToList();
 
     private static void Fill(string template, string app, PackageManifest manifest, AppEntry entry, StagedState staged, MobileApp mobile, string id, string label,
         string group, Dictionary<string, object> apps, IReadOnlyList<AppEntry> installation)

@@ -9,7 +9,7 @@ public static class PackagerCli
                                         a first manifest: the installation's apps, services and registry paths
         package stage <x.wpfpkg.json> [--work <folder>] [--copy]
                                         its registry as hive files, its ProgramData listed (--copy: copied)
-        package build <x.wpfpkg.json> [--target <android|quest|ios|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>] [--fast]
+        package build <x.wpfpkg.json> [--target <android|quest|ios|visionos|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>] [--fast]
                                         the packages: one app per "mobile" app for a phone or headset; the whole installation for macOS, Linux and Windows
                                         (--fast: nothing compressed, for testing)
         """;

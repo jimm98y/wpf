@@ -3,6 +3,10 @@
 //
 //   android.pack   the Android/Quest host APK (both activities, the OpenXR loader), every assembly kept whole,
 //                  and those assemblies (refs/) for the rewrite of an app's onto the stack.
+//   ios.pack       the iOS / iPadOS host .app, the simulator's (interpreted) and a device's (the stack compiled ahead
+//                  of time), unsigned but for the simulator's ad hoc seal, and their assemblies (refs/).
+//   visionos.pack  the same two .apps made visionOS ones (each Mach-O marked for visionOS, Info.plist for Vision,
+//                  libWpfImmersive.dylib for the immersive space), unsigned: the Packager signs them as it fills them.
 //   browser.pack   the browser head's page with no app in it (site/: the page, the runtime, the stack, nothing
 //                  trimmed), and its assemblies (refs/) for the rewrite of an app's onto the stack.
 //   sqlserver-<target>.pack  the SQL Server a Windows or Mac installation brings, optional (SqlServerPacks): Microsoft's
@@ -24,7 +28,7 @@ internal static class Pack
     public static int Run(string[] args)
     {
         string? outDir = null, feed = null;
-        bool android = false, verbose = false, ios = false, browser = false;
+        bool android = false, verbose = false, ios = false, visionOs = false, browser = false;
         var desktop = new List<string>();
         var setup = new List<string>();
         var sqlServer = new List<string>();
@@ -37,6 +41,7 @@ internal static class Pack
                 case "--feed": feed = args[++i]; break;
                 case "--android": android = true; break;
                 case "--ios": ios = true; break;
+                case "--visionos": visionOs = true; break;
                 case "--browser": browser = true; break;
                 case "--desktop": desktop.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
@@ -46,8 +51,8 @@ internal static class Pack
                 default: throw new UserError($"unknown option '{args[i]}'.");
             }
         }
-        if (!android && !ios && !browser && desktop.Count == 0 && setup.Count == 0 && sqlServer.Count == 0)
-            throw new UserError("which template? --android, --ios, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64,macos");
+        if (!android && !ios && !visionOs && !browser && desktop.Count == 0 && setup.Count == 0 && sqlServer.Count == 0)
+            throw new UserError("which template? --android, --ios, --visionos, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64,macos");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)
@@ -62,16 +67,16 @@ internal static class Pack
         }
         foreach (string target in sqlServer)
             WpfWebGpu.Packager.SqlServer.SqlServerPacks.Make(target, outDir, Path.Combine(Locations.CacheRoot, "sqlserver"), m => Console.WriteLine("wpfrun pack: " + m));
-        if (!android && !ios && !browser) return 0;
+        if (!android && !ios && !visionOs && !browser) return 0;
         feed = Path.GetFullPath(feed ?? Bundle.FindFeedForPack() ?? throw new UserError("no package feed with WpfWebGpu.Sdk found beside wpfrun; pass --feed <folder>."));
         if (browser)
         {
             int code = PackBrowser(outDir, feed, verbose);
-            if (code != 0 || (!android && !ios)) return code;
+            if (code != 0 || (!android && !ios && !visionOs)) return code;
         }
-        if (ios)
+        if (ios || visionOs)
         {
-            int code = PackIos(outDir, feed, verbose);
+            int code = PackApple(outDir, feed, verbose, ios, visionOs);
             if (code != 0 || !android) return code;
         }
         return PackAndroid(outDir, feed, verbose);
@@ -128,9 +133,9 @@ internal static class Pack
 
     // ---- iOS ----------------------------------------------------------------------------------------------
 
-    private static int PackIos(string outDir, string feed, bool verbose)
+    private static int PackApple(string outDir, string feed, bool verbose, bool ios, bool visionOs)
     {
-        if (!OperatingSystem.IsMacOS()) throw new UserError("the iOS template is built on a Mac (Xcode)");
+        if (!OperatingSystem.IsMacOS()) throw new UserError("the iOS and visionOS templates are built on a Mac (Xcode)");
         var apps = new Dictionary<string, string>();
         foreach (var (kind, rid) in new[] { ("simulator", "iossimulator-arm64"), ("device", "ios-arm64") })
         {
@@ -145,14 +150,34 @@ internal static class Pack
             if (!Directory.Exists(app)) throw new UserError($"the build made no {app}");
             apps[kind] = app;
         }
+        if (ios) WriteApplePack(Path.Combine(outDir, "ios.pack"), "ios", apps);
+        if (visionOs)
+        {
+            // the iOS .apps made visionOS ones, a copy each (the iOS pack's are left as they are)
+            var vision = new Dictionary<string, string>();
+            foreach (var (kind, app) in apps)
+            {
+                string copy = Path.Combine(Locations.CacheRoot, "bundles", "template-visionos-" + kind, "WpfRunBundle.app");
+                if (Directory.Exists(copy)) Directory.Delete(copy, recursive: true);
+                CopyTree(app, copy);
+                Console.WriteLine($"wpfrun pack: making the {kind} template a visionOS one");
+                int code = Bundle.RetagForVisionOs(copy, device: kind == "device", sign: false);
+                if (code != 0) return code;
+                vision[kind] = copy;
+            }
+            WriteApplePack(Path.Combine(outDir, "visionos.pack"), "visionos", vision);
+        }
+        return 0;
+    }
 
-        string pack = Path.Combine(outDir, "ios.pack");
+    private static void WriteApplePack(string pack, string kindName, Dictionary<string, string> apps)
+    {
         if (File.Exists(pack)) File.Delete(pack);
         using (var zip = ZipFile.Open(pack, ZipArchiveMode.Create))
         {
             var info = new Dictionary<string, object>
             {
-                ["kind"] = "ios", ["templateId"] = Bundle.IosTemplateId, ["templateLabel"] = Bundle.IosTemplateLabel,
+                ["kind"] = kindName, ["templateId"] = Bundle.IosTemplateId, ["templateLabel"] = Bundle.IosTemplateLabel,
                 ["built"] = DateTime.UtcNow.ToString("O"),
             };
             using (var w = new StreamWriter(zip.CreateEntry("pack.json").Open()))
@@ -171,7 +196,6 @@ internal static class Pack
             AddSharedFrameworks(zip);
         }
         Console.WriteLine($"wpfrun pack: {pack} ({new FileInfo(pack).Length / (1024 * 1024)} MB)");
-        return 0;
     }
 
     // ---- desktop ----------------------------------------------------------------------------------------
