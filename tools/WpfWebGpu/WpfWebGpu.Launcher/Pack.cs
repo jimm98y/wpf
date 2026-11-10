@@ -12,6 +12,7 @@
 //   sqlserver-<target>.pack  the SQL Server a Windows or Mac installation brings, optional (SqlServerPacks): Microsoft's
 //                  SQL Server 2025 Express setup (win-x64), Apple's container installer (macos: SQL Server's image
 //                  is pulled when installing, as on Linux).
+//   --packager <rid>     not a pack: the Packager itself for that OS, beside the packs folder (PackPackager).
 //   desktop-<rid>.pack   runtime/: what runs an installation's programs on that OS with nothing installed --
 //                  a private .NET (with ASP.NET Core, which servers use), wpfrun (launcher/, overlay/ from
 //                  artifacts/wpfrun/<rid>, made by build.sh -r <rid>) and `run`, which starts a program with them.
@@ -31,6 +32,7 @@ internal static class Pack
         bool android = false, verbose = false, ios = false, visionOs = false, browser = false;
         var desktop = new List<string>();
         var setup = new List<string>();
+        var packager = new List<string>();
         var sqlServer = new List<string>();
         string? wpfrunBuilds = null;
         for (int i = 0; i < args.Length; i++)
@@ -46,13 +48,14 @@ internal static class Pack
                 case "--desktop": desktop.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
                 case "--setup": setup.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
+                case "--packager": packager.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--sqlserver": sqlServer.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "-v" or "--verbose": verbose = true; break;
                 default: throw new UserError($"unknown option '{args[i]}'.");
             }
         }
-        if (!android && !ios && !visionOs && !browser && desktop.Count == 0 && setup.Count == 0 && sqlServer.Count == 0)
-            throw new UserError("which template? --android, --ios, --visionos, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64,macos");
+        if (!android && !ios && !visionOs && !browser && desktop.Count == 0 && setup.Count == 0 && sqlServer.Count == 0 && packager.Count == 0)
+            throw new UserError("which template? --android, --ios, --visionos, --browser, --desktop <rid>[,<rid>...], --setup <win-rid>[,...], --sqlserver win-x64,macos, --packager <rid>[,...]");
         outDir = Path.GetFullPath(outDir ?? Path.Combine(Environment.CurrentDirectory, "packs"));
         Directory.CreateDirectory(outDir);
         foreach (string rid in desktop)
@@ -63,6 +66,11 @@ internal static class Pack
         foreach (string rid in setup)
         {
             int code = PackSetup(outDir, rid, verbose);
+            if (code != 0) return code;
+        }
+        foreach (string rid in packager)
+        {
+            int code = PackPackager.Make(outDir, rid, verbose);
             if (code != 0) return code;
         }
         foreach (string target in sqlServer)
@@ -328,16 +336,20 @@ internal static class Pack
 
     /// <summary>.NET's apphost for <paramref name="rid"/> (Microsoft.NETCore.App.Host, MIT), of the runtime's version,
     /// downloaded once from nuget.org.</summary>
+    /// <summary>.NET's apphost for <paramref name="rid"/> (apphost.exe on Windows), fetched from its package.</summary>
+    internal static string AppHostFor(string rid, string version) => AppHost(rid, version);
+
     private static string AppHost(string rid, string version)
     {
-        string path = Path.Combine(Locations.CacheRoot, "apphosts", rid + "-" + version, "apphost");
+        string file = rid.StartsWith("win", StringComparison.Ordinal) ? "apphost.exe" : "apphost";
+        string path = Path.Combine(Locations.CacheRoot, "apphosts", rid + "-" + version, file);
         if (File.Exists(path)) return path;
         string id = "microsoft.netcore.app.host." + rid;
         string url = $"https://api.nuget.org/v3-flatcontainer/{id}/{version}/{id}.{version}.nupkg";
         Console.WriteLine($"wpfrun pack: fetching {url}");
         using var http = new System.Net.Http.HttpClient();
         using var package = new ZipArchive(new MemoryStream(http.GetByteArrayAsync(url).GetAwaiter().GetResult()));
-        var entry = package.GetEntry($"runtimes/{rid}/native/apphost") ?? throw new UserError($"{url} holds no apphost for {rid}");
+        var entry = package.GetEntry($"runtimes/{rid}/native/{file}") ?? throw new UserError($"{url} holds no apphost for {rid}");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         entry.ExtractToFile(path, overwrite: true);
         return path;

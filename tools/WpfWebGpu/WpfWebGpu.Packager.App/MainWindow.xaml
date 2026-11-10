@@ -1,0 +1,257 @@
+<Window x:Class="WpfWebGpu.Packager.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:WpfWebGpu.Packager.App"
+        Title="Packager" Width="1100" Height="760" MinWidth="820" MinHeight="560"
+        WindowStartupLocation="CenterScreen">
+  <Window.Resources>
+    <local:JoinConverter x:Key="Join" />
+  </Window.Resources>
+
+  <DockPanel>
+    <!-- the manifest: what is packaged and how, saved and opened again -->
+    <Border DockPanel.Dock="Top" BorderBrush="#DDD" BorderThickness="0,0,0,1" Padding="12,8">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button Content="New" Click="OnNew" />
+          <Button Content="Open…" Click="OnOpen" />
+          <Button Content="Save" Click="OnSave" />
+          <Button Content="Save As…" Click="OnSaveAs" />
+        </StackPanel>
+        <TextBlock x:Name="ManifestPath" VerticalAlignment="Center" Foreground="#555" TextTrimming="CharacterEllipsis" Text="A new manifest" />
+      </DockPanel>
+    </Border>
+
+    <TabControl x:Name="Pages" TabStripPlacement="Left" Padding="20,16" BorderThickness="0">
+
+      <TabItem Header="Installation">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Heading}" Text="The Windows installation" />
+            <TextBlock Style="{StaticResource Hint}" Text="Its Program Files folder, as copied from a Windows machine it is installed on; optionally its ProgramData folders and a registry export (regedit's .reg) of its keys, and IIS's applicationHost.config for its web sites. Scan suggests the apps, services and paths; check them on the next pages." />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <TextBlock Style="{StaticResource Label}" Text="Program Files folder" />
+              <TextBox Grid.Column="1" Text="{Binding Inputs.InstallDir, UpdateSourceTrigger=PropertyChanged}" />
+              <Button Grid.Column="2" Content="Browse…" Click="OnBrowseInstall" />
+              <TextBlock Grid.Row="1" Style="{StaticResource Label}" Text="IIS configuration" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Inputs.IisConfig, UpdateSourceTrigger=PropertyChanged}" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Click="OnBrowseIis" />
+            </Grid>
+
+            <TextBlock Margin="0,16,0,4" FontWeight="SemiBold" Text="ProgramData folders" />
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Right">
+                <Button Content="Add…" Click="OnAddProgramData" />
+                <Button Content="Remove" Click="OnRemoveProgramData" />
+              </StackPanel>
+              <ListBox x:Name="ProgramDataList" Height="80" />
+            </DockPanel>
+
+            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="Registry exports" />
+            <DockPanel>
+              <StackPanel DockPanel.Dock="Right">
+                <Button Content="Add…" Click="OnAddRegistry" />
+                <Button Content="Remove" Click="OnRemoveRegistry" />
+              </StackPanel>
+              <ListBox x:Name="RegistryList" Height="80" />
+            </DockPanel>
+
+            <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+              <Button x:Name="ScanButton" Content="Scan" Margin="0,4" MinWidth="120" Click="OnScan" />
+              <TextBlock x:Name="ScanStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Product">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Heading}" Text="The product" />
+          <TextBlock Style="{StaticResource Hint}" Text="What the installers and apps are called and whose they are. The id prefix starts every package and bundle id (com.example)." />
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Style="{StaticResource Label}" Text="Name" />
+            <TextBox Grid.Column="1" Text="{Binding Product.Name}" />
+            <TextBlock Grid.Row="1" Style="{StaticResource Label}" Text="Version" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Product.Version}" />
+            <TextBlock Grid.Row="2" Style="{StaticResource Label}" Text="Publisher" />
+            <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Product.Publisher}" />
+            <TextBlock Grid.Row="3" Style="{StaticResource Label}" Text="Id prefix" />
+            <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Product.IdPrefix}" />
+            <TextBlock Grid.Row="4" Style="{StaticResource Label}" Text="Icon (an app's .exe)" />
+            <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Product.Icon}" />
+          </Grid>
+        </StackPanel>
+      </TabItem>
+
+      <TabItem Header="Apps">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top">
+            <TextBlock Style="{StaticResource Heading}" Text="Apps" />
+            <TextBlock Style="{StaticResource Hint}" Text="Every program of the installation. Mobile: made an app for phones, tablets and headsets. Web: served as a page for the browser by the desktop installations. Shortcut: in the Start menu, Applications or the app menu." />
+          </StackPanel>
+          <DataGrid x:Name="AppsGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Program" Binding="{Binding Exe}" IsReadOnly="True" Width="2*" />
+              <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+              <DataGridComboBoxColumn x:Name="KindColumn" Header="Kind" SelectedItemBinding="{Binding Kind}" Width="90" />
+              <DataGridCheckBoxColumn Header="Mobile" Binding="{Binding Mobile}" Width="60" />
+              <DataGridCheckBoxColumn Header="Web" Binding="{Binding Web}" Width="50" />
+              <DataGridCheckBoxColumn Header="Shortcut" Binding="{Binding Shortcut}" Width="70" />
+              <DataGridTextColumn Header="Warnings" Binding="{Binding Warnings, Converter={StaticResource Join}}" IsReadOnly="True" Width="*" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="Services">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top">
+            <TextBlock Style="{StaticResource Heading}" Text="Services" />
+            <TextBlock Style="{StaticResource Hint}" Text="As the registry registers them (or as the programs suggest): run by launchd, systemd or Windows' service manager, under the start type and account they were registered with." />
+          </StackPanel>
+          <DataGrid x:Name="ServicesGrid" AutoGenerateColumns="False" CanUserAddRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+              <DataGridTextColumn Header="Display name" Binding="{Binding DisplayName}" Width="*" />
+              <DataGridTextColumn Header="Program" Binding="{Binding Exe}" IsReadOnly="True" Width="2*" />
+              <DataGridComboBoxColumn x:Name="StartColumn" Header="Start" SelectedItemBinding="{Binding Start}" Width="90" />
+              <DataGridCheckBoxColumn Header="Delayed" Binding="{Binding DelayedAutoStart}" Width="65" />
+              <DataGridComboBoxColumn x:Name="AccountColumn" Header="Account" SelectedItemBinding="{Binding Account}" Width="120" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
+      <TabItem Header="SQL Server">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Heading}" Text="SQL Server" />
+          <TextBlock Style="{StaticResource Hint}" Text="The database server the installation keeps its configuration in, offered by every desktop installer and chosen by default: SQL Server Express on Windows (the instance named as the installation's configuration expects it), SQL Server in a container on macOS and Linux, its image downloaded from Microsoft when installing." />
+          <CheckBox Content="The installers bring SQL Server" IsChecked="{Binding SqlServer.Include}" />
+          <Grid Margin="0,8,0,0" Width="420" HorizontalAlignment="Left">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="Auto" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto" />
+              <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Style="{StaticResource Label}" Text="Instance (Windows)" />
+            <TextBox Grid.Column="1" Text="{Binding SqlServer.Instance}" />
+            <TextBlock Grid.Row="1" Style="{StaticResource Label}" Text="Port (macOS, Linux)" />
+            <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding SqlServer.Port}" />
+          </Grid>
+        </StackPanel>
+      </TabItem>
+
+      <TabItem Header="Signing">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Heading}" Text="Signing" />
+            <TextBlock Style="{StaticResource Hint}" Text="Optional; what is left empty is not signed (Android: a debug key). Passwords are never saved: WPFPKG_AUTHENTICODE_PASSWORD and the other WPFPKG_*_PASSWORD environment variables give them." />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <TextBlock Style="{StaticResource Label}" Text="Windows: Authenticode (.pfx)" />
+              <TextBox Grid.Column="1" Text="{Binding Signing.AuthenticodeCertificate}" />
+              <Button Grid.Column="2" Content="Browse…" Tag="AuthenticodeCertificate" Click="OnBrowseSigningFile" />
+              <TextBlock Grid.Row="1" Style="{StaticResource Label}" Text="Time-stamp server" />
+              <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Signing.TimestampUrl}" />
+              <TextBlock Grid.Row="2" Style="{StaticResource Label}" Text="macOS: Developer ID Application" />
+              <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Signing.DeveloperIdCertificate}" />
+              <TextBlock Grid.Row="3" Style="{StaticResource Label}" Text="macOS: Developer ID Installer" />
+              <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Signing.DeveloperIdInstaller}" />
+              <TextBlock Grid.Row="4" Style="{StaticResource Label}" Text="Notary API key (.p8)" />
+              <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Signing.NotaryKey}" />
+              <Button Grid.Row="4" Grid.Column="2" Content="Browse…" Tag="NotaryKey" Click="OnBrowseSigningFile" />
+              <TextBlock Grid.Row="5" Style="{StaticResource Label}" Text="Notary key id" />
+              <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Signing.NotaryKeyId}" />
+              <TextBlock Grid.Row="6" Style="{StaticResource Label}" Text="Notary issuer id" />
+              <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Signing.NotaryIssuer}" />
+              <TextBlock Grid.Row="7" Style="{StaticResource Label}" Text="iOS, visionOS: signing identity" />
+              <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Signing.AppleSigningIdentity}" />
+              <TextBlock Grid.Row="8" Style="{StaticResource Label}" Text="Provisioning profile" />
+              <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding Signing.AppleProvisioningProfile}" />
+              <Button Grid.Row="8" Grid.Column="2" Content="Browse…" Tag="AppleProvisioningProfile" Click="OnBrowseSigningFile" />
+              <TextBlock Grid.Row="9" Style="{StaticResource Label}" Text="Android: keystore" />
+              <TextBox Grid.Row="9" Grid.Column="1" Text="{Binding Signing.AndroidKeystore}" />
+              <Button Grid.Row="9" Grid.Column="2" Content="Browse…" Tag="AndroidKeystore" Click="OnBrowseSigningFile" />
+              <TextBlock Grid.Row="10" Style="{StaticResource Label}" Text="Key alias" />
+              <TextBox Grid.Row="10" Grid.Column="1" Text="{Binding Signing.AndroidKeyAlias}" />
+            </Grid>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Build">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top">
+            <TextBlock Style="{StaticResource Heading}" Text="Build" />
+            <TextBlock Style="{StaticResource Hint}" Text="Every target from this machine, with nothing installed: the templates in the packs folder are filled and signed here. A Mac's package and Apple's signing are made on a Mac." />
+            <WrapPanel x:Name="TargetsPanel" Margin="0,0,0,8" />
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+              </Grid.RowDefinitions>
+              <TextBlock Style="{StaticResource Label}" Text="Output folder" />
+              <TextBox x:Name="OutputFolder" Grid.Column="1" />
+              <Button Grid.Column="2" Content="Browse…" Click="OnBrowseOutput" />
+              <TextBlock Grid.Row="1" Style="{StaticResource Label}" Text="Packs folder" />
+              <TextBox x:Name="PacksFolder" Grid.Row="1" Grid.Column="1" />
+              <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Click="OnBrowsePacks" />
+            </Grid>
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,8">
+              <CheckBox x:Name="FastBuild" Content="For testing: nothing compressed" />
+              <Button x:Name="BuildButton" Content="Build" MinWidth="120" Margin="24,4,0,4" Click="OnBuild" />
+              <TextBlock x:Name="BuildStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
+            </StackPanel>
+          </StackPanel>
+          <TextBox x:Name="Log" IsReadOnly="True" FontFamily="Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12"
+                   VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" TextWrapping="NoWrap" />
+        </DockPanel>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

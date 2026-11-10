@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Packager: a Windows installation into installers and apps for every head, as a window (and, given
+       arguments, as `wpfrun package`'s command line). An ordinary WPF app for Windows, run on every OS (Windows
+       too) by the stack's desktop runtime (desktop-<rid>.pack), as the installations it makes run theirs:
+       publish.sh puts the runtime, this app and the packs/ folder side by side, nothing to install. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>Packager</AssemblyName>
+    <RootNamespace>WpfWebGpu.Packager.App</RootNamespace>
+    <ApplicationIcon></ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WpfWebGpu.Packager/WpfWebGpu.Packager.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -85,6 +85,7 @@ internal static class Program
     public static int Main(string[] args)
     {
         DefaultChildSignal();
+        args = LauncherStub.Arguments(args);
         try
         {
             if (args.Length == 0 || args[0] is "-h" or "--help" or "help")
