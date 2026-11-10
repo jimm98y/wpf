@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Replacement for the System.Diagnostics.EventLog package's runtime assembly, for macOS, where
-       the package throws PlatformNotSupportedException. The Application, System and Security logs
-       exist; sources and the logs they create are registered where Windows registers them,
-       HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<log>\<source>, so they persist when the
-       registry does (the Microsoft.Win32.Registry shim's file store). Entries are kept for the
-       process's lifetime (a log reads back what this process wrote) and mirrored to wpfrun's
-       compatibility log. The Eventing.Reader API stays unsupported.
+  <!-- Replacement for the System.Diagnostics.EventLog package's runtime assembly, on every OS (Windows
+       too). Entries are the OS's log's: written there and read back from there (OsLog: the Event Log on
+       Windows, journald on Linux, the unified log on macOS), so a log holds what every program wrote; where
+       the OS keeps none (Android, iOS), the process keeps its own. Sources and the logs they create are
+       registered where Windows registers them, HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<log>\<source>
+       (on Windows the registry itself, elsewhere the Microsoft.Win32.Registry shim's file store). Each entry
+       is also mirrored to wpfrun's compatibility log. The Eventing.Reader API stays unsupported.
 
        Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
        as the package (ECMA key), AssemblyVersion above it. -->

@@ -1,10 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Replacement for the System.Diagnostics.PerformanceCounter package's runtime assembly, for
-       macOS, where the package throws PlatformNotSupportedException. Categories an app creates live
-       in its own process (a counter it writes, it can read back); the standard categories Processor,
-       Memory, Process and System are read-only and report this machine's live values. A category or
-       counter that does not exist fails as on Windows, where an app's installer has not registered it.
+  <!-- Replacement for the System.Diagnostics.PerformanceCounter package's runtime assembly, on every OS
+       (Windows too). Categories an app creates live in its own process (a counter it writes, it can read
+       back) and are published as .NET metrics (CounterMetrics: a Meter per category), which dotnet-counters,
+       OpenTelemetry and any MeterListener read on every OS alike; the standard categories Processor, Memory,
+       Process and System are read-only and report this machine's live values. A category or counter that
+       does not exist fails as on Windows, where an app's installer has not registered it.
 
        Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
        as the package (ECMA key), AssemblyVersion above it. -->
