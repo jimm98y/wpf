@@ -564,12 +564,17 @@
     <Warning Text="The WpfWebGpu.Fonts package did not restore, so this head has no app-local fonts: UI text falls back to whatever the system has, CJK renders as boxes and emoji as nothing. Check that the feed serving WpfWebGpu.Sdk also serves WpfWebGpu.Fonts." />
   </Target>
 
-  <!-- unix: overlay the cross-platform Microsoft.Win32.SystemEvents / Registry shims over whatever
-       the Windows-only runtime packages dropped in the output (same strong-name identity, so the
-       load binds the shim). These are the shims the windows head deliberately does NOT use. -->
+  <!-- Overlay the cross-platform shims over whatever the runtime packages dropped in the output (same strong-name
+       identity, so the load binds the shim):
+         Microsoft.Win32.SystemEvents  every desktop head, Windows included: it is the Windows Desktop Runtime's,
+                                       which an app here does not need: on Windows the shim pumps the OS's own
+                                       broadcasts (a hidden top-level window), elsewhere the session's events;
+         Microsoft.Win32.Registry      unix, Android and portable builds only: it is .NET's own runtime's, which
+                                       a Windows head keeps (a portable output serves every OS from one folder,
+                                       and the shim forwards to advapi32 there). -->
   <Target Name="_WpfWebGpuOverlaySystemEventsShim"
           AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
-          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true'">
+          Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true'">
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
@@ -578,10 +583,10 @@
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
-          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
+          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(OutDir)' != '' and Exists('$(OutDir)')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
           DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
-          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
+          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(PublishDir)' != '' and Exists('$(PublishDir)')" />
   </Target>
 
   <!-- ================================ browser ================================ -->
