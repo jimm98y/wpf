@@ -175,10 +175,15 @@ public sealed class SigningSection
     /// <summary>The keychain identity a device .ipa is signed with ("Apple Distribution: Name (TEAM)").</summary>
     public string AppleSigningIdentity { get; set; } = "";
     public string AppleProvisioningProfile { get; set; } = "";
+    /// <summary>The keychain identity a Mac installation's code is signed with ("Developer ID Application: Name (TEAM)").</summary>
     public string DeveloperIdCertificate { get; set; } = "";
     /// <summary>The keychain identity a macOS package is signed with ("Developer ID Installer: Name (TEAM)").</summary>
     public string DeveloperIdInstaller { get; set; } = "";
+    /// <summary>The App Store Connect API key (AuthKey_&lt;id&gt;.p8) a Mac package is notarized with, its key id and
+    /// issuer id; none: not notarized.</summary>
     public string NotaryKey { get; set; } = "";
+    public string NotaryKeyId { get; set; } = "";
+    public string NotaryIssuer { get; set; } = "";
     /// <summary>The .pfx Windows programs are signed with (Setup.exe, and the runtime's programs that are not signed
     /// already); its password WPFPKG_AUTHENTICODE_PASSWORD.</summary>
     public string AuthenticodeCertificate { get; set; } = "";

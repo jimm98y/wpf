@@ -127,6 +127,7 @@ public static partial class MacPackager
 
         // the package takes the folder's permissions as the installed files': readable by all, the scripts runnable
         Run("/bin/chmod", "-R", "u+rwX,go+rX,go-w", payload);
+        if (manifest.Signing.DeveloperIdCertificate.Length > 0) SignPayload(payload, manifest.Signing.DeveloperIdCertificate, work, log);
         string component = Path.Combine(work, "component.pkg");
         // what pkgbuild makes, with the payload compressed on every core (MacComponent); the app stubs installed
         // where they belong, not relocatable: the installer would otherwise update whatever copy of a bundle it
@@ -162,6 +163,11 @@ public static partial class MacPackager
         if (manifest.Signing.DeveloperIdInstaller.Length > 0) { args.Add("--sign"); args.Add(manifest.Signing.DeveloperIdInstaller); }
         args.Add(pkg);
         Run("/usr/bin/productbuild", args.ToArray());
+        if (manifest.Signing.NotaryKey.Length > 0)
+        {
+            if (manifest.Signing.DeveloperIdInstaller.Length == 0) throw new PackagerError("a notarized package is signed: signing.developerIdInstaller");
+            Notarize(pkg, manifest.Signing, log);
+        }
         Directory.Delete(work, recursive: true);
         log($"{pkg} ({new FileInfo(pkg).Length / (1024 * 1024)} MB)");
         return pkg;
