@@ -10,8 +10,12 @@
 //                                     runtime\dotnet the .NET it starts (found beside it: the apphost's app-relative
 //                                     search), Packager.wpfrun saying what it runs (LauncherStub); runtime\, app\, packs\
 //
-// Written beside the packs folder (<packs>/../Packager-<rid>/). The app is published from this repository's source.
+// Written beside the packs folder (<packs>/../Packager-<rid>/), and archived as it is handed out beside it: a .zip
+// for Windows and macOS (the .app in it, the programs' modes kept), a .tar.gz for Linux. The app is published from
+// this repository's source.
 
+using System.Formats.Tar;
+using System.IO.Compression;
 using System.Reflection;
 using System.Text.Json;
 
@@ -91,7 +95,8 @@ internal static class PackPackager
             File.WriteAllText(Path.Combine(root, "Packager.wpfrun"),
                 "# what Packager.exe runs (LauncherStub): wpfrun, given these before its own arguments\r\nrun\r\n@app\\Packager.exe\r\nset WPFPKG_PACKS=@packs\r\n");
         }
-        Console.WriteLine($"wpfrun pack: {(mac ? bundle : output)} (the runtime, the app, {packs} packs)");
+        string archive = Archive(output, windows, mac);
+        Console.WriteLine($"wpfrun pack: {(mac ? bundle : output)} (the runtime, the app, {packs} packs), {archive} ({new FileInfo(archive).Length / (1024 * 1024)} MB)");
         return 0;
     }
 
@@ -124,6 +129,46 @@ internal static class PackPackager
         }).ToArray();
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         create.Invoke(null, arguments);
+    }
+
+    // the folder as it is handed out: its top folder (Packager-<rid>/) or, for a Mac, the .app at the top
+    private static string Archive(string folder, bool windows, bool mac)
+    {
+        string from = mac ? Path.Combine(folder, "Packager.app") : folder;
+        string prefix = Path.GetFileName(from);
+        var files = Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal).ToList();
+        if (windows || mac)
+        {
+            string zip = folder + ".zip";
+            if (File.Exists(zip)) File.Delete(zip);
+            using var archive = ZipFile.Open(zip, ZipArchiveMode.Create);
+            foreach (string f in files)
+            {
+                string name = prefix + "/" + Path.GetRelativePath(from, f).Replace('\\', '/');
+                bool stored = f.EndsWith(".pack", StringComparison.Ordinal);
+                var entry = archive.CreateEntryFromFile(f, name, stored ? CompressionLevel.NoCompression : CompressionLevel.Optimal);
+                // the Unix modes (a Mac's archive utility and unzip keep them): the programs runnable
+                if (!windows) entry.ExternalAttributes = (int)(0x8000 | (int)File.GetUnixFileMode(f)) << 16;
+            }
+            return zip;
+        }
+        string tgz = folder + ".tar.gz";
+        using (var file = File.Create(tgz))
+        using (var gz = new GZipStream(file, CompressionLevel.Optimal))
+        using (var tar = new TarWriter(gz, TarEntryFormat.Pax))
+        {
+            foreach (string f in files)
+            {
+                var entry = new PaxTarEntry(TarEntryType.RegularFile, prefix + "/" + Path.GetRelativePath(from, f).Replace('\\', '/'))
+                {
+                    Mode = File.GetUnixFileMode(f), ModificationTime = File.GetLastWriteTimeUtc(f),
+                };
+                using var data = File.OpenRead(f);
+                entry.DataStream = data;
+                tar.WriteEntry(entry);
+            }
+        }
+        return tgz;
     }
 
     private static string? FindProject()
