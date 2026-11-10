@@ -106,21 +106,11 @@
   <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf/*.dll" Private="true" />
 
-    <!-- The renderer. A per-RID Windows build names the one assembly it wants rather than globbing
-         the folder, because lib/wpf-desktop also carries the SystemEvents/Registry shims and Windows
-         binds the real runtime packages instead.
-
-         A PORTABLE build takes the whole folder on Windows too. It has to: one output serves three
-         operating systems, the shims and the real packages share an assembly identity, so exactly
-         one of them can ship — and the shims are the ones that work everywhere, now that they do the
-         real thing on Windows (a hidden top-level window pumping the OS broadcasts, and advapi32 for
-         the registry) instead of no-opping. -->
+    <!-- The renderer, and the SystemEvents/Registry shims beside it, on every desktop head (Windows included,
+         where the shims forward to the OS: a hidden top-level window pumping its broadcasts, advapi32 for the
+         registry). -->
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-desktop/*.dll" Private="true"
-               Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true' and ('$(_WpfWebGpuWin)' != 'true' or '$(WpfWebGpuPortable)' == 'true')" />
-    <Reference Include="Microsoft.Wpf.Interop.WebGpu" Condition="'$(_WpfWebGpuWin)' == 'true' and '$(WpfWebGpuPortable)' != 'true'">
-      <HintPath>$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Wpf.Interop.WebGpu.dll</HintPath>
-      <Private>true</Private>
-    </Reference>
+               Condition="'$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true'" />
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-ios/*.dll" Private="true" Condition="'$(_WpfWebGpuIos)' == 'true'" />
     <Reference Include="$(WpfWebGpuSdkRoot)lib/wpf-browser/*.dll" Private="true" Condition="'$(_WpfWebGpuBrowser)' == 'true'" />
 
@@ -402,10 +392,8 @@
       - there is no native apphost. A portable app is App.dll, started with `dotnet App.dll`; an
         .exe/Mach-O/ELF launcher is per-RID by definition.
 
-    NOT yet portable: Microsoft.Win32.SystemEvents and Microsoft.Win32.Registry. Two assemblies share
-    one identity — our cross-platform stand-in and the real Windows package — and one output can
-    carry only one of them, so a portable build still takes whichever the BUILD MACHINE's head
-    picked. See _WpfWebGpuPortableShimWarning below.
+    Microsoft.Win32.SystemEvents and Microsoft.Win32.Registry are the shims on every head, Windows
+    included, so a portable output carries the one implementation every OS runs.
   -->
   <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuMobile)' != 'true' and '$(_WpfWebGpuBrowser)' != 'true' and '$(WpfWebGpuPortable)' == 'true'">
     <_WpfWebGpuPortableRid Include="win-x64;win-arm64;win-x86;linux-x64;linux-arm64;osx-x64;osx-arm64" />
@@ -569,9 +557,9 @@
          Microsoft.Win32.SystemEvents  every desktop head, Windows included: it is the Windows Desktop Runtime's,
                                        which an app here does not need: on Windows the shim pumps the OS's own
                                        broadcasts (a hidden top-level window), elsewhere the session's events;
-         Microsoft.Win32.Registry      unix, Android and portable builds only: it is .NET's own runtime's, which
-                                       a Windows head keeps (a portable output serves every OS from one folder,
-                                       and the shim forwards to advapi32 there). -->
+         Microsoft.Win32.Registry      every desktop head too, though it is .NET's own runtime's: on Windows the
+                                       shim forwards to advapi32 (the registry itself), so an app's registry
+                                       goes through the one implementation on every OS. -->
   <Target Name="_WpfWebGpuOverlaySystemEventsShim"
           AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
           Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true'">
@@ -583,10 +571,10 @@
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
-          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(OutDir)' != '' and Exists('$(OutDir)')" />
+          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
     <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
           DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
-          Condition="('$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true' or '$(WpfWebGpuPortable)' == 'true') and '$(PublishDir)' != '' and Exists('$(PublishDir)')" />
+          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
   </Target>
 
   <!-- ================================ browser ================================ -->
