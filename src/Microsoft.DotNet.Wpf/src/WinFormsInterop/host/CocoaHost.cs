@@ -1326,7 +1326,12 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         return h > 0 ? h : 900;
     }
 
-    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRect(IntPtr r, IntPtr s, NSRect a);
+    // a struct of more than 16 bytes comes back through objc_msgSend_stret on x86_64 (an Intel Mac); arm64 has
+    // only objc_msgSend, which returns any struct
+    private static NSRect SendRectRect(IntPtr r, IntPtr s, NSRect a) => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+        ? SendRectRectStret(r, s, a) : SendRectRectArm64(r, s, a);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRectArm64(IntPtr r, IntPtr s, NSRect a);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern NSRect SendRectRectStret(IntPtr r, IntPtr s, NSRect a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRectBool(IntPtr r, IntPtr s, NSRect a, [MarshalAs(UnmanagedType.I1)] bool b);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr r, IntPtr s, nuint a);
 
@@ -1380,7 +1385,12 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         return new System.Drawing.Point(client.Left + (int)Math.Floor((p.x - c.x) * _k), client.Top + (int)Math.Floor((c.y + c.h - p.y) * _k));
     }
 
-    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRet(IntPtr r, IntPtr s);
+    // a struct of more than 16 bytes comes back through objc_msgSend_stret on x86_64 (an Intel Mac); arm64 has
+    // only objc_msgSend, which returns any struct
+    private static NSRect SendRectRet(IntPtr r, IntPtr s) => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+        ? SendRectRetStret(r, s) : SendRectRetArm64(r, s);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRetArm64(IntPtr r, IntPtr s);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern NSRect SendRectRetStret(IntPtr r, IntPtr s);
 
     // ---- the main queue -------------------------------------------------------------
 

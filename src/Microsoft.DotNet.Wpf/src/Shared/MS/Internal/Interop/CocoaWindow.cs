@@ -3689,8 +3689,18 @@ namespace MS.Internal.Interop
         // NSEvent.rotation is a float, not a CGFloat: a float return arrives in a different register
         // than a double, so reading it as one gives nonsense.
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern float SendFloat(IntPtr receiver, IntPtr selector);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRect(IntPtr receiver, IntPtr selector);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRect(IntPtr receiver, IntPtr selector, NSRect arg);
+        // a struct of more than 16 bytes comes back through objc_msgSend_stret on x86_64 (an Intel Mac); arm64 has
+        // only objc_msgSend, which returns any struct
+        private static NSRect SendRect(IntPtr receiver, IntPtr selector) => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+            ? SendRectStret(receiver, selector) : SendRectArm64(receiver, selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectArm64(IntPtr receiver, IntPtr selector);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern NSRect SendRectStret(IntPtr receiver, IntPtr selector);
+        // a struct of more than 16 bytes comes back through objc_msgSend_stret on x86_64 (an Intel Mac); arm64 has
+        // only objc_msgSend, which returns any struct
+        private static NSRect SendRectRect(IntPtr receiver, IntPtr selector, NSRect arg) => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+            ? SendRectRectStret(receiver, selector, arg) : SendRectRectArm64(receiver, selector, arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRectArm64(IntPtr receiver, IntPtr selector, NSRect arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern NSRect SendRectRectStret(IntPtr receiver, IntPtr selector, NSRect arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr receiver, IntPtr selector, nuint arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSPoint SendPoint(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern ulong SendNUInt(IntPtr receiver, IntPtr selector);

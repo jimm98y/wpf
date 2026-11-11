@@ -338,7 +338,12 @@ namespace System.Windows.Media
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNInt(IntPtr r, IntPtr s);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr r, IntPtr s);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGSize SendSize(IntPtr r, IntPtr s);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CMTime SendCMTime(IntPtr r, IntPtr s);
+        // a struct of more than 16 bytes comes back through objc_msgSend_stret on x86_64 (an Intel Mac); arm64 has
+        // only objc_msgSend, which returns any struct
+        private static CMTime SendCMTime(IntPtr r, IntPtr s) => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+            ? SendCMTimeStret(r, s) : SendCMTimeArm64(r, s);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CMTime SendCMTimeArm64(IntPtr r, IntPtr s);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern CMTime SendCMTimeStret(IntPtr r, IntPtr s);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidCMTime(IntPtr r, IntPtr s, CMTime a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBoolCMTime(IntPtr r, IntPtr s, CMTime a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrCMTimePtr(IntPtr r, IntPtr s, CMTime a, IntPtr b);

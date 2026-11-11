@@ -153,7 +153,7 @@ public static partial class MacPackager
             packages.Add(("sqlserver.pkg", id + ".sqlserver", manifest.Product.Version, sqlKBytes));
             log($"  {sqlPack["engine"]}: a choice, chosen by default (its image downloaded when installing)");
         }
-        var dist = Distribution(id, manifest.Product.Version, packages);
+        var dist = Distribution(id, manifest.Product.Version, packages, arch == "arm64" ? "arm64" : "x86_64");
         if (sqlPack != null)
         {
             SqlServerChoices(dist, product, id, sqlPack["package"]);
@@ -528,14 +528,18 @@ public static partial class MacPackager
     }
 
     /// <summary>The Distribution productbuild synthesizes for the packages, as it finishes it: each package a hidden choice
-    /// under the default one, the packages' versions and sizes, and the product's id and version.</summary>
-    private static System.Xml.Linq.XDocument Distribution(string id, string version, List<(string File, string Id, string Version, long KBytes)> packages)
+    /// under the default one, the packages' versions and sizes, and the product's id and version -- for the one
+    /// architecture the package's runtime is built for.</summary>
+    private static System.Xml.Linq.XDocument Distribution(string id, string version, List<(string File, string Id, string Version, long KBytes)> packages,
+        string hostArchitecture)
     {
         static System.Xml.Linq.XElement E(string name, params object[] content) => new(name, content);
         static System.Xml.Linq.XAttribute A(string name, object value) => new(name, value);
         var root = E("installer-gui-script", A("minSpecVersion", 1));
         foreach (var p in packages) root.Add(E("pkg-ref", A("id", p.Id), E("bundle-version")));
-        root.Add(E("options", A("customize", "never"), A("require-scripts", "false"), A("hostArchitectures", "x86_64,arm64")));
+        // the Mac the package's runtime runs on: Installer refuses another, saying why (an Intel Mac's runtime would run
+        // in Rosetta on Apple silicon, but the Apple silicon package is the one to install there)
+        root.Add(E("options", A("customize", "never"), A("require-scripts", "false"), A("hostArchitectures", hostArchitecture)));
         var line = E("line", A("choice", "default"));
         foreach (var p in packages) line.Add(E("line", A("choice", p.Id)));
         root.Add(E("choices-outline", line), E("choice", A("id", "default")));

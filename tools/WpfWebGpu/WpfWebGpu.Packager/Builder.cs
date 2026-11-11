@@ -61,8 +61,13 @@ public static class Builder
                 : new List<string>();
             if (rids.Count == 0) throw new PackagerError($"no desktop-osx-<arch>.pack in {packsFolder}: the macOS runtime is not installed");
             foreach (string rid in rids)
+            {
+                // SQL Server runs in Apple's container, which runs on Apple silicon only: an Intel Mac's package has none
+                if (manifest.SqlServer.Include && rid != "osx-arm64")
+                    log($"macOS ({rid.Split('-')[1]}): no SQL Server (it runs in Apple's container, on Apple silicon only); the product is pointed at a server of its own");
                 made.Add(Desktop.MacPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), Path.Combine(outDir, "macos"), log, pages,
                     rid == "osx-arm64" ? SqlServerPack(manifest, packsFolder, "macos") : null));
+            }
         }
         if (targets.Contains(Target.Linux))
         {

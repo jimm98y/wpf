@@ -1060,7 +1060,12 @@ namespace MS.Internal.Interop.WebView
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtrNIntBool(IntPtr r, IntPtr s, IntPtr a, nint b, [MarshalAs(UnmanagedType.I1)] bool c);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrRectPtr(IntPtr r, IntPtr s, CGRect a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrDouble(IntPtr r, IntPtr s, double a);
-        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr r, IntPtr s);
+        // a struct of more than 16 bytes comes back through objc_msgSend_stret on x86_64 (an Intel Mac); arm64 has
+        // only objc_msgSend, which returns any struct
+        private static CGRect SendRect(IntPtr r, IntPtr s) => System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64
+            ? SendRectStret(r, s) : SendRectArm64(r, s);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRectArm64(IntPtr r, IntPtr s);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern CGRect SendRectStret(IntPtr r, IntPtr s);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr r, IntPtr s);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNInt(IntPtr r, IntPtr s);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)]
