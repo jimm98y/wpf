@@ -8,6 +8,70 @@
 // EditorBrowsable/pragma blocks.
 namespace MS.Internal.Interop
 {
+    public enum AccessibleAction { Invoke = 0, Toggle = 1, Expand = 2, Collapse = 3, Select = 4, ToggleSelection = 5 }
+    [System.FlagsAttribute]
+    public enum AccessibleState
+    {
+        None = 0, Enabled = 1, Focusable = 2, Focused = 4, Offscreen = 8, Password = 16, ReadOnly = 32, Checked = 64,
+        Indeterminate = 128, Expanded = 256, Collapsed = 512, Selected = 1024, Selectable = 2048, HasValue = 4096, HasRange = 8192,
+    }
+    public interface IAutomationTreeSource
+    {
+        const int InvalidNode = -1;
+        int GetRootId(System.IntPtr windowHandle);
+        int[] GetChildIds(int id);
+        int GetParentId(int id);
+        int GetRole(int id);
+        string GetName(int id);
+        string GetAutomationId(int id);
+        string GetHelpText(int id);
+        string GetValue(int id);
+        bool TryGetRange(int id, out double value, out double minimum, out double maximum);
+        MS.Internal.Interop.AccessibleState GetState(int id);
+        bool TryGetBounds(int id, out double x, out double y, out double width, out double height);
+        int HitTest(System.IntPtr windowHandle, double screenX, double screenY);
+        int GetFocusedId(System.IntPtr windowHandle);
+        bool SupportsAction(int id, MS.Internal.Interop.AccessibleAction action);
+        bool DoAction(int id, MS.Internal.Interop.AccessibleAction action);
+        bool SetValue(int id, string value);
+        bool SetFocus(int id);
+    }
+    public static partial class AutomationTree
+    {
+        public static MS.Internal.Interop.IAutomationTreeSource Current { get { throw null; } set { } }
+        public static bool IsAvailable { get { throw null; } }
+        public static event System.Action<MS.Internal.Interop.AutomationChange> Changed { add { } remove { } }
+        public static event System.Action ActivationRequested { add { } remove { } }
+        public static void AddSource(MS.Internal.Interop.IAutomationTreeSource source, int idBase) { }
+        public static void RequestActivation() { }
+        public static void RaiseChanged(MS.Internal.Interop.AutomationChange change) { }
+    }
+    public readonly partial struct AutomationChange
+    {
+        private readonly object _dummy;
+        private readonly int _dummyPrimitive;
+        public AutomationChange(MS.Internal.Interop.AutomationChangeKind kind, int nodeId, System.IntPtr windowHandle) { throw null; }
+        public AutomationChange(MS.Internal.Interop.AutomationChangeKind kind, int nodeId, System.IntPtr windowHandle, int childId, int index) { throw null; }
+        public MS.Internal.Interop.AutomationChangeKind Kind { get { throw null; } }
+        public int NodeId { get { throw null; } }
+        public System.IntPtr WindowHandle { get { throw null; } }
+        public int ChildId { get { throw null; } }
+        public int Index { get { throw null; } }
+    }
+    public enum AutomationChangeKind
+    {
+        FocusChanged = 0, ChildrenChanged = 1, PropertyChanged = 2, ValueChanged = 3, SelectionChanged = 4, NameChanged = 5,
+        DescriptionChanged = 6, ExpandedChanged = 7, CheckedChanged = 8, EnabledChanged = 9, OffscreenChanged = 10,
+        ChildAdded = 11, ChildRemoved = 12,
+    }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("macos")]
+    public static partial class CocoaAccessibility
+    {
+        public static void AddViewAccessibility(System.IntPtr viewClass) { }
+    }
+}
+namespace MS.Internal.Interop
+{
     public sealed partial class AndroidWindow : MS.Internal.Interop.IPlatformWindow
     {
         public const int RightPress = 5;

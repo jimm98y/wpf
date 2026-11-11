@@ -16,7 +16,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
-internal sealed class CocoaHost : IWinFormsHost
+internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 {
     private readonly Form _form;
     private readonly XplatUIWebGpu _driver;
@@ -514,11 +514,12 @@ internal sealed class CocoaHost : IWinFormsHost
                 if (_transparent) MakeTransparent(nw);
                 HideTitleBar(nw);
                 SendVoidPtr(nw, Sel("setTitle:"), NSStr(title));
-                IntPtr nv = SendInitRect(Send(Cls("NSView"), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = r.w, h = r.h });
+                IntPtr nv = SendInitRect(Send(AccessibleViewClass(), Sel("alloc")), Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = r.w, h = r.h });
                 SendVoidBool(nv, Sel("setWantsLayer:"), true);
                 SendVoidPtr(nw, Sel("setContentView:"), nv);
                 _imageView = nv;
                 _window = nw;
+                WinFormsWebGpu.Accessibility.AutomationSource.Register(this);
                 SendVoidPtr(nw, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
                 // As the main thread's forms do: a process the user just started takes the foreground
                 // with its first window. A splash screen shown from its own thread came up before any
@@ -564,12 +565,13 @@ internal sealed class CocoaHost : IWinFormsHost
         HideTitleBar(win);
         SendVoidPtr(win, Sel("setTitle:"), NSStr(_form.Text ?? "WinForms"));
 
-        IntPtr view = Send(Cls("NSView"), Sel("alloc"));
+        IntPtr view = Send(AccessibleViewClass(), Sel("alloc"));
         view = SendInitRect(view, Sel("initWithFrame:"), new NSRect { x = 0, y = 0, w = rect.w, h = rect.h });
         SendVoidBool(view, Sel("setWantsLayer:"), true);   // layer-backed: we set layer.contents = CGImage
         SendVoidPtr(win, Sel("setContentView:"), view);
 
         _window = win; _imageView = view;
+        WinFormsWebGpu.Accessibility.AutomationSource.Register(this);
         // the title bar's close button asks the form, as Windows' does (WindowShouldClose)
         SendVoidPtr(win, Sel("setDelegate:"), CloseDelegate());
         // What the form asked for. AppKit may constrain it (below the menu bar, onto the screen);
@@ -1262,6 +1264,62 @@ internal sealed class CocoaHost : IWinFormsHost
     // screen of the key window, which moves.)
     // (read again at most once a second: NSScreen.screens asks the window server, and the frame is
     // synchronised on every pump -- MacInterop keeps it)
+    // ---- accessibility: the form as VoiceOver asks it (AutomationSource, CocoaAccessibility) ----------------
+    //
+    // The content view is of a class that answers NSAccessibility's container selectors (CocoaAccessibility adds
+    // them, as to WPF's windows' views): its one child is the form's tree, which knows the window by the view.
+    // The tree's bounds are top-left screen pixels at the main screen's backing scale (what CocoaAccessibility
+    // turns into AppKit's points); a driver position is a point per ScreenScale units, a size per _k.
+
+    private static IntPtr s_accessibleViewClass;
+
+    private static IntPtr AccessibleViewClass()
+    {
+        if (s_accessibleViewClass != IntPtr.Zero) return s_accessibleViewClass;
+        IntPtr cls = objc_getClass("WfAccessibleFormView");
+        if (cls == IntPtr.Zero)
+        {
+            cls = objc_allocateClassPair(Cls("NSView"), "WfAccessibleFormView", UIntPtr.Zero);
+            WindowsBase::MS.Internal.Interop.CocoaAccessibility.AddViewAccessibility(cls);
+            objc_registerClassPair(cls);
+        }
+        return s_accessibleViewClass = cls;
+    }
+
+    // the primary display's (NSScreen.screens[0]), the scale CocoaAccessibility turns the pixels back into points with
+    private static double BackingScale()
+    {
+        IntPtr screens = Send(Cls("NSScreen"), Sel("screens"));
+        IntPtr primary = screens != IntPtr.Zero && (nint)Send(screens, Sel("count")) > 0
+            ? SendPtrNUInt(screens, Sel("objectAtIndex:"), 0) : Send(Cls("NSScreen"), Sel("mainScreen"));
+        double scale = primary == IntPtr.Zero ? 1 : SendDouble(primary, Sel("backingScaleFactor"));
+        return scale > 0 ? scale : 1;
+    }
+
+    IntPtr WinFormsWebGpu.Accessibility.IA11yHostSite.Handle => _imageView;
+
+    Form WinFormsWebGpu.Accessibility.IA11yHostSite.Form => _closed ? null : _form;
+
+    bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapToScreen(Rectangle driverRect, out double x, out double y, out double width, out double height)
+    {
+        double ss = ScreenScale, k = _k > 0 ? _k : 1, bs = BackingScale();
+        x = driverRect.X / ss * bs;
+        y = driverRect.Y / ss * bs;
+        width = driverRect.Width / k * bs;
+        height = driverRect.Height / k * bs;
+        return !_closed;
+    }
+
+    bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapFromScreen(double x, double y, out Point driverPoint)
+    {
+        double ss = ScreenScale, bs = BackingScale();
+        driverPoint = new Point((int)Math.Floor(x / bs * ss), (int)Math.Floor(y / bs * ss));
+        return !_closed;
+    }
+
+    bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryWindowRect(out double x, out double y, out double width, out double height) =>
+        ((WinFormsWebGpu.Accessibility.IA11yHostSite)this).TryMapToScreen(_form.Bounds, out x, out y, out width, out height);
+
     private static double PrimaryScreenHeight()
     {
         double h = Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacInterop.PrimaryScreenHeight();
@@ -1449,6 +1507,7 @@ internal sealed class CocoaHost : IWinFormsHost
     /// window close box). Idempotent.</summary>
     public void Close()
     {
+        WinFormsWebGpu.Accessibility.AutomationSource.Unregister(_imageView);
         _form.VisibleChanged -= OnFormVisibleChanged;
         if (_offMain)
         {

@@ -25,7 +25,7 @@ using System;
 namespace MS.Internal.Interop
 {
     /// <summary>What an accessible node can be asked to do. Each maps to a WPF automation pattern.</summary>
-    internal enum AccessibleAction
+    public enum AccessibleAction
     {
         /// <summary>Press a button, activate a hyperlink (IInvokeProvider).</summary>
         Invoke,
@@ -47,7 +47,7 @@ namespace MS.Internal.Interop
     /// already the dominant cost of an accessibility tree walk.
     /// </summary>
     [Flags]
-    internal enum AccessibleState
+    public enum AccessibleState
     {
         None = 0,
         Enabled = 1 << 0,
@@ -73,7 +73,7 @@ namespace MS.Internal.Interop
     /// The accessibility tree, as the platform backends see it. Implemented by PresentationCore's
     /// AutomationBridge over the AutomationPeer tree, and installed in <see cref="Current"/>.
     /// </summary>
-    internal interface IAutomationTreeSource
+    public interface IAutomationTreeSource
     {
         /// <summary>
         /// The root node of the window identified by <paramref name="windowHandle"/> (the same handle
@@ -149,23 +149,93 @@ namespace MS.Internal.Interop
     /// method: assistive technologies address the application, not a particular window, and the
     /// window handle is a parameter rather than a separate channel.
     /// </summary>
-    internal static class AutomationTree
+    public static class AutomationTree
     {
         /// <summary>
         /// The installed tree, or null when PresentationCore has not started one -- which is the
         /// case in a WindowsBase-only process, and until an assistive technology is detected.
         /// </summary>
-        internal static IAutomationTreeSource Current { get; set; }
+        public static IAutomationTreeSource Current
+        {
+            get { lock (s_sources) return s_sources.Count == 0 ? s_primary : s_router; }
+            set => s_primary = value;
+        }
+
+        private static IAutomationTreeSource s_primary;
+        private static readonly System.Collections.Generic.List<(IAutomationTreeSource Source, int IdBase)> s_sources = new();
+        private static readonly Router s_router = new();
+
+        /// <summary>
+        /// A tree of another UI stack in the process (WinForms' forms) beside WPF's: it answers for its own windows (a
+        /// root for their handles) and for node ids from <paramref name="idBase"/> up, above any WPF hands out.
+        /// <see cref="Current"/> is then a router that asks each its own.
+        /// </summary>
+        public static void AddSource(IAutomationTreeSource source, int idBase)
+        {
+            lock (s_sources)
+            {
+                if (s_sources.Exists(x => ReferenceEquals(x.Source, source))) return;
+                s_sources.Add((source, idBase));
+                s_sources.Sort((a, b) => b.IdBase.CompareTo(a.IdBase));
+            }
+        }
+
+        // a node to the source whose ids it is in; a window to the first source with a root for it
+        private sealed class Router : IAutomationTreeSource
+        {
+            private static IAutomationTreeSource ForId(int id)
+            {
+                lock (s_sources)
+                    foreach (var (source, idBase) in s_sources)
+                        if (id >= idBase) return source;
+                return s_primary;
+            }
+
+            private static IAutomationTreeSource ForWindow(IntPtr windowHandle)
+            {
+                (IAutomationTreeSource Source, int IdBase)[] sources;
+                lock (s_sources) sources = s_sources.ToArray();
+                foreach (var (source, _) in sources)
+                    if (source.GetRootId(windowHandle) != IAutomationTreeSource.InvalidNode) return source;
+                return s_primary;
+            }
+
+            public int GetRootId(IntPtr windowHandle) => ForWindow(windowHandle)?.GetRootId(windowHandle) ?? IAutomationTreeSource.InvalidNode;
+            public int[] GetChildIds(int id) => ForId(id)?.GetChildIds(id) ?? Array.Empty<int>();
+            public int GetParentId(int id) => ForId(id)?.GetParentId(id) ?? IAutomationTreeSource.InvalidNode;
+            public int GetRole(int id) => ForId(id)?.GetRole(id) ?? -1;
+            public string GetName(int id) => ForId(id)?.GetName(id);
+            public string GetAutomationId(int id) => ForId(id)?.GetAutomationId(id);
+            public string GetHelpText(int id) => ForId(id)?.GetHelpText(id);
+            public string GetValue(int id) => ForId(id)?.GetValue(id);
+            public bool TryGetRange(int id, out double value, out double minimum, out double maximum)
+            {
+                value = minimum = maximum = 0;
+                return ForId(id)?.TryGetRange(id, out value, out minimum, out maximum) ?? false;
+            }
+            public AccessibleState GetState(int id) => ForId(id)?.GetState(id) ?? AccessibleState.None;
+            public bool TryGetBounds(int id, out double x, out double y, out double width, out double height)
+            {
+                x = y = width = height = 0;
+                return ForId(id)?.TryGetBounds(id, out x, out y, out width, out height) ?? false;
+            }
+            public int HitTest(IntPtr windowHandle, double screenX, double screenY) => ForWindow(windowHandle)?.HitTest(windowHandle, screenX, screenY) ?? IAutomationTreeSource.InvalidNode;
+            public int GetFocusedId(IntPtr windowHandle) => ForWindow(windowHandle)?.GetFocusedId(windowHandle) ?? IAutomationTreeSource.InvalidNode;
+            public bool SupportsAction(int id, AccessibleAction action) => ForId(id)?.SupportsAction(id, action) ?? false;
+            public bool DoAction(int id, AccessibleAction action) => ForId(id)?.DoAction(id, action) ?? false;
+            public bool SetValue(int id, string value) => ForId(id)?.SetValue(id, value) ?? false;
+            public bool SetFocus(int id) => ForId(id)?.SetFocus(id) ?? false;
+        }
 
         /// <summary>True when there is a tree to ask. Backends check this before every batch.</summary>
-        internal static bool IsAvailable => Current != null;
+        public static bool IsAvailable => Current != null;
 
         /// <summary>
         /// Raised by PresentationCore when something changed that an assistive technology needs to
         /// hear about. Backends translate it into their platform's notification; nothing else in
         /// WindowsBase listens.
         /// </summary>
-        internal static event Action<AutomationChange> Changed;
+        public static event Action<AutomationChange> Changed;
 
         /// <summary>
         /// Raised when a backend has detected a real assistive technology and wants the tree built.
@@ -175,20 +245,20 @@ namespace MS.Internal.Interop
         /// backend cannot call Activate directly -- it raises this, and PresentationCore, which
         /// subscribed on the way up, answers. The mirror image of Changed below.
         /// </summary>
-        internal static event Action ActivationRequested;
+        public static event Action ActivationRequested;
 
         /// <summary>
         /// Called by a backend the first time it sees an assistive technology. Safe to call
         /// repeatedly; PresentationCore's handler is idempotent.
         /// </summary>
-        internal static void RequestActivation()
+        public static void RequestActivation()
         {
             try { ActivationRequested?.Invoke(); }
             catch (InvalidOperationException) { }   // nothing listening yet
         }
 
         /// <summary>Called by PresentationCore. Kept here so the event stays private to the pair.</summary>
-        internal static void RaiseChanged(AutomationChange change)
+        public static void RaiseChanged(AutomationChange change)
         {
             try { Changed?.Invoke(change); }
             catch (InvalidOperationException) { }   // a backend torn down mid-notification
@@ -196,7 +266,7 @@ namespace MS.Internal.Interop
     }
 
     /// <summary>One thing that changed, as flat data a backend can forward without touching the tree.</summary>
-    internal readonly struct AutomationChange
+    public readonly struct AutomationChange
     {
         public AutomationChangeKind Kind { get; }
         public int NodeId { get; }
@@ -240,7 +310,7 @@ namespace MS.Internal.Interop
     /// Backends switch on this with a default arm, so new kinds degrade to the generic notification
     /// rather than breaking a head that has not been taught about them.
     /// </summary>
-    internal enum AutomationChangeKind
+    public enum AutomationChangeKind
     {
         /// <summary>Keyboard focus moved to NodeId.</summary>
         FocusChanged,

@@ -38,7 +38,7 @@ using Microsoft.Wpf.Interop.WebGpu.Composition.Platform;
 namespace System.Windows.Forms
 {
 	[SupportedOSPlatform ("linux")]
-	internal sealed class WaylandFormHost : IWinFormsHost
+	internal sealed class WaylandFormHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 	{
 		private readonly Form _form;
 		private readonly XplatUIWebGpu _driver = XplatUIWebGpu.GetInstance ();
@@ -340,6 +340,9 @@ namespace System.Windows.Forms
 			_window.Closed += OnCloseRequested;
 			_window.ActiveChanged += OnActiveChanged;
 			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
+			// the form's tree for AT-SPI, which knows the window by its surface (WaylandWindow attaches the bridge)
+			_a11yHandle = _window.Surface;
+			WinFormsWebGpu.Accessibility.AutomationSource.Register (this);
 			bool active = _window.IsActive;
 			_ready = true;
 			Action placed = () => {
@@ -1055,11 +1058,51 @@ namespace System.Windows.Forms
 
 		public void SaveFrame (string path) { }
 
+		// ---- accessibility: the form as AT-SPI asks it (AutomationSource) --------------------------------------
+		//
+		// The driver's space is the virtual screen in driver units; the window's client shows ClientScreen of it,
+		// scaled, at the client's origin in WaylandWindow's virtual screen of device pixels.
+
+		private IntPtr _a11yHandle;
+
+		IntPtr WinFormsWebGpu.Accessibility.IA11yHostSite.Handle => _a11yHandle;
+
+		Form WinFormsWebGpu.Accessibility.IA11yHostSite.Form => _closed ? null : _form;
+
+		bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapToScreen (Rectangle driverRect, out double x, out double y, out double width, out double height)
+		{
+			x = y = width = height = 0;
+			if (_closed || _window == null)
+				return false;
+			_window.GetClientScreenOriginPixels (out int cx, out int cy);
+			Rectangle client = ClientScreen;
+			x = cx + (driverRect.X - client.X) * _scale;
+			y = cy + (driverRect.Y - client.Y) * _scale;
+			width = driverRect.Width * _scale;
+			height = driverRect.Height * _scale;
+			return true;
+		}
+
+		bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapFromScreen (double x, double y, out Point driverPoint)
+		{
+			driverPoint = Point.Empty;
+			if (_closed || _window == null || _scale <= 0)
+				return false;
+			_window.GetClientScreenOriginPixels (out int cx, out int cy);
+			Rectangle client = ClientScreen;
+			driverPoint = new Point (client.X + (int)Math.Floor ((x - cx) / _scale), client.Y + (int)Math.Floor ((y - cy) / _scale));
+			return true;
+		}
+
+		bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryWindowRect (out double x, out double y, out double width, out double height) =>
+			((WinFormsWebGpu.Accessibility.IA11yHostSite)this).TryMapToScreen (_form.Bounds, out x, out y, out width, out height);
+
 		public void Close ()
 		{
 			if (_closed)
 				return;
 			_closed = true;
+			WinFormsWebGpu.Accessibility.AutomationSource.Unregister (_a11yHandle);
 			lock (s_hosts) s_hosts.Remove (this);
 			_form.VisibleChanged -= OnVisibleChanged;
 			_form.LocationChanged -= OnFormMoved;

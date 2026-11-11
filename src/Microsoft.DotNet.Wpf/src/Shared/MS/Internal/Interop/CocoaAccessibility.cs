@@ -28,7 +28,7 @@ using System.Runtime.Versioning;
 namespace MS.Internal.Interop
 {
     [SupportedOSPlatform("macos")]
-    internal static class CocoaAccessibility
+    public static class CocoaAccessibility
     {
         /// <summary>True on macOS once AppKit is reachable; the tree itself may still be dormant.</summary>
         internal static bool IsAvailable => OperatingSystem.IsMacOS();
@@ -52,7 +52,7 @@ namespace MS.Internal.Interop
         /// registered. Adds the handful of selectors that make the view an accessibility container
         /// whose one child is the WPF tree's root.
         /// </summary>
-        internal static void AddViewAccessibility(IntPtr viewClass)
+        public static void AddViewAccessibility(IntPtr viewClass)
         {
             EnsureElementClass();
 
