@@ -64,6 +64,7 @@ public static unsafe partial class Exports
         {
             DispatcherObject d when !d.CheckAccess() => d.Dispatcher.Thread,
             Forms.Control c when c.InvokeRequired => Forms.Win32Bridge.OwnerThread(c),
+            AppWindow a when a.ThreadId != Environment.CurrentManagedThreadId => a.Thread,
             _ => null,
         };
         if (target == null || !target.IsAlive) return f();
@@ -1102,6 +1103,9 @@ public static unsafe partial class Exports
         object? o = Resolve(hwnd);
         switch (o)
         {
+            case AppWindow a when a.Context == null && a.ThreadId != Environment.CurrentManagedThreadId && QueueOf(a.ThreadId) != null:
+                // its thread pumps its own queue: the call runs there, while that thread waits in GetMessage
+                return Ui(a, () => a.Dispatch(msg, w, l));
             case AppWindow a:
                 return a.Dispatch(msg, w, l);
             case Forms.Control c:
@@ -1322,9 +1326,13 @@ public static unsafe partial class Exports
             else if (procPtr != 0) ((delegate* unmanaged<nint, uint, nuint, uint, void>)procPtr)(hwnd, WM_TIMER, id, tick);
             else if (target is AppWindow a) a.Dispatch(WM_TIMER, (nint)id, 0);
         }
+        // a thread that pumps its own queue takes its timers from it: WM_TIMER, the TIMERPROC in lParam
+        int owner = target is AppWindow ow ? ow.ThreadId : Environment.CurrentManagedThreadId;
         var timer = new Timer(_ =>
         {
-            if (context != null) context.Post(_ => Fire(), null); else Fire();
+            if (context != null) context.Post(_ => Fire(), null);
+            else if (QueueOf(owner) is { } queue) Enqueue(queue, hwnd, WM_TIMER, (nint)id, procPtr);
+            else Fire();
         }, null, Math.Max(ms, 10), Math.Max(ms, 10));
         s_timers[key] = timer;
         return id;
@@ -1372,6 +1380,7 @@ internal sealed unsafe class AppWindow
     public nint Parent { get; set; }
     public RECT Rect { get; set; }
     public int ThreadId { get; } = Environment.CurrentManagedThreadId;
+    public System.Threading.Thread Thread { get; } = System.Threading.Thread.CurrentThread;
     public SynchronizationContext? Context { get; } = SynchronizationContext.Current;
 
     public AppWindow(Exports.WindowClass cls, uint exStyle, uint style, string title, nint parent, RECT rect)
@@ -1396,11 +1405,16 @@ internal sealed unsafe class AppWindow
     public void Post(uint msg, nint w, nint l)
     {
         if (Context != null) Context.Post(_ => Dispatch(msg, w, l), null);
+        // the creating thread pumps a queue of its own (GetMessage): the message waits there for it
+        else if (Exports.QueueOf(ThreadId) is { } queue) Exports.Enqueue(queue, Handle, msg, w, l);
         else ThreadPool.QueueUserWorkItem(_ => Dispatch(msg, w, l));
     }
 
-    public static bool PostToThread(int thread, uint msg, nint w, nint l) =>
-        s_threadContexts.TryGetValue(thread, out var ctx) && ctx != null;   // no thread-message procedure to deliver to
+    public static bool PostToThread(int thread, uint msg, nint w, nint l)
+    {
+        if (Exports.QueueOf(thread) is { } queue) { Exports.Enqueue(queue, 0, msg, w, l); return true; }
+        return s_threadContexts.TryGetValue(thread, out var ctx) && ctx != null;   // a dispatcher's thread: no thread-message procedure to deliver to
+    }
 
     /// <summary>WM_NCCREATE then WM_CREATE, with a CREATESTRUCT as Windows passes it.</summary>
     public bool Create(void* param)

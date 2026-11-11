@@ -7,12 +7,7 @@ namespace WpfWebGpu.Tests;
 // read from the file, walked as VerQueryValueW walks it. The file is this assembly, which the compiler gave one.
 public unsafe class VersionExportTests
 {
-    private static MethodInfo Export(string name)
-    {
-        string win32 = typeof(VersionExportTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "WpfWebGpuWin32").Value!;
-        Assert.SkipWhen(!File.Exists(win32), "WpfWebGpu.Win32 is not built (tools/WpfWebGpu/build.sh)");
-        return Assembly.LoadFrom(win32).GetType("WpfWebGpu.Win32.Exports")!.GetMethod(name)!;
-    }
+    private static MethodInfo Export(string name) => Win32Exports.Method(name);
 
     private static object P(void* p, Type t) => Pointer.Box(p, t);
 

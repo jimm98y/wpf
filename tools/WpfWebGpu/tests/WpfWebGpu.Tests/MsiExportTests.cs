@@ -14,12 +14,7 @@ public unsafe class MsiExportTests
     private const string Upgrade = "{12345678-9ABC-DEF0-1234-56789ABCDEF0}";
     private const string Product = "{90120000-0030-0000-0000-0000000FF1CE}";
 
-    private static MethodInfo Export(string name)
-    {
-        string win32 = typeof(MsiExportTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "WpfWebGpuWin32").Value!;
-        Assert.SkipWhen(!File.Exists(win32), "WpfWebGpu.Win32 is not built (tools/WpfWebGpu/build.sh)");
-        return Assembly.LoadFrom(win32).GetType("WpfWebGpu.Win32.Exports")!.GetMethod(name)!;
-    }
+    private static MethodInfo Export(string name) => Win32Exports.Method(name);
 
     private static uint Enum(string upgrade, uint index, out string product)
     {

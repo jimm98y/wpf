@@ -6,12 +6,7 @@ namespace WpfWebGpu.Tests;
 // kernel32's disk space queries in the stack's user-mode Windows (WpfWebGpu.Win32/Kernel32.Disk.cs).
 public unsafe class DiskSpaceExportTests
 {
-    private static MethodInfo Export(string name)
-    {
-        string win32 = typeof(DiskSpaceExportTests).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Single(a => a.Key == "WpfWebGpuWin32").Value!;
-        Assert.SkipWhen(!File.Exists(win32), "WpfWebGpu.Win32 is not built (tools/WpfWebGpu/build.sh)");
-        return Assembly.LoadFrom(win32).GetType("WpfWebGpu.Win32.Exports")!.GetMethod(name)!;
-    }
+    private static MethodInfo Export(string name) => Win32Exports.Method(name);
 
     [Fact]
     public void A_directory_s_disk_reports_its_size_and_free_space_and_a_missing_one_is_refused()
