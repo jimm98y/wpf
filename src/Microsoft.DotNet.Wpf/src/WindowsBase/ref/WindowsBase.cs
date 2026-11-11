@@ -620,6 +620,7 @@ namespace MS.Internal.Interop
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static MS.Internal.Interop.IPlatformWindow FromHandle(System.IntPtr handle) { throw null; }
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
+        public static bool TryGetCursorPixels(out int x, out int y) { throw null; }
         public static int GetMonitorCount() { throw null; }
         public static bool GetMonitorPixels(int index, out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom, out bool isPrimary) { throw null; }
         public static int MonitorIndexFromWindow(System.IntPtr handle) { throw null; }

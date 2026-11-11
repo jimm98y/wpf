@@ -18,13 +18,9 @@ internal static class Platform
     /// <summary>The pointer in screen coordinates; false when nothing knows where it is.</summary>
     public static bool Cursor(out int x, out int y)
     {
-        if (OperatingSystem.IsMacOS())
-        {
-            CGPoint c = MacNative.CursorPosition();
-            x = (int)Math.Round(c.X);
-            y = (int)Math.Round(c.Y);
-            return true;
-        }
+        // where the head knows it: in the device pixels windows and monitors are in (macOS: NSEvent's
+        // location flipped and scaled, not CoreGraphics' points, which are half that on a Retina display)
+        if (!OperatingSystem.IsLinux() && MS.Internal.Interop.PlatformWindow.TryGetCursorPixels(out x, out y)) return true;
         // where the mouse is in one of the stack's WPF windows, in that window's screen coordinates
         foreach (object o in Exports.TopLevels())
         {
@@ -48,7 +44,15 @@ internal static class Platform
 
     /// <summary>Moves the pointer; false where a program may not (anywhere but macOS here).</summary>
     public static bool SetCursor(int x, int y)
-        => OperatingSystem.IsMacOS() && MacNative.CGWarpMouseCursorPosition(new CGPoint { X = x, Y = y }) == 0;
+    {
+        if (!OperatingSystem.IsMacOS()) return false;
+        // device pixels to CoreGraphics' global points: the main display's pixels per point
+        double scale = 1;
+        var main = MacNative.Displays()[0].Bounds;
+        if (main.Size.Width > 0 && MS.Internal.Interop.PlatformWindow.GetMonitorPixels(0, out int l, out _, out int r, out _, out _, out _, out _, out _, out _) && r > l)
+            scale = (r - l) / main.Size.Width;
+        return MacNative.CGWarpMouseCursorPosition(new CGPoint { X = x / scale, Y = y / scale }) == 0;
+    }
 
     // Windows virtual-key codes to macOS key codes (kVK_*), for the keys apps actually poll.
     private static readonly Dictionary<int, ushort> s_vkToMac = new()
@@ -106,19 +110,17 @@ internal static class Platform
         var list = new List<(RECT, RECT)>();
         if (OperatingSystem.IsMacOS())
         {
-            foreach (var (_, bounds) in MacNative.Displays())
+            // every display in the pixels the stack's windows report (each by its own scale), with the work area
+            // NSScreen.visibleFrame gives it: the menu bar and the Dock where they are, on whichever display
+            int count = MS.Internal.Interop.PlatformWindow.GetMonitorCount();
+            for (int i = 0; i < count; i++)
             {
-                RECT b = new()
-                {
-                    Left = (int)bounds.Origin.X, Top = (int)bounds.Origin.Y,
-                    Right = (int)(bounds.Origin.X + bounds.Size.Width), Bottom = (int)(bounds.Origin.Y + bounds.Size.Height),
-                };
-                // The menu bar takes the top of the main display; the Dock's share is not known from here.
-                RECT w = b;
-                if (list.Count == 0) w.Top += 25;
-                list.Add((b, w));
+                if (!MS.Internal.Interop.PlatformWindow.GetMonitorPixels(i, out int dl, out int dt, out int dr, out int db,
+                        out int vl, out int vt, out int vr, out int vb, out _))
+                    continue;
+                list.Add((new RECT { Left = dl, Top = dt, Right = dr, Bottom = db }, new RECT { Left = vl, Top = vt, Right = vr, Bottom = vb }));
             }
-            return list;
+            if (list.Count > 0) return list;
         }
         // one display, in device pixels as Win32 has it: the head's (the page, the screen), or as the
         // stack's WPF describes it -- in DIPs, which are pixels only at 96 dpi

@@ -457,7 +457,21 @@ namespace MS.Internal.Interop
                 Wayland.WaylandWindow.SetTitle(handle, title);
         }
 
-        /// <summary>Primary screen bounds and work area in top-left device pixels.</summary>
+        /// <summary>
+        /// The pointer in the screen's device pixels, top-left origin -- the space window rectangles and
+        /// monitors are in, as GetCursorPos reports it; false where no pointer is known (Linux: Wayland
+        /// tells a window where the pointer is only while it is over it).
+        /// </summary>
+        public static bool TryGetCursorPixels(out int x, out int y)
+        {
+            x = y = 0;
+            if (OperatingSystem.IsMacOS()) return CocoaWindow.TryGetCursorPixels(out x, out y);
+            if (OperatingSystem.IsIOS()) return UIKitWindow.TryGetCursorPixels(out x, out y);
+            if (OperatingSystem.IsAndroid()) return AndroidWindow.TryGetCursorPixels(out x, out y);
+            if (OperatingSystem.IsBrowser()) return BrowserWindow.TryGetCursorPixels(out x, out y);
+            return false;
+        }
+
         /// <summary>How many displays are attached. One, for a head whose window IS the screen.</summary>
         public static int GetMonitorCount()
         {
