@@ -107,6 +107,12 @@ namespace System.Windows.Documents
         {
             SpellerInteropBase spellerInterop = null;
 
+            // off Windows, the OS's own spelling: there is neither Windows' spell checking service nor NLG to ask
+            if (!OperatingSystem.IsWindows())
+            {
+                return PlatformSpellerInterop.TryCreate();
+            }
+
             bool winRTSupport = false;
             
             try
