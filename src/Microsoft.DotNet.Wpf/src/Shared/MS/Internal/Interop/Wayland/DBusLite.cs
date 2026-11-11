@@ -862,6 +862,9 @@ namespace MS.Internal.Interop.Wayland
             finally { Marshal.FreeCoTaskMem(utf8); }
         }
 
+        /// <summary>Drops a message never sent (a reply begun for a member that turned out unhandled).</summary>
+        internal static void Unref(IntPtr message) => dbus_message_unref(message);
+
         internal static void AppendInt32(byte* iter, int value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_INT32, &value);
 
         internal static void AppendUInt32(byte* iter, uint value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &value);

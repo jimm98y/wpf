@@ -20,6 +20,10 @@
 //     through org.freedesktop.DBus.Properties. An implementation that only offers methods looks like
 //     an empty tree, which is a confusing way to fail.
 //
+// The root object is the APPLICATION, as AT-SPI requires and GTK and Qt export it: its children are
+// the process's toplevel windows, each the root of its own WPF (or WinForms) tree, so a second window
+// -- a dialog, a tool window -- is as reachable as the first, and Orca hears which one is active.
+//
 // What is deliberately approximate: under Wayland a toplevel never learns its position on screen
 // (WaylandWindow says so at length), so screen coordinates here are the head's synthesised virtual
 // space. Reading order, focus tracking and navigation are all correct; flat-review against physical
@@ -49,7 +53,14 @@ namespace MS.Internal.Interop.Wayland
 
         private static IntPtr s_bus;
         private static string s_busName = string.Empty;
-        private static IntPtr s_window;
+
+        // The toplevels exported under the application, in the order they appeared, and the active one.
+        private static readonly System.Collections.Generic.List<IntPtr> s_windows = new();
+        private static IntPtr s_active;
+
+        /// <summary>The application object's node: below every node id the tree hands out, and not
+        /// <see cref="IAutomationTreeSource.InvalidNode"/>.</summary>
+        private const int AppNode = -2;
 
         internal static bool IsAttached => s_bus != IntPtr.Zero;
 
@@ -77,7 +88,7 @@ namespace MS.Internal.Interop.Wayland
         /// </summary>
         internal static bool TryAttach(IntPtr window)
         {
-            if (IsAttached) return true;
+            if (IsAttached) { AddWindow(window); return true; }
             if (s_tried) return false;
             s_tried = true;
 
@@ -91,7 +102,6 @@ namespace MS.Internal.Interop.Wayland
             if (bus == IntPtr.Zero) { Trace($"could not open {address}"); return false; }
 
             s_bus = bus;
-            s_window = window;
             s_busName = DBusLite.UniqueNameOf(bus) ?? string.Empty;
 
             s_messageHandler = HandleMessage;
@@ -109,8 +119,86 @@ namespace MS.Internal.Interop.Wayland
             AutomationTree.Changed += OnTreeChanged;
 
             Embed();
+            AddWindow(window);
             return true;
         }
+
+        // ---- the application's windows ---------------------------------------------
+
+        private static void AddWindow(IntPtr window)
+        {
+            if (window == IntPtr.Zero || s_windows.Contains(window)) return;
+            s_windows.Add(window);
+            int root = Tree?.GetRootId(window) ?? IAutomationTreeSource.InvalidNode;
+            if (root >= 0) EmitChildrenChanged(RootPath, "add", s_windows.Count - 1, PathForNode(root));
+            DBusLite.Flush(s_bus);
+        }
+
+        /// <summary>A toplevel going away: the application's child removed, before its surface is.</summary>
+        internal static void Detach(IntPtr window)
+        {
+            int index = s_windows.IndexOf(window);
+            if (index < 0) return;
+            int root = Tree?.GetRootId(window) ?? IAutomationTreeSource.InvalidNode;
+            s_windows.RemoveAt(index);
+            if (s_active == window) s_active = IntPtr.Zero;
+            if (s_bus == IntPtr.Zero) return;
+            if (root >= 0) EmitChildrenChanged(RootPath, "remove", index, PathForNode(root));
+            DBusLite.Flush(s_bus);
+        }
+
+        /// <summary>
+        /// The compositor made a toplevel the active window, or took that away: AT-SPI's window
+        /// Activate/Deactivate and the frame's ACTIVE state, which is how Orca knows to announce the
+        /// window the user switched to.
+        /// </summary>
+        internal static void WindowActivated(IntPtr window, bool active)
+        {
+            if (active) s_active = window;
+            else if (s_active == window) s_active = IntPtr.Zero;
+            if (s_bus == IntPtr.Zero || !s_windows.Contains(window)) return;
+            int root = Tree?.GetRootId(window) ?? IAutomationTreeSource.InvalidNode;
+            if (root < 0) return;
+            string path = PathForNode(root);
+            EmitStateChanged(path, "active", active ? 1 : 0);
+            Trace($"event Window.{(active ? "Activate" : "Deactivate")} on {path}");
+            DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventWindow, active ? "Activate" : "Deactivate",
+                                    string.Empty, 0, 0, Tree.GetName(root));
+            DBusLite.Flush(s_bus);
+        }
+
+        private const string IfaceEventWindow = "org.a11y.atspi.Event.Window";
+
+        /// <summary>The windows' tree roots, the application's children.</summary>
+        private static int[] WindowRoots()
+        {
+            IAutomationTreeSource tree = Tree;
+            if (tree == null) return Array.Empty<int>();
+            var roots = new System.Collections.Generic.List<int>(s_windows.Count);
+            foreach (IntPtr window in s_windows)
+            {
+                int root = tree.GetRootId(window);
+                if (root >= 0) roots.Add(root);
+            }
+            return roots.ToArray();
+        }
+
+        /// <summary>The toplevel a node is in: the window whose root its parent chain ends at.</summary>
+        private static IntPtr WindowOf(IAutomationTreeSource tree, int node)
+        {
+            for (int depth = 0; node >= 0 && depth < 256; depth++)
+            {
+                int parent = tree.GetParentId(node);
+                if (parent < 0) break;
+                node = parent;
+            }
+            foreach (IntPtr window in s_windows)
+                if (tree.GetRootId(window) == node) return window;
+            return s_active != IntPtr.Zero ? s_active : s_windows.Count > 0 ? s_windows[0] : IntPtr.Zero;
+        }
+
+        private static string ApplicationName =>
+            System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? AppDomain.CurrentDomain.FriendlyName;
 
         // Held in a static field: libdbus keeps only the raw function pointer.
         private static MessageHandler s_messageHandler;
@@ -227,7 +315,7 @@ namespace MS.Internal.Interop.Wayland
         internal static int NodeFromPath(string path)
         {
             if (string.IsNullOrEmpty(path)) return IAutomationTreeSource.InvalidNode;
-            if (path == RootPath) return Tree?.GetRootId(s_window) ?? IAutomationTreeSource.InvalidNode;
+            if (path == RootPath) return AppNode;
 
             int slash = path.LastIndexOf('/');
             if (slash < 0 || slash == path.Length - 1) return IAutomationTreeSource.InvalidNode;
@@ -310,6 +398,7 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>Writes one property's value, as a variant.</summary>
         private static void AppendProperty(byte* iter, IAutomationTreeSource tree, int node, string property)
         {
+            if (node == AppNode) { AppendApplicationProperty(iter, property); return; }
             switch (property)
             {
                 case "Name":
@@ -358,6 +447,25 @@ namespace MS.Internal.Interop.Wayland
                     break;
             }
         }
+
+        /// <summary>The application object's properties: its name, its windows, the desktop above it.</summary>
+        private static void AppendApplicationProperty(byte* iter, string property)
+        {
+            switch (property)
+            {
+                case "Name": DBusLite.AppendStringVariant(iter, ApplicationName); break;
+                case "Parent": DBusLite.AppendObjectRefVariant(iter, RegistryBusName, RootPath); break;
+                case "ChildCount": DBusLite.AppendInt32Variant(iter, WindowRoots().Length); break;
+                case "Locale": DBusLite.AppendStringVariant(iter, System.Globalization.CultureInfo.CurrentUICulture.Name); break;
+                case "ToolkitName": DBusLite.AppendStringVariant(iter, "WPF"); break;
+                case "Version": DBusLite.AppendStringVariant(iter, "10.0"); break;
+                case "AtspiVersion": DBusLite.AppendStringVariant(iter, "2.1"); break;
+                default: DBusLite.AppendStringVariant(iter, string.Empty); break;
+            }
+        }
+
+        // the registry daemon, whose root is the desktop every application is embedded in
+        private const string RegistryBusName = "org.a11y.atspi.Registry";
 
         private static string[] PropertiesOf(string iface) => iface switch
         {
@@ -432,6 +540,7 @@ namespace MS.Internal.Interop.Wayland
         {
             IAutomationTreeSource tree = Tree;
             if (tree == null) return IntPtr.Zero;
+            if (node == AppNode) return HandleApplicationAccessible(message, member);
 
             IntPtr reply;
             byte* iter = stackalloc byte[DBusLite.IterSize];
@@ -453,10 +562,15 @@ namespace MS.Internal.Interop.Wayland
                     return reply;
 
                 case "GetState":
+                {
+                    ulong states = AtSpiRoles.StatesFor(tree.GetState(node));
+                    // the frame of the window the compositor has active
+                    if (s_active != IntPtr.Zero && tree.GetRootId(s_active) == node) states |= 1UL << StateActive;
                     reply = DBusLite.NewMethodReturn(message);
                     DBusLite.IterInitAppend(reply, iter);
-                    DBusLite.AppendStateSet(iter, AtSpiRoles.StatesFor(tree.GetState(node)));
+                    DBusLite.AppendStateSet(iter, states);
                     return reply;
+                }
 
                 case "GetChildAtIndex":
                 {
@@ -490,7 +604,9 @@ namespace MS.Internal.Interop.Wayland
                 {
                     int parent = tree.GetParentId(node);
                     int index = -1;
-                    if (parent >= 0)
+                    // a window's root is a child of the application
+                    if (parent < 0) index = Array.IndexOf(WindowRoots(), node);
+                    else
                     {
                         int[] siblings = tree.GetChildIds(parent);
                         for (int i = 0; i < siblings.Length; i++)
@@ -528,12 +644,53 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        private const int StateActive = 1;   // ATSPI_STATE_ACTIVE
+
+        /// <summary>The application object as an accessible: role application, its windows as children.</summary>
+        private static IntPtr HandleApplicationAccessible(IntPtr message, string member)
+        {
+            byte* iter = stackalloc byte[DBusLite.IterSize];
+            IntPtr reply = DBusLite.NewMethodReturn(message);
+            DBusLite.IterInitAppend(reply, iter);
+            int[] windows = WindowRoots();
+            switch (member)
+            {
+                case "GetRole": DBusLite.AppendUInt32(iter, 75); break;   // ATSPI_ROLE_APPLICATION
+                case "GetRoleName":
+                case "GetLocalizedRoleName": DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING, "application"); break;
+                case "GetState": DBusLite.AppendStateSet(iter, 0); break;
+                case "GetChildAtIndex":
+                {
+                    byte* args = stackalloc byte[DBusLite.IterSize];
+                    int index = DBusLite.IterInit(message, args) ? DBusLite.ReadInt32Or(args, -1) : -1;
+                    DBusLite.AppendObjectRef(iter, s_busName, index >= 0 && index < windows.Length ? PathForNode(windows[index]) : PathForNode(-1));
+                    break;
+                }
+                case "GetChildren":
+                {
+                    byte* array = stackalloc byte[DBusLite.IterSize];
+                    DBusLite.OpenArray(iter, "(so)", array);
+                    foreach (int root in windows) DBusLite.AppendObjectRef(array, s_busName, PathForNode(root));
+                    DBusLite.CloseContainer(iter, array);
+                    break;
+                }
+                case "GetIndexInParent": DBusLite.AppendInt32(iter, -1); break;
+                case "GetApplication": DBusLite.AppendObjectRef(iter, s_busName, RootPath); break;
+                case "GetAttributes": DBusLite.OpenAndCloseEmptyArray(iter, "{ss}"); break;
+                case "GetRelationSet": DBusLite.OpenAndCloseEmptyArray(iter, "(ua(so))"); break;
+                default:
+                    DBusLite.Unref(reply);
+                    return IntPtr.Zero;
+            }
+            return reply;
+        }
+
         // ---- org.a11y.atspi.Component ----------------------------------------------
 
         private static IntPtr HandleComponent(IntPtr message, string member, int node)
         {
             IAutomationTreeSource tree = Tree;
-            if (tree == null) return IntPtr.Zero;
+            if (tree == null || node == AppNode) return IntPtr.Zero;   // the application has no extent
 
             byte* iter = stackalloc byte[DBusLite.IterSize];
             tree.TryGetBounds(node, out double x, out double y, out double w, out double h);
@@ -595,7 +752,7 @@ namespace MS.Internal.Interop.Wayland
                         if (DBusLite.IterNext(args)) py = DBusLite.ReadInt32Or(args, 0);
                     }
 
-                    int hit = tree.HitTest(s_window, px, py);
+                    int hit = tree.HitTest(WindowOf(tree, node), px, py);
 
                     IntPtr reply = DBusLite.NewMethodReturn(message);
                     DBusLite.IterInitAppend(reply, iter);
@@ -622,7 +779,7 @@ namespace MS.Internal.Interop.Wayland
         private static IntPtr HandleAction(IntPtr message, string member, int node)
         {
             IAutomationTreeSource tree = Tree;
-            if (tree == null) return IntPtr.Zero;
+            if (tree == null || node == AppNode) return IntPtr.Zero;
 
             byte* iter = stackalloc byte[DBusLite.IterSize];
             AccessibleAction[] available = AvailableActions(tree, node);

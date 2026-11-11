@@ -315,7 +315,7 @@ namespace MS.Internal.Interop.Wayland
             // Only a real toplevel is worth exporting: a popup is a menu or a tooltip belonging to a
             // window that has already registered, and AT-SPI wants one application root, not one per
             // surface. The bridge itself decides whether an assistive technology is present.
-            if (!borderless) AtSpiBridge.TryAttach(_surface);
+            if (!borderless) AtSpiBridge.TryAttach(_handle);
         }
 
         private void CreateToplevel()
@@ -1286,6 +1286,7 @@ namespace MS.Internal.Interop.Wayland
             if (_xdgPopup != IntPtr.Zero) DropPopupsAbove(this, _popupSeq);
             else if (_frame != IntPtr.Zero) DropPopupsAbove(this, 0);
             _destroyed = true;
+            AtSpiBridge.Detach(_handle);
 
             lock (s_lock)
             {
@@ -1568,6 +1569,7 @@ namespace MS.Internal.Interop.Wayland
                 if (active != _lastReportedActive)
                 {
                     _lastReportedActive = active;
+                    AtSpiBridge.WindowActivated(_handle, active);
                     ActiveChanged?.Invoke(active);
                 }
             }
