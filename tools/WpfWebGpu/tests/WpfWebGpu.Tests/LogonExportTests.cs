@@ -51,4 +51,22 @@ public unsafe class LogonExportTests
             Assert.Equal(1326, LastError());
         }
     }
+
+    [Fact]
+    public void The_machine_is_in_a_workgroup_and_no_domain_controller_answers()
+    {
+        char* name = null;
+        int status = 0;
+        Assert.Equal(0, (int)Export("NetGetJoinInformation").Invoke(null, new object[] { Pointer.Box(null, typeof(char*)), Pointer.Box(&name, typeof(char**)), Pointer.Box(&status, typeof(int*)) })!);
+        Assert.Equal(("WORKGROUP", 2), (new string(name), status));                     // NetSetupWorkgroupName
+        Assert.Equal(0, (int)Export("NetApiBufferFree").Invoke(null, new object[] { Pointer.Box(name, typeof(void*)) })!);
+
+        void* info = (void*)1;
+        Assert.Equal(1355, (int)Export("DsGetDcNameW").Invoke(null, new object[]
+        {
+            Pointer.Box(null, typeof(char*)), Pointer.Box(null, typeof(char*)), Pointer.Box(null, typeof(void*)), Pointer.Box(null, typeof(char*)), 0u,
+            Pointer.Box(&info, typeof(void**)),
+        })!);                                                                              // ERROR_NO_SUCH_DOMAIN
+        Assert.True(info == null);
+    }
 }
