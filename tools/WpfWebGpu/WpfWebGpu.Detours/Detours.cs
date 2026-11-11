@@ -14,6 +14,9 @@
 //                                   managed listener compared paths ordinally: app registers
 //                                   /fwxserverws/Ws_Anon/ and its clients ask for /fwxserverws/ws_anon/,
 //                                   which found no listener (404), so no client could connect.
+//   Process.ProcessorAffinity       "not supported on this platform" on macOS, which has no affinity
+//                                   API. A process's mask is all processors unless set, as on Windows;
+//                                   one set is checked as Windows checks it, and reported back.
 //   SystemColors                    off Windows System.Drawing.Primitives answers a palette compiled
 //                                   into it, Windows XP's (a beige #ECE9D8 Control). On Windows it asks
 //                                   GetSysColor, and so does this, of the stack's user32.
@@ -45,6 +48,7 @@ public static class Detours
         Try(installed, "machine-wide folders", InstallSpecialFolders);
         Try(installed, "system colours", InstallSystemColors);
         Try(installed, "HttpListener prefix case", InstallHttpListenerCase);
+        Try(installed, "processor affinity", InstallProcessorAffinity);
         return installed.ToArray();
     }
 
@@ -86,6 +90,46 @@ public static class Detours
         Add(typeof(Thread).GetMethod(nameof(Thread.GetApartmentState), Type.EmptyTypes)!,
             (Func<Thread, ApartmentState> orig, Thread self) =>
                 s_apartments.TryGetValue(self, out var box) ? box.Value : orig(self));
+    }
+
+    // ---- processor affinity -----------------------------------------------------------------------
+    //
+    // An app's service list reads each service process's mask to show it; macOS refuses the read, so
+    // the list failed. Masks set are kept per process id (and so are seen by every Process for it).
+
+    private static readonly Dictionary<int, IntPtr> s_affinity = new();
+
+    /// <summary>Every logical processor's bit: what Windows gives a process unless it is restricted.</summary>
+    private static IntPtr AllProcessors()
+    {
+        int count = Math.Min(Environment.ProcessorCount, IntPtr.Size * 8);
+        return count >= IntPtr.Size * 8 ? new IntPtr(-1) : new IntPtr((long)((1UL << count) - 1));
+    }
+
+    internal static void InstallProcessorAffinity()
+    {
+        PropertyInfo property = typeof(System.Diagnostics.Process).GetProperty(nameof(System.Diagnostics.Process.ProcessorAffinity))!;
+        Add(property.GetGetMethod()!, (Func<System.Diagnostics.Process, IntPtr> orig, System.Diagnostics.Process self) =>
+        {
+            try { return orig(self); }
+            catch (PlatformNotSupportedException)
+            {
+                int id = self.Id;                // an exited or never-started process throws here, as on Windows
+                lock (s_affinity) return s_affinity.TryGetValue(id, out IntPtr mask) ? mask : AllProcessors();
+            }
+        });
+        Add(property.GetSetMethod()!, (Action<System.Diagnostics.Process, IntPtr> orig, System.Diagnostics.Process self, IntPtr value) =>
+        {
+            try { orig(self, value); }
+            catch (PlatformNotSupportedException)
+            {
+                int id = self.Id;
+                // SetProcessAffinityMask: no processor at all, or one the machine does not have, is ERROR_INVALID_PARAMETER
+                long mask = value.ToInt64(), all = AllProcessors().ToInt64();
+                if (mask == 0 || (mask & ~all) != 0) throw new System.ComponentModel.Win32Exception(87);
+                lock (s_affinity) s_affinity[id] = value;
+            }
+        });
     }
 
     // ---- HttpListener prefixes ------------------------------------------------------------------------

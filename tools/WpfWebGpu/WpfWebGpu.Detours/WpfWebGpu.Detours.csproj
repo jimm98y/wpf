@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="MonoMod.RuntimeDetour" Version="25.3.6" />
+    <InternalsVisibleTo Include="WpfWebGpu.Tests" />
   </ItemGroup>
 
 </Project>

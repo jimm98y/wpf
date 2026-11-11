@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="../../WpfWebGpu.Launcher/WpfWebGpu.Launcher.csproj" />
     <ProjectReference Include="../../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+    <ProjectReference Include="../../WpfWebGpu.Detours/WpfWebGpu.Detours.csproj" />
     <!-- rewritten by ComRewriterTests, which load the result on their own -->
     <ProjectReference Include="../ComImportFixture/ComImportFixture.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../ComUserFixture/ComUserFixture.csproj" ReferenceOutputAssembly="false" />
