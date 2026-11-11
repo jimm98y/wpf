@@ -26,7 +26,7 @@ public static partial class MacPackager
     private static string SqlServerLabel(string id) => id + "-sqlserver";
 
     /// <summary>Writes the SQL Server component (&lt;id&gt;.sqlserver) into <paramref name="work"/> and returns it.</summary>
-    private static string BuildSqlServerComponent(PackageManifest manifest, string id, string root, string work, Action<string> log)
+    private static string BuildSqlServerComponent(PackageManifest manifest, string id, string root, string work, out long kbytes, Action<string> log)
     {
         var sql = SqlServerImage.X64;
         string label = SqlServerLabel(id), dir = root + "/sqlserver";
@@ -59,9 +59,8 @@ public static partial class MacPackager
         Executable(run);
         File.WriteAllText(Path.Combine(scripts, "postinstall"), SqlServerPostInstall(manifest, sql, label, dir));
         Executable(Path.Combine(scripts, "postinstall"));
-        Run("/bin/chmod", "-R", "u+rwX,go+rX,go-w", payload);
         string component = Path.Combine(work, "sqlserver.pkg");
-        MacComponent.Write(payload, scripts, id + ".sqlserver", manifest.Product.Version, compress: true, component, log);
+        kbytes = MacComponent.Write(payload, scripts, id + ".sqlserver", manifest.Product.Version, compress: true, component, log);
         return component;
     }
 

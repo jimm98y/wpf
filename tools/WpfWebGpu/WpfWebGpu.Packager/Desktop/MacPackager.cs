@@ -29,7 +29,9 @@ public static partial class MacPackager
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
         IReadOnlyList<WebPages.Page>? pages = null, PackFile? sqlPack = null)
     {
-        if (!OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is made on a Mac (productbuild)");
+        // made on any machine; what signs it (codesign, productsign) and notarizes it is a Mac's for now
+        bool signs = manifest.Signing.DeveloperIdCertificate.Length > 0 || manifest.Signing.DeveloperIdInstaller.Length > 0 || manifest.Signing.NotaryKey.Length > 0;
+        if (signs && !OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is signed and notarized on a Mac (codesign, productsign, notarytool): leave signing.developerId* and notaryKey out to make it unsigned here");
         string product = manifest.Product.Name;
         // the folders an upgrade clears are named by it: never /Applications itself
         if (product.Trim().Length == 0 || product.Contains('/') || product is "." or "..")
@@ -125,44 +127,52 @@ public static partial class MacPackager
         Executable(Path.Combine(scripts, "preinstall"));
         Executable(Path.Combine(scripts, "postinstall"));
 
-        // the package takes the folder's permissions as the installed files': readable by all, the scripts runnable
-        Run("/bin/chmod", "-R", "u+rwX,go+rX,go-w", payload);
+        // the package gives the installed files their modes itself (MacComponent: readable by all, code runnable)
         if (manifest.Signing.DeveloperIdCertificate.Length > 0) SignPayload(payload, manifest.Signing.DeveloperIdCertificate, work, log);
-        string component = Path.Combine(work, "component.pkg");
         // what pkgbuild makes, with the payload compressed on every core (MacComponent); the app stubs installed
         // where they belong, not relocatable: the installer would otherwise update whatever copy of a bundle it
         // finds instead (another folder, or <App>.localized/ beside the old one)
-        MacComponent.Write(payload, scripts, id, manifest.Product.Version, compress: !manifest.Output.Fast, component, log);
+        string component = Path.Combine(work, "component.pkg");
+        long installKBytes = MacComponent.Write(payload, scripts, id, manifest.Product.Version, compress: !manifest.Output.Fast, component, log);
 
         Directory.CreateDirectory(outDir);
         string pkg = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-macos-{arch}.pkg");
-        // the product archive's Distribution, with the product's name as its title (what Installer and `installer`
-        // show; productbuild --package alone writes none)
-        string distribution = Path.Combine(work, "distribution.xml");
+        // the product archive (what productbuild makes): the components as folders, the Distribution that installs them,
+        // with the product's name as its title (what Installer and `installer` show)
+        var packages = new List<(string File, string Id, string Version, long KBytes)> { ("component.pkg", id, manifest.Product.Version, installKBytes) };
+        var archive = new XarWriter();
+        AddComponent(archive, "component.pkg", component);
         // with SQL Server: Apple's container, as signed, and the daemon that runs SQL Server in it, a choice of their own
-        var synthesize = new List<string> { "--synthesize", "--package", component };
+        string? resources = null;
         if (sqlPack != null)
         {
-            string container = Path.Combine(work, "container.pkg");
-            File.Copy(Path.Combine(sqlPack.Directory, "container.pkg"), container);
-            synthesize.AddRange(new[] { "--package", container, "--package", BuildSqlServerComponent(manifest, id, root, work, log) });
+            archive.AddArchive("container.pkg", Path.Combine(sqlPack.Directory, "container.pkg"));
+            packages.Add(("container.pkg", sqlPack["package"], (sqlPack.Info.TryGetValue("packageVersion", out var cv) ? cv : ""), 0));
+            string sqlComponent = BuildSqlServerComponent(manifest, id, root, work, out long sqlKBytes, log);
+            AddComponent(archive, "sqlserver.pkg", sqlComponent);
+            packages.Add(("sqlserver.pkg", id + ".sqlserver", manifest.Product.Version, sqlKBytes));
             log($"  {sqlPack["engine"]}: a choice, chosen by default (its image downloaded when installing)");
         }
-        synthesize.Add(distribution);
-        Run("/usr/bin/productbuild", synthesize.ToArray());
-        var dist = System.Xml.Linq.XDocument.Load(distribution);
+        var dist = Distribution(id, manifest.Product.Version, packages);
         if (sqlPack != null)
         {
             SqlServerChoices(dist, product, id, sqlPack["package"]);
-            SqlServerConclusion(dist, manifest, root, Path.Combine(work, "resources"));
+            resources = Path.Combine(work, "resources");
+            SqlServerConclusion(dist, manifest, root, resources);
         }
         dist.Root!.AddFirst(new System.Xml.Linq.XElement("title", product));
-        dist.Save(distribution);
-        var args = new List<string> { "--distribution", distribution, "--package-path", work, "--identifier", id, "--version", manifest.Product.Version };
-        if (sqlPack != null) { args.Add("--resources"); args.Add(Path.Combine(work, "resources")); }
-        if (manifest.Signing.DeveloperIdInstaller.Length > 0) { args.Add("--sign"); args.Add(manifest.Signing.DeveloperIdInstaller); }
-        args.Add(pkg);
-        Run("/usr/bin/productbuild", args.ToArray());
+        archive.AddBytes("Distribution", System.Text.Encoding.UTF8.GetBytes(dist.Declaration + "\n" + dist.Root!.ToString()), compress: true);
+        if (resources != null)
+            foreach (string f in Directory.EnumerateFiles(resources, "*", SearchOption.AllDirectories))
+                archive.AddFile("Resources/" + Path.GetRelativePath(resources, f).Replace('\\', '/'), f, compress: true);
+        archive.Write(pkg);
+        if (manifest.Signing.DeveloperIdInstaller.Length > 0)
+        {
+            // signed by productsign (the xar's signature over its table of contents), for now
+            string signed = pkg + ".signed";
+            Run("/usr/bin/productsign", "--sign", manifest.Signing.DeveloperIdInstaller, pkg, signed);
+            File.Move(signed, pkg, overwrite: true);
+        }
         if (manifest.Signing.NotaryKey.Length > 0)
         {
             if (manifest.Signing.DeveloperIdInstaller.Length == 0) throw new PackagerError("a notarized package is signed: signing.developerIdInstaller");
@@ -497,12 +507,51 @@ public static partial class MacPackager
     {
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         if (File.Exists(target)) File.Delete(target);
-        if (clonefile(source, target, 0) != 0) File.Copy(source, target);
+        if (!OperatingSystem.IsMacOS() || clonefile(source, target, 0) != 0) File.Copy(source, target);
     }
 
-    private static void Executable(string path) =>
+    // on Windows, which keeps no modes, the package tells a script by its "#!" (MacComponent)
+    private static void Executable(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead
             | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+    }
+
+    // a component as a product archive holds it: its Bom, PackageInfo (compressed), Payload and Scripts (as they are)
+    private static void AddComponent(XarWriter archive, string name, string expanded)
+    {
+        archive.AddFile(name + "/Bom", Path.Combine(expanded, "Bom"), compress: true);
+        archive.AddFile(name + "/Payload", Path.Combine(expanded, "Payload"), compress: false);
+        archive.AddFile(name + "/Scripts", Path.Combine(expanded, "Scripts"), compress: false);
+        archive.AddFile(name + "/PackageInfo", Path.Combine(expanded, "PackageInfo"), compress: true);
+    }
+
+    /// <summary>The Distribution productbuild synthesizes for the packages, as it finishes it: each package a hidden choice
+    /// under the default one, the packages' versions and sizes, and the product's id and version.</summary>
+    private static System.Xml.Linq.XDocument Distribution(string id, string version, List<(string File, string Id, string Version, long KBytes)> packages)
+    {
+        static System.Xml.Linq.XElement E(string name, params object[] content) => new(name, content);
+        static System.Xml.Linq.XAttribute A(string name, object value) => new(name, value);
+        var root = E("installer-gui-script", A("minSpecVersion", 1));
+        foreach (var p in packages) root.Add(E("pkg-ref", A("id", p.Id), E("bundle-version")));
+        root.Add(E("options", A("customize", "never"), A("require-scripts", "false"), A("hostArchitectures", "x86_64,arm64")));
+        var line = E("line", A("choice", "default"));
+        foreach (var p in packages) line.Add(E("line", A("choice", p.Id)));
+        root.Add(E("choices-outline", line), E("choice", A("id", "default")));
+        foreach (var p in packages) root.Add(E("choice", A("id", p.Id), A("visible", "false"), E("pkg-ref", A("id", p.Id))));
+        foreach (var p in packages)
+        {
+            var reference = E("pkg-ref", A("id", p.Id));
+            if (p.Version.Length > 0) reference.Add(A("version", p.Version));
+            reference.Add(A("onConclusion", "none"));
+            if (p.KBytes > 0) { reference.Add(A("installKBytes", p.KBytes)); reference.Add(A("updateKBytes", 0)); }
+            reference.Add("#" + p.File);
+            root.Add(reference);
+        }
+        root.Add(E("product", A("id", id), A("version", version)));
+        return new System.Xml.Linq.XDocument(new System.Xml.Linq.XDeclaration("1.0", "utf-8", "yes"), root);
+    }
 
     private static void Run(string tool, params string[] args)
     {

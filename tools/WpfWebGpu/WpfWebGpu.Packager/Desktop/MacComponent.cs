@@ -2,15 +2,17 @@
 //
 // pkgbuild compresses the payload on one thread: 8.5 GB of installation took it most of ten minutes, the rest of the
 // machine idle. The payload is a gzipped cpio archive, as pkgbuild writes it -- one gzip stream, made here as pigz
-// makes one: the archive cut into 16 MB chunks, each deflated on its own (by the system's zlib) and ended on a byte
-// boundary (a sync flush), all at once, then joined in order behind one header, with the whole archive's CRC (each
-// chunk's, combined) after them. xz (pkgbuild's "latest", pbzx) was tried: a third smaller, but seven times slower a
+// makes one: the archive cut into 16 MB chunks, each deflated on its own (by .NET's own deflate, on every machine) and
+// ended on a byte boundary (a sync flush), all at once, then joined in order behind one header, with the whole
+// archive's CRC (kept as the bytes go by) after them. xz (pkgbuild's "latest", pbzx) was tried: a third smaller, but seven times slower a
 // core than deflate, which a busy machine's cores did not make up for. A fast build (for testing) stores the blocks.
 //
 // The rest is pkgbuild's: the cpio (odc) of the root, every entry root:wheel ("--ownership recommended") with its
-// mode; the Bom (mkbom, from a listing with each file's size and cksum, made while the payload is written);
-// PackageInfo naming the scripts and the bundles, none of them relocatable. pkgutil --flatten makes the expanded
-// package -- these, and the scripts' folder, which it archives -- the package.
+// mode -- 0755 for a folder and for code (an executable bit set, or, on Windows, which keeps none, a Mach-O or a
+// script by its first bytes), 0644 for the rest, as chmod -R u+rwX,go+rX,go-w leaves them; the Bom (Bom.cs, from the
+// listing made while the payload is written); the scripts as a gzipped cpio of their own; PackageInfo naming the
+// scripts and the bundles, none of them relocatable. The product archive holds them as they are (MacPackager), so
+// nothing here needs a Mac.
 
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -24,11 +26,11 @@ internal static partial class MacComponent
 {
     private const int ChunkSize = 16 * 1024 * 1024;
 
-    /// <summary>Writes the component package <paramref name="componentPkg"/> of <paramref name="root"/>, installed at
-    /// "/", with <paramref name="scripts"/>' preinstall and postinstall.</summary>
-    public static void Write(string root, string scripts, string identifier, string version, bool compress, string componentPkg, Action<string> log)
+    /// <summary>Writes the component package of <paramref name="root"/>, installed at "/", with <paramref name="scripts"/>'
+    /// preinstall and postinstall, as the folder a product archive holds it as (<paramref name="expanded"/>: Bom, Payload,
+    /// Scripts, PackageInfo). Returns what it installs, in kilobytes.</summary>
+    public static long Write(string root, string scripts, string identifier, string version, bool compress, string expanded, Action<string> log)
     {
-        string expanded = componentPkg + ".expanded";
         if (Directory.Exists(expanded)) Directory.Delete(expanded, recursive: true);
         Directory.CreateDirectory(expanded);
 
@@ -76,21 +78,28 @@ internal static partial class MacComponent
         log($"  payload: {entries} entries, {payloadBytes / (1024 * 1024)} MB in {payloadSize / (1024 * 1024)} MB "
             + $"({(compress ? "compressed on " + Environment.ProcessorCount + " cores" : "stored")}) in {watch.Elapsed.TotalSeconds:0} s");
 
-        string list = Path.Combine(expanded, "..", Path.GetFileName(componentPkg) + ".bomlist");
-        File.WriteAllText(list, listing.ToString());
-        Run("/usr/bin/mkbom", "-i", list, Path.Combine(expanded, "Bom"));
-        File.Delete(list);
+        Bom.Write(Bom.ReadListing(listing.ToString()), Path.Combine(expanded, "Bom"));
 
-        // the scripts as a folder: pkgutil --flatten archives it (an expanded package's Payload is the archive itself)
-        Directory.CreateDirectory(Path.Combine(expanded, "Scripts"));
-        foreach (string script in Directory.EnumerateFiles(scripts))
-            File.Copy(script, Path.Combine(expanded, "Scripts", Path.GetFileName(script)));
+        // the scripts as a flat package keeps them: a gzipped cpio of their folder
+        using (var archive = new ParallelGzipStream(File.Create(Path.Combine(expanded, "Scripts")), compress: true))
+        {
+            var cpio = new CpioWriter(archive);
+            foreach (var entry in Entries(scripts))
+            {
+                string path = entry.Relative.Length == 0 ? "." : "./" + entry.Relative;
+                long mtime = new DateTimeOffset(entry.Info.LastWriteTimeUtc).ToUnixTimeSeconds();
+                if (entry.Info is DirectoryInfo) cpio.Add(path, 0x4000 | 0b111_101_101, mtime, 0, null);
+                else
+                {
+                    byte[] bytes = File.ReadAllBytes(entry.Info.FullName);
+                    cpio.Add(path, 0x8000 | 0b111_101_101, mtime, bytes.Length, s => s.Write(bytes));    // scripts run
+                }
+            }
+            cpio.Finish();
+        }
 
         File.WriteAllText(Path.Combine(expanded, "PackageInfo"), PackageInfo(root, scripts, identifier, version, entries, installKBytes));
-
-        if (File.Exists(componentPkg)) File.Delete(componentPkg);
-        Run("/usr/sbin/pkgutil", "--flatten", expanded, componentPkg);
-        Directory.Delete(expanded, recursive: true);
+        return installKBytes;
     }
 
     // ---- the entries ----------------------------------------------------------------------------------------
@@ -122,8 +131,21 @@ internal static partial class MacComponent
 
     private static uint Mode(FileSystemInfo info)
     {
-        uint type = info.LinkTarget != null ? 0xA000u : info is DirectoryInfo ? 0x4000u : 0x8000u;
-        return type | (uint)info.UnixFileMode;
+        if (info.LinkTarget != null) return 0xA000u | 0b111_101_101;
+        if (info is DirectoryInfo) return 0x4000u | 0b111_101_101;
+        bool executable = OperatingSystem.IsWindows() ? IsCode(info.FullName) : ((uint)info.UnixFileMode & 0b001_001_001) != 0;
+        return 0x8000u | (executable ? 0b111_101_101u : 0b110_100_100u);
+    }
+
+    // what runs, by its first bytes: a Mach-O (thin or universal, either byte order) or a script ("#!")
+    private static bool IsCode(string path)
+    {
+        using var s = File.OpenRead(path);
+        Span<byte> head = stackalloc byte[4];
+        if (s.Read(head) < 2) return false;
+        if (head[0] == '#' && head[1] == '!') return true;
+        uint magic = BinaryPrimitives.ReadUInt32LittleEndian(head);
+        return magic is 0xfeedfacf or 0xfeedface or 0xcffaedfe or 0xcefaedfe or 0xbebafeca or 0xcafebabe;
     }
 
     private static uint CopyWithCksum(string path, Stream to, long size)
@@ -185,14 +207,15 @@ internal static partial class MacComponent
         }
     }
 
+    // a value of an Info.plist (XML or binary), as a string; null where it has none
     private static string? PlistValue(string plist, string key)
     {
-        var psi = new ProcessStartInfo("/usr/bin/plutil") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (string a in new[] { "-extract", key, "raw", "-o", "-", plist }) psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi)!;
-        string value = p.StandardOutput.ReadToEnd().Trim();
-        p.WaitForExit();
-        return p.ExitCode == 0 && value.Length > 0 ? value : null;
+        try
+        {
+            object? value = Apple.Plist.Read(File.ReadAllBytes(plist)) is Apple.PlistDict d ? d[key] : null;
+            return value?.ToString() is { Length: > 0 } text ? text : null;
+        }
+        catch (Exception e) when (e is PackagerError or FormatException or System.Xml.XmlException) { return null; }
     }
 
     private static string X(string s) => SecurityElement.Escape(s)!;
@@ -260,12 +283,12 @@ internal static partial class MacComponent
     {
         private readonly Stream _out;
         private readonly int _level;
-        private readonly Queue<Task<(byte[] Data, int Length, uint Crc, int Size)>> _pending = new();
+        private readonly Queue<Task<(byte[] Data, int Length)>> _pending = new();
+        private readonly System.IO.Hashing.Crc32 _crc32 = new();
         private readonly int _inFlight = Math.Max(2, Environment.ProcessorCount * 2);
         private byte[] _chunk = new byte[ChunkSize];
         private int _used;
         private long _length;
-        private uint _crc;
         private bool _finished;
 
         public ParallelGzipStream(Stream output, bool compress)
@@ -286,6 +309,7 @@ internal static partial class MacComponent
             {
                 int n = Math.Min(data.Length, ChunkSize - _used);
                 data[..n].CopyTo(_chunk.AsSpan(_used));
+                _crc32.Append(data[..n]);
                 _used += n;
                 _length += n;
                 data = data[n..];
@@ -307,9 +331,8 @@ internal static partial class MacComponent
 
         private void Drain()
         {
-            var (data, length, crc, size) = _pending.Dequeue().GetAwaiter().GetResult();
+            var (data, length) = _pending.Dequeue().GetAwaiter().GetResult();
             _out.Write(data, 0, length);
-            _crc = Zlib.Combine(_crc, crc, size);
         }
 
         private void Finish()
@@ -319,7 +342,7 @@ internal static partial class MacComponent
             Submit(last: true);   // what is left (perhaps nothing), and the final block
             while (_pending.Count > 0) Drain();
             Span<byte> trailer = stackalloc byte[8];
-            BinaryPrimitives.WriteUInt32LittleEndian(trailer, _crc);
+            BinaryPrimitives.WriteUInt32LittleEndian(trailer, _crc32.GetCurrentHashAsUInt32());
             BinaryPrimitives.WriteUInt32LittleEndian(trailer[4..], unchecked((uint)_length));
             _out.Write(trailer);
         }
@@ -344,56 +367,28 @@ internal static partial class MacComponent
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 
-    /// <summary>Raw deflate and CRC-32 by the system's zlib (macOS has it; nothing is shipped).</summary>
-    internal static unsafe partial class Zlib
+    /// <summary>Raw deflate by .NET's own (zlib-ng, in the runtime on every machine).</summary>
+    internal static class Zlib
     {
-        private const int Z_SYNC_FLUSH = 2, Z_FINISH = 4, Z_STREAM_END = 1, Z_DEFLATED = 8;
-
-        // zlib.h's z_stream, LP64
-        [StructLayout(LayoutKind.Sequential)]
-        private struct ZStream
+        /// <summary>The chunk deflated as raw blocks, ended on a byte boundary (a sync flush) -- or, the last, with the
+        /// final block.</summary>
+        public static (byte[] Data, int Length) Deflate(byte[] chunk, int size, int level, bool last)
         {
-            public byte* NextIn; public uint AvailIn; public nuint TotalIn;
-            public byte* NextOut; public uint AvailOut; public nuint TotalOut;
-            public IntPtr Msg, State, ZAlloc, ZFree, Opaque;
-            public int DataType; public nuint Adler, Reserved;
-        }
-
-        /// <summary>The chunk deflated as raw blocks, ended on a byte boundary -- or, the last, with the final block;
-        /// and its CRC-32.</summary>
-        public static (byte[] Data, int Length, uint Crc, int Size) Deflate(byte[] chunk, int size, int level, bool last)
-        {
-            var z = new ZStream();
-            // raw deflate (no zlib header): window bits negated
-            int r = deflateInit2_(&z, level, Z_DEFLATED, -15, 8, 0, zlibVersion(), sizeof(ZStream));
-            if (r != 0) throw new PackagerError($"deflate failed to start ({r})");
-            try
+            using var output = new MemoryStream(size / 2 + 1024);
+            var deflate = new System.IO.Compression.DeflateStream(output,
+                level == 0 ? System.IO.Compression.CompressionLevel.NoCompression : System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true);
+            deflate.Write(chunk, 0, size);
+            if (last)
             {
-                byte[] output = new byte[(int)deflateBound(&z, (nuint)size) + 64];
-                fixed (byte* input = chunk)
-                fixed (byte* o = output)
-                {
-                    z.NextIn = input; z.AvailIn = (uint)size;
-                    z.NextOut = o; z.AvailOut = (uint)output.Length;
-                    r = deflate(&z, last ? Z_FINISH : Z_SYNC_FLUSH);
-                    if (last ? r != Z_STREAM_END : r != 0 || z.AvailIn != 0) throw new PackagerError($"deflate failed ({r})");
-                    uint crc = (uint)crc32(0, input, (uint)size);
-                    return (output, (int)z.TotalOut, crc, size);
-                }
+                deflate.Dispose();                                     // the final block
+                return (output.GetBuffer(), (int)output.Length);
             }
-            finally { deflateEnd(&z); }
+            deflate.Flush();                                           // Z_SYNC_FLUSH: ended on a byte boundary
+            int length = (int)output.Length;
+            byte[] data = output.GetBuffer();
+            deflate.Dispose();                                         // its final block written after length: not taken
+            return (data, length);
         }
-
-        /// <summary>The CRC-32 of two runs of bytes, one after the other, from each one's.</summary>
-        public static uint Combine(uint first, uint second, long secondLength) => (uint)crc32_combine(first, second, secondLength);
-
-        [LibraryImport("libz")] private static partial IntPtr zlibVersion();
-        [LibraryImport("libz")] private static partial int deflateInit2_(ZStream* stream, int level, int method, int windowBits, int memLevel, int strategy, IntPtr version, int streamSize);
-        [LibraryImport("libz")] private static partial int deflate(ZStream* stream, int flush);
-        [LibraryImport("libz")] private static partial int deflateEnd(ZStream* stream);
-        [LibraryImport("libz")] private static partial nuint deflateBound(ZStream* stream, nuint sourceLength);
-        [LibraryImport("libz")] private static partial nuint crc32(nuint crc, byte* buffer, uint length);
-        [LibraryImport("libz")] private static partial nuint crc32_combine(nuint crc1, nuint crc2, long length2);
     }
 
     // ---- cksum ----------------------------------------------------------------------------------------------
