@@ -1,11 +1,12 @@
 // advapi32, the service control manager's client side: what an app's service tools call to see and manage the
 // machine's services -- OpenSCManager, OpenService, QueryServiceStatus(Ex), QueryServiceConfig, StartService,
-// ControlService (stop, interrogate) and ChangeServiceConfig's start type. Answered by the stack's service manager
+// ControlService (stop, interrogate), ChangeServiceConfig's start type, CreateService and DeleteService. Answered by
+// the stack's service manager
 // (WpfWebGpu.Services): the installed services, their state from launchd or systemd, and every request decided by
 // the service's security descriptor and the caller's account, as the SCM decides -- OpenService refuses the access
-// a descriptor does not grant, and starting or stopping is done by root or the service manager's daemon.
-//
-// Creating and deleting services is the installer's work (the units launchd and systemd run are its), and not here.
+// a descriptor does not grant, and starting or stopping is done by root or the service manager's daemon. A service a
+// program creates (an elevated one: the SCM lets administrators alone) is written as the package writes those it
+// installs, a launchd daemon or a systemd unit running its program on the installation's runtime.
 
 using WpfWebGpu.Services;
 
@@ -19,16 +20,16 @@ public static unsafe partial class Exports
     private const int RPC_S_SERVER_UNAVAILABLE = 1722, ERROR_INVALID_LEVEL = 124,
         ERROR_SERVICE_DOES_NOT_EXIST = 1060, ERROR_INVALID_SERVICE_CONTROL = 1052, ERROR_CALL_NOT_IMPLEMENTED_SCM = 120;
 
-    private sealed class ScmHandle;
+    private sealed record ScmHandle(uint Access);
     private sealed record ServiceHandle(string Name, uint Access);
 
     [Win32Export("OpenSCManagerW")]
-    public static nint OpenSCManagerW(char* machine, char* database, uint access) => OpenScm(ReadUtf16(machine));
+    public static nint OpenSCManagerW(char* machine, char* database, uint access) => OpenScm(ReadUtf16(machine), access);
 
     [Win32Export("OpenSCManagerA", "OpenSCManager")]
-    public static nint OpenSCManagerA(byte* machine, byte* database, uint access) => OpenScm(ReadEither(machine));
+    public static nint OpenSCManagerA(byte* machine, byte* database, uint access) => OpenScm(ReadEither(machine), access);
 
-    private static nint OpenScm(string? machine)
+    private static nint OpenScm(string? machine, uint access)
     {
         // this machine's only: another's SCM is reached over RPC, and there is none to reach
         if (!string.IsNullOrEmpty(machine) && !machine.TrimStart('\\').Equals(Environment.MachineName, StringComparison.OrdinalIgnoreCase)
@@ -37,7 +38,25 @@ public static unsafe partial class Exports
             SetLastError(RPC_S_SERVER_UNAVAILABLE);
             return 0;
         }
-        return NewHandle(new ScmHandle());
+        // the access asked for, against the SCM's own descriptor: creating services, locking it are administrators'
+        uint specific = MapManagerAccess(access);
+        if (!OperatingSystem.IsWindows() && !WindowsAccounts.AccessAllowed(ServiceDatabase.ManagerDescriptor, WindowsAccounts.TokenOf(WindowsAccounts.CurrentUid()), specific))
+        {
+            SetLastError(ServiceManager.ERROR_ACCESS_DENIED);
+            return 0;
+        }
+        return NewHandle(new ScmHandle(specific));
+    }
+
+    // GENERIC_* to the SCM's rights (SC_MANAGER_ALL_ACCESS is 0xF003F); SC_MANAGER_CONNECT is implied
+    private static uint MapManagerAccess(uint access)
+    {
+        uint mapped = (access & 0x0001FFFF) | ServiceManager.ManagerConnect;
+        if ((access & 0x80000000) != 0) mapped |= 0x20014;     // GENERIC_READ: ENUMERATE_SERVICE, QUERY_LOCK_STATUS, READ_CONTROL
+        if ((access & 0x40000000) != 0) mapped |= 0x20022;     // GENERIC_WRITE: CREATE_SERVICE, MODIFY_BOOT_CONFIG
+        if ((access & 0x20000000) != 0) mapped |= 0x20009;     // GENERIC_EXECUTE: CONNECT, LOCK
+        if ((access & 0x10000000) != 0) mapped |= 0xF003F;     // GENERIC_ALL
+        return mapped;
     }
 
     [Win32Export("OpenServiceW")]
@@ -54,6 +73,11 @@ public static unsafe partial class Exports
         if (service == null || !service.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
         {
             SetLastError(ERROR_SERVICE_DOES_NOT_EXIST);    // OpenService takes the key name, not the display name
+            return 0;
+        }
+        if (service.MarkedForDelete)
+        {
+            SetLastError(ServiceManager.ERROR_SERVICE_MARKED_FOR_DELETE);
             return 0;
         }
         // the access asked for, against the service's descriptor (generic and standard rights mapped as the SCM maps them)
@@ -241,6 +265,97 @@ public static unsafe partial class Exports
             *(nint*)(buffer + 32) = Put(strings[4]);
         }
         return TRUE;
+    }
+
+    [Win32Export("CreateServiceW")]
+    public static nint CreateServiceW(nint scm, char* name, char* displayName, uint access, uint type, uint start, uint errorControl,
+        char* path, char* group, uint* tag, char* dependencies, char* account, char* password) =>
+        CreateServiceCore(scm, ReadUtf16(name), ReadUtf16(displayName), access, type, start, ReadUtf16(path), tag,
+            MultiUtf16(dependencies), ReadUtf16(account));
+
+    [Win32Export("CreateServiceA", "CreateService")]
+    public static nint CreateServiceA(nint scm, byte* name, byte* displayName, uint access, uint type, uint start, uint errorControl,
+        byte* path, byte* group, uint* tag, byte* dependencies, byte* account, byte* password)
+    {
+        // the undecorated name takes either encoding, as each string shows (ReadEither)
+        bool wide = name != null && name[0] != 0 && name[1] == 0;
+        return CreateServiceCore(scm, ReadEither(name), ReadEither(displayName), access, type, start, ReadEither(path), tag,
+            wide ? MultiUtf16((char*)dependencies) : MultiUtf8(dependencies), ReadEither(account));
+    }
+
+    private const uint SERVICE_WIN32_SHARE_PROCESS = 0x20, SERVICE_INTERACTIVE_PROCESS = 0x100;
+
+    private static nint CreateServiceCore(nint scm, string? name, string? displayName, uint access, uint type, uint start,
+        string? path, uint* tag, List<string> dependencies, string? account)
+    {
+        if (Handle(scm) is not ScmHandle h) { SetLastError(ERROR_INVALID_HANDLE); return 0; }
+        if ((h.Access & ServiceManager.ManagerCreateService) == 0) { SetLastError(ServiceManager.ERROR_ACCESS_DENIED); return 0; }
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(path)) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }
+        if (tag != null) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }     // a tag is a driver's, in a load order group
+        // a process of its own, or sharing one (each runs in its own here, as a shared one would on its own); a
+        // driver is the kernel's, and there is no Windows kernel to load one into
+        if ((type & ~SERVICE_INTERACTIVE_PROCESS) is not (SERVICE_WIN32_OWN_PROCESS or SERVICE_WIN32_SHARE_PROCESS))
+        {
+            LogOnce($"scm:create:{name}", $"win32 shim: advapi32!CreateService of a driver ({name}, type 0x{type:X}) is not supported here");
+            SetLastError(50);                                                            // ERROR_NOT_SUPPORTED
+            return 0;
+        }
+        ServiceStart? to = start switch { 2 => ServiceStart.Auto, 3 => ServiceStart.Manual, 4 => ServiceStart.Disabled, _ => null };
+        if (to == null) { SetLastError(ERROR_INVALID_PARAMETER); return 0; }       // boot and system start are drivers'
+
+        var (program, args) = ServiceManager.SplitCommandLine(path, p => WpfWebGpu.ComInterop.WindowsPaths.Disk(p)!);
+        var request = new ServiceCreateRequest
+        {
+            Service = new ServiceRecord
+            {
+                Name = name,
+                DisplayName = string.IsNullOrEmpty(displayName) ? name : displayName,
+                PathName = path,
+                Start = to.Value,
+                StartName = string.IsNullOrEmpty(account) ? "LocalSystem" : account,
+                DependsOn = dependencies,
+            },
+            Program = program,
+            Args = args,
+        };
+        if (ServiceRequest(() => ServiceManager.Create(request)) == FALSE) return 0;
+        // the creator gets the access it asked for (its own service, as an administrator)
+        return NewHandle(new ServiceHandle(name, MapServiceAccess(access)));
+    }
+
+    [Win32Export("DeleteService")]
+    public static int DeleteService(nint handle)
+    {
+        if (ServiceOf(handle, ServiceManager.DeleteRight) is not { } h) return FALSE;
+        return ServiceRequest(() => ServiceManager.Delete(h.Name));
+    }
+
+    // a double-terminated list of strings (dependencies: "A\0B\0\0")
+    private static List<string> MultiUtf16(char* p)
+    {
+        var list = new List<string>();
+        if (p == null) return list;
+        while (*p != 0)
+        {
+            string s = new(p);
+            list.Add(s);
+            p += s.Length + 1;
+        }
+        return list;
+    }
+
+    private static List<string> MultiUtf8(byte* p)
+    {
+        var list = new List<string>();
+        if (p == null) return list;
+        while (*p != 0)
+        {
+            int n = 0;
+            while (p[n] != 0) n++;
+            list.Add(System.Text.Encoding.UTF8.GetString(p, n));
+            p += n + 1;
+        }
+        return list;
     }
 
     // a service manager request, its refusal as Windows' error

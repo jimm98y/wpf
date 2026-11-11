@@ -70,7 +70,7 @@ public static partial class MacPackager
         }
         // the service manager: the services as registered (services.json, installed into the machine's state on every
         // install) and its daemon, root, which starts and stops them for callers that are not
-        File.WriteAllText(Path.Combine(home, "services.json"), DesktopCommon.ServiceDatabase(manifest, root, s => id + "." + DesktopCommon.Segment(s.Name)));
+        File.WriteAllText(Path.Combine(home, "services.json"), DesktopCommon.ServiceDatabase(manifest, root, s => id + "." + DesktopCommon.Segment(s.Name), Host(root, product, manifest.Product.OsIdentity, id + ".")));
         if (manifest.Services.Count > 0)
         {
             string label = id + ".scm";
@@ -185,55 +185,26 @@ public static partial class MacPackager
 
     // ---- what is installed --------------------------------------------------------------------------------
 
-    private static IEnumerable<KeyValuePair<string, string>> ServiceEnvironment(string? osIdentity, ServiceEntry service)
-    {
-        var env = new Dictionary<string, string>(service.Environment);
-        if (!string.IsNullOrEmpty(osIdentity)) env.TryAdd("WPFWEBGPU_OS_IDENTITY", osIdentity);
-        foreach (var (key, value) in DesktopCommon.ServiceRuntimeEnvironment) env.TryAdd(key, value);
-        return env;
-    }
+    internal static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity) =>
+        WpfWebGpu.Services.ServiceUnits.Launchd(Host(root, product, osIdentity, label[..(label.LastIndexOf('.') + 1)]), new WpfWebGpu.Services.ServiceDefinition
+        {
+            Unit = label,
+            Program = root + "/app/" + service.Exe.Replace('\\', '/'),
+            Args = new List<string>(service.Args),
+            WorkingDirectory = root + "/app/" + Path.GetDirectoryName(service.Exe.Replace('\\', '/'))!,
+            Environment = DesktopCommon.ServiceEnvironment(service, osIdentity),
+            Account = DesktopCommon.SystemAccount(service.Account, mac: true),
+            Start = DesktopCommon.ServiceStartOf(service.Start),
+            RestartAfterFailure = service.RestartAfterFailure,
+            LogName = Path.GetFileNameWithoutExtension(service.Exe),
+        });
 
-    internal static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity)
+    /// <summary>The installation as its services run in it (services.json keeps it, for those created later).</summary>
+    internal static WpfWebGpu.Services.ServiceHost Host(string root, string product, string osIdentity, string unitPrefix) => new()
     {
-        var args = new List<string> { root + "/runtime/run", root + "/app/" + service.Exe };
-        args.AddRange(service.Args);
-        string log = $"/Library/Logs/{product}/{Path.GetFileNameWithoutExtension(service.Exe)}.log";
-        return $"""
-            <?xml version="1.0" encoding="UTF-8"?>
-            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            <plist version="1.0">
-            <dict>
-              <key>Label</key><string>{X(label)}</string>
-              <key>ProgramArguments</key>
-              <array>
-            {string.Concat(args.Select(a => $"    <string>{X(a)}</string>\n"))}  </array>
-              <key>EnvironmentVariables</key>
-              <dict>
-                <key>WPFRUN_STATE</key><string>{X(root)}/state</string>
-                <key>WPFRUN_CACHE</key><string>/Library/Caches/{X(product)}</string>
-                <key>WPFRUN_LOGS</key><string>/Library/Logs/{X(product)}</string>
-            {string.Concat(ServiceEnvironment(osIdentity, service).Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}
-              </dict>
-              <key>WorkingDirectory</key><string>{X(root + "/app/" + Path.GetDirectoryName(service.Exe)!.Replace('\\', '/'))}</string>
-              {(DesktopCommon.SystemAccount(service.Account, mac: true) is { } user ? $"<key>UserName</key><string>{user}</string>\n  <key>GroupName</key><string>staff</string>" : "")}
-              <key>RunAtLoad</key><{(service.Start == StartType.Auto ? "true" : "false")}/>
-              {KeepAlive(service)}<key>ThrottleInterval</key><integer>{(service.RestartAfterFailure > 0 ? service.RestartAfterFailure : 10)}</integer>
-              <key>ExitTimeOut</key><integer>30</integer>
-              <key>Umask</key><integer>2</integer>
-              <key>StandardOutPath</key><string>{X(log)}</string>
-              <key>StandardErrorPath</key><string>{X(log)}</string>
-            </dict>
-            </plist>
-            """;
-    }
-
-    // started again after a failure only where its recovery actions say so, as Windows does: a service without them is
-    // left stopped. launchd's KeepAlive on an unsuccessful exit implies RunAtLoad (the job has to have run to have an
-    // exit status), which started every manual service with the system; a manual one is kept alive only after a crash
-    private static string KeepAlive(ServiceEntry service) =>
-        service.RestartAfterFailure <= 0 || service.Start == StartType.Disabled ? ""
-        : service.Start == StartType.Auto ? "<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n  "
-        : "<key>KeepAlive</key><dict><key>Crashed</key><true/></dict>\n  ";
+        Root = root, State = root + "/state", Cache = "/Library/Caches/" + product, Logs = "/Library/Logs/" + product,
+        Product = product, UnitPrefix = unitPrefix, Environment = DesktopCommon.HostEnvironment(osIdentity),
+    };
 
     // a daemon of the stack's own (wpfrun <command>: the http.sys service, the service manager, the web server), root,
     // always running; the programs it starts (the web server's workers, under their pools' accounts) take the

@@ -122,7 +122,7 @@ internal static partial class WindowsServiceManager
         if (scm == IntPtr.Zero) throw Error();
         try
         {
-            uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, _ => 0 };
+            uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, "delete" => ServiceManager.DeleteRight, _ => 0 };
             if (right == 0) throw new ServiceException(ServiceManager.ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
             IntPtr service = OpenServiceW(scm, name, right | ServiceManager.QueryStatus);
             if (service == IntPtr.Zero) throw Error();
@@ -132,6 +132,7 @@ internal static partial class WindowsServiceManager
                 {
                     "start" => StartServiceW(service, 0, IntPtr.Zero),
                     "stop" => ControlService(service, SERVICE_CONTROL_STOP, new uint[7]),
+                    "delete" => DeleteService(service),
                     _ => Enum.TryParse(arg, ignoreCase: true, out ServiceStart start)
                          && ChangeServiceConfigW(service, SERVICE_NO_CHANGE, start switch { ServiceStart.Auto => 2u, ServiceStart.Manual => 3u, _ => 4u },
                                                  SERVICE_NO_CHANGE, null, null, IntPtr.Zero, null, null, null, null),
@@ -139,6 +140,24 @@ internal static partial class WindowsServiceManager
                 if (!ok) throw Error();
             }
             finally { CloseServiceHandle(service); }
+        }
+        finally { CloseServiceHandle(scm); }
+    }
+
+    /// <summary>CreateService, the SCM's: the service as the request registers it (its command line as given).</summary>
+    public static void Create(ServiceCreateRequest request)
+    {
+        IntPtr scm = OpenSCManagerW(null, null, SC_MANAGER_CONNECT | ServiceManager.ManagerCreateService);
+        if (scm == IntPtr.Zero) throw Error();
+        try
+        {
+            ServiceRecord r = request.Service;
+            string? dependencies = r.DependsOn.Count == 0 ? null : string.Concat(r.DependsOn.Select(d => d + "\0")) + "\0";
+            IntPtr service = CreateServiceW(scm, r.Name, r.DisplayName.Length > 0 ? r.DisplayName : r.Name, ServiceManager.QueryStatus,
+                0x10, r.Start switch { ServiceStart.Auto => 2u, ServiceStart.Disabled => 4u, _ => 3u }, 1, r.PathName, null, IntPtr.Zero,
+                dependencies, r.StartName.Length > 0 && r.StartName != "LocalSystem" ? r.StartName : null, null);
+            if (service == IntPtr.Zero) throw Error();
+            CloseServiceHandle(service);
         }
         finally { CloseServiceHandle(scm); }
     }
@@ -211,6 +230,14 @@ internal static partial class WindowsServiceManager
     [LibraryImport("advapi32", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool ControlService(IntPtr service, uint control, uint[] status);
+
+    [LibraryImport("advapi32", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    private static partial IntPtr CreateServiceW(IntPtr scm, string name, string displayName, uint access, uint type, uint start,
+        uint errorControl, string binaryPath, string? loadOrderGroup, IntPtr tagId, string? dependencies, string? startName, string? password);
+
+    [LibraryImport("advapi32", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool DeleteService(IntPtr service);
 
     [LibraryImport("advapi32", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]

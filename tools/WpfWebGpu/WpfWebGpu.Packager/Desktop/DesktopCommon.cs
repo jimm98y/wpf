@@ -7,12 +7,7 @@ namespace WpfWebGpu.Packager.Desktop;
 internal static class DesktopCommon
 {
     /// <summary>A name as an identifier's segment: lower case letters, digits and '-'.</summary>
-    public static string Segment(string s)
-    {
-        var sb = new StringBuilder();
-        foreach (char c in s.ToLowerInvariant()) if (char.IsAsciiLetterOrDigit(c) || c == '-') sb.Append(c);
-        return sb.Length == 0 ? "app" : sb.ToString();
-    }
+    public static string Segment(string s) => WpfWebGpu.Services.ServiceUnits.Segment(s);
 
     private static readonly string[] s_architectureSuffixes = { "_ARM64", "_x64", "_x86" };
 
@@ -30,11 +25,12 @@ internal static class DesktopCommon
     /// <summary>
     /// The service manager's database the package installs into the machine's state (services.json): each service as
     /// it was registered -- its name, display name, description, start type, account, dependencies and security
-    /// descriptor -- with the program it runs here and the system service that runs it (<paramref name="unit"/>).
+    /// descriptor -- with the program it runs here and the system service that runs it (<paramref name="unit"/>); and
+    /// the installation they run in (<paramref name="host"/>), for a service a program creates after the install.
     /// </summary>
-    public static string ServiceDatabase(PackageManifest manifest, string root, Func<ServiceEntry, string> unit)
+    public static string ServiceDatabase(PackageManifest manifest, string root, Func<ServiceEntry, string> unit, WpfWebGpu.Services.ServiceHost host)
     {
-        var db = new WpfWebGpu.Services.ServiceDatabase();
+        var db = new WpfWebGpu.Services.ServiceDatabase { Host = host };
         foreach (var s in manifest.Services)
         {
             string program = root + "/app/" + s.Exe.Replace('\\', '/');
@@ -44,7 +40,7 @@ internal static class DesktopCommon
                 DisplayName = s.DisplayName.Length > 0 ? s.DisplayName : s.Name,
                 Description = s.Description,
                 PathName = "\"" + program + "\"" + string.Concat(s.Args.Select(a => " " + (a.Contains(' ') ? "\"" + a + "\"" : a))),
-                Start = s.Start switch { StartType.Auto => WpfWebGpu.Services.ServiceStart.Auto, StartType.Disabled => WpfWebGpu.Services.ServiceStart.Disabled, _ => WpfWebGpu.Services.ServiceStart.Manual },
+                Start = ServiceStartOf(s.Start),
                 DelayedAutoStart = s.DelayedAutoStart,
                 StartName = s.StartName.Length > 0 ? s.StartName : s.Account switch
                 {
@@ -113,6 +109,30 @@ internal static class DesktopCommon
     public static readonly IReadOnlyDictionary<string, string> ServiceRuntimeEnvironment = new Dictionary<string, string>
     {
         ["DOTNET_ThreadPool_UnfairSemaphoreSpinLimit"] = "0",
+    };
+
+    /// <summary>What every service of the installation runs with: the system it is told it is on, the runtime's settings.</summary>
+    public static Dictionary<string, string> HostEnvironment(string? osIdentity)
+    {
+        var env = new Dictionary<string, string>();
+        if (!string.IsNullOrEmpty(osIdentity)) env["WPFWEBGPU_OS_IDENTITY"] = osIdentity;
+        foreach (var (key, value) in ServiceRuntimeEnvironment) env[key] = value;
+        return env;
+    }
+
+    /// <summary>A service's environment: its own, then the installation's where it does not set them.</summary>
+    public static Dictionary<string, string> ServiceEnvironment(ServiceEntry service, string? osIdentity)
+    {
+        var env = new Dictionary<string, string>(service.Environment);
+        foreach (var (key, value) in HostEnvironment(osIdentity)) env.TryAdd(key, value);
+        return env;
+    }
+
+    public static WpfWebGpu.Services.ServiceStart ServiceStartOf(StartType start) => start switch
+    {
+        StartType.Auto => WpfWebGpu.Services.ServiceStart.Auto,
+        StartType.Disabled => WpfWebGpu.Services.ServiceStart.Disabled,
+        _ => WpfWebGpu.Services.ServiceStart.Manual,
     };
 
     public static string FileName(string s) => string.Concat(s.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ':' ? '_' : c));

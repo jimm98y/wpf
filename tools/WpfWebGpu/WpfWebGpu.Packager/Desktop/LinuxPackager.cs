@@ -100,7 +100,7 @@ public static partial class LinuxPackager
             }
             // the service manager: the services as registered, installed into the machine's state on every install, and
             // its daemon, root, which starts and stops them for callers that are not
-            tar.AddText($"{root}/services.json", DesktopCommon.ServiceDatabase(manifest, root, sv => UnitName(pkg, sv.Name)), executable: false);
+            tar.AddText($"{root}/services.json", DesktopCommon.ServiceDatabase(manifest, root, sv => UnitName(pkg, sv.Name), Host(manifest, pkg, root, state)), executable: false);
             if (manifest.Services.Count > 0)
             {
                 tar.AddText($"/lib/systemd/system/{pkg}-scm.service", SystemUnit(manifest, pkg, root, state, "scm", "service manager"), executable: false);
@@ -246,39 +246,28 @@ public static partial class LinuxPackager
 
         """;
 
-    private static string Unit(PackageManifest manifest, ServiceEntry service, string pkg, string root, string state)
+    private static string Unit(PackageManifest manifest, ServiceEntry service, string pkg, string root, string state) =>
+        WpfWebGpu.Services.ServiceUnits.Systemd(Host(manifest, pkg, root, state), new WpfWebGpu.Services.ServiceDefinition
+        {
+            Unit = UnitName(pkg, service.Name),
+            Title = service.DisplayName.Length > 0 ? service.DisplayName : service.Name,
+            Program = root + "/app/" + service.Exe.Replace('\\', '/'),
+            Args = new List<string>(service.Args),
+            WorkingDirectory = root + "/app/" + Path.GetDirectoryName(service.Exe.Replace('\\', '/'))!,
+            Environment = DesktopCommon.ServiceEnvironment(service, manifest.Product.OsIdentity),
+            Account = DesktopCommon.SystemAccount(service.Account, mac: false),
+            Start = DesktopCommon.ServiceStartOf(service.Start),
+            RestartAfterFailure = service.RestartAfterFailure,
+            DependsOn = service.DependsOn.Select(d => UnitName(pkg, d)).ToList(),
+            LogName = Path.GetFileNameWithoutExtension(service.Exe),
+        });
+
+    /// <summary>The installation as its services run in it (services.json keeps it, for those created later).</summary>
+    private static WpfWebGpu.Services.ServiceHost Host(PackageManifest manifest, string pkg, string root, string state) => new()
     {
-        string exe = $"{root}/app/{service.Exe}";
-        string args = string.Concat(service.Args.Select(a => " " + Quote(a)));
-        var deps = service.DependsOn.Select(d => UnitName(pkg, d)).ToList();
-        string after = string.Join(" ", new[] { "network-online.target" }.Concat(deps));
-        return $"""
-            [Unit]
-            Description={(service.DisplayName.Length > 0 ? service.DisplayName : service.Name)} ({manifest.Product.Name})
-            After={after}
-            Wants=network-online.target
-            {(deps.Count > 0 ? "Requires=" + string.Join(" ", deps) + "\n" : "")}
-            [Service]
-            Type=simple
-            ExecStart={Quote(root + "/runtime/run")} {Quote(exe)}{args}
-            WorkingDirectory={root}/app/{Path.GetDirectoryName(service.Exe)!.Replace('\\', '/')}
-            Environment=WPFRUN_STATE={state}
-            Environment=WPFRUN_CACHE=/var/cache/{pkg}
-            Environment=WPFRUN_LOGS=/var/log/{pkg}
-            {string.Concat(service.Environment.Concat(manifest.Product.OsIdentity.Length > 0 && !service.Environment.ContainsKey("WPFWEBGPU_OS_IDENTITY")
-                ? new[] { new KeyValuePair<string, string>("WPFWEBGPU_OS_IDENTITY", manifest.Product.OsIdentity) } : Array.Empty<KeyValuePair<string, string>>())
-                .Concat(DesktopCommon.ServiceRuntimeEnvironment.Where(e => !service.Environment.ContainsKey(e.Key)))
-                .Select(e => $"Environment={e.Key}={e.Value}\n"))}
-            {(DesktopCommon.SystemAccount(service.Account, mac: false) is { } user
-                ? $"User={user}\nGroup=users\n# a port below 1024, which Windows lets any account listen on\nAmbientCapabilities=CAP_NET_BIND_SERVICE\n" : "")}UMask=0002
-            {(service.RestartAfterFailure > 0 ? $"Restart=on-failure\nRestartSec={service.RestartAfterFailure}\n" : "")}TimeoutStopSec=30
-            SyslogIdentifier={Path.GetFileNameWithoutExtension(service.Exe)}
-
-            [Install]
-            WantedBy=multi-user.target
-
-            """;
-    }
+        Root = root, State = state, Cache = "/var/cache/" + pkg, Logs = "/var/log/" + pkg,
+        Product = manifest.Product.Name, UnitPrefix = pkg + "-", Environment = DesktopCommon.HostEnvironment(manifest.Product.OsIdentity),
+    };
 
     // what a user starts of the installation: the machine's state, and the user's own files of this product under its
     // name (XDG's cache and state folders), where an upgrade and the removal find them
@@ -464,7 +453,7 @@ public static partial class LinuxPackager
         return name.Length < 2 || !char.IsAsciiLetterOrDigit(name[0]) ? "app" + name : name;
     }
 
-    private static string UnitName(string pkg, string service) => $"{pkg}-{DesktopCommon.Segment(service)}.service";
+    private static string UnitName(string pkg, string service) => $"{pkg}-{WpfWebGpu.Services.ServiceUnits.Segment(service)}.service";
 
     private static string DebVersion(string v)
     {

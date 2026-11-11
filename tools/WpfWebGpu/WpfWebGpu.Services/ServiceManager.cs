@@ -25,15 +25,20 @@ public sealed class ServiceException(int error, string message) : Exception(mess
     public int Error { get; } = error;
 }
 
-public static class ServiceManager
+public static partial class ServiceManager
 {
     // SERVICE_* access rights
-    public const uint QueryConfig = 0x1, ChangeConfig = 0x2, QueryStatus = 0x4, StartRight = 0x10, StopRight = 0x20, PauseContinue = 0x40;
+    public const uint QueryConfig = 0x1, ChangeConfig = 0x2, QueryStatus = 0x4, StartRight = 0x10, StopRight = 0x20, PauseContinue = 0x40,
+        DeleteRight = 0x10000;
+    // SC_MANAGER_* access rights
+    public const uint ManagerConnect = 0x1, ManagerCreateService = 0x2, ManagerEnumerate = 0x4, ManagerLock = 0x8,
+        ManagerQueryLockStatus = 0x10, ManagerModifyBootConfig = 0x20;
 
     public const int ERROR_ACCESS_DENIED = 5, ERROR_DEPENDENT_SERVICES_RUNNING = 1051, ERROR_INVALID_SERVICE_CONTROL = 1052,
         ERROR_SERVICE_ALREADY_RUNNING = 1056, ERROR_SERVICE_DISABLED = 1058, ERROR_SERVICE_DOES_NOT_EXIST = 1060,
         ERROR_SERVICE_NOT_ACTIVE = 1062, ERROR_SERVICE_DEPENDENCY_FAIL = 1068, ERROR_SERVICE_REQUEST_TIMEOUT = 1053,
-        RPC_S_SERVER_UNAVAILABLE = 1722;
+        ERROR_SERVICE_MARKED_FOR_DELETE = 1072, ERROR_SERVICE_EXISTS = 1073, ERROR_DUPLICATE_SERVICE_NAME = 1078,
+        ERROR_INVALID_NAME = 123, ERROR_INVALID_PARAMETER = 87, ERROR_CALL_NOT_IMPLEMENTED = 120, RPC_S_SERVER_UNAVAILABLE = 1722;
 
     /// <summary>The machine's services: the service control manager's on Windows, the installed database elsewhere.</summary>
     public static ServiceDatabase Database() =>
@@ -99,7 +104,7 @@ public static class ServiceManager
     public static void SetStart(string name, ServiceStart start) => Control("config", name, start.ToString());
 
     // root acts itself; anyone else asks the daemon
-    private static void Control(string op, string name, string arg)
+    internal static void Control(string op, string name, string arg)
     {
         // Windows: the service control manager decides, by the service's descriptor and the caller's token
         if (OperatingSystem.IsWindows()) { WindowsServiceManager.Execute(op, name, arg); return; }
@@ -125,20 +130,24 @@ public static class ServiceManager
 }
 
 /// <summary>What the service manager does for a request it has decided to grant -- root's work.</summary>
-public static class ServiceControl
+public static partial class ServiceControl
 {
     /// <summary>Carries out <paramref name="op"/> (start, stop, config) on the service for the account
     /// <paramref name="caller"/>, or refuses it as Windows would.</summary>
     public static void Execute(string? databasePath, string op, string name, string arg, uint caller)
     {
+        RemoveStoppedDeleted(databasePath);
+        if (op == "create") { Create(databasePath, arg, caller); return; }
         var db = ServiceDatabase.Load(databasePath);
         var service = db.Find(name) ?? throw new ServiceException(ServiceManager.ERROR_SERVICE_DOES_NOT_EXIST, "The specified service does not exist as an installed service.");
-        uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, _ => 0 };
+        uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, "delete" => ServiceManager.DeleteRight, _ => 0 };
         if (right == 0) throw new ServiceException(ServiceManager.ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
         if (!WindowsAccounts.AccessAllowed(ServiceDatabase.DescriptorOf(service), WindowsAccounts.TokenOf(caller), right))
             throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, $"Access is denied ({WindowsAccounts.Describe(caller)}, {service.Name}).");
+        if (service.MarkedForDelete && op != "stop") throw MarkedForDelete();
         switch (op)
         {
+            case "delete": Delete(databasePath, db, service); break;
             case "start": StartWithDependencies(db, service, new HashSet<string>(StringComparer.OrdinalIgnoreCase)); break;
             case "stop": StopService(db, service); break;
             case "config":
@@ -271,6 +280,16 @@ public static class ServiceBroker
         File.SetUnixFileMode(socketPath, (UnixFileMode)Convert.ToInt32("666", 8));   // anyone may ask; the descriptor decides
         listener.Listen(16);
         log($"service manager: {databasePath}, requests at {socketPath}");
+        // a service deleted while it ran goes once it has stopped, however it stopped
+        _ = Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(5), stop); } catch (OperationCanceledException) { break; }
+                try { ServiceControl.RemoveStoppedDeleted(databasePath); }
+                catch (Exception e) { log("service manager: removing deleted services: " + e.Message); }
+            }
+        });
         while (!stop.IsCancellationRequested)
         {
             Socket client;

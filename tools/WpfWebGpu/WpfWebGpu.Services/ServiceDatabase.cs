@@ -3,7 +3,8 @@
 // dependencies and security descriptor -- and the system service that runs it here (a launchd daemon, a systemd
 // unit). The package writes it into the machine's state on every install (services.json beside registry/ and
 // ProgramData/), so it is what is installed now, not what the first install seeded; the service manager (WpfWebGpu.
-// Services.ServiceManager) answers from it and from launchd or systemd.
+// Services.ServiceManager) answers from it and from launchd or systemd, and keeps in it the services a program creates
+// or deletes (CreateService, DeleteService).
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -29,11 +30,19 @@ public sealed class ServiceRecord
     public string Security { get; set; } = "";
     /// <summary>The system service that runs it: a launchd label (system domain), a systemd unit.</summary>
     public string Unit { get; set; } = "";
+    /// <summary>Created by a program (CreateService), not installed by the package: its unit is the service manager's.</summary>
+    public bool Created { get; set; }
+    /// <summary>Deleted while it ran (DeleteService): gone once it stops, as the SCM removes it then; till then it
+    /// is opened no more (ERROR_SERVICE_MARKED_FOR_DELETE).</summary>
+    public bool MarkedForDelete { get; set; }
 }
 
 public sealed class ServiceDatabase
 {
     public List<ServiceRecord> Services { get; set; } = new();
+    /// <summary>The installation the services run in, where a service a program creates is written; none in a
+    /// database an older package installed (services are not created there).</summary>
+    public ServiceHost? Host { get; set; }
 
     public const string FileName = "services.json";
 
@@ -79,31 +88,37 @@ public sealed class ServiceDatabase
         return s_default;
     }
 
-    private static byte[] DefaultDescriptor()
+    private static byte[] DefaultDescriptor() => Descriptor(
+        Ace(0x000F01FF, 1, 5, 18),          // SYSTEM: all access
+        Ace(0x000F01FF, 2, 5, 32, 544),     // Administrators: all access
+        Ace(0x0002018D, 1, 5, 4),           // INTERACTIVE: query, interrogate, user-defined controls
+        Ace(0x0002018D, 1, 5, 6));          // SERVICE: the same
+
+    /// <summary>The service control manager's own descriptor, as Windows has it: everyone authenticated connects,
+    /// enumerates and queries its lock; only SYSTEM and administrators create services, lock it, change boot config.</summary>
+    public static readonly byte[] ManagerDescriptor = Descriptor(
+        Ace(0x000F003F, 1, 5, 18),          // SYSTEM: SC_MANAGER_ALL_ACCESS
+        Ace(0x000F003F, 2, 5, 32, 544),     // Administrators: the same
+        Ace(0x00020015, 1, 5, 11));         // Authenticated Users: connect, enumerate, query lock status, read control
+
+    private static byte[] Descriptor(params byte[][] aces)
     {
-        var aces = new List<byte[]>
-        {
-            Ace(0x000F01FF, 1, 5, 18),          // SYSTEM: all access
-            Ace(0x000F01FF, 2, 5, 32, 544),     // Administrators: all access
-            Ace(0x0002018D, 1, 5, 4),           // INTERACTIVE: query, interrogate, user-defined controls
-            Ace(0x0002018D, 1, 5, 6),           // SERVICE: the same
-        };
         int daclSize = 8 + aces.Sum(a => a.Length);
         var sd = new byte[20 + daclSize];
         sd[0] = 1; BitConverter.GetBytes((ushort)0x8004).CopyTo(sd, 2);   // self-relative, DACL present
         BitConverter.GetBytes(20).CopyTo(sd, 16);
-        sd[20] = 2; BitConverter.GetBytes((ushort)daclSize).CopyTo(sd, 22); BitConverter.GetBytes((ushort)aces.Count).CopyTo(sd, 24);
+        sd[20] = 2; BitConverter.GetBytes((ushort)daclSize).CopyTo(sd, 22); BitConverter.GetBytes((ushort)aces.Length).CopyTo(sd, 24);
         int at = 28;
         foreach (byte[] a in aces) { a.CopyTo(sd, at); at += a.Length; }
         return sd;
+    }
 
-        static byte[] Ace(uint mask, int subCount, byte authority, params uint[] subs)
-        {
-            var ace = new byte[8 + 8 + 4 * subCount];
-            ace[0] = 0; BitConverter.GetBytes((ushort)ace.Length).CopyTo(ace, 2); BitConverter.GetBytes(mask).CopyTo(ace, 4);
-            ace[8] = 1; ace[9] = (byte)subCount; ace[15] = authority;
-            for (int i = 0; i < subCount; i++) BitConverter.GetBytes(subs[i]).CopyTo(ace, 16 + 4 * i);
-            return ace;
-        }
+    private static byte[] Ace(uint mask, int subCount, byte authority, params uint[] subs)
+    {
+        var ace = new byte[8 + 8 + 4 * subCount];
+        ace[0] = 0; BitConverter.GetBytes((ushort)ace.Length).CopyTo(ace, 2); BitConverter.GetBytes(mask).CopyTo(ace, 4);
+        ace[8] = 1; ace[9] = (byte)subCount; ace[15] = authority;
+        for (int i = 0; i < subCount; i++) BitConverter.GetBytes(subs[i]).CopyTo(ace, 16 + 4 * i);
+        return ace;
     }
 }
