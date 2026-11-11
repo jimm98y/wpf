@@ -481,27 +481,10 @@ public static unsafe partial class Exports
 
     // ---- text and the environment ---------------------------------------------------------------
 
-    private static readonly Dictionary<uint, string> s_messages = new()
-    {
-        [0] = "The operation completed successfully.",
-        [2] = "The system cannot find the file specified.",
-        [3] = "The system cannot find the path specified.",
-        [5] = "Access is denied.",
-        [6] = "The handle is invalid.",
-        [8] = "Not enough memory resources are available to process this command.",
-        [32] = "The process cannot access the file because it is being used by another process.",
-        [87] = "The parameter is incorrect.",
-        [120] = "This function is not supported on this system.",
-        [122] = "The data area passed to a system call is too small.",
-        [126] = "The specified module could not be found.",
-        [127] = "The specified procedure could not be found.",
-        [183] = "Cannot create a file when that file already exists.",
-        [1400] = "Invalid window handle.",
-        [1460] = "This operation returned because the timeout period expired.",
-    };
+    // Windows' system messages (WindowsErrors, the same the app's Win32Exception messages read)
+    private static string? MessageText(uint id) => WpfWebGpu.ComInterop.WindowsErrors.Message((int)id) is { } m ? m + "\r\n" : null;
 
-    private static string MessageText(uint id) =>
-        (s_messages.TryGetValue(id, out string? m) ? m : $"Unknown error (0x{id:x})") + "\r\n";
+    private const int ERROR_MR_MID_NOT_FOUND = 317;
 
     private static uint FormatMessageCore(uint flags, uint id, void* buffer, uint size, bool wide)
     {
@@ -510,7 +493,8 @@ public static unsafe partial class Exports
             SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
             return 0;
         }
-        string text = MessageText(id);
+        // a message the system has no text for: FormatMessage fails, as Windows' does
+        if (MessageText(id) is not { } text) { SetLastError(ERROR_MR_MID_NOT_FOUND); return 0; }
         if ((flags & 0x100) != 0)    // FORMAT_MESSAGE_ALLOCATE_BUFFER: buffer is a pointer to the pointer
         {
             int bytes = wide ? (text.Length + 1) * 2 : System.Text.Encoding.UTF8.GetByteCount(text) + 1;

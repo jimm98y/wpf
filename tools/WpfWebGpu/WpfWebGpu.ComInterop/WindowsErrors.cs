@@ -1,0 +1,116 @@
+// Windows' system messages: the text FormatMessage gives for a Win32 error code, which a Windows program shows its user
+// (new Win32Exception(error).Message, Marshal.GetPInvokeErrorMessage). Off Windows .NET answers with the C library's
+// text for the same number read as an errno -- 5 is "Input/output error" there, "Access is denied." on Windows -- and
+// "Unknown error 1060" for the codes errno has none for; the app's calls get Windows' text instead (WindowsPaths'
+// Win32Exception and Marshal stand-ins), and kernel32's FormatMessage reads the same table.
+
+namespace WpfWebGpu.ComInterop;
+
+public static class WindowsErrors
+{
+    /// <summary>Windows' text for the Win32 error <paramref name="code"/>, as FormatMessage gives it (without its
+    /// line end); null where this table has none.</summary>
+    public static string? Message(int code) => s_messages.TryGetValue(code, out string? m) ? m : null;
+
+    /// <summary>What Win32Exception says on Windows for <paramref name="code"/>: its message, or "Unknown error
+    /// (0x...)" where the system has none.</summary>
+    public static string ExceptionMessage(int code) => Message(code) ?? $"Unknown error (0x{code:x})";
+
+    private static readonly Dictionary<int, string> s_messages = new()
+    {
+        [0] = "The operation completed successfully.",
+        [1] = "Incorrect function.",
+        [2] = "The system cannot find the file specified.",
+        [3] = "The system cannot find the path specified.",
+        [4] = "The system cannot open the file.",
+        [5] = "Access is denied.",
+        [6] = "The handle is invalid.",
+        [8] = "Not enough memory resources are available to process this command.",
+        [13] = "The data is invalid.",
+        [14] = "Not enough memory resources are available to complete this operation.",
+        [15] = "The system cannot find the drive specified.",
+        [17] = "The system cannot move the file to a different disk drive.",
+        [18] = "There are no more files.",
+        [19] = "The media is write protected.",
+        [21] = "The device is not ready.",
+        [31] = "A device attached to the system is not functioning.",
+        [32] = "The process cannot access the file because it is being used by another process.",
+        [33] = "The process cannot access the file because another process has locked a portion of the file.",
+        [38] = "Reached the end of the file.",
+        [39] = "The disk is full.",
+        [50] = "The request is not supported.",
+        [53] = "The network path was not found.",
+        [64] = "The specified network name is no longer available.",
+        [67] = "The network name cannot be found.",
+        [80] = "The file exists.",
+        [82] = "The directory or file cannot be created.",
+        [87] = "The parameter is incorrect.",
+        [109] = "The pipe has been ended.",
+        [111] = "The file name is too long.",
+        [112] = "There is not enough space on the disk.",
+        [120] = "This function is not supported on this system.",
+        [122] = "The data area passed to a system call is too small.",
+        [123] = "The filename, directory name, or volume label syntax is incorrect.",
+        [126] = "The specified module could not be found.",
+        [127] = "The specified procedure could not be found.",
+        [145] = "The directory is not empty.",
+        [161] = "The specified path is invalid.",
+        [170] = "The requested resource is in use.",
+        [183] = "Cannot create a file when that file already exists.",
+        [193] = "%1 is not a valid Win32 application.",
+        [203] = "The system could not find the environment option that was entered.",
+        [206] = "The filename or extension is too long.",
+        [231] = "All pipe instances are busy.",
+        [232] = "The pipe is being closed.",
+        [233] = "No process is on the other end of the pipe.",
+        [234] = "More data is available.",
+        [258] = "The wait operation timed out.",
+        [259] = "No more data is available.",
+        [267] = "The directory name is invalid.",
+        [487] = "Attempt to access invalid address.",
+        [995] = "The I/O operation has been aborted because of either a thread exit or an application request.",
+        [996] = "Overlapped I/O event is not in a signaled state.",
+        [997] = "Overlapped I/O operation is in progress.",
+        [1001] = "Recursion too deep; the stack overflowed.",
+        [1051] = "A stop control has been sent to a service that other running services are dependent on.",
+        [1052] = "The requested control is not valid for this service.",
+        [1053] = "The service did not respond to the start or control request in a timely fashion.",
+        [1055] = "The service database is locked.",
+        [1056] = "An instance of the service is already running.",
+        [1058] = "The service cannot be started, either because it is disabled or because it has no enabled devices associated with it.",
+        [1060] = "The specified service does not exist as an installed service.",
+        [1061] = "The service cannot accept control messages at this time.",
+        [1062] = "The service has not been started.",
+        [1063] = "The service process could not connect to the service controller.",
+        [1066] = "The service has returned a service-specific error code.",
+        [1068] = "The dependency service or group failed to start.",
+        [1069] = "The service did not start due to a logon failure.",
+        [1072] = "The specified service has been marked for deletion.",
+        [1073] = "The specified service already exists.",
+        [1078] = "The name is already in use as either a service name or a service display name.",
+        [1155] = "No application is associated with the specified file for this operation.",
+        [1168] = "Element not found.",
+        [1223] = "The operation was canceled by the user.",
+        [1314] = "A required privilege is not held by the client.",
+        [1326] = "The user name or password is incorrect.",
+        [1332] = "No mapping between account names and security IDs was done.",
+        [1355] = "The specified domain either does not exist or could not be contacted.",
+        [1376] = "The specified local group does not exist.",
+        [1377] = "The specified account name is not a member of the group.",
+        [1378] = "The specified account name is already a member of the group.",
+        [1400] = "Invalid window handle.",
+        [1407] = "Cannot find window class.",
+        [1460] = "This operation returned because the timeout period expired.",
+        [1722] = "The RPC server is unavailable.",
+        [1726] = "The remote procedure call failed.",
+        [2221] = "The user name could not be found.",
+        [2224] = "The account already exists.",
+        [10013] = "An attempt was made to access a socket in a way forbidden by its access permissions.",
+        [10048] = "Only one usage of each socket address (protocol/network address/port) is normally permitted.",
+        [10049] = "The requested address is not valid in its context.",
+        [10054] = "An existing connection was forcibly closed by the remote host.",
+        [10060] = "A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.",
+        [10061] = "No connection could be made because the target machine actively refused it.",
+        [11001] = "No such host is known.",
+    };
+}

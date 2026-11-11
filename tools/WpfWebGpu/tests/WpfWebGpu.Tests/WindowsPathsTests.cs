@@ -119,6 +119,35 @@ public sealed class OSIdentityRewriteTests
         Assert.Equal("PhysicalFileProvider_new", call.Name);
     }
 
+    [Fact]
+    public void A_Win32_error_reads_as_Windows_says_it()
+    {
+        // the app's new Win32Exception(5): Windows' "Access is denied.", not the errno's "Input/output error"
+        var subs = WpfWebGpu.ComRewrite.PathSubstitutions.For(new[] { AppContext.BaseDirectory })!;
+        var module = Mono.Cecil.ModuleDefinition.CreateModule("Errors", Mono.Cecil.ModuleKind.Dll);
+        var type = new Mono.Cecil.TypeDefinition("Fixture", "Errors", Mono.Cecil.TypeAttributes.Public | Mono.Cecil.TypeAttributes.Abstract | Mono.Cecil.TypeAttributes.Sealed, module.TypeSystem.Object);
+        module.Types.Add(type);
+        var method = new Mono.Cecil.MethodDefinition("Fail", Mono.Cecil.MethodAttributes.Public | Mono.Cecil.MethodAttributes.Static, module.TypeSystem.Object);
+        type.Methods.Add(method);
+        var il = method.Body.GetILProcessor();
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ldc_I4_5);
+        il.Emit(Mono.Cecil.Cil.OpCodes.Newobj, module.ImportReference(typeof(System.ComponentModel.Win32Exception).GetConstructor(new[] { typeof(int) })));
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
+
+        subs.Apply(module);
+        var call = (Mono.Cecil.MethodReference)method.Body.Instructions[1].Operand;
+        Assert.Equal(("WindowsPaths", "Win32Exception_new"), (call.DeclaringType.Name, call.Name));
+
+        var e = WindowsPaths.Win32Exception_new(5);
+        Assert.Equal(5, e.NativeErrorCode);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Equal("Access is denied.", e.Message);
+            Assert.Equal("The specified service does not exist as an installed service.", WindowsPaths.Marshal_GetPInvokeErrorMessage(1060));
+            Assert.Equal("Unknown error (0x3039)", WindowsPaths.Win32Exception_new(12345).Message);
+        }
+    }
+
     [Theory]
     [InlineData(false, -1)]     // a program written for Windows: the plain stand-in
     [InlineData(true, 1)]       // a library that asks about macOS: the variant told it knows macOS (bit 1)

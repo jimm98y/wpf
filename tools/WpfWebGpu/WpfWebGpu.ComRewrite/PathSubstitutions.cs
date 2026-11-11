@@ -30,11 +30,15 @@ public sealed class PathSubstitutions
         "System.Type",
         // the operating system as the app asks about it (WindowsPaths: WPFWEBGPU_OS_IDENTITY)
         "System.OperatingSystem", "System.Runtime.InteropServices.RuntimeInformation",
+        // the text of a Win32 error (WindowsPaths: WindowsErrors)
+        "System.ComponentModel.Win32Exception", "System.Runtime.InteropServices.Marshal",
     };
 
     // .NET's own assemblies, and Microsoft's libraries an app carries (a SQL client choosing its native code by
     // the system): their questions about the system get its own answers, never a stand-in's
     private static readonly HashSet<string> s_osTypes = new(StringComparer.Ordinal) { "System.OperatingSystem", "System.Runtime.InteropServices.RuntimeInformation" };
+    // ...and their errors are the system's (an errno, read as one): Windows' text is for the app's own Win32 errors
+    private static readonly HashSet<string> s_errorTypes = new(StringComparer.Ordinal) { "System.ComponentModel.Win32Exception", "System.Runtime.InteropServices.Marshal" };
     private static readonly HashSet<string> s_microsoftKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "b03f5f7f11d50a3a", "31bf3856ad364e35", "cc7b13ffcd2ddd51", "7cec85d7bea7798e", "adb9793829ddae60", "b77a5c561934e089",
@@ -171,7 +175,7 @@ public sealed class PathSubstitutions
                     if ((i.OpCode != OpCodes.Call && i.OpCode != OpCodes.Callvirt && i.OpCode != OpCodes.Newobj)
                         || i.Operand is not MethodReference r || For(r) is not { } stand) continue;
                     bool os = s_osTypes.Contains(r.DeclaringType.FullName) || r.Name == "get_OSVersion";
-                    if (microsofts && os) continue;
+                    if (microsofts && (os || s_errorTypes.Contains(r.DeclaringType.FullName))) continue;
                     // a constructor is only stood in for where it makes the object (newobj), not where a
                     // derived type's constructor calls it
                     if (r.Name == ".ctor" && i.OpCode != OpCodes.Newobj) continue;

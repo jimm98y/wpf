@@ -599,6 +599,22 @@ public static class WindowsPaths
 
     // ---- what is made for a path ----
 
+    // ---- Windows' messages for Win32 errors (WindowsErrors) ----
+    //
+    // A program shows the user what a Win32 error is (new Win32Exception(error).Message): off Windows .NET reads
+    // the code as an errno -- 5 "Input/output error", 1060 "Unknown error 1060" -- where Windows says "Access is
+    // denied." and "The specified service does not exist as an installed service."
+
+    public static System.ComponentModel.Win32Exception Win32Exception_new() => Win32Exception_new(System.Runtime.InteropServices.Marshal.GetLastPInvokeError());
+
+    public static System.ComponentModel.Win32Exception Win32Exception_new(int error) =>
+        s_windows ? new System.ComponentModel.Win32Exception(error) : new System.ComponentModel.Win32Exception(error, WindowsErrors.ExceptionMessage(error));
+
+    public static string Marshal_GetPInvokeErrorMessage(int error) =>
+        s_windows ? System.Runtime.InteropServices.Marshal.GetPInvokeErrorMessage(error) : WindowsErrors.ExceptionMessage(error);
+
+    public static string Marshal_GetLastPInvokeErrorMessage() => Marshal_GetPInvokeErrorMessage(System.Runtime.InteropServices.Marshal.GetLastPInvokeError());
+
     public static FileInfo FileInfo_new(string fileName) => new FileInfo(Disk(fileName)!);
     public static DirectoryInfo DirectoryInfo_new(string path) => new DirectoryInfo(Disk(path)!);
     public static FileStream FileStream_new(string path, FileMode mode) => new FileStream(Disk(path)!, mode);
