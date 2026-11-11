@@ -23,7 +23,9 @@ namespace WpfWebGpu;
 
 internal static class PackPackager
 {
-    public static int Make(string packsDir, string rid, bool verbose)
+    /// <param name="includePacks">the packs beside it (a Packager ready to use); false: an empty packs/ folder, the
+    /// packs downloaded on their own (a release's assets: a pack each, the ones a user's targets need)</param>
+    public static int Make(string packsDir, string rid, bool verbose, bool includePacks = true)
     {
         string desktopPack = Path.Combine(packsDir, $"desktop-{rid}.pack");
         if (!File.Exists(desktopPack)) throw new UserError($"no {desktopPack}: make it first (wpfrun pack --desktop {rid})");
@@ -53,12 +55,27 @@ internal static class PackPackager
                 File.Copy(package, Path.Combine(root, "runtime", "launcher", "local-feed", Path.GetFileName(package)), overwrite: true);
             }
         int packs = 0;
-        foreach (string pack in Directory.EnumerateFiles(packsDir, "*.pack"))
-        {
-            Directory.CreateDirectory(Path.Combine(root, "packs"));
-            File.Copy(pack, Path.Combine(root, "packs", Path.GetFileName(pack)), overwrite: true);
-            packs++;
-        }
+        Directory.CreateDirectory(Path.Combine(root, "packs"));
+        if (includePacks)
+            foreach (string pack in Directory.EnumerateFiles(packsDir, "*.pack"))
+            {
+                File.Copy(pack, Path.Combine(root, "packs", Path.GetFileName(pack)), overwrite: true);
+                packs++;
+            }
+        else
+            File.WriteAllText(Path.Combine(root, "packs", "README.txt"), """
+                The Packager's templates go in this folder: a <kind>.pack for each target it makes.
+
+                  desktop-<rid>.pack       a desktop installation for that OS (osx-arm64, osx-x64, linux-x64,
+                                           linux-arm64, win-x64, win-arm64), with setup-win-<arch>.pack for Windows
+                  android.pack             Android and Meta Quest apps
+                  ios.pack, visionos.pack  iPhone and iPad, Apple Vision Pro apps
+                  browser.pack             an installation's web pages
+                  sqlserver-<target>.pack  the SQL Server a Windows or Mac installation brings (optional)
+
+                Download the ones your targets need from the same release as the Packager, or point WPFPKG_PACKS at a
+                folder that holds them.
+                """);
 
         const string script = """
             #!/bin/sh

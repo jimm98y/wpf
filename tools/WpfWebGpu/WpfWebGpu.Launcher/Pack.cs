@@ -12,7 +12,8 @@
 //   sqlserver-<target>.pack  the SQL Server a Windows or Mac installation brings, optional (SqlServerPacks): Microsoft's
 //                  SQL Server 2025 Express setup (win-x64), Apple's container installer (macos: SQL Server's image
 //                  is pulled when installing, as on Linux).
-//   --packager <rid>     not a pack: the Packager itself for that OS, beside the packs folder (PackPackager).
+//   --packager <rid>     not a pack: the Packager itself for that OS, beside the packs folder (PackPackager), the
+//                  packs in it (--without-packs: an empty packs/ folder, the packs downloaded on their own).
 //   desktop-<rid>.pack   runtime/: what runs an installation's programs on that OS with nothing installed --
 //                  a private .NET (with ASP.NET Core, which servers use), wpfrun (launcher/, overlay/ from
 //                  artifacts/wpfrun/<rid>, made by build.sh -r <rid>) and `run`, which starts a program with them.
@@ -35,6 +36,7 @@ internal static class Pack
         var packager = new List<string>();
         var sqlServer = new List<string>();
         string? wpfrunBuilds = null;
+        bool withoutPacks = false;
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
@@ -49,6 +51,7 @@ internal static class Pack
                 case "--wpfrun": wpfrunBuilds = args[++i]; break;
                 case "--setup": setup.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "--packager": packager.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
+                case "--without-packs": withoutPacks = true; break;
                 case "--sqlserver": sqlServer.AddRange(args[++i].Split(',', StringSplitOptions.RemoveEmptyEntries)); break;
                 case "-v" or "--verbose": verbose = true; break;
                 default: throw new UserError($"unknown option '{args[i]}'.");
@@ -70,7 +73,7 @@ internal static class Pack
         }
         foreach (string rid in packager)
         {
-            int code = PackPackager.Make(outDir, rid, verbose);
+            int code = PackPackager.Make(outDir, rid, verbose, includePacks: !withoutPacks);
             if (code != 0) return code;
         }
         foreach (string target in sqlServer)

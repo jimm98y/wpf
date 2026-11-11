@@ -1,0 +1,69 @@
+# The Packager's templates and the Packager itself, built from source (eng/build-packs.sh): every pack (android,
+# ios, visionos, browser, desktop-<rid>, setup-win-<arch>, sqlserver-*) and the Packager for each host. A Mac builds
+# all of it: the Apple packs need Xcode, the rest is .NET and its workloads.
+# The Packagers are made without their packs (a Packager with all of them passes GitHub's 2 GB per file): a tag
+# packager-v* releases each Packager and each pack as an asset of their own, a user taking the packs they need.
+name: Packs and the Packager
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['packager-v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: packs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  packs:
+    runs-on: macos-26
+    timeout-minutes: 240
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      # the SDK global.json names, into .dotnet (as ./build.sh bootstraps it), and the workloads the heads build with
+      - name: .NET SDK and workloads
+        run: |
+          ./eng/common/dotnet.sh --version
+          ./.dotnet/dotnet workload install android ios wasm-tools
+
+      # Xcode for the iOS and visionOS packs; a JDK for the Android one (the runner has the Android SDK)
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Build the packs and the Packager
+        run: ./eng/build-packs.sh --packager-without-packs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packs
+          path: artifacts/packs/*.pack
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packager
+          path: |
+            artifacts/Packager-*.zip
+            artifacts/Packager-*.tar.gz
+          retention-days: 30
+
+      - name: Release (a packager-v* tag)
+        if: startsWith(github.ref, 'refs/tags/packager-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/packs/*.pack
+            artifacts/Packager-*.zip
+            artifacts/Packager-*.tar.gz
