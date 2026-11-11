@@ -23,6 +23,8 @@
   <ItemGroup>
     <!-- PROPVARIANT/VARIANT housekeeping (PropVariantClear and kin) is WpfWebGpu.ComInterop's -->
     <ProjectReference Include="../WpfWebGpu.ComInterop/WpfWebGpu.ComInterop.csproj" />
+    <!-- the service control manager's client functions answer from the stack's service manager -->
+    <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 
   <!-- A library: the GPU backend is the app's (the payload's, for its RID) to deploy. Built without a
