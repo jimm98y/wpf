@@ -4,8 +4,8 @@ using Xunit;
 
 namespace WpfWebGpu.Tests;
 
-// The component package written in place of pkgbuild's, read back by macOS's own tools: pkgutil expands its payload
-// (pbzx, compressed or stored) and lsbom reads its Bom.
+// The component package written in place of pkgbuild's (its Bom, payload, scripts and PackageInfo, archived here as a
+// flat package by the managed xar writer), read back by macOS's own tools: pkgutil expands it and lsbom reads its Bom.
 public class MacComponentTests
 {
     private static string Tree()
@@ -60,10 +60,17 @@ public class MacComponentTests
     [InlineData(false)]
     public void Its_package_expands_to_the_tree_it_was_made_of(bool compress)
     {
-        Assert.SkipUnless(OperatingSystem.IsMacOS(), "a macOS package is made on a Mac");
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "read back by macOS's tools");
         string root = Tree(), scripts = Scripts();
-        string pkg = Path.Combine(TestEnvironment.NewDirectory("pkgout"), "component.pkg");
-        MacComponent.Write(root, scripts, "com.example.product", "1.2.3", compress, pkg, _ => { });
+        string component = Path.Combine(TestEnvironment.NewDirectory("pkgout"), "component");
+        MacComponent.Write(root, scripts, "com.example.product", "1.2.3", compress, component, _ => { });
+        string pkg = component + ".pkg";
+        var archive = new XarWriter();
+        archive.AddFile("Bom", Path.Combine(component, "Bom"), compress: true);
+        archive.AddFile("Payload", Path.Combine(component, "Payload"), compress: false);
+        archive.AddFile("Scripts", Path.Combine(component, "Scripts"), compress: false);
+        archive.AddFile("PackageInfo", Path.Combine(component, "PackageInfo"), compress: true);
+        archive.Write(pkg);
 
         // the payload one gzip stream, its CRC and length right (gzip -t checks both)
         string flat = TestEnvironment.NewDirectory("pkgflat");
