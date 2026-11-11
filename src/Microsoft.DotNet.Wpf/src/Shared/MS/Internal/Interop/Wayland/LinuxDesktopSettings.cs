@@ -52,25 +52,58 @@ namespace MS.Internal.Interop.Wayland
 
         /// <summary>
         /// The accent colour the user picked (org.freedesktop.appearance accent-color: sRGB, each
-        /// channel 0..1); false where the desktop has none -- the portal reports a channel outside
-        /// that range for "not set", and older portals do not know the key.
+        /// channel 0..1), else the accent of the GTK theme picked; false where the desktop has none --
+        /// the portal reports a channel outside that range for "not set", and older portals do not
+        /// know the key.
         /// </summary>
         internal static bool TryGetAccentColor(out byte r, out byte g, out byte b)
         {
             r = g = b = 0;
             try
             {
-                if (!DBusLite.IsAvailable) return false;
                 string[] key = { AppearanceNamespace, "accent-color" };
-                if (!DBusLite.CallReadDoubleTripleVariant(PortalService, PortalPath, SettingsInterface, "ReadOne", key, out double red, out double green, out double blue) &&
+                double red = 0, green = 0, blue = 0;
+                if (!DBusLite.IsAvailable ||
+                    !DBusLite.CallReadDoubleTripleVariant(PortalService, PortalPath, SettingsInterface, "ReadOne", key, out red, out green, out blue) &&
                     !DBusLite.CallReadDoubleTripleVariant(PortalService, PortalPath, SettingsInterface, "Read", key, out red, out green, out blue))
-                    return false;
+                    return TryGetThemeAccent(out r, out g, out b);
                 static bool InRange(double v) => v >= 0 && v <= 1;
                 if (!InRange(red) || !InRange(green) || !InRange(blue)) return false;
                 (r, g, b) = ((byte)Math.Round(red * 255), (byte)Math.Round(green * 255), (byte)Math.Round(blue * 255));
                 return true;
             }
             catch { return false; }
+        }
+
+        /// <summary>
+        /// The accent of the GTK theme the user picked, for desktops whose portal has no accent-color (GNOME before 47:
+        /// Ubuntu's Settings > Appearance picks its accent by picking a Yaru variant, Yaru-blue and so on). The theme
+        /// says its own: its GTK 2 colour scheme's selected_bg_color, in the theme as installed.
+        /// </summary>
+        private static bool TryGetThemeAccent(out byte r, out byte g, out byte b)
+        {
+            r = g = b = 0;
+            string? theme = ReadGSetting("org.gnome.desktop.interface", "gtk-theme")?.Trim('\'');
+            if (string.IsNullOrEmpty(theme) || theme.Contains('/') || theme.Contains("..")) return false;
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string data = Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } x ? x : System.IO.Path.Combine(home, ".local", "share");
+            foreach (string root in new[] { System.IO.Path.Combine(data, "themes"), System.IO.Path.Combine(home, ".themes"), "/usr/local/share/themes", "/usr/share/themes" })
+            {
+                string rc = System.IO.Path.Combine(root, theme, "gtk-2.0", "gtkrc");
+                if (!System.IO.File.Exists(rc)) continue;
+                // gtk-color-scheme = "...\nselected_bg_color:#0073E5\n..."
+                string text = System.IO.File.ReadAllText(rc);
+                int at = text.IndexOf("selected_bg_color:", StringComparison.Ordinal);
+                if (at < 0) return false;
+                at += "selected_bg_color:".Length;
+                while (at < text.Length && text[at] == ' ') at++;
+                if (at + 7 > text.Length || text[at] != '#' ||
+                    !uint.TryParse(text.AsSpan(at + 1, 6), System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out uint rgb))
+                    return false;
+                (r, g, b) = ((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+                return true;
+            }
+            return false;
         }
 
         private static bool QueryColorScheme()
