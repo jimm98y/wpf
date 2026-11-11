@@ -22,7 +22,7 @@ using Microsoft.Wpf.Interop.WebGpu.Composition.Platform;
 namespace System.Windows.Forms
 {
 	[SupportedOSPlatform ("browser")]
-	internal sealed class BrowserFormHost : IWinFormsHost
+	internal sealed class BrowserFormHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 	{
 		private readonly Form _form;
 		private readonly XplatUIWebGpu _driver = XplatUIWebGpu.GetInstance ();
@@ -177,7 +177,7 @@ namespace System.Windows.Forms
 			_scale = backing / _k;
 			_window.Resized += OnResized;
 			// the form's window, for content that is a window of its own inside it: an ElementHost's WPF tree
-			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
+			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form); _a11yHandle = _window.Handle; WinFormsWebGpu.Accessibility.AutomationSource.Register (this);
 			// hidden is not closed (a form is shown again, a drop-down reused): the canvas follows
 			_form.VisibleChanged += OnVisibleChanged;
 			// ShowDialog's end destroys the dialog's handle: its window goes, and a later Show makes another
@@ -351,7 +351,7 @@ namespace System.Windows.Forms
 			if ((float)(backing / _k) != _wgpu.Scale) {
 				_scale = backing / _k;
 				_wgpu.SetScale (_scale);
-				EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
+				EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form); _a11yHandle = _window.Handle; WinFormsWebGpu.Accessibility.AutomationSource.Register (this);
 				_surfaceW = -1;                // the canvas's CSS size follows
 				_lastVer = -1;
 			}
@@ -655,12 +655,50 @@ namespace System.Windows.Forms
 
 		public void SaveFrame (string path) { }   // no readback of a page's canvas here
 
+		// ---- accessibility: the form as the platform's assistive technology asks it (AutomationSource) --------
+		//
+		// The window shows the form at its Location: the driver's space, scaled, from the client's origin in the
+		// window's screen of device pixels -- what the platform's accessibility backend reads bounds in.
+
+		private IntPtr _a11yHandle;
+
+		IntPtr WinFormsWebGpu.Accessibility.IA11yHostSite.Handle => _a11yHandle;
+
+		Form WinFormsWebGpu.Accessibility.IA11yHostSite.Form => _closed ? null : _form;
+
+		bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapToScreen (Rectangle driverRect, out double x, out double y, out double width, out double height)
+		{
+			x = y = width = height = 0;
+			if (_closed || _window == null)
+				return false;
+			_window.GetClientScreenOriginPixels (out int px, out int py);
+			x = px + (driverRect.X - _form.Left) * _scale;
+			y = py + (driverRect.Y - _form.Top) * _scale;
+			width = driverRect.Width * _scale;
+			height = driverRect.Height * _scale;
+			return true;
+		}
+
+		bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryMapFromScreen (double x, double y, out Point driverPoint)
+		{
+			driverPoint = Point.Empty;
+			if (_closed || _window == null || _scale <= 0)
+				return false;
+			_window.GetClientScreenOriginPixels (out int px, out int py);
+			driverPoint = new Point (_form.Left + (int)Math.Floor ((x - px) / _scale), _form.Top + (int)Math.Floor ((y - py) / _scale));
+			return true;
+		}
+
+		bool WinFormsWebGpu.Accessibility.IA11yHostSite.TryWindowRect (out double x, out double y, out double width, out double height) =>
+			((WinFormsWebGpu.Accessibility.IA11yHostSite)this).TryMapToScreen (_form.Bounds, out x, out y, out width, out height);
+
 		public void Close ()
 		{
 			if (_closed)
 				return;
 			Deactivate ();
 			_closed = true;
+			WinFormsWebGpu.Accessibility.AutomationSource.Unregister (_a11yHandle);
 			_form.VisibleChanged -= OnVisibleChanged;
 			_form.LocationChanged -= OnFormMoved;
 			_form.HandleDestroyed -= OnHandleDestroyed;
