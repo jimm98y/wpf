@@ -9,8 +9,9 @@
 //            `log show --predicate 'subsystem == "<source>"'` and Console find them. os_log is a macro whose format
 //            string must be in a loaded image's __oslogstring section (the log reads it from there when it shows
 //            the entry), so a "%{public}s" of a system library's section is the format, the entry's text its one
-//            argument. Read back with `log show` (its JSON), which keeps the text and whether it was an error, not
-//            an entry's category or data. `log show` reads the whole store for a time range, seconds a day of it:
+//            argument. The unified log keeps a message and whether it is an error: the entry's type, id and category
+//            lead its text ("Warning 501 (category 3): ..."), so that they read back; its data is not kept. Read back
+//            with `log show` (its JSON). `log show` reads the whole store for a time range, seconds a day of it:
 //            a process reads a log's last day (or since it was cleared) once, then only what came since.
 //   Windows  the Event Log itself (WindowsEventLog: ReportEvent, ReadEventLog).
 //
@@ -47,13 +48,13 @@ namespace System.Diagnostics
         public static void Write(string log, string source, EventLogEntryType type, long instanceId, short category, byte[] data, string[] strings, string message)
         {
             if (OperatingSystem.IsWindows()) WindowsEventLog.Report(source, type, instanceId, category, data, strings);
-            else if (OperatingSystem.IsMacOS()) Unified(log, source, type, instanceId, message);
+            else if (OperatingSystem.IsMacOS()) Unified(log, source, type, instanceId, category, message);
             else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
             {
                 try
                 {
                     if (Keeps) Journal(log, source, type, instanceId, category, data, strings, message);
-                    else Syslog(source, type, Text(instanceId, message));
+                    else Syslog(source, type, Text(type, instanceId, category, message));
                 }
                 catch (Exception e) when (e is SocketException or DllNotFoundException or EntryPointNotFoundException) { }
             }
@@ -71,10 +72,39 @@ namespace System.Diagnostics
             return entries.ToArray();
         }
 
-        private static string Text(long instanceId, string message)
+        // the entry's type, id and category before its message, readably, for a log that keeps only a message
+        private static string Text(EventLogEntryType type, long instanceId, short category, string message)
         {
-            int eventId = (int)(instanceId & 0x3FFFFFFF);
-            return eventId != 0 ? $"Event {eventId}: {message}" : message;
+            string word = type switch
+            {
+                EventLogEntryType.Error => "Error",
+                EventLogEntryType.Warning => "Warning",
+                EventLogEntryType.SuccessAudit => "Audit Success",
+                EventLogEntryType.FailureAudit => "Audit Failure",
+                _ => "Information",
+            };
+            return $"{word} {instanceId.ToString(Inv.InvariantCulture)}{(category != 0 ? $" (category {category.ToString(Inv.InvariantCulture)})" : "")}: {message}";
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex s_text = new(
+            @"^(?:(?<type>Information|Warning|Error|Audit Success|Audit Failure) (?<id>-?\d+)(?: \(category (?<cat>-?\d+)\))?|Event (?<id>-?\d+)): (?<message>.*)$",
+            System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        private static (EventLogEntryType? Type, long InstanceId, short Category, string Message) ParseText(string text)
+        {
+            var m = s_text.Match(text);
+            if (!m.Success) return (null, 0, 0, text);
+            EventLogEntryType? type = m.Groups["type"].Value switch
+            {
+                "Error" => EventLogEntryType.Error,
+                "Warning" => EventLogEntryType.Warning,
+                "Audit Success" => EventLogEntryType.SuccessAudit,
+                "Audit Failure" => EventLogEntryType.FailureAudit,
+                "Information" => EventLogEntryType.Information,
+                _ => null,
+            };
+            return (type, long.Parse(m.Groups["id"].Value, Inv.InvariantCulture),
+                m.Groups["cat"].Success ? short.Parse(m.Groups["cat"].Value, Inv.InvariantCulture) : (short)0, m.Groups["message"].Value);
         }
 
         // syslog's severities: an error 3, a warning (and a failed audit) 4, a successful audit 5 (notice), information 6
@@ -143,15 +173,19 @@ namespace System.Diagnostics
             foreach (string line in Lines(Journalctl, args))
             {
                 using var json = JsonDocument.Parse(line);
-                JsonElement e = json.RootElement;
-                string data = First(e, "EVENTLOG_DATA");
-                long micros = Number(First(e, "__REALTIME_TIMESTAMP"), 0);
-                entries.Add(new EventLogEntry(entries.Count + 1, First(e, "EVENTLOG_SOURCE"), First(e, "EVENTLOG_MACHINE") is { Length: > 0 } m ? m : Environment.MachineName,
-                    (EventLogEntryType)Number(First(e, "EVENTLOG_TYPE"), 4), Number(First(e, "EVENTLOG_INSTANCE_ID"), 0), (short)Number(First(e, "EVENTLOG_CATEGORY"), 0),
-                    data.Length > 0 ? Convert.FromHexString(data) : Array.Empty<byte>(), Values(e, "EVENTLOG_STRING"), First(e, "MESSAGE"),
-                    DateTime.UnixEpoch.AddTicks(micros * 10).ToLocalTime()));
+                entries.Add(JournalEntry(json.RootElement, entries.Count + 1));
             }
             return entries;
+        }
+
+        private static EventLogEntry JournalEntry(JsonElement e, int index)
+        {
+            string data = First(e, "EVENTLOG_DATA");
+            long micros = Number(First(e, "__REALTIME_TIMESTAMP"), 0);
+            return new EventLogEntry(index, First(e, "EVENTLOG_SOURCE"), First(e, "EVENTLOG_MACHINE") is { Length: > 0 } m ? m : Environment.MachineName,
+                (EventLogEntryType)Number(First(e, "EVENTLOG_TYPE"), 4), Number(First(e, "EVENTLOG_INSTANCE_ID"), 0), (short)Number(First(e, "EVENTLOG_CATEGORY"), 0),
+                data.Length > 0 ? Convert.FromHexString(data) : Array.Empty<byte>(), Values(e, "EVENTLOG_STRING"), First(e, "MESSAGE"),
+                DateTime.UnixEpoch.AddTicks(micros * 10).ToLocalTime());
         }
 
         private static string First(JsonElement entry, string field) => Values(entry, field).FirstOrDefault() ?? "";
@@ -201,7 +235,7 @@ namespace System.Diagnostics
         private static (IntPtr Dso, IntPtr Format)? s_format;
         private static bool s_formatSearched;
 
-        private static void Unified(string log, string source, EventLogEntryType type, long instanceId, string message)
+        private static void Unified(string log, string source, EventLogEntryType type, long instanceId, short category, string message)
         {
             if (Format() is not { } format) return;
             IntPtr handle = s_logs.GetOrAdd((source, log), static key =>
@@ -214,7 +248,7 @@ namespace System.Diagnostics
             if (handle == IntPtr.Zero) return;
             // OS_LOG_TYPE_ERROR for an error (and a failed audit), the default (kept on disk) for the rest
             byte level = type is EventLogEntryType.Error or EventLogEntryType.FailureAudit ? (byte)0x10 : (byte)0x00;
-            IntPtr text = Marshal.StringToCoTaskMemUTF8(Text(instanceId, message));
+            IntPtr text = Marshal.StringToCoTaskMemUTF8(Text(type, instanceId, category, message));
             try
             {
                 // the arguments: a summary (one is not a scalar), their count (1), then the one -- a public string
@@ -289,7 +323,7 @@ namespace System.Diagnostics
                 var added = Unified(log, sources, read.Until.AddSeconds(-1))
                     .Where(e => !read.Entries.Any(x => x.TimeGenerated == e.TimeGenerated && x.Message == e.Message && x.Source == e.Source)).ToList();
                 foreach (EventLogEntry e in added)
-                    read.Entries.Add(new EventLogEntry(read.Entries.Count + 1, e.Source, e.MachineName, e.EntryType, e.InstanceId, 0, Array.Empty<byte>(), e.ReplacementStrings, e.Message, e.TimeGenerated));
+                    read.Entries.Add(new EventLogEntry(read.Entries.Count + 1, e.Source, e.MachineName, e.EntryType, e.InstanceId, e.CategoryNumber, Array.Empty<byte>(), e.ReplacementStrings, e.Message, e.TimeGenerated));
                 read.Until = now;
                 return read.Entries.ToArray();
             }
@@ -305,25 +339,151 @@ namespace System.Diagnostics
             {
                 if (!line.StartsWith('{')) continue;
                 using var json = JsonDocument.Parse(line);
-                JsonElement e = json.RootElement;
-                if (!e.TryGetProperty("eventMessage", out JsonElement m) || !e.TryGetProperty("subsystem", out JsonElement sub)) continue;
-                string text = m.GetString() ?? "";
-                long instanceId = 0;
-                // "Event <id>: " leads the text of an entry with an id (Text)
-                int colon = text.IndexOf(": ", StringComparison.Ordinal);
-                if (text.StartsWith("Event ", StringComparison.Ordinal) && colon > 6
-                    && long.TryParse(text.AsSpan(6, colon - 6), Globalization.NumberStyles.Integer, Inv.InvariantCulture, out long id))
-                {
-                    instanceId = id;
-                    text = text[(colon + 2)..];
-                }
-                bool error = e.TryGetProperty("messageType", out JsonElement t) && t.GetString() is "Error" or "Fault";
-                DateTime time = e.TryGetProperty("timestamp", out JsonElement ts)
-                    && DateTimeOffset.TryParse(ts.GetString(), Inv.InvariantCulture, Globalization.DateTimeStyles.None, out DateTimeOffset when) ? when.LocalDateTime : DateTime.Now;
-                entries.Add(new EventLogEntry(entries.Count + 1, sub.GetString() ?? "", Environment.MachineName,
-                    error ? EventLogEntryType.Error : EventLogEntryType.Information, instanceId, 0, Array.Empty<byte>(), new[] { text }, text, time));
+                if (UnifiedEntry(json.RootElement, entries.Count + 1) is { } entry) entries.Add(entry);
             }
             return entries;
+        }
+
+        // a `log show` / `log stream` event: its subsystem the source, its text the type, id, category and message
+        private static EventLogEntry UnifiedEntry(JsonElement e, int index)
+        {
+            if (!e.TryGetProperty("eventMessage", out JsonElement m) || !e.TryGetProperty("subsystem", out JsonElement sub)) return null;
+            var (type, instanceId, category, message) = ParseText(m.GetString() ?? "");
+            bool error = e.TryGetProperty("messageType", out JsonElement t) && t.GetString() is "Error" or "Fault";
+            DateTime time = e.TryGetProperty("timestamp", out JsonElement ts)
+                && DateTimeOffset.TryParse(ts.GetString(), Inv.InvariantCulture, Globalization.DateTimeStyles.None, out DateTimeOffset when) ? when.LocalDateTime : DateTime.Now;
+            return new EventLogEntry(index, sub.GetString() ?? "", Environment.MachineName, type ?? (error ? EventLogEntryType.Error : EventLogEntryType.Information),
+                instanceId, category, Array.Empty<byte>(), new[] { message }, message, time);
+        }
+
+        // ---- following a log ----------------------------------------------------------------------------------
+
+        /// <summary>The log's entries as they are written (another process's; this one's too where
+        /// <paramref name="includeOwn"/>): journalctl -f, log stream, or on Windows the Event Log's new records.</summary>
+        public static IDisposable Follow(string log, bool includeOwn, Action<EventLogEntry> onEntry)
+        {
+            if (OperatingSystem.IsWindows()) return new WindowsFollower(log, includeOwn, onEntry);
+            var followStart = DateTimeOffset.UtcNow;
+            long startMicros = followStart.ToUnixTimeMilliseconds() * 1000;
+            ProcessStartInfo psi;
+            if (OperatingSystem.IsMacOS())
+            {
+                psi = new ProcessStartInfo(LogTool);
+                foreach (string a in new[] { "stream", "--style", "ndjson", "--predicate", "category == \"" + log.Replace("\"", "\\\"") + "\"" }) psi.ArgumentList.Add(a);
+            }
+            else
+            {
+                psi = new ProcessStartInfo(Journalctl);
+                // from now: what is written while journalctl starts is not lost (what came before this second is left out below)
+                foreach (string a in new[] { "-f", "--since=@" + followStart.ToUnixTimeSeconds().ToString(Inv.InvariantCulture), "-o", "json", "--no-pager", "--quiet", "EVENTLOG_LOG=" + log })
+                    psi.ArgumentList.Add(a);
+            }
+            psi.UseShellExecute = false;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.CreateNoWindow = true;
+            var process = Process.Start(psi);
+            process.ErrorDataReceived += (_, _) => { };
+            process.BeginErrorReadLine();
+            int own = Environment.ProcessId, index = 0;
+            // attached: `log stream` says so ("Filtering the log data using ..."), journalctl reads from the start time
+            var attached = new Threading.ManualResetEventSlim(!OperatingSystem.IsMacOS());
+            var reader = new Threading.Thread(() =>
+            {
+                try
+                {
+                    string line;
+                    while ((line = process.StandardOutput.ReadLine()) != null)
+                    {
+                        attached.Set();
+                        if (!line.StartsWith('{')) continue;
+                        try
+                        {
+                            using var json = JsonDocument.Parse(line);
+                            JsonElement e = json.RootElement;
+                            int pid = OperatingSystem.IsMacOS()
+                                ? (e.TryGetProperty("processID", out JsonElement p) && p.ValueKind == JsonValueKind.Number ? p.GetInt32() : 0)
+                                : (int)Number(First(e, "_PID"), 0);
+                            if (!includeOwn && pid == own) continue;
+                            if (!OperatingSystem.IsMacOS() && Number(First(e, "__REALTIME_TIMESTAMP"), 0) < startMicros) continue;
+                            EventLogEntry entry = OperatingSystem.IsMacOS() ? UnifiedEntry(e, ++index) : JournalEntry(e, ++index);
+                            if (entry != null) onEntry(entry);
+                        }
+                        catch (JsonException) { }
+                    }
+                }
+                catch (Exception e) when (e is IOException or ObjectDisposedException or InvalidOperationException) { }
+            }) { IsBackground = true, Name = "EventLog follower: " + log };
+            reader.Start();
+            // `log stream` prints its filter a moment before it captures: given that moment, an entry written right after
+            // this returns is followed
+            if (attached.Wait(TimeSpan.FromSeconds(10)) && OperatingSystem.IsMacOS()) Threading.Thread.Sleep(750);
+            return new ProcessFollower(process);
+        }
+
+        private sealed class ProcessFollower : IDisposable
+        {
+            private readonly Process _process;
+            public ProcessFollower(Process process) => _process = process;
+            public void Dispose()
+            {
+                try { if (!_process.HasExited) _process.Kill(); } catch (InvalidOperationException) { } catch (Win32Exception) { }
+                _process.Dispose();
+            }
+        }
+
+        // Windows: the log's records past the newest seen, every second (the Event Log's own query, newest first,
+        // read until one already seen)
+        private sealed class WindowsFollower : IDisposable
+        {
+            private readonly Threading.Timer _timer;
+            private long _last;
+            private int _busy;
+
+            public WindowsFollower(string log, bool includeOwn, Action<EventLogEntry> onEntry)
+            {
+                _last = Newest(log);
+                _timer = new Threading.Timer(_ =>
+                {
+                    if (Threading.Interlocked.Exchange(ref _busy, 1) == 1) return;
+                    try
+                    {
+                        var fresh = new List<EventLogEntry>();
+                        foreach (var r in Eventing.Reader.WindowsEvt.Query(new Eventing.Reader.EventLogQuery(log, Eventing.Reader.PathType.LogName) { ReverseDirection = true }))
+                        {
+                            if ((r.RecordId ?? 0) <= _last) break;
+                            fresh.Add(Entry(r));
+                        }
+                        if (fresh.Count > 0) _last = fresh[0].Index;
+                        fresh.Reverse();
+                        foreach (var e in fresh) onEntry(e);
+                    }
+                    catch (Exception) { }
+                    finally { Threading.Volatile.Write(ref _busy, 0); }
+                }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+            }
+
+            private static long Newest(string log)
+            {
+                foreach (var r in Eventing.Reader.WindowsEvt.Query(new Eventing.Reader.EventLogQuery(log, Eventing.Reader.PathType.LogName) { ReverseDirection = true }))
+                    return r.RecordId ?? 0;
+                return 0;
+            }
+
+            private static EventLogEntry Entry(Eventing.Reader.EventLogRecord r)
+            {
+                long keywords = r.Keywords ?? 0;
+                var type = (keywords & (long)Eventing.Reader.StandardEventKeywords.AuditFailure) != 0 ? EventLogEntryType.FailureAudit
+                    : (keywords & (long)Eventing.Reader.StandardEventKeywords.AuditSuccess) != 0 ? EventLogEntryType.SuccessAudit
+                    : r.Level switch { 1 or 2 => EventLogEntryType.Error, 3 => EventLogEntryType.Warning, _ => EventLogEntryType.Information };
+                var values = r.Properties.Select(p => p.Value).ToList();
+                byte[] data = values.OfType<byte[]>().FirstOrDefault() ?? Array.Empty<byte>();
+                string[] strings = values.Where(v => v is not byte[]).Select(v => Convert.ToString(v, Inv.InvariantCulture) ?? "").ToArray();
+                return new EventLogEntry((int)(r.RecordId ?? 0), r.ProviderName, r.MachineName, type, ((long)(r.Qualifiers ?? 0) << 16) | (uint)r.Id,
+                    (short)(r.Task ?? 0), data, strings, r.FormatDescription() ?? string.Join(Environment.NewLine, strings), r.TimeCreated ?? DateTime.Now);
+            }
+
+            public void Dispose() => _timer.Dispose();
         }
 
         private static List<string> Lines(string tool, IEnumerable<string> args)

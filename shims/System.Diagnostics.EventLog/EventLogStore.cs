@@ -182,6 +182,7 @@ namespace System.Diagnostics
             {
             }
 
+            if (OperatingSystem.IsWindows()) return;   // the follower raises it, as the Event Log does for every writer
             EventLog[] listeners;
             lock (s_listeners)
             {
@@ -205,6 +206,18 @@ namespace System.Diagnostics
                 lock (s_gate) sources.AddRange(s_memorySources.Where(p => string.Equals(p.Value, log, StringComparison.OrdinalIgnoreCase) && !sources.Contains(p.Key, StringComparer.OrdinalIgnoreCase)).Select(p => p.Key));
             });
             return sources;
+        }
+
+        /// <summary>A value a source was registered with (EventMessageFile, ...), or null.</summary>
+        public static string SourceValue(string log, string source, string name)
+        {
+            string value = null;
+            WithRegistry(root =>
+            {
+                using RegistryKey k = root.OpenSubKey(log + "\\" + source);
+                value = k?.GetValue(name) as string;
+            }, () => { });
+            return value;
         }
 
         // when a log the OS keeps was cleared: a value of its registration
@@ -237,14 +250,47 @@ namespace System.Diagnostics
             });
         }
 
+        // a log's follower (OsLog.Follow) while anything of this process listens to it: what other processes write
+        // raises EntryWritten here too, as the Event Log raises it for every writer on Windows
+        private static readonly Dictionary<string, IDisposable> s_followers = new Dictionary<string, IDisposable>(StringComparer.OrdinalIgnoreCase);
+
         public static void Listen(EventLog log)
         {
-            lock (s_listeners) s_listeners.Add(new WeakReference<EventLog>(log));
+            string name = log.ListenedLog;
+            lock (s_listeners)
+            {
+                s_listeners.Add(new WeakReference<EventLog>(log));
+                if (OsLog.Keeps && !string.IsNullOrEmpty(name) && !s_followers.ContainsKey(name))
+                {
+                    try { s_followers[name] = OsLog.Follow(name, includeOwn: OperatingSystem.IsWindows(), entry => Raise(name, entry)); }
+                    catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or InvalidOperationException) { }
+                }
+            }
         }
 
         public static void Unlisten(EventLog log)
         {
-            lock (s_listeners) s_listeners.RemoveAll(w => !w.TryGetTarget(out EventLog l) || ReferenceEquals(l, log));
+            lock (s_listeners)
+            {
+                s_listeners.RemoveAll(w => !w.TryGetTarget(out EventLog l) || ReferenceEquals(l, log));
+                foreach (string name in s_followers.Keys.ToList())
+                {
+                    if (s_listeners.Any(w => w.TryGetTarget(out EventLog l) && string.Equals(l.ListenedLog, name, StringComparison.OrdinalIgnoreCase))) continue;
+                    s_followers[name].Dispose();
+                    s_followers.Remove(name);
+                }
+            }
+        }
+
+        private static void Raise(string log, EventLogEntry entry)
+        {
+            EventLog[] listeners;
+            lock (s_listeners)
+            {
+                listeners = s_listeners.Select(w => w.TryGetTarget(out EventLog l) ? l : null)
+                    .Where(l => l != null && string.Equals(l.ListenedLog, log, StringComparison.OrdinalIgnoreCase)).ToArray();
+            }
+            foreach (EventLog l in listeners) l.OnEntryWritten(entry);
         }
 
         private static bool? s_registryWorks;
