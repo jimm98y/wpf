@@ -7,10 +7,14 @@
 // Three things make this different from the macOS backend next door, and all three are UIKit's
 // doing rather than ours:
 //
-//   * UIKit has no accessibility TREE. A UIAccessibilityContainer exposes a FLAT, indexed list, and
-//     VoiceOver swipes along it. So the peer tree is flattened here, and only nodes that are worth
-//     stopping on are included -- a StackPanel that exists purely to lay out three buttons is not
-//     something a user wants to swipe past.
+//   * UIKit's tree is shallow by design. A UIAccessibilityContainer exposes an indexed list that
+//     VoiceOver swipes along, and an element of that list may itself be a container -- a list, a
+//     toolbar, a named group -- which VoiceOver announces on the way in ("list start", "toolbar")
+//     and lets the user step over or into with the containers rotor. So the peer tree is
+//     condensed rather than mirrored: only nodes worth stopping on are listed, a StackPanel that
+//     exists purely to lay out three buttons disappears into its parent, and the containers a user
+//     would recognise (UIA's lists, menus, toolbars, tabs, tables, and groups and panes with a
+//     name) keep their own level.
 //   * Roles are a BITMASK, not a name. UIAccessibilityTraits describes what an element does
 //     (button, adjustable, selected, header) rather than what it is, so the mapping is many-to-many
 //     and a checkbox is "button + selected" rather than a checkbox.
@@ -43,17 +47,31 @@ namespace MS.Internal.Interop
         private static IntPtr s_elementClass;
         private static nint s_nodeIdOffset;
 
-        // The flattened view of the tree, and the container it was built for. VoiceOver asks for the
-        // count and then walks indices, so the list must stay stable across that walk; it is rebuilt
-        // when the tree says the structure changed, not per query.
-        private static readonly List<int> s_flattened = new();
-        private static IntPtr s_flattenedFor;
-        private static bool s_flattenedStale = true;
+        // The condensed tree: each window view's own list, and each nested container's. VoiceOver
+        // asks for a count and then walks indices, so the lists must stay stable across that walk;
+        // they are rebuilt when the tree says the structure changed, not per query. A node's parent
+        // is the nested container it is listed in, or ViewParent for its view's own list (s_viewOf).
+        // One window fills the screen and the others float over it, each a view of its own.
+        private const int ViewParent = -1;
+        private static readonly Dictionary<IntPtr, List<int>> s_views = new();
+        private static readonly HashSet<IntPtr> s_knownViews = new();
+        private static readonly Dictionary<int, List<int>> s_containers = new();
+        private static readonly Dictionary<int, int> s_parents = new();
+        private static readonly Dictionary<int, IntPtr> s_viewOf = new();
+        private static bool s_stale = true;
 
         // One element object per node, so VoiceOver's pointer-identity focus tracking works.
         private static readonly Dictionary<int, IntPtr> s_elements = new();
 
         private static IAutomationTreeSource Tree => AutomationTree.Current;
+
+        // WPF_A11Y_LOG=1: what VoiceOver asked and what the condensed tree held, as the Linux backend traces
+        private static readonly bool s_log = Environment.GetEnvironmentVariable("WPF_A11Y_LOG") == "1";
+
+        private static void Trace(string message)
+        {
+            if (s_log) Console.WriteLine($"[a11y] {message}");
+        }
 
         /// <summary>
         /// Adds the container selectors to a synthesised view class. Called from UIKitWindow while it
@@ -136,19 +154,46 @@ namespace MS.Internal.Interop
             class_addMethod(cls, Sel("accessibilityDecrement"),
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, void>)&DecrementImp, "v@:");
 
+            // A nested container answers as one: not an element itself, its list in place of a label.
+            class_addMethod(cls, Sel("accessibilityElementCount"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, nint>)&NestedCountImp, "q@:");
+            class_addMethod(cls, Sel("accessibilityElementAtIndex:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, nint, IntPtr>)&NestedAtIndexImp, "@@:q");
+            class_addMethod(cls, Sel("indexOfAccessibilityElement:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, nint>)&NestedIndexOfImp, "q@:@");
+            class_addMethod(cls, Sel("accessibilityContainerType"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, nint>)&ContainerTypeImp, "q@:");
+
             objc_registerClassPair(cls);
 
             s_elementClass = cls;
             s_nodeIdOffset = ivar_getOffset(class_getInstanceVariable(cls, "_nodeId"));
         }
 
-        private static IntPtr ElementFor(int nodeId, IntPtr container)
+        /// <summary>
+        /// The element of a listed node, its accessibilityContainer the nested container it is listed
+        /// in (or <paramref name="view"/>): VoiceOver walks that back-pointer to announce the
+        /// containers the user is in.
+        /// </summary>
+        private static IntPtr ElementFor(int nodeId, IntPtr view)
         {
             if (nodeId < 0) return IntPtr.Zero;
 
             EnsureElementClass();
             if (s_elementClass == IntPtr.Zero) return IntPtr.Zero;
-            if (s_elements.TryGetValue(nodeId, out IntPtr existing)) return existing;
+
+            IntPtr container = s_parents.TryGetValue(nodeId, out int parent) && parent != ViewParent
+                ? ElementFor(parent, view)
+                : s_viewOf.TryGetValue(nodeId, out IntPtr own) ? own : view;
+            if (container == IntPtr.Zero) return IntPtr.Zero;
+
+            if (s_elements.TryGetValue(nodeId, out IntPtr existing))
+            {
+                // the node may have moved since its element was made; the back-pointer follows it
+                if (Send(existing, Sel("accessibilityContainer")) != container)
+                    SendPtrPtr(existing, Sel("setAccessibilityContainer:"), container);
+                return existing;
+            }
 
             IntPtr element = SendPtrPtr(Send(s_elementClass, Sel("alloc")),
                                         Sel("initWithAccessibilityContainer:"), container);
@@ -167,44 +212,85 @@ namespace MS.Internal.Interop
         // ---- flattening ------------------------------------------------------------
 
         /// <summary>
-        /// Rebuilds the flat list UIKit navigates. Only nodes worth stopping on are included: one
-        /// that has no name, no value and nothing to do is layout scaffolding, and putting it in the
-        /// list means the user swipes through silence.
+        /// Rebuilds the lists UIKit navigates. Only nodes worth stopping on are included: one that
+        /// has no name, no value and nothing to do is layout scaffolding, and listing it means the
+        /// user swipes through silence.
         /// </summary>
-        private static void EnsureFlattened(IntPtr container)
+        private static List<int> EnsureFlattened(IntPtr view)
         {
-            if (!s_flattenedStale && s_flattenedFor == container) return;
+            if (s_stale)
+            {
+                s_views.Clear();
+                s_containers.Clear();
+                s_parents.Clear();
+                s_viewOf.Clear();
+                s_stale = false;
+            }
+            s_knownViews.Add(view);
+            if (s_views.TryGetValue(view, out List<int> list)) return list;
 
-            s_flattened.Clear();
-            s_flattenedFor = container;
-            s_flattenedStale = false;
-
+            // The first question is what switches the automation tree on, and the window's root may
+            // not exist yet when it is asked: nothing is kept until there is one to read, or the empty
+            // answer would stand until the next structural change.
             IAutomationTreeSource tree = Tree;
-            if (tree == null) return;
+            if (tree == null) { Trace("no automation tree yet"); return null; }
 
-            int root = tree.GetRootId(container);
-            if (root < 0) return;
+            // the tree knows its windows by handle, UIKit by view
+            int root = tree.GetRootId(UIKitWindow.HandleOf(view));
+            if (root < 0) { Trace($"view 0x{view.ToInt64():x}: no tree root"); return null; }
 
-            Flatten(tree, root, 0);
+            list = new List<int>();
+            s_views[view] = list;
+            foreach (int child in tree.GetChildIds(root)) Collect(tree, child, list, ViewParent, view, 0);
+            Trace($"view 0x{view.ToInt64():x}: root {root}, {list.Count} listed, {s_containers.Count} nested containers in all");
+            return list;
         }
 
-        private static void Flatten(IAutomationTreeSource tree, int node, int depth)
+        private static void Collect(IAutomationTreeSource tree, int node, List<int> into, int parent, IntPtr view, int depth)
         {
             if (depth > 64) return;   // a malformed custom peer must not hang VoiceOver
 
-            if (IsWorthStopping(tree, node))
+            bool stop = IsWorthStopping(tree, node);
+            int role = tree.GetRole(node);
+
+            // a GroupBox's header is its own text peer, carrying the name the group already announces
+            if (role == 20 && parent != ViewParent && tree.GetName(node) == tree.GetName(parent)) return;
+
+            if (IsNestedContainer(tree, node, role))
             {
-                s_flattened.Add(node);
+                var items = new List<int>();
+                foreach (int child in tree.GetChildIds(node)) Collect(tree, child, items, node, view, depth + 1);
+                if (items.Count > 0)
+                {
+                    s_containers[node] = items;
+                    Add(node, into, parent, view);
+                    return;
+                }
+                // an empty list still says it is there, as an element
+                if (stop) Add(node, into, parent, view);
+                return;
+            }
+
+            if (stop)
+            {
+                Add(node, into, parent, view);
 
                 // An element that is itself accessible HIDES its children -- UIKit's own rule for
                 // views, and the right one here. A WPF Button contains a TextBlock carrying the same
                 // string, so descending into it would list every control twice: once as a button and
-                // again as static text. Containers are the exception: a ListBox is worth stopping on
-                // AND its items have to be reachable.
-                if (!IsContainerRole(tree.GetRole(node))) return;
+                // again as static text. A container's children are content in their own right, so a
+                // window or pane worth stopping on still lists them, beside itself.
+                if (!IsContainerRole(role)) return;
             }
 
-            foreach (int child in tree.GetChildIds(node)) Flatten(tree, child, depth + 1);
+            foreach (int child in tree.GetChildIds(node)) Collect(tree, child, into, parent, view, depth + 1);
+        }
+
+        private static void Add(int node, List<int> into, int parent, IntPtr view)
+        {
+            into.Add(node);
+            s_parents[node] = parent;
+            if (parent == ViewParent) s_viewOf[node] = view;
         }
 
         /// <summary>
@@ -218,6 +304,28 @@ namespace MS.Internal.Interop
             26 or 33 or 32 or 30 => true,       // Group, Pane, Window, Document
             17 or 37 or 34 => true,             // StatusBar, TitleBar, Header
             _ => false,
+        };
+
+        /// <summary>
+        /// The containers that keep a level of their own: the ones a user recognises and would step
+        /// over or into. A group, pane or window only when it has a name to announce -- WPF wraps
+        /// nearly everything in nameless panes and groups, and a level per wrapper would bury every
+        /// control under announcements of nothing.
+        /// </summary>
+        private static bool IsNestedContainer(IAutomationTreeSource tree, int node, int role) => role switch
+        {
+            8 or 23 or 28 or 36 or 9 or 10 or 21 or 18 or 17 => true,
+            26 or 33 or 32 or 30 => !string.IsNullOrEmpty(tree.GetName(node)),
+            _ => false,
+        };
+
+        /// <summary>UIAccessibilityContainerType: List (2) for the lists VoiceOver counts through,
+        /// SemanticGroup (4) for the rest. A table is a group, not a DataTable (1): that type
+        /// promises the row/column protocol, which this backend does not answer.</summary>
+        private static nint ContainerTypeFor(int role) => role switch
+        {
+            8 or 23 or 9 or 10 => 2,
+            _ => 4,
         };
 
         private static bool IsWorthStopping(IAutomationTreeSource tree, int node)
@@ -250,8 +358,7 @@ namespace MS.Internal.Interop
             NoteAccessibilityClient();
             try
             {
-                EnsureFlattened(self);
-                return s_flattened.Count;
+                return EnsureFlattened(self)?.Count ?? 0;
             }
             catch (Exception e) { Log("accessibilityElementCount", e); return 0; }
         }
@@ -262,9 +369,9 @@ namespace MS.Internal.Interop
             NoteAccessibilityClient();
             try
             {
-                EnsureFlattened(self);
-                if (index < 0 || index >= s_flattened.Count) return IntPtr.Zero;
-                return ElementFor(s_flattened[(int)index], self);
+                List<int> list = EnsureFlattened(self);
+                if (list == null || index < 0 || index >= list.Count) return IntPtr.Zero;
+                return ElementFor(list[(int)index], self);
             }
             catch (Exception e) { Log("accessibilityElementAtIndex", e); return IntPtr.Zero; }
         }
@@ -274,19 +381,74 @@ namespace MS.Internal.Interop
         {
             try
             {
-                EnsureFlattened(self);
-                int node = NodeOf(element);
-                int index = s_flattened.IndexOf(node);
+                int index = EnsureFlattened(self)?.IndexOf(NodeOf(element)) ?? -1;
                 // NSNotFound, which is what UIKit expects for an element that is no longer listed.
                 return index < 0 ? nint.MaxValue : index;
             }
             catch (Exception e) { Log("indexOfAccessibilityElement", e); return nint.MaxValue; }
         }
 
+        // ---- a nested container's answers ------------------------------------------
+
+        private static List<int> NestedList(IntPtr element)
+        {
+            // after a structural change the lists are rebuilt from every view that has been asked about
+            if (s_stale) foreach (IntPtr view in s_knownViews) EnsureFlattened(view);
+            return s_containers.TryGetValue(NodeOf(element), out List<int> items) ? items : null;
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static nint NestedCountImp(IntPtr self, IntPtr sel)
+        {
+            try { return NestedList(self)?.Count ?? 0; }
+            catch (Exception e) { Log("accessibilityElementCount (nested)", e); return 0; }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static IntPtr NestedAtIndexImp(IntPtr self, IntPtr sel, nint index)
+        {
+            try
+            {
+                List<int> items = NestedList(self);
+                if (items == null || index < 0 || index >= items.Count) return IntPtr.Zero;
+                return ElementFor(items[(int)index], IntPtr.Zero);
+            }
+            catch (Exception e) { Log("accessibilityElementAtIndex (nested)", e); return IntPtr.Zero; }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static nint NestedIndexOfImp(IntPtr self, IntPtr sel, IntPtr element)
+        {
+            try
+            {
+                int index = NestedList(self)?.IndexOf(NodeOf(element)) ?? -1;
+                return index < 0 ? nint.MaxValue : index;
+            }
+            catch (Exception e) { Log("indexOfAccessibilityElement (nested)", e); return nint.MaxValue; }
+        }
+
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static nint ContainerTypeImp(IntPtr self, IntPtr sel)
+        {
+            try
+            {
+                IAutomationTreeSource tree = Tree;
+                int node = NodeOf(self);
+                if (tree == null || node < 0 || NestedList(self) == null) return 0;
+                return ContainerTypeFor(tree.GetRole(node));
+            }
+            catch (Exception e) { Log("accessibilityContainerType", e); return 0; }
+        }
+
         // ---- an element's answers --------------------------------------------------
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static byte IsElementImp(IntPtr self, IntPtr sel) => 1;
+        private static byte IsElementImp(IntPtr self, IntPtr sel)
+        {
+            // a nested container is navigated into, not stopped on
+            try { return (byte)(NestedList(self) == null ? 1 : 0); }
+            catch (Exception e) { Log("isAccessibilityElement", e); return 1; }
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static IntPtr LabelImp(IntPtr self, IntPtr sel)
@@ -455,20 +617,35 @@ namespace MS.Internal.Interop
 
                 if (structural)
                 {
-                    // The flat list is now wrong; rebuild it before telling VoiceOver to re-read.
-                    s_flattenedStale = true;
+                    // The lists are now wrong; rebuild them before telling VoiceOver to re-read.
+                    s_stale = true;
                 }
 
                 // UIAccessibilityLayoutChangedNotification = 1001, ScreenChanged = 1000.
                 uint notification = structural ? 1000u : 1001u;
 
-                IntPtr element = change.Kind == AutomationChangeKind.FocusChanged && s_flattenedFor != IntPtr.Zero
-                    ? ElementFor(change.NodeId, s_flattenedFor)
+                IntPtr element = change.Kind == AutomationChangeKind.FocusChanged
+                    ? FocusElement(change.NodeId)
                     : IntPtr.Zero;
 
                 UIAccessibilityPostNotification(notification, element);
             }
             catch (Exception e) { Log("postNotification", e); }
+        }
+
+        // The element VoiceOver moves to with the keyboard focus: the focused node's, or the nearest
+        // listed ancestor's (a TextBlock in a list item is not listed itself, the item is).
+        private static IntPtr FocusElement(int node)
+        {
+            if (s_stale) foreach (IntPtr view in s_knownViews) EnsureFlattened(view);
+            IAutomationTreeSource tree = Tree;
+            for (int depth = 0; node >= 0 && tree != null && depth < 64; depth++, node = tree.GetParentId(node))
+            {
+                if (!s_parents.ContainsKey(node)) continue;
+                for (int top = node; ; top = s_parents[top])
+                    if (s_parents[top] == ViewParent) return ElementFor(node, s_viewOf[top]);
+            }
+            return IntPtr.Zero;
         }
 
         // ---- helpers ---------------------------------------------------------------
