@@ -5,6 +5,7 @@
 
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
 namespace WpfWebGpu.ComRewrite;
@@ -17,6 +18,8 @@ public sealed class AssemblyScan
     public required string Hash { get; init; }
     /// <summary>IL only: not a mixed-mode (C++/CLI) image, which Cecil cannot write.</summary>
     public bool ILOnly { get; init; }
+    /// <summary>The processor its image names (IMAGE_FILE_MACHINE_*): I386 for AnyCPU, AMD64 or ARM64 for one processor's.</summary>
+    public ushort Machine { get; init; }
     /// <summary>It declares [ComImport] types.</summary>
     public bool DeclaresCom { get; init; }
     /// <summary>It may read assembly locations (LocationCallers.MayRead).</summary>
@@ -30,6 +33,14 @@ public sealed class AssemblyScan
     public bool PInvokeDelegates { get; private set; }
     /// <summary>The assemblies whose types its P/Invokes' signatures name.</summary>
     public HashSet<string> PInvokeScopes { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    private const ushort MachineAmd64 = 0x8664, MachineArm64 = 0xAA64;
+
+    /// <summary>An image built for the other 64-bit processor than this process's (an app published for x64, run on
+    /// an ARM64 machine): Windows runs such an app emulated; its IL runs here as it is, loaded as AnyCPU.</summary>
+    public static bool ForOtherProcessor(ushort machine) =>
+        (machine == MachineAmd64 && RuntimeInformation.ProcessArchitecture != Architecture.X64)
+        || (machine == MachineArm64 && RuntimeInformation.ProcessArchitecture != Architecture.Arm64);
 
     /// <summary>The scan of <paramref name="file"/>, or null when it is not an assembly.</summary>
     public static AssemblyScan? Read(string file)
@@ -50,6 +61,7 @@ public sealed class AssemblyScan
                 Name = md.GetString(md.GetAssemblyDefinition().Name),
                 Hash = Convert.ToHexString(SHA256.HashData(bytes))[..24].ToLowerInvariant(),
                 ILOnly = (pe.PEHeaders.CorHeader?.Flags & CorFlags.ILOnly) != 0,
+                Machine = (ushort)pe.PEHeaders.CoffHeader.Machine,
                 DeclaresCom = declaresCom,
                 MayReadLocations = LocationCallers.MayRead(md),
                 References = md.AssemblyReferences.Select(h => md.GetString(md.GetAssemblyReference(h).Name)).ToList(),

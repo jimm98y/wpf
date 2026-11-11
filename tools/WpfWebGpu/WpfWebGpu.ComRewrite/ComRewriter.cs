@@ -36,6 +36,8 @@ public sealed class RewriteResult
     public SortedSet<string> UsesComTypesOf { get; } = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Written to the output path.</summary>
     public bool Written;
+    /// <summary>Built for the other 64-bit processor, written as AnyCPU.</summary>
+    public bool Retargeted;
     public int Interfaces, Methods, PInvokes, Delegates, CallSites, EventInterfaces;
     /// <summary>Windows P/Invokes (ComRewriter.PInvoke.cs): onto an implementation, onto the logged failure, onto
     /// EntryPointNotFoundException (no Windows DLL exports it); on Windows, routed for the stack's windows.</summary>
@@ -195,6 +197,15 @@ public static partial class ComRewriter
             if (pinvokes) work.RunPInvokes(catalog ?? Win32Catalog.For(searchDirs), windows);
             if (paths && PathSubstitutions.For(searchDirs) is { } ps) result.PathCalls = ps.Apply(module);
             module.Attributes &= ~ModuleAttributes.StrongNameSigned;
+            // IL built for the other 64-bit processor (published for x64, run on ARM64): AnyCPU, which it is but for
+            // its mark -- a 64-bit process either way, as the emulated one Windows would run it in
+            if (module.IsILOnly() && module.Architecture is TargetArchitecture.AMD64 or TargetArchitecture.ARM64
+                && AssemblyScan.ForOtherProcessor(module.Architecture == TargetArchitecture.AMD64 ? (ushort)0x8664 : (ushort)0xAA64))
+            {
+                module.Architecture = TargetArchitecture.I386;
+                module.Attributes &= ~(ModuleAttributes.Required32Bit | ModuleAttributes.Preferred32Bit);
+                result.Retargeted = true;
+            }
             var image = new MemoryStream();
             MemoryStream? sym = null;
             if (symbols)

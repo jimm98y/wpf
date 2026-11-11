@@ -78,6 +78,7 @@ internal static class ComImportStep
         public List<(JsonObject Runtime, string Asset)> Entries = new();
         public string Hash = "";
         public bool DeclaresCom, MayReadLocations, ILOnly;
+        public ushort Machine;
         public List<string> References = new();
         public Verdict? Verdict;
         public LocationAsks? Asks;
@@ -171,10 +172,20 @@ internal static class ComImportStep
                 paths.Add(f.Name);
             }
 
+        // (nor this) the assemblies built for the other 64-bit processor (published for x64, run on ARM64): which the
+        // runtime refuses to load as they are, and runs once marked AnyCPU (the loader marks them)
+        var machine = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in files)
+            if (f.ILOnly && AssemblyScan.ForOtherProcessor(f.Machine))
+            {
+                machine.Add(f.Name);
+                notes.Add($"machine {f.Name}: built for {(f.Machine == 0x8664 ? "x64" : "ARM64")}, loaded as AnyCPU (Windows would run it emulated)");
+            }
+
         var candidates = files.Where(f => f.DeclaresCom).ToList();
         // An assembly rewritten for its P/Invokes is loaded from memory as well, with no file: what asks
         // where it is goes through the caller rewriting below (step 2), as for a COM-rewritten one.
-        if (candidates.Count == 0 && pinvokes.Count == 0 && paths.Count == 0)
+        if (candidates.Count == 0 && pinvokes.Count == 0 && paths.Count == 0 && machine.Count == 0)
         {
             Finish();
             notes.Add($"rewriter: {files.Count} app assemblies read, none declares COM types, P/Invokes Windows or takes a path; {total.ElapsedMilliseconds} ms");
@@ -270,7 +281,7 @@ internal static class ComImportStep
         // every component's signer with it: with no file it found none, every point manager was "custom",
         // and app held back even its licence information during the demo's startup delay.
         var callers = new Dictionary<string, AppFile>(StringComparer.OrdinalIgnoreCase);
-        if (chosen.Count > 0 || pinvokes.Count > 0 || paths.Count > 0)
+        if (chosen.Count > 0 || pinvokes.Count > 0 || paths.Count > 0 || machine.Count > 0)
         {
             foreach (var f in files.Where(f => f.MayReadLocations))
             {
@@ -281,7 +292,7 @@ internal static class ComImportStep
                 dirty = true;
             }
             var askers = files.Where(f => f.Asks is { AsksOthers: true }).ToList();
-            var rewritten = new HashSet<string>(chosen.Keys.Concat(pinvokes).Concat(paths), StringComparer.OrdinalIgnoreCase);
+            var rewritten = new HashSet<string>(chosen.Keys.Concat(pinvokes).Concat(paths).Concat(machine), StringComparer.OrdinalIgnoreCase);
             for (bool grew = true; grew;)
             {
                 grew = false;
@@ -317,12 +328,13 @@ internal static class ComImportStep
         foreach (var x in callers.Values) if (!chosen.ContainsKey(x.Name)) Add(x, ComImportLoader.Parts.Location);
         foreach (var f in files) if (pinvokes.Contains(f.Name)) Add(f, ComImportLoader.Parts.PInvokes);
         foreach (var f in files) if (paths.Contains(f.Name)) Add(f, ComImportLoader.Parts.Paths);
-        // a P/Invoke- or path-rewritten assembly's own location calls (Assembly.GetExecutingAssembly().Location): it has no file
+        foreach (var f in files) if (machine.Contains(f.Name)) Add(f, ComImportLoader.Parts.Machine);
+        // a P/Invoke-, path- or processor-rewritten assembly's own location calls (Assembly.GetExecutingAssembly().Location): it has no file
         foreach (var f in files)
-            if ((pinvokes.Contains(f.Name) || paths.Contains(f.Name)) && f.MayReadLocations && !chosen.ContainsKey(f.Name))
+            if ((pinvokes.Contains(f.Name) || paths.Contains(f.Name) || machine.Contains(f.Name)) && f.MayReadLocations && !chosen.ContainsKey(f.Name))
             {
                 Add(f, ComImportLoader.Parts.Location);
-                if (!callers.ContainsKey(f.Name)) notes.Add($"comimport {f.Name}: its location calls rewritten with its {(pinvokes.Contains(f.Name) ? "P/Invokes" : "calls taking a path")} -- it is loaded from memory and may ask where it is");
+                if (!callers.ContainsKey(f.Name)) notes.Add($"comimport {f.Name}: its location calls rewritten with its {(pinvokes.Contains(f.Name) ? "P/Invokes" : paths.Contains(f.Name) ? "calls taking a path" : "processor")} -- it is loaded from memory and may ask where it is");
             }
         foreach (var (f, p) in parts.Values) Take(f, list, p);
         Finish();
@@ -333,7 +345,7 @@ internal static class ComImportStep
             catch (IOException) { }
         }
         notes.Add($"rewriter: {files.Count} app assemblies read, {candidates.Count} declare COM types, {judged} judged now (the rest cached), " +
-                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls, {pinvokes.Count} for their Windows P/Invokes, {paths.Count} for their calls taking a path; {total.ElapsedMilliseconds} ms");
+                  $"{chosen.Count} rewritten for COM, {callers.Count} for their location calls, {pinvokes.Count} for their Windows P/Invokes, {paths.Count} for their calls taking a path, {machine.Count} for the other processor; {total.ElapsedMilliseconds} ms");
 
         void Finish()
         {
@@ -351,6 +363,7 @@ internal static class ComImportStep
         if ((parts & ComImportLoader.Parts.Location) != 0) names.Add("location");
         if ((parts & ComImportLoader.Parts.PInvokes) != 0) names.Add("pinvoke");
         if ((parts & ComImportLoader.Parts.Paths) != 0) names.Add("paths");
+        if ((parts & ComImportLoader.Parts.Machine) != 0) names.Add("machine");
         list.Add($"{f.Name}|{f.File}|{string.Join(",", names)}");
     }
 
@@ -362,6 +375,7 @@ internal static class ComImportStep
         f.Name = scan.Name;
         f.Hash = scan.Hash;
         f.ILOnly = scan.ILOnly;
+        f.Machine = scan.Machine;
         f.DeclaresCom = scan.DeclaresCom;
         f.MayReadLocations = scan.MayReadLocations;
         f.References = scan.References.ToList();
