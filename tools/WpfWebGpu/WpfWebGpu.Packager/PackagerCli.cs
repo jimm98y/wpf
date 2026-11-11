@@ -1,15 +1,16 @@
-// The Packager's command line, shared by `wpfrun package` and the Packager app's unattended mode.
+// The Packager's command line, shared by `wpfrun package` and the Packager app's unattended mode (`Packager build ...`,
+// `wpfrun package build ...`): the usage names the commands alone, as both take them.
 
 namespace WpfWebGpu.Packager;
 
 public static class PackagerCli
 {
     public const string Usage = """
-        package scan <install folder> [--programdata <folder>]... [--registry <file.reg>]... [--iis <applicationHost.config>] [--out <x.wpfpkg.json>]
+        scan <install folder> [--programdata <folder>]... [--registry <file.reg>]... [--iis <applicationHost.config>] [--out <x.wpfpkg.json>]
                                         a first manifest: the installation's apps, services and registry paths
-        package stage <x.wpfpkg.json> [--work <folder>] [--copy]
+        stage <x.wpfpkg.json> [--work <folder>] [--copy]
                                         its registry as hive files, its ProgramData listed (--copy: copied)
-        package build <x.wpfpkg.json> [--target <android|quest|ios|visionos|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>] [--fast]
+        build <x.wpfpkg.json> [--target <android|quest|ios|visionos|macos|linux|windows>[,...]] [--out <folder>] [--packs <folder>] [--fast]
                                         the packages: one app per "mobile" app for a phone or headset; the whole installation for macOS, Linux and Windows
                                         (--fast: nothing compressed, for testing)
         """;
