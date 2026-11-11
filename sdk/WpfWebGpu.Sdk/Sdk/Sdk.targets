@@ -554,25 +554,25 @@
 
   <!-- Overlay the cross-platform shims over whatever the runtime packages dropped in the output (same strong-name
        identity, so the load binds the shim):
-         Microsoft.Win32.SystemEvents  every desktop head, Windows included: it is the Windows Desktop Runtime's,
-                                       which an app here does not need: on Windows the shim pumps the OS's own
-                                       broadcasts (a hidden top-level window), elsewhere the session's events;
-         Microsoft.Win32.Registry      every desktop head too, though it is .NET's own runtime's: on Windows the
-                                       shim forwards to advapi32 (the registry itself), so an app's registry
-                                       goes through the one implementation on every OS. -->
+         lib/wpf-desktop's shims       every desktop head, Windows included: Microsoft.Win32.SystemEvents, EventLog,
+                                       PerformanceCounter, ProtectedData and Threading.AccessControl are the Windows
+                                       Desktop Runtime's, which an app here does not need, and Microsoft.Win32.Registry
+                                       goes through the one implementation on every OS; on Windows each forwards to
+                                       the OS (the broadcasts, the Event Log, DPAPI, the kernel's objects, advapi32);
+         lib/wpf-unix's                unix and Android only: System.Security.AccessControl and Principal.Windows,
+                                       .NET's own runtime's, which throw off Windows and stay .NET's on Windows. -->
+  <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true'">
+    <_WpfWebGpuOverlayShim Include="Microsoft.Win32.SystemEvents;Microsoft.Win32.Registry;System.Diagnostics.EventLog;System.Diagnostics.PerformanceCounter;System.Security.Cryptography.ProtectedData;System.Threading.AccessControl" Folder="wpf-desktop" />
+    <_WpfWebGpuOverlayShim Include="System.Security.AccessControl;System.Security.Principal.Windows" Folder="wpf-unix"
+                           Condition="'$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true'" />
+  </ItemGroup>
   <Target Name="_WpfWebGpuOverlaySystemEventsShim"
           AfterTargets="Build;Publish;CopyFilesToOutputDirectory"
           Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true'">
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
+    <Copy SourceFiles="@(_WpfWebGpuOverlayShim->'$(WpfWebGpuSdkRoot)lib/%(Folder)/%(Identity).dll')"
           DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.SystemEvents.dll"
-          DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
-          Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
-          DestinationFolder="$(OutDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
-          Condition="'$(OutDir)' != '' and Exists('$(OutDir)')" />
-    <Copy SourceFiles="$(WpfWebGpuSdkRoot)lib/wpf-desktop/Microsoft.Win32.Registry.dll"
+    <Copy SourceFiles="@(_WpfWebGpuOverlayShim->'$(WpfWebGpuSdkRoot)lib/%(Folder)/%(Identity).dll')"
           DestinationFolder="$(PublishDir)" SkipUnchangedFiles="false" OverwriteReadOnlyFiles="true"
           Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')" />
   </Target>
@@ -1044,7 +1044,7 @@
     </ItemGroup>
   </Target>
 
-  <!-- iOS and Android: the cross-platform SystemEvents / Registry shims (lib/wpf-desktop, the ones the desktop
+  <!-- iOS and Android: the cross-platform shims (lib/wpf-desktop and lib/wpf-unix, the ones the desktop
        heads overlay) in place of the framework's throw-only copies, swapped in the list the app bundle
        is made of, as the browser's are above. -->
   <Target Name="_WpfWebGpuIosPublishShims"
@@ -1052,10 +1052,14 @@
           Condition="'$(_WpfWebGpuMobile)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != ''">
     <ItemGroup>
       <_WpfWebGpuIosShimmed Include="@(ResolvedFileToPublish)"
-                            Condition="'%(Extension)' == '.dll' and ('%(Filename)' == 'Microsoft.Win32.SystemEvents' or '%(Filename)' == 'Microsoft.Win32.Registry')
+                            Condition="'%(Extension)' == '.dll' and Exists('$(WpfWebGpuSdkRoot)lib/wpf-desktop/%(Filename)%(Extension)') and '%(Filename)' != 'Microsoft.Wpf.Interop.WebGpu'
                                        and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)'))" />
-      <ResolvedFileToPublish Remove="@(_WpfWebGpuIosShimmed)" />
+      <_WpfWebGpuIosUnixShimmed Include="@(ResolvedFileToPublish)"
+                                Condition="'%(Extension)' == '.dll' and Exists('$(WpfWebGpuSdkRoot)lib/wpf-unix/%(Filename)%(Extension)')
+                                           and !$([System.String]::Copy('%(FullPath)').StartsWith('$(WpfWebGpuSdkRoot)'))" />
+      <ResolvedFileToPublish Remove="@(_WpfWebGpuIosShimmed);@(_WpfWebGpuIosUnixShimmed)" />
       <ResolvedFileToPublish Include="@(_WpfWebGpuIosShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-desktop/%(Filename)%(Extension)')" />
+      <ResolvedFileToPublish Include="@(_WpfWebGpuIosUnixShimmed->'$(WpfWebGpuSdkRoot)lib/wpf-unix/%(Filename)%(Extension)')" />
     </ItemGroup>
   </Target>
 

@@ -75,6 +75,13 @@
     <_Proj Include="$(RepoRoot)shims/System.Diagnostics.Process/System.Diagnostics.Process.csproj" />
     <_Proj Include="$(RepoRoot)shims/System.IO.IsolatedStorage/System.IO.IsolatedStorage.csproj" />
     <_Proj Include="$(RepoRoot)shims/System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
+    <!-- the rest of the Windows Desktop Runtime's that an app built with the SDK takes as ours on every head
+         (Windows included, where they forward to Windows), and what they need off Windows -->
+    <_Proj Include="$(RepoRoot)shims/System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Threading.AccessControl/System.Threading.AccessControl.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Security.AccessControl/System.Security.AccessControl.csproj" />
+    <_Proj Include="$(RepoRoot)shims/System.Security.Principal.Windows/System.Security.Principal.Windows.csproj" />
     <_Proj Include="$(RepoRoot)shims/System.Net.Requests/System.Net.Requests.csproj" />
     <_Proj Include="$(RepoRoot)shims/System.Net.WebClient/System.Net.WebClient.csproj" />
 

@@ -129,6 +129,15 @@
     <None Include="$(WgpuInteropDir)bin/Release/net10.0/Microsoft.Wpf.Interop.WebGpu.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <!-- the Windows Desktop Runtime's others an app takes from us on every desktop head, Windows included -->
+    <None Include="$(WpfBin)System.Diagnostics.EventLog/Release/net10.0/System.Diagnostics.EventLog.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <None Include="$(WpfBin)System.Diagnostics.PerformanceCounter/Release/net10.0/System.Diagnostics.PerformanceCounter.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <None Include="$(WpfBin)System.Security.Cryptography.ProtectedData/Release/net10.0/System.Security.Cryptography.ProtectedData.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <None Include="$(WpfBin)System.Threading.AccessControl/Release/net10.0/System.Threading.AccessControl.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <!-- off Windows only: .NET's own runtime's, which throw there and stay .NET's on Windows; what the access
+         control lists above are kept with. Not referenced at compile time (the framework's are), overlaid. -->
+    <None Include="$(WpfBin)System.Security.AccessControl/Release/net10.0/System.Security.AccessControl.dll" Pack="true" PackagePath="lib/wpf-unix/" />
+    <None Include="$(WpfBin)System.Security.Principal.Windows/Release/net10.0/System.Security.Principal.Windows.dll" Pack="true" PackagePath="lib/wpf-unix/" />
 
     <!-- iOS: the same assembly name built against the iOS bindings (Metal/CAMetalLayer + UIKit)
          instead of the desktop platform layer. Needs the ios workload to have been built. -->
