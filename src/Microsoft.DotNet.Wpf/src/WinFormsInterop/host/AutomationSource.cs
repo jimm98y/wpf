@@ -17,6 +17,8 @@ using System.Runtime.CompilerServices;
 using System.Windows.Forms;
 using AccessibleAction = WindowsBase::MS.Internal.Interop.AccessibleAction;
 using AccessibleState = WindowsBase::MS.Internal.Interop.AccessibleState;
+using AutomationChange = WindowsBase::MS.Internal.Interop.AutomationChange;
+using AutomationChangeKind = WindowsBase::MS.Internal.Interop.AutomationChangeKind;
 using AutomationTree = WindowsBase::MS.Internal.Interop.AutomationTree;
 using IAutomationTreeSource = WindowsBase::MS.Internal.Interop.IAutomationTreeSource;
 
@@ -49,6 +51,22 @@ namespace WinFormsWebGpu.Accessibility
         internal static void Unregister(IntPtr handle)
         {
             lock (s_gate) s_sites.Remove(handle);
+        }
+
+        /// <summary>The keyboard went to the window <paramref name="handle"/> (a control's): the platform's assistive
+        /// technology is told, as UI Automation's focus-changed event tells it on Windows.</summary>
+        internal static void NoteFocus(IntPtr handle)
+        {
+            if (handle == IntPtr.Zero) return;
+            lock (s_gate) if (s_sites.Count == 0) return;
+            try
+            {
+                Control control = Control.FromHandle(handle);
+                IA11yHostSite site = control == null ? null : SiteOf(control);
+                if (site == null) return;
+                AutomationTree.RaiseChanged(new AutomationChange(AutomationChangeKind.FocusChanged, IdOf(control), site.Handle));
+            }
+            catch (Exception) { }
         }
 
         // ---- ids ----------------------------------------------------------------------------------------------

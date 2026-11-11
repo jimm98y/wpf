@@ -61,6 +61,8 @@ namespace System.Windows.Forms {
 		{
 			EnsureFocusRegistered();
 			PlatformFocus.SetFocus(handle);
+			// a screen reader follows the keyboard: the tree says where it went (AutomationSource)
+			WinFormsWebGpu.Accessibility.AutomationSource.NoteFocus(handle);
 		}
 	}
 }
