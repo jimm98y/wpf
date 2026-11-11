@@ -19,6 +19,9 @@ public static class PackagerCli
     {
         var o = output ?? Console.Out;
         if (args.Length == 0) throw new PackagerError("usage:\n" + Usage);
+        // paths given are the caller's, relative to where it ran this from (wpfrun starts a program in its own folder)
+        if (Environment.GetEnvironmentVariable("WPFRUN_CALLER_CWD") is { Length: > 0 } caller && Directory.Exists(caller))
+            Directory.SetCurrentDirectory(caller);
         return args[0] switch
         {
             "scan" => ScanCommand(args[1..], o),

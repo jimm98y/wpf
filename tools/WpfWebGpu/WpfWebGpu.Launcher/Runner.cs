@@ -132,6 +132,9 @@ internal sealed class Runner
         psi.ArgumentList.Add(File.Exists(host) ? host : App.Dll);
         foreach (string a in appArgs) psi.ArgumentList.Add(a);
 
+        // the folder it was started from, which a command-line program resolves its arguments' paths against (it runs
+        // in its own folder, as Explorer starts a program; a shell keeps the caller's)
+        psi.Environment["WPFRUN_CALLER_CWD"] = Environment.CurrentDirectory;
         if (!HostInfo.IsWindows)
         {
             // The registry shim's store. Shared by every app run through wpfrun, like the real registry,
