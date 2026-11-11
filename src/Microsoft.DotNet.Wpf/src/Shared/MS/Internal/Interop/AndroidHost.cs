@@ -1423,19 +1423,66 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         return clip.GetItemAt(0)?.CoerceToText(_activity);
     }
 
-    /// <summary>
-    ///  Not supported: Android carries non-text clip data as a content:// URI, so an image would
-    ///  have to be written somewhere a ContentProvider can serve it, and this head declares none.
-    /// </summary>
-    /// <remarks>
-    ///  Returning false rather than pretending: PlatformClipboard then reports the image as absent,
-    ///  which is true, instead of putting a URI on the clipboard that nothing can resolve.
-    /// </remarks>
-    public bool SetData(string mimeType, byte[] data) => false;
+    // Anything but text: Android's clipboard carries a content:// URI, which the app's own provider
+    // (ClipboardProvider, below) serves from its cache -- the clip's bytes in a file there. Another
+    // app reads it with the permission Android grants a clipboard URI's reader (grantUriPermissions);
+    // a clip another app put there is read through the content resolver the same way.
 
-    public byte[]? GetData(string mimeType) => null;
+    public bool SetData(string mimeType, byte[] data) => OnMain(() => SetDataCore(mimeType, data));
 
-    public bool ContainsData(string mimeType) => false;
+    private bool SetDataCore(string mimeType, byte[] data)
+    {
+        ClipboardManager? clipboard = Clipboard;
+        if (clipboard is null || data is null) return false;
+        Java.IO.File folder = ClipboardProvider.Folder(_activity);
+        folder.Mkdirs();
+        // only the current clip is kept: what was copied before is no longer on the clipboard
+        foreach (Java.IO.File old in folder.ListFiles() ?? Array.Empty<Java.IO.File>()) old.Delete();
+        string name = "clip-" + DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) + ClipboardProvider.ExtensionOf(mimeType);
+        System.IO.File.WriteAllBytes(System.IO.Path.Combine(folder.AbsolutePath, name), data);
+        Android.Net.Uri uri = Android.Net.Uri.Parse($"content://{_activity.PackageName}{ClipboardProvider.AuthoritySuffix}/{name}")!;
+        clipboard.PrimaryClip = ClipData.NewUri(_activity.ContentResolver, _activity.PackageName ?? "WPF", uri);
+        return true;
+    }
+
+    public byte[]? GetData(string mimeType) => OnMain(() => GetDataCore(mimeType));
+
+    private byte[]? GetDataCore(string mimeType)
+    {
+        ClipData? clip = Clipboard?.PrimaryClip;
+        if (clip is null || clip.ItemCount == 0) return null;
+        Android.Net.Uri? uri = clip.GetItemAt(0)?.Uri;
+        ContentResolver? resolver = _activity.ContentResolver;
+        if (uri is null || resolver is null) return null;
+        try
+        {
+            string? type = resolver.GetType(uri);
+            using System.IO.Stream? input = resolver.OpenInputStream(uri);
+            if (input is null) return null;
+            var bytes = new System.IO.MemoryStream();
+            input.CopyTo(bytes);
+            if (type == mimeType || mimeType == "application/octet-stream") return bytes.ToArray();
+            // an image of another kind (JPEG, WebP, ...) for a PNG asked for: decoded and encoded as PNG
+            if (mimeType == AndroidClipboard.TypePng && type is not null && type.StartsWith("image/", StringComparison.Ordinal))
+            {
+                using Bitmap? bitmap = BitmapFactory.DecodeByteArray(bytes.ToArray(), 0, (int)bytes.Length);
+                if (bitmap is null) return null;
+                var png = new System.IO.MemoryStream();
+                bitmap.Compress(Bitmap.CompressFormat.Png!, 100, png);
+                return png.ToArray();
+            }
+            return null;
+        }
+        catch (Java.Lang.Exception) { return null; }
+        catch (System.IO.IOException) { return null; }
+    }
+
+    public bool ContainsData(string mimeType) => OnMain(() =>
+    {
+        ClipDescription? description = Clipboard?.PrimaryClipDescription;
+        if (description is null) return false;
+        return description.HasMimeType(mimeType) || (mimeType == AndroidClipboard.TypePng && description.HasMimeType("image/*"));
+    });
 
     // ---- message boxes --------------------------------------------------------
     //
@@ -1822,4 +1869,70 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         width = m?.WidthPixels ?? 0;
         height = m?.HeightPixels ?? 0;
     }
+}
+
+
+/// <summary>
+///  What the app puts on the clipboard that is not text, served to the app that pastes it: the files of
+///  its cache's clipboard folder, read-only, as content://&lt;package&gt;.clipboard/&lt;file&gt;. Not
+///  exported; a reader gets the permission Android grants for a clipboard URI (grantUriPermissions).
+///  The authority is the package's (${applicationId}), which the Packager's template rewrite keeps.
+/// </summary>
+[ContentProvider(new[] { "${applicationId}.clipboard" }, Name = "wpfrun.host.ClipboardProvider", Exported = false, GrantUriPermissions = true)]
+public sealed class ClipboardProvider : ContentProvider
+{
+    internal const string AuthoritySuffix = ".clipboard";
+
+    internal static Java.IO.File Folder(Context context) => new Java.IO.File(context.CacheDir, "clipboard");
+
+    internal static string ExtensionOf(string mimeType) => mimeType switch
+    {
+        "image/png" => ".png",
+        "image/jpeg" => ".jpg",
+        "text/html" => ".html",
+        "text/plain" => ".txt",
+        _ => ".bin",
+    };
+
+    private static string TypeOf(string? name) => System.IO.Path.GetExtension(name ?? "") switch
+    {
+        ".png" => "image/png",
+        ".jpg" => "image/jpeg",
+        ".html" => "text/html",
+        ".txt" => "text/plain",
+        _ => "application/octet-stream",
+    };
+
+    private Java.IO.File? FileOf(Android.Net.Uri uri)
+    {
+        if (Context is null) return null;
+        // the folder's own files only: the URI's last segment, its name alone
+        var file = new Java.IO.File(Folder(Context), System.IO.Path.GetFileName(uri.LastPathSegment ?? ""));
+        return file.Exists() ? file : null;
+    }
+
+    public override bool OnCreate() => true;
+
+    public override string? GetType(Android.Net.Uri uri) => TypeOf(uri.LastPathSegment);
+
+    public override ParcelFileDescriptor? OpenFile(Android.Net.Uri uri, string mode)
+    {
+        Java.IO.File file = FileOf(uri) ?? throw new Java.IO.FileNotFoundException(uri.ToString());
+        return ParcelFileDescriptor.Open(file, ParcelFileMode.ReadOnly);
+    }
+
+    public override Android.Database.ICursor? Query(Android.Net.Uri uri, string[]? projection, string? selection, string[]? selectionArgs, string? sortOrder)
+    {
+        Java.IO.File? file = FileOf(uri);
+        if (file is null) return null;
+        var cursor = new Android.Database.MatrixCursor(new[] { Android.Provider.IOpenableColumns.DisplayName, Android.Provider.IOpenableColumns.Size });
+        cursor.AddRow(new Java.Lang.Object[] { new Java.Lang.String(file.Name), new Java.Lang.Long(file.Length()) });
+        return cursor;
+    }
+
+    public override Android.Net.Uri? Insert(Android.Net.Uri uri, ContentValues? values) => null;
+
+    public override int Delete(Android.Net.Uri uri, string? selection, string[]? selectionArgs) => 0;
+
+    public override int Update(Android.Net.Uri uri, ContentValues? values, string? selection, string[]? selectionArgs) => 0;
 }
