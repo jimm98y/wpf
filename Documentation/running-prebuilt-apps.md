@@ -120,12 +120,12 @@ pretending to be a particular Windows machine, so an app takes its own "not inst
 | assembly | on macOS |
 |---|---|
 | `Microsoft.Win32.Registry` | a persistent per-user store in wpfrun's state, shared by every app run through wpfrun, like the real registry. `wpfrun reg import` seeds it from a regedit export. |
-| `Microsoft.Win32.SystemEvents` | handlers are accepted and never raised (macOS has no setting-change broadcast to translate) |
+| `Microsoft.Win32.SystemEvents` | `UserPreferenceChanged` is raised when the system switches between light and dark; the other events are accepted and not raised (macOS has no broadcast to translate them from). On Windows the shim pumps the OS's own broadcasts. |
 | `System.Management` (WMI) | WQL `SELECT ... WHERE` over `root\cimv2` with this Mac's data: `Win32_ComputerSystem[Product]`, `_BaseBoard`, `_BIOS`, `_Processor`, `_OperatingSystem`, `_LogicalDisk`, `_NetworkAdapter[Configuration]`, `_VideoController`, `_PhysicalMemory`, `_Process`. `Win32_Service` is empty. Other built-in namespaces return nothing, and a product's namespace (SQL Server's, say) is `InvalidNamespace`. Values have WMI's types (`uint32`, `uint64`, ...). |
-| `System.ServiceProcess.ServiceController` | a service manager with no services: Windows' "service not found" errors |
-| `System.Security.Cryptography.ProtectedData` | DPAPI's contract with AES-GCM under per-user and per-machine keys in wpfrun's state. Blobs protected on Windows cannot be read here, just as between two Windows machines. |
-| `System.Diagnostics.PerformanceCounter` | counters the app creates work in-process; Processor, Memory, Process and System report live values |
-| `System.Diagnostics.EventLog` | Application, System and Security exist; sources are registered in the registry where Windows keeps them; entries are kept for the process and copied to the compatibility log |
+| `System.ServiceProcess.ServiceController` | the services an installation registered (the Packager's installers: launchd daemons, systemd units), controlled through the stack's service manager; without one, Windows' "service not found" errors. On Windows it is the service control manager. |
+| `System.Security.Cryptography.ProtectedData` | DPAPI's contract and blob layout (AES-256-CBC, HMAC-SHA512) under per-user and per-machine master keys (the user's in the login keychain). Blobs protected on Windows cannot be read here, just as between two Windows machines. On Windows it is DPAPI itself. |
+| `System.Diagnostics.PerformanceCounter` | counters the app creates work in-process and are published as .NET metrics (a `Meter` per category), which `dotnet-counters`, OpenTelemetry and `MeterListener` read on every OS, Windows included; Processor, Memory, Process and System report live values |
+| `System.Diagnostics.EventLog` | Application, System and Security exist; sources are registered in the registry where Windows keeps them. Entries are the OS's log's: written to the unified log (Linux: journald) and read back from it, so a log holds what every program wrote and `EntryWritten` fires for every writer. `System.Diagnostics.Eventing.Reader` (queries with XPath, readers, watchers, bookmarks) works over the same entries. On Windows it is the Event Log itself. |
 
 **Win32 ([pinvoke-rewriter.md](pinvoke-rewriter.md)).** Every function in the Windows API metadata,
 about 18,000 exports across 364 DLLs, is known, and the app's P/Invokes of them are rewritten into

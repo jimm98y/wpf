@@ -36,9 +36,9 @@ and SharpDX, the embedded shaders, and a run of a app 3D display under the launc
 - **Shaders:** 170 precompiled DXBC blobs, all Shader Model 4.0 (79 pixel, 49 vertex, 42 geometry), about
   12,000 instructions and about 60 distinct opcodes, with structured flow control and GS `emit`/`cut`.
   Nothing is compiled at run time.
-- **WPF's `D3DImage`** is not implemented by the port today. `SetBackBuffer` P/Invokes the native
-  milcore (`InteropDeviceBitmap_Create`), which no longer exists, so it throws
-  `DllNotFoundException`. app survives the exception and shows an empty 3D area.
+- **WPF's `D3DImage`** is implemented on the managed backend (`D3DImage.Managed.cs`, section 8): the
+  surface `SetBackBuffer` is given is read back on each present and shown as the image's bitmap, as WPF's
+  own software path does. A surface the Direct3D shim made answers the same calls.
 
 ## Rules this has to keep
 
