@@ -4,7 +4,7 @@
 // machine's state, shared by every app of the installation as on Windows -- Info.plist given the app's id, name,
 // version and icon, its URL scheme and the installation's apps' (Process.Start of one opens it) -- and sealed again:
 //
-//   simulator   <App>.app, signed ad hoc (codesign: the simulator is a Mac's)
+//   simulator   <App>.app, signed ad hoc (BundleSigner, on any machine)
 //   device      <App>.ipa, signed with the manifest's identity and provisioning profile (codesign, on a Mac)
 //
 // Apple Vision Pro the same way, from visionos.pack: the same host made a visionOS app (visionos-simulator/,
@@ -41,15 +41,10 @@ public static class IosPackager
         // the simulator's
         string sim = Path.Combine(outDir, platform + "-simulator", FileName(label) + ".app");
         Fill(Path.Combine(pack.Directory, "simulator", "WpfRunBundle.app"), sim, manifest, entry, staged, app, id, label, group, apps, installation);
-        // ad hoc, with the installation's App Group (the simulator gives a group's container to an app that claims it)
-        string simEntitlements = Path.Combine(work, "simulator.entitlements");
-        File.WriteAllBytes(simEntitlements, Plist.WriteXml(new PlistDict { new("com.apple.security.application-groups", new List<object> { group }) }));
+        // ad hoc, with the installation's App Group (the simulator gives a group's container to an app that claims it):
+        // signed here (BundleSigner), on whatever machine the Packager runs on
         LinkedGroup(Path.Combine(sim, "WpfRunBundle"), group);
-        if (OperatingSystem.IsMacOS())
-        {
-            foreach (string nested in NestedCode(sim)) Run("/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", nested);
-            Run("/usr/bin/codesign", "--force", "--sign", "-", "--entitlements", simEntitlements, "--timestamp=none", sim);
-        }
+        BundleSigner.SignAdHoc(sim, new PlistDict { new("com.apple.security.application-groups", new List<object> { group }) });
         log($"{sim} ({id}; xcrun simctl install booted \"{sim}\")");
         made.Add(sim);
 
