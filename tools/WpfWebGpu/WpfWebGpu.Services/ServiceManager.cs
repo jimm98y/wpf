@@ -292,9 +292,23 @@ public static class ServiceBroker
                 uint uid = PeerUid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's account is unknown).");
                 string[] parts = (reader.ReadLine() ?? "").Split('\t');
                 if (parts.Length < 3) throw new ServiceException(87, "The parameter is incorrect.");
-                ServiceControl.Execute(databasePath, parts[0], parts[1], parts[2], uid);
-                log($"service manager: {parts[0]} {parts[1]} {parts[2]} for {WindowsAccounts.Describe(uid)}");
-                reply = "0\t";
+                if (parts[0] == "logon")
+                {
+                    // a local account's password, checked for a caller that may not read others' (LocalLogon); the
+                    // password is not logged, and a wrong one waits as PAM makes it wait
+                    string password;
+                    try { password = Encoding.UTF8.GetString(Convert.FromBase64String(parts[2])); }
+                    catch (FormatException) { throw new ServiceException(87, "The parameter is incorrect."); }
+                    int error = LocalLogon.VerifyHere(parts[1], password);
+                    log($"service manager: logon {parts[1]} for {WindowsAccounts.Describe(uid)}: {(error == 0 ? "accepted" : "refused (" + error + ")")}");
+                    reply = error == 0 ? "0\t" : $"{error}\tThe user name or password is incorrect.";
+                }
+                else
+                {
+                    ServiceControl.Execute(databasePath, parts[0], parts[1], parts[2], uid);
+                    log($"service manager: {parts[0]} {parts[1]} {parts[2]} for {WindowsAccounts.Describe(uid)}");
+                    reply = "0\t";
+                }
             }
             catch (ServiceException e)
             {
