@@ -4,6 +4,7 @@
 //
 // Spell checking off Windows: SpellCheck.IsEnabled with the OS's own spelling, where Windows uses its spell checking
 // service (WinRTSpellerInterop) -- macOS's NSSpellChecker (the languages the user has, the words the user learned),
+// iOS's and visionOS's UITextChecker (the keyboard's dictionaries),
 // and on Linux the desktop's Enchant (Hunspell's dictionaries, as GNOME's and KDE's editors use them), when it is
 // installed: it is the system's, never carried with the app.
 //
@@ -27,6 +28,7 @@ namespace System.Windows.Documents
         internal static PlatformSpellerInterop TryCreate()
         {
             SpellingEngine engine = OperatingSystem.IsMacOS() ? MacSpelling.TryCreate()
+                : OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst() ? UIKitSpelling.TryCreate()
                 : OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid() ? EnchantSpelling.TryCreate()
                 : null;
             return engine == null ? null : new PlatformSpellerInterop(engine);
@@ -308,6 +310,107 @@ namespace System.Windows.Documents
             [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendChars(IntPtr r, IntPtr s, char* chars, nint length);
             [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRange SendCheck(IntPtr r, IntPtr s, IntPtr text, nint start, IntPtr language, byte wrap, nint tag, nint* wordCount);
             [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendGuesses(IntPtr r, IntPtr s, NSRange range, IntPtr text, IntPtr language, nint tag);
+        }
+
+        /// <summary>UIKit's UITextChecker: the languages the keyboard has dictionaries for.</summary>
+        private sealed unsafe class UIKitSpelling : SpellingEngine
+        {
+            private readonly IntPtr _checker;
+            private readonly List<string> _languages;
+            private readonly Dictionary<string, string> _byCulture = new();
+
+            public static UIKitSpelling TryCreate()
+            {
+                try
+                {
+                    IntPtr cls = objc_getClass("UITextChecker");
+                    if (cls == IntPtr.Zero) return null;
+                    IntPtr checker = Send(Send(cls, Sel("alloc")), Sel("init"));
+                    if (checker == IntPtr.Zero) return null;
+                    var languages = Strings(Send(cls, Sel("availableLanguages")));
+                    return languages.Count == 0 ? null : new UIKitSpelling(checker, languages);
+                }
+                catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return null; }
+            }
+
+            private UIKitSpelling(IntPtr checker, List<string> languages)
+            {
+                _checker = checker;
+                _languages = languages;
+            }
+
+            private string Language(CultureInfo culture)
+            {
+                if (!_byCulture.TryGetValue(culture.Name, out string language)) _byCulture[culture.Name] = language = Match(culture, _languages);
+                return language;
+            }
+
+            public override bool Supports(CultureInfo culture) => Language(culture) != null;
+
+            public override bool IsCorrect(string word, CultureInfo culture)
+            {
+                string language = Language(culture);
+                if (language == null) return true;
+                IntPtr pool = objc_autoreleasePoolPush();
+                try
+                {
+                    // rangeOfMisspelledWordInString:range:startingAt:wrap:language: -- NSNotFound where it is spelled right
+                    NSRange r = SendMisspelled(_checker, Sel("rangeOfMisspelledWordInString:range:startingAt:wrap:language:"),
+                        NSString(word), new NSRange { Location = 0, Length = word.Length }, 0, 0, NSString(language));
+                    return r.Location == nint.MaxValue || r.Length == 0;
+                }
+                finally { objc_autoreleasePoolPop(pool); }
+            }
+
+            public override IReadOnlyList<string> Suggest(string word, CultureInfo culture)
+            {
+                string language = Language(culture);
+                if (language == null) return Array.Empty<string>();
+                IntPtr pool = objc_autoreleasePoolPush();
+                try
+                {
+                    return Strings(SendGuesses(_checker, Sel("guessesForWordRange:inString:language:"),
+                        new NSRange { Location = 0, Length = word.Length }, NSString(word), NSString(language)));
+                }
+                finally { objc_autoreleasePoolPop(pool); }
+            }
+
+            public override void Dispose() => Send(_checker, Sel("release"));
+
+            private static IntPtr NSString(string s)
+            {
+                fixed (char* chars = s)
+                    return SendChars(objc_getClass("NSString"), Sel("stringWithCharacters:length:"), chars, s.Length);
+            }
+
+            private static List<string> Strings(IntPtr array)
+            {
+                var result = new List<string>();
+                if (array == IntPtr.Zero) return result;
+                nint count = SendCount(array, Sel("count"));
+                for (nint i = 0; i < count; i++)
+                {
+                    IntPtr utf8 = Send(SendIndex(array, Sel("objectAtIndex:"), i), Sel("UTF8String"));
+                    if (utf8 != IntPtr.Zero) result.Add(Marshal.PtrToStringUTF8(utf8));
+                }
+                return result;
+            }
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct NSRange { public nint Location; public nint Length; }
+
+            private const string ObjC = "/usr/lib/libobjc.A.dylib";
+            private static IntPtr Sel(string name) => sel_registerName(name);
+            [DllImport(ObjC)] private static extern IntPtr objc_getClass(string name);
+            [DllImport(ObjC)] private static extern IntPtr sel_registerName(string name);
+            [DllImport(ObjC)] private static extern IntPtr objc_autoreleasePoolPush();
+            [DllImport(ObjC)] private static extern void objc_autoreleasePoolPop(IntPtr pool);
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr r, IntPtr s);
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendCount(IntPtr r, IntPtr s);
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendIndex(IntPtr r, IntPtr s, nint i);
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendChars(IntPtr r, IntPtr s, char* chars, nint length);
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRange SendMisspelled(IntPtr r, IntPtr s, IntPtr text, NSRange range, nint start, byte wrap, IntPtr language);
+            [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendGuesses(IntPtr r, IntPtr s, NSRange range, IntPtr text, IntPtr language);
         }
 
         /// <summary>Enchant 2, the desktop's spelling library on Linux, with the dictionaries installed.</summary>
