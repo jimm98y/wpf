@@ -20,13 +20,14 @@ public class AccessControlShimTests
     public void A_global_mutex_made_with_an_access_list_keeps_it()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows the framework's own");
-        var everyone = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+        // System.Threading.AccessControl is built against the framework's access control types (as on Windows)
+        var everyone = new global::System.Security.Principal.SecurityIdentifier(global::System.Security.Principal.WellKnownSidType.WorldSid, null);
         var security = new MutexSecurity();
-        security.AddAccessRule(new MutexAccessRule(everyone, MutexRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new MutexAccessRule(everyone, MutexRights.FullControl, global::System.Security.AccessControl.AccessControlType.Allow));
         string name = "Global\\wpfwebgpu-test-" + Guid.NewGuid().ToString("N");
         using var mutex = MutexAcl.Create(false, name, out bool createdNew, security);
         Assert.True(createdNew);
-        var rules = ThreadingAclExtensions.GetAccessControl(mutex).GetAccessRules(true, false, typeof(SecurityIdentifier));
+        var rules = ThreadingAclExtensions.GetAccessControl(mutex).GetAccessRules(true, false, typeof(global::System.Security.Principal.SecurityIdentifier));
         Assert.Contains(rules.Cast<MutexAccessRule>(), r => r.IdentityReference.Equals(everyone) && r.MutexRights == MutexRights.FullControl);
         using var again = MutexAcl.OpenExisting(name, MutexRights.Synchronize);
         Assert.True(again.WaitOne(0));

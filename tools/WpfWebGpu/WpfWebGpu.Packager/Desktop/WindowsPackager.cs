@@ -44,11 +44,12 @@ public static class WindowsPackager
         string setup = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-windows-{arch}-Setup.exe");
         log($"Windows ({arch}): {setup}");
         using var certificate = Authenticode.Certificate(manifest);
-        using (var output = File.Create(setup))
+        // the zip is written beside Setup.exe first, then appended to it when it is small enough (Payload.MaxEmbedded)
+        string dataName = Path.GetFileNameWithoutExtension(setup) + ".data";
+        string data = Path.Combine(outDir, dataName);
+        using (var output = File.Create(data))
         {
-            using (var stub = File.OpenRead(Path.Combine(setupPack.Directory, "Setup.exe"))) stub.CopyTo(output);
-            long zipOffset = output.Position;
-            using (var zip = new ZipArchive(new OffsetStream(output, zipOffset), ZipArchiveMode.Create, leaveOpen: true))
+            using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
             {
                 using (var s = zip.CreateEntry("setup.json", CompressionLevel.Optimal).Open()) info.Write(s);
                 int files = 0;
@@ -71,8 +72,26 @@ public static class WindowsPackager
                 }
                 log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData, {info.Services.Count} services, {info.Apps.Count} Start menu entries");
             }
-            output.Write(Payload.Trailer(zipOffset));
         }
+        long dataLength = new FileInfo(data).Length;
+        using (var output = File.Create(setup))
+        {
+            using (var stub = File.OpenRead(Path.Combine(setupPack.Directory, "Setup.exe"))) stub.CopyTo(output);
+            if (dataLength <= Payload.MaxEmbedded)
+            {
+                long zipOffset = output.Position;
+                using (var zip = File.OpenRead(data)) zip.CopyTo(output);
+                output.Write(Payload.Trailer(zipOffset));
+            }
+            else
+            {
+                byte[] hash;
+                using (var zip = File.OpenRead(data)) hash = System.Security.Cryptography.SHA256.HashData(zip);
+                output.Write(Payload.ExternalTrailer(dataName, dataLength, hash));
+            }
+        }
+        if (dataLength <= Payload.MaxEmbedded) File.Delete(data);
+        else log($"  the installation ({dataLength >> 20} MB) is {dataName}, beside Setup.exe: too large to carry inside a program; the two go together");
         if (certificate != null)
         {
             Authenticode.Sign(setup, certificate, manifest.Signing.TimestampUrl);

@@ -65,9 +65,9 @@ internal static partial class Program
 
     private static int Install()
     {
-        using var self = File.OpenRead(Environment.ProcessPath!);
-        var (offset, length) = Payload.Find(self) ?? throw new InvalidOperationException("this Setup.exe carries no installation.");
-        using var zip = new ZipArchive(new OffsetStream(self, offset, length), ZipArchiveMode.Read);
+        using var payload = Payload.Open(Environment.ProcessPath!, Console.WriteLine)
+            ?? throw new InvalidOperationException("this Setup.exe carries no installation.");
+        using var zip = new ZipArchive(payload, ZipArchiveMode.Read);
         SetupInfo info;
         using (var s = (zip.GetEntry("setup.json") ?? throw new InvalidOperationException("no setup.json")).Open()) info = SetupInfo.Read(s);
 
@@ -165,10 +165,12 @@ internal static partial class Program
 
         // to remove it again: this program without its payload, and what it installed
         string uninstaller = Path.Combine(root, "uninstall.exe");
+        using (var self = File.OpenRead(Environment.ProcessPath!))
         using (var to = File.Create(uninstaller))
         {
+            long program = Payload.ProgramLength(self);
             self.Position = 0;
-            CopyBytes(self, to, offset);
+            CopyBytes(self, to, program);
         }
         using (var s = File.Create(Path.Combine(root, "setup.json"))) info.Write(s);
         using (var key = Registry.LocalMachine.CreateSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{info.Id}"))

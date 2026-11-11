@@ -6,6 +6,15 @@
 // The signature, where the Packager signs it, covers what is before it and is the PE file's certificate table, which
 // the header's directory finds.
 //
+// A large installation is not appended: a signed file is under 4 GB (its certificate table is found by a 32-bit
+// offset), and Windows and the tools between a download and a user balk at executables of gigabytes long before
+// that. Past MaxEmbedded the zip is a file beside Setup.exe, as installers on several discs have their .cab files
+// beside them, and Setup.exe carries what it must be instead --
+//
+//   [Setup.exe][file name, UTF-8][its length: 4 bytes][the zip's length: 8 bytes][its SHA-256: 32 bytes]["WPFPKG02"][signature]
+//
+// -- so the signature vouches for the data file too: Setup checks it before reading a byte of it.
+//
 // The zip is written and read as a stream of its own (OffsetStream), so its offsets are from its own start and it
 // is read with ZipArchive as it was written; zip64 where it passes 4 GB. Shared by the Packager, which writes it
 // (its project links this file), and Setup, which reads it.
@@ -26,7 +35,97 @@ namespace WpfWebGpu.Setup;
 public static class Payload
 {
     public static ReadOnlySpan<byte> Magic => "WPFPKG01"u8;
+    public static ReadOnlySpan<byte> ExternalMagic => "WPFPKG02"u8;
     public const int TrailerSize = 16;
+
+    /// <summary>The largest zip carried inside Setup.exe; a larger one is a file beside it.</summary>
+    public const long MaxEmbedded = 2L << 30;
+
+    /// <summary>The trailer of a Setup.exe whose zip is the file <paramref name="fileName"/> beside it.</summary>
+    public static byte[] ExternalTrailer(string fileName, long length, byte[] sha256)
+    {
+        byte[] name = System.Text.Encoding.UTF8.GetBytes(fileName);
+        var t = new byte[name.Length + 4 + 8 + 32 + 8];
+        name.CopyTo(t, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(t.AsSpan(name.Length), name.Length);
+        BinaryPrimitives.WriteInt64LittleEndian(t.AsSpan(name.Length + 4), length);
+        sha256.CopyTo(t, name.Length + 12);
+        ExternalMagic.CopyTo(t.AsSpan(name.Length + 44));
+        return t;
+    }
+
+    /// <summary>
+    /// The installation <paramref name="setupExe"/> carries, as a stream of the zip: appended to it, or the data file
+    /// beside it -- opened so that nothing can write it, and its SHA-256 checked against the one Setup.exe holds.
+    /// Null when it carries none.
+    /// </summary>
+    public static Stream? Open(string setupExe, Action<string>? log = null)
+    {
+        var self = new FileStream(setupExe, FileMode.Open, FileAccess.Read, FileShare.Read);
+        long end = SignedEnd(self);
+        if (FindMagic(self, end, ExternalMagic) is not long magicAt)
+        {
+            if (Find(self) is not var (offset, length)) { self.Dispose(); return null; }
+            return new OffsetStream(self, offset, length, ownsInner: true);
+        }
+        try
+        {
+            var fixedPart = new byte[44];
+            self.Position = magicAt - 44;
+            self.ReadExactly(fixedPart);
+            int nameLength = BinaryPrimitives.ReadInt32LittleEndian(fixedPart);
+            long dataLength = BinaryPrimitives.ReadInt64LittleEndian(fixedPart.AsSpan(4));
+            byte[] expected = fixedPart.AsSpan(12, 32).ToArray();
+            if (nameLength <= 0 || nameLength > 1024 || magicAt - 44 - nameLength < 0) throw new InvalidDataException("this Setup.exe's trailer is damaged.");
+            var name = new byte[nameLength];
+            self.Position = magicAt - 44 - nameLength;
+            self.ReadExactly(name);
+            string fileName = System.Text.Encoding.UTF8.GetString(name);
+            if (fileName != Path.GetFileName(fileName)) throw new InvalidDataException("this Setup.exe's trailer is damaged.");
+            string path = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(setupExe))!, fileName);
+            if (!File.Exists(path)) throw new FileNotFoundException($"{fileName} is not beside {Path.GetFileName(setupExe)}: the installation is in it, and the two go together.", path);
+
+            var data = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 20);
+            try
+            {
+                if (data.Length != dataLength) throw new InvalidDataException($"{fileName} is not the one this Setup.exe was made with (its length differs).");
+                log?.Invoke($"Checking {fileName}");
+                byte[] actual = System.Security.Cryptography.SHA256.HashData(data);
+                if (!actual.AsSpan().SequenceEqual(expected)) throw new InvalidDataException($"{fileName} is damaged or not the one this Setup.exe was made with.");
+                data.Position = 0;
+                return data;
+            }
+            catch { data.Dispose(); throw; }
+        }
+        finally { self.Dispose(); }
+    }
+
+    /// <summary>The length of the program itself: Setup.exe before its zip or the trailer naming its data file.</summary>
+    public static long ProgramLength(FileStream file)
+    {
+        long end = SignedEnd(file);
+        if (FindMagic(file, end, ExternalMagic) is long magicAt)
+        {
+            var nameLength = new byte[4];
+            file.Position = magicAt - 44;
+            file.ReadExactly(nameLength);
+            return magicAt - 44 - BinaryPrimitives.ReadInt32LittleEndian(nameLength);
+        }
+        return Find(file)?.Offset ?? end;
+    }
+
+    // where the 8-byte magic ends the file's own bytes (before up to 7 bytes of the signature's padding): its offset
+    private static long? FindMagic(FileStream file, long end, ReadOnlySpan<byte> magic)
+    {
+        Span<byte> m = stackalloc byte[8];
+        for (int pad = 0; pad < 8 && end - pad >= 8; pad++)
+        {
+            file.Position = end - pad - 8;
+            file.ReadExactly(m);
+            if (m.SequenceEqual(magic)) return end - pad - 8;
+        }
+        return null;
+    }
 
     public static byte[] Trailer(long zipOffset)
     {
@@ -78,8 +177,14 @@ public static class Payload
 }
 
 /// <summary>A window of a stream, seen as a stream of its own (position 0 at <paramref name="offset"/>).</summary>
-public sealed class OffsetStream(Stream inner, long offset, long length = -1) : Stream
+public sealed class OffsetStream(Stream inner, long offset, long length = -1, bool ownsInner = false) : Stream
 {
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && ownsInner) inner.Dispose();
+        base.Dispose(disposing);
+    }
+
     public override bool CanRead => inner.CanRead;
     public override bool CanSeek => inner.CanSeek;
     public override bool CanWrite => inner.CanWrite;
