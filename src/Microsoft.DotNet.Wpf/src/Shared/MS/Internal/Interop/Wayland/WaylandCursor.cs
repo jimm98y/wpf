@@ -20,6 +20,10 @@
 // LinuxDesktopSettings -- letting libwayland-cursor default them resolves to /usr/share/icons/
 // default, which on Ubuntu inherits DMZ-White rather than the theme the user actually chose.
 //
+// A cursor of the app's own (a .cur or .ani, which Windows loads into a cursor of its own) is a third: its
+// picture in a shared-memory buffer (wl_shm, one per cursor, made once), attached to the same cursor surface and
+// given with its hot spot -- on every enter, as the others are.
+//
 
 using System;
 using System.Runtime.InteropServices;
@@ -72,6 +76,11 @@ namespace MS.Internal.Interop.Wayland
         private static IntPtr s_cursorSurface;
         private static string s_currentName = string.Empty;
 
+        // the app's own cursor shown now, if one is; its buffers by key
+        private static (IntPtr Buffer, int HotspotX, int HotspotY)? s_custom;
+        private static readonly System.Collections.Generic.Dictionary<int, (IntPtr Buffer, int HotspotX, int HotspotY)> s_customBuffers = new();
+        private const uint CustomShape = uint.MaxValue;   // s_currentShape while one is shown: any standard one differs
+
         internal static void AttachPointer(IntPtr pointer)
         {
             s_pointer = pointer;
@@ -94,13 +103,84 @@ namespace MS.Internal.Interop.Wayland
         {
             // Re-apply on every enter. The cursor is UNDEFINED when the pointer enters a surface, so
             // a client that does not set one shows whatever the previously-focused client left.
+            if (s_custom is { } custom) { ApplyCustom(custom, serial); return; }
             Apply(s_currentShape == 0 ? CURSOR_SHAPE_DEFAULT : s_currentShape, serial);
+        }
+
+        /// <summary>The app's own cursor: <paramref name="bgra"/> (straight alpha), its hot spot; made into a
+        /// buffer the first time <paramref name="key"/> is shown.</summary>
+        internal static void SetCustomCursor(int key, byte[] bgra, int width, int height, int hotspotX, int hotspotY)
+        {
+            if (!s_customBuffers.TryGetValue(key, out var custom))
+            {
+                IntPtr buffer = MakeBuffer(bgra, width, height);
+                if (buffer == IntPtr.Zero) return;
+                s_customBuffers[key] = custom = (buffer, hotspotX, hotspotY);
+            }
+            // asked again on every move: given to the compositor once, and again on each enter (OnPointerEnter)
+            if (s_custom is { } shown && shown.Buffer == custom.Buffer) return;
+            s_custom = custom;
+            s_currentShape = CustomShape;
+            s_currentName = string.Empty;
+            ApplyCustom(custom, WaylandInput.EnterSerial);
+        }
+
+        private static void ApplyCustom((IntPtr Buffer, int HotspotX, int HotspotY) custom, uint serial)
+        {
+            if (serial == 0 || s_pointer == IntPtr.Zero || !EnsureCursorSurface()) return;
+            Wl.Request(s_cursorSurface, WL_SURFACE_SET_BUFFER_SCALE, WlArgument.Int(1));
+            Wl.Request(s_cursorSurface, WL_SURFACE_ATTACH, WlArgument.Ptr(custom.Buffer), WlArgument.Int(0), WlArgument.Int(0));
+            Wl.Request(s_cursorSurface, WL_SURFACE_DAMAGE, WlArgument.Int(0), WlArgument.Int(0), WlArgument.Int(int.MaxValue), WlArgument.Int(int.MaxValue));
+            Wl.Request(s_cursorSurface, WL_SURFACE_COMMIT);
+            Wl.Request(s_pointer, WL_POINTER_SET_CURSOR, WlArgument.UInt(serial), WlArgument.Ptr(s_cursorSurface),
+                WlArgument.Int(custom.HotspotX), WlArgument.Int(custom.HotspotY));
+            WaylandDisplay.Flush();
+        }
+
+        [DllImport("libc", SetLastError = true)] private static extern int memfd_create([MarshalAs(UnmanagedType.LPUTF8Str)] string name, uint flags);
+        [DllImport("libc", SetLastError = true)] private static extern int ftruncate(int fd, long length);
+        [DllImport("libc", SetLastError = true)] private static extern IntPtr mmap(IntPtr address, nuint length, int protection, int flags, int fd, long offset);
+        [DllImport("libc")] private static extern int munmap(IntPtr address, nuint length);
+        [DllImport("libc")] private static extern int close(int fd);
+
+        // wl_shm's ARGB8888 (little-endian: B, G, R, A, premultiplied) from straight BGRA, in a pool of its own
+        private static IntPtr MakeBuffer(byte[] bgra, int width, int height)
+        {
+            if (WaylandDisplay.Shm == IntPtr.Zero || width <= 0 || height <= 0 || bgra.Length < width * height * 4) return IntPtr.Zero;
+            int size = width * height * 4;
+            int fd = memfd_create("wpf-cursor", 1 /* MFD_CLOEXEC */);
+            if (fd < 0) return IntPtr.Zero;
+            try
+            {
+                if (ftruncate(fd, size) != 0) return IntPtr.Zero;
+                IntPtr map = mmap(IntPtr.Zero, (nuint)size, 3 /* PROT_READ | PROT_WRITE */, 1 /* MAP_SHARED */, fd, 0);
+                if (map == new IntPtr(-1)) return IntPtr.Zero;
+                var pixels = new Span<byte>((void*)map, size);
+                for (int i = 0; i < size; i += 4)
+                {
+                    int a = bgra[i + 3];
+                    pixels[i] = (byte)(bgra[i] * a / 255);
+                    pixels[i + 1] = (byte)(bgra[i + 1] * a / 255);
+                    pixels[i + 2] = (byte)(bgra[i + 2] * a / 255);
+                    pixels[i + 3] = (byte)a;
+                }
+                munmap(map, (nuint)size);
+                IntPtr pool = Wl.Construct(WaylandDisplay.Shm, WL_SHM_CREATE_POOL, "wl_shm_pool", 1, WlArgument.NewId(), WlArgument.Int(fd), WlArgument.Int(size));
+                if (pool == IntPtr.Zero) return IntPtr.Zero;
+                IntPtr buffer = Wl.Construct(pool, WL_SHM_POOL_CREATE_BUFFER, "wl_buffer", 1, WlArgument.NewId(),
+                    WlArgument.Int(0), WlArgument.Int(width), WlArgument.Int(height), WlArgument.Int(width * 4), WlArgument.UInt(WL_SHM_FORMAT_ARGB8888));
+                // the buffer keeps the memory; the pool is not needed once it is made
+                Wl.Request(pool, WL_SHM_POOL_DESTROY);
+                return buffer;
+            }
+            finally { close(fd); }
         }
 
         /// <summary>Set the cursor from a WPF cursor name (see HwndMouseInputProvider).</summary>
         internal static void SetCursor(string name)
         {
             s_currentName = name ?? "Arrow";
+            s_custom = null;
             uint shape = MapName(s_currentName);
             WaylandDisplay.LogSink?.Invoke($"cursor {s_currentName} (shape {shape}, was {s_currentShape}) serial={WaylandInput.EnterSerial} shapeDevice={s_shapeDevice != IntPtr.Zero} pointer={s_pointer != IntPtr.Zero}");
             if (shape != s_currentShape || s_shapeDevice == IntPtr.Zero)

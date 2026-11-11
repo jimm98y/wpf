@@ -319,6 +319,7 @@ namespace MS.Internal.Interop
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
         public static void SetCursor(string nsCursorSelector) { }
+        public static void SetCustomCursor(int key, byte[] png, double hotspotX, double hotspotY) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
         public void SetWindowAppearance(bool dark) { }
         public readonly partial struct CocoaKeyMessage
@@ -707,6 +708,7 @@ namespace MS.Internal.Interop.Wayland
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
         public static void SetCursor(string name) { }
+        public static void SetCustomCursor(int key, byte[] bgra, int width, int height, int hotspotX, int hotspotY) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }
         public static void SetTitle(System.IntPtr handle, string title) { }
         public static void SetWindowState(System.IntPtr handle, int state) { }

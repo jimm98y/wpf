@@ -471,6 +471,7 @@
     <Compile Include="System\Windows\Input\AngleUtil.cs" />
     <Compile Include="System\Windows\Input\CaptureMode.cs" />
     <Compile Include="System\Windows\Input\Cursor.cs" />
+    <Compile Include="System\Windows\Input\CursorImage.cs" />
     <Compile Include="System\Windows\Input\CursorConverter.cs" />
     <Compile Include="System\Windows\Input\Cursors.cs" />
     <Compile Include="System\Windows\Input\CursorType.cs" />

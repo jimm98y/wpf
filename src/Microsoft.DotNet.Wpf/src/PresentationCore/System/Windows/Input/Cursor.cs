@@ -159,9 +159,11 @@ namespace System.Windows.Input
 
         private void LoadFromFile(string fileName)
         {
-            // See LoadFromStream: LoadImageCursor is a user32.dll P/Invoke unavailable off-Windows.
+            // See LoadFromStream: LoadImageCursor is a user32.dll P/Invoke unavailable off-Windows; the file's
+            // bytes are kept for the head to draw (CustomImage).
             if (!OperatingSystem.IsWindows())
             {
+                _customData = File.ReadAllBytes(fileName);
                 return;
             }
 
@@ -275,9 +277,13 @@ namespace System.Windows.Input
             // LoadImageCursor is a user32.dll P/Invoke that does not exist off-Windows. As with
             // LoadCursorHelper, leave the native handle unset there; the per-platform windowing
             // backend supplies the actual cursor. Without this, e.g. GridViewColumnHeader loading
-            // its resize "split" cursor from a resource stream throws DllNotFoundException.
+            // its resize "split" cursor from a resource stream throws DllNotFoundException. The stream's bytes are
+            // kept for the head to draw (CustomImage), as Windows loads them into a cursor of its own.
             if (!OperatingSystem.IsWindows())
             {
+                using var copy = new MemoryStream();
+                cursorStream.CopyTo(copy);
+                _customData = copy.ToArray();
                 return;
             }
 
@@ -351,6 +357,24 @@ namespace System.Windows.Input
             return ((int)cursorType >= (int)CursorType.None && (int)cursorType <= (int)CursorType.ArrowCD);
         }
 
+        /// <summary>
+        /// Off Windows: a cursor made from a .cur or .ani (a file or a stream), its picture as the head draws it --
+        /// the file's image nearest a cursor's size (32 pixels, scaled by <paramref name="dpiScale"/> where the
+        /// cursor scales with DPI), decoded once per size; null for a standard cursor or a file that is not one.
+        /// </summary>
+        internal CursorImage CustomImage(double dpiScale = 1.0)
+        {
+            if (_customData == null) return null;
+            int size = (int)Math.Round(32 * (_scaleWithDpi ? Math.Max(1.0, dpiScale) : 1.0));
+            var cached = _customImage;
+            if (cached.Image != null && cached.Size == size) return cached.Image;
+            CursorImage image = CursorImage.Decode(_customData, size);
+            _customImage = (size, image);
+            return image;
+        }
+
+        private byte[]      _customData;
+        private (int Size, CursorImage Image) _customImage;
         private string      _fileName     = String.Empty;
         private CursorType  _cursorType   = CursorType.None;
         private bool        _scaleWithDpi = false;

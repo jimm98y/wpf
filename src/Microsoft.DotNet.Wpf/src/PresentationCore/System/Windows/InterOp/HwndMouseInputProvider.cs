@@ -150,6 +150,18 @@ namespace System.Windows.Interop
             // it via AppKit. Report success so WPF considers the cursor handled.
             if (!OperatingSystem.IsWindows())
             {
+                // a cursor of the app's own (a .cur or .ani): its picture, as Windows shows the cursor it loaded it into
+                if (cursor?.CustomImage() is { } custom)
+                {
+                    int key = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(custom);
+                    if (OperatingSystem.IsBrowser())
+                        MS.Internal.Interop.BrowserWindow.SetCursor(custom.Css);
+                    else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+                        MS.Internal.Interop.Wayland.WaylandWindow.SetCustomCursor(key, custom.Bgra, custom.Width, custom.Height, custom.HotspotX, custom.HotspotY);
+                    else if (OperatingSystem.IsMacOS())
+                        MS.Internal.Interop.CocoaWindow.SetCustomCursor(key, custom.Png, custom.HotspotX, custom.HotspotY);
+                    return true;
+                }
                 if (OperatingSystem.IsBrowser())
                     MS.Internal.Interop.BrowserWindow.SetCursor(MapCursorToCssCursor(cursor));
                 else if (OperatingSystem.IsLinux())
@@ -220,6 +232,8 @@ namespace System.Windows.Interop
                 // a move: the open hand, as the WinForms host shows SizeAll
                 case CursorType.SizeAll:
                 case CursorType.ScrollAll: return "openHandCursor";
+                // Cursors.None: no cursor at all, as Windows' SetCursor(NULL)
+                case CursorType.None:     return "none";
                 default:                  return "arrowCursor";
             }
         }

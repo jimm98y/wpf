@@ -257,6 +257,10 @@ namespace MS.Internal.Interop.Wayland
         internal const uint WL_SEAT_GET_KEYBOARD = 1;
         internal const uint WL_SEAT_GET_TOUCH = 2;
         internal const uint WL_POINTER_SET_CURSOR = 0;
+        internal const uint WL_SHM_CREATE_POOL = 0;
+        internal const uint WL_SHM_POOL_CREATE_BUFFER = 0;
+        internal const uint WL_SHM_POOL_DESTROY = 1;
+        internal const uint WL_SHM_FORMAT_ARGB8888 = 0;
         internal const uint WL_DATA_DEVICE_MANAGER_CREATE_DATA_SOURCE = 0;
         internal const uint WL_DATA_DEVICE_MANAGER_GET_DATA_DEVICE = 1;
         internal const uint WL_DATA_DEVICE_START_DRAG = 0;

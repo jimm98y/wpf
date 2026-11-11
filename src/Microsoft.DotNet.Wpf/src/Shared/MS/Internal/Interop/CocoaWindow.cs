@@ -3577,6 +3577,13 @@ namespace MS.Internal.Interop
             if (string.IsNullOrEmpty(nsCursorSelector)) return;
             IntPtr cls = objc_getClass("NSCursor");
             if (cls == IntPtr.Zero) return;
+            // "none": the pointer hidden ([NSCursor hide], counted by AppKit: hidden once, shown again once)
+            if (nsCursorSelector == "none")
+            {
+                if (!s_cursorHidden) { Send(cls, Sel("hide")); s_cursorHidden = true; }
+                return;
+            }
+            ShowCursor(cls);
             IntPtr cursor;
             // "frameResize:<position>": a corner's resize cursor, where AppKit has them (macOS 15; the arrow before)
             if (nsCursorSelector.StartsWith("frameResize:", StringComparison.Ordinal))
@@ -3589,6 +3596,40 @@ namespace MS.Internal.Interop
             else cursor = Send(cls, Sel(nsCursorSelector));
             if (cursor != IntPtr.Zero) Send(cursor, Sel("set"));
         }
+
+        /// <summary>
+        /// A cursor of the app's own (a .cur or .ani, which Windows loads into a cursor of its own): its picture as a PNG
+        /// and its hot spot, made an NSCursor once per <paramref name="key"/> and set.
+        /// </summary>
+        public static void SetCustomCursor(int key, byte[] png, double hotspotX, double hotspotY)
+        {
+            if (!s_customCursors.TryGetValue(key, out IntPtr cursor))
+            {
+                IntPtr data;
+                unsafe
+                {
+                    fixed (byte* p = png) data = SendPtrPtrNUInt(objc_getClass("NSData"), Sel("dataWithBytes:length:"), (IntPtr)p, (nuint)png.Length);
+                }
+                IntPtr image = data == IntPtr.Zero ? IntPtr.Zero : SendPtrRet(Send(objc_getClass("NSImage"), Sel("alloc")), Sel("initWithData:"), data);
+                cursor = image == IntPtr.Zero ? IntPtr.Zero
+                    : SendPtrPtrPoint(Send(objc_getClass("NSCursor"), Sel("alloc")), Sel("initWithImage:hotSpot:"), image, new NSPoint { x = hotspotX, y = hotspotY });
+                if (cursor == IntPtr.Zero) return;
+                s_customCursors[key] = cursor;
+            }
+            ShowCursor(objc_getClass("NSCursor"));
+            Send(cursor, Sel("set"));
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<int, IntPtr> s_customCursors = new();
+        private static bool s_cursorHidden;
+
+        private static void ShowCursor(IntPtr cls)
+        {
+            if (s_cursorHidden) { Send(cls, Sel("unhide")); s_cursorHidden = false; }
+        }
+
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtrNUInt(IntPtr r, IntPtr s, IntPtr a, nuint b);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtrPoint(IntPtr r, IntPtr s, IntPtr a, NSPoint b);
 
         private static bool RespondsToClassSelector(IntPtr cls, IntPtr sel) => class_respondsToSelector(object_getClass(cls), sel);
 

@@ -1420,6 +1420,11 @@ namespace MS.Internal.Interop.Wayland
 
         public static void SetCursor(string name) => WaylandCursor.SetCursor(name);
 
+        /// <summary>A cursor of the app's own (a .cur or .ani): its picture, BGRA straight alpha, and hot spot;
+        /// <paramref name="key"/> names it, so that it is made into a buffer once.</summary>
+        public static void SetCustomCursor(int key, byte[] bgra, int width, int height, int hotspotX, int hotspotY) =>
+            WaylandCursor.SetCustomCursor(key, bgra, width, height, hotspotX, hotspotY);
+
         /// <summary>
         /// The pointer's position in the virtual screen space, or false when it is not over any of
         /// our windows. Wayland reports pointer coordinates surface-locally and never globally, so
