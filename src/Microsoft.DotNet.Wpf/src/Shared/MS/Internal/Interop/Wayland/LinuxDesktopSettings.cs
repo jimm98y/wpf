@@ -50,6 +50,29 @@ namespace MS.Internal.Interop.Wayland
             return s_isDark;
         }
 
+        /// <summary>
+        /// The accent colour the user picked (org.freedesktop.appearance accent-color: sRGB, each
+        /// channel 0..1); false where the desktop has none -- the portal reports a channel outside
+        /// that range for "not set", and older portals do not know the key.
+        /// </summary>
+        internal static bool TryGetAccentColor(out byte r, out byte g, out byte b)
+        {
+            r = g = b = 0;
+            try
+            {
+                if (!DBusLite.IsAvailable) return false;
+                string[] key = { AppearanceNamespace, "accent-color" };
+                if (!DBusLite.CallReadDoubleTripleVariant(PortalService, PortalPath, SettingsInterface, "ReadOne", key, out double red, out double green, out double blue) &&
+                    !DBusLite.CallReadDoubleTripleVariant(PortalService, PortalPath, SettingsInterface, "Read", key, out red, out green, out blue))
+                    return false;
+                static bool InRange(double v) => v >= 0 && v <= 1;
+                if (!InRange(red) || !InRange(green) || !InRange(blue)) return false;
+                (r, g, b) = ((byte)Math.Round(red * 255), (byte)Math.Round(green * 255), (byte)Math.Round(blue * 255));
+                return true;
+            }
+            catch { return false; }
+        }
+
         private static bool QueryColorScheme()
         {
             try

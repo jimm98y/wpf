@@ -27,9 +27,31 @@ namespace MS.Internal.WindowsRuntime
 
             private bool _useFallbackColor = false;
 
+            // off Windows: the accent the user picked in the OS's own settings (PlatformAccentColor), or
+            // Windows' default where the OS has none; the shades are derived from it
+            private readonly Color _baseAccentColor = _fallbackAccentColor;
+
             internal UISettings()
             {
                 _isSupported = false;
+
+                if (!OperatingSystem.IsWindows())
+                {
+                    // there is no WinRT to ask: the OS's own accent stands in for UISettings', the
+                    // same colour every native app on it follows
+                    if (MS.Internal.Interop.PlatformAccentColor.TryGet(out byte r, out byte g, out byte b))
+                    {
+                        _baseAccentColor = Color.FromRgb(r, g, b);
+                    }
+                    _accentColor = _baseAccentColor;
+                    _accentLight1 = GetFallbackShade(UISettingsRCW.UIColorType.AccentLight1);
+                    _accentLight2 = GetFallbackShade(UISettingsRCW.UIColorType.AccentLight2);
+                    _accentLight3 = GetFallbackShade(UISettingsRCW.UIColorType.AccentLight3);
+                    _accentDark1 = GetFallbackShade(UISettingsRCW.UIColorType.AccentDark1);
+                    _accentDark2 = GetFallbackShade(UISettingsRCW.UIColorType.AccentDark2);
+                    _accentDark3 = GetFallbackShade(UISettingsRCW.UIColorType.AccentDark3);
+                    return;
+                }
 
                 try
                 {
@@ -84,21 +106,21 @@ namespace MS.Internal.WindowsRuntime
             }
 
             /// <summary>
-            ///   Derives a light or dark shade of <see cref="_fallbackAccentColor"/> for the
+            ///   Derives a light or dark shade of the base accent (the OS's, or <see cref="_fallbackAccentColor"/>) for the
             ///   requested accent color type. Light shades blend the accent toward white and dark
             ///   shades blend it toward black, approximating the variations Windows exposes.
             /// </summary>
-            private static Color GetFallbackShade(UISettingsRCW.UIColorType desiredColor)
+            private Color GetFallbackShade(UISettingsRCW.UIColorType desiredColor)
             {
                 return desiredColor switch
                 {
-                    UISettingsRCW.UIColorType.AccentLight1 => Blend(_fallbackAccentColor, s_white, 0.30),
-                    UISettingsRCW.UIColorType.AccentLight2 => Blend(_fallbackAccentColor, s_white, 0.50),
-                    UISettingsRCW.UIColorType.AccentLight3 => Blend(_fallbackAccentColor, s_white, 0.70),
-                    UISettingsRCW.UIColorType.AccentDark1 => Blend(_fallbackAccentColor, s_black, 0.20),
-                    UISettingsRCW.UIColorType.AccentDark2 => Blend(_fallbackAccentColor, s_black, 0.40),
-                    UISettingsRCW.UIColorType.AccentDark3 => Blend(_fallbackAccentColor, s_black, 0.55),
-                    _ => _fallbackAccentColor,
+                    UISettingsRCW.UIColorType.AccentLight1 => Blend(_baseAccentColor, s_white, 0.30),
+                    UISettingsRCW.UIColorType.AccentLight2 => Blend(_baseAccentColor, s_white, 0.50),
+                    UISettingsRCW.UIColorType.AccentLight3 => Blend(_baseAccentColor, s_white, 0.70),
+                    UISettingsRCW.UIColorType.AccentDark1 => Blend(_baseAccentColor, s_black, 0.20),
+                    UISettingsRCW.UIColorType.AccentDark2 => Blend(_baseAccentColor, s_black, 0.40),
+                    UISettingsRCW.UIColorType.AccentDark3 => Blend(_baseAccentColor, s_black, 0.55),
+                    _ => _baseAccentColor,
                 };
             }
 

@@ -187,7 +187,30 @@ namespace MS.Internal.Interop.Wayland
         internal static bool CallReadUInt32Variant(string destination, string path, string iface, string method,
                                                    string[] args, out uint value)
         {
-            value = 0;
+            uint read = 0;
+            bool ok = CallAndRead(destination, path, iface, method, args, r => ReadUInt32Recursive(r, out read));
+            value = read;
+            return ok;
+        }
+
+        /// <summary>
+        /// A method returning a variant (one or two layers deep, as <see cref="ReadUInt32Recursive"/>
+        /// explains) that holds a struct of three doubles -- the portal's accent colour, (ddd) in 0..1.
+        /// </summary>
+        internal static bool CallReadDoubleTripleVariant(string destination, string path, string iface, string method,
+                                                         string[] args, out double a, out double b, out double c)
+        {
+            double x = 0, y = 0, z = 0;
+            bool ok = CallAndRead(destination, path, iface, method, args, r => ReadDoubleTripleRecursive(r, out x, out y, out z));
+            (a, b, c) = (x, y, z);
+            return ok;
+        }
+
+        private delegate bool ReplyReader(byte* reply);
+
+        // calls a method with string arguments on the session bus and hands its reply's first argument to read
+        private static bool CallAndRead(string destination, string path, string iface, string method, string[] args, ReplyReader read)
+        {
             if (Connection == IntPtr.Zero) return false;
 
             IntPtr msg = dbus_message_new_method_call(destination, path, iface, method);
@@ -216,7 +239,7 @@ namespace MS.Internal.Interop.Wayland
                 {
                     byte* r = stackalloc byte[IterSize];
                     if (dbus_message_iter_init(reply, r) == 0) return false;
-                    return ReadUInt32Recursive(r, out value);
+                    return read(r);
                 }
                 finally
                 {
@@ -227,6 +250,35 @@ namespace MS.Internal.Interop.Wayland
             {
                 dbus_message_unref(msg);
             }
+        }
+
+        private static bool ReadDoubleTripleRecursive(byte* iter, out double a, out double b, out double c)
+        {
+            a = b = c = 0;
+            for (int depth = 0; depth < 8; depth++)
+            {
+                int type = dbus_message_iter_get_arg_type(iter);
+                if (type == DBUS_TYPE_STRUCT)
+                {
+                    byte* field = stackalloc byte[IterSize];
+                    dbus_message_iter_recurse(iter, field);
+                    double* values = stackalloc double[3];
+                    for (int i = 0; i < 3; i++)
+                    {
+                        if (dbus_message_iter_get_arg_type(field) != DBUS_TYPE_DOUBLE) return false;
+                        dbus_message_iter_get_basic(field, &values[i]);
+                        if (i < 2 && dbus_message_iter_next(field) == 0) return false;
+                    }
+                    (a, b, c) = (values[0], values[1], values[2]);
+                    return true;
+                }
+                if (type != DBUS_TYPE_VARIANT) return false;
+
+                byte* sub = stackalloc byte[IterSize];
+                dbus_message_iter_recurse(iter, sub);
+                return ReadDoubleTripleRecursive(sub, out a, out b, out c);
+            }
+            return false;
         }
 
         /// <summary>
