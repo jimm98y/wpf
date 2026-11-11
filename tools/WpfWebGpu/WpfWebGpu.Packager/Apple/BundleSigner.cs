@@ -15,7 +15,11 @@ namespace WpfWebGpu.Packager.Apple;
 public static class BundleSigner
 {
     /// <summary>Signs the bundle at <paramref name="app"/> ad hoc, with <paramref name="entitlements"/> (or none).</summary>
-    public static void SignAdHoc(string app, PlistDict? entitlements)
+    public static void SignAdHoc(string app, PlistDict? entitlements) => Sign(app, entitlements, null);
+
+    /// <summary>Signs the bundle at <paramref name="app"/> with <paramref name="identity"/>'s certificate (ad hoc where
+    /// it is null), with <paramref name="entitlements"/> (or none); its code inside with the same certificate.</summary>
+    public static void Sign(string app, PlistDict? entitlements, MachOSigner.Identity? identity)
     {
         byte[] infoPlist = File.ReadAllBytes(Path.Combine(app, "Info.plist"));
         var info = (PlistDict)Plist.Read(infoPlist);
@@ -24,25 +28,64 @@ public static class BundleSigner
 
         // nested code first: frameworks (bundles of their own), then the loose libraries
         foreach (string framework in Directory.EnumerateDirectories(app, "*.framework", SearchOption.AllDirectories).OrderByDescending(p => p.Length))
-            SignAdHoc(framework, null);
+            Sign(framework, null, identity);
         foreach (string library in Directory.EnumerateFiles(app, "*.dylib", SearchOption.AllDirectories))
             if (!IsInsideFramework(app, library))
-                MachOSigner.SignAdHoc(library, new MachOSigner.Options { Identifier = Path.GetFileNameWithoutExtension(library) });
+                MachOSigner.Sign(library, new MachOSigner.Options { Identifier = Path.GetFileNameWithoutExtension(library) }, identity);
 
         byte[] seal = Seal(app, executable);
         Directory.CreateDirectory(Path.Combine(app, "_CodeSignature"));
         File.WriteAllBytes(Path.Combine(app, "_CodeSignature", "CodeResources"), seal);
-        MachOSigner.SignAdHoc(Path.Combine(app, executable), new MachOSigner.Options
+        MachOSigner.Sign(Path.Combine(app, executable), new MachOSigner.Options
         {
             Identifier = identifier, InfoPlist = infoPlist, CodeResources = seal, Entitlements = entitlements,
             MainExecutable = !app.EndsWith(".framework", StringComparison.Ordinal),
-        });
+        }, identity);
     }
 
     private static bool IsInsideFramework(string app, string path)
     {
         string rel = Path.GetRelativePath(app, path).Replace('\\', '/');
         return rel.Split('/').SkipLast(1).Any(part => part.EndsWith(".framework", StringComparison.Ordinal));
+    }
+
+    /// <summary>An .ipa of the bundles in <paramref name="payload"/> (Payload/&lt;App&gt;.app): the code in it executable, as an
+    /// iPhone installs it -- the archive says so itself, so one made on Windows carries it too.</summary>
+    public static void WriteIpa(string payload, string ipa)
+    {
+        if (File.Exists(ipa)) File.Delete(ipa);
+        using var zip = System.IO.Compression.ZipFile.Open(ipa, System.IO.Compression.ZipArchiveMode.Create);
+        string root = Path.GetDirectoryName(Path.GetFullPath(payload))!;
+        foreach (string file in Directory.EnumerateFiles(payload, "*", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
+        {
+            string name = Path.GetRelativePath(root, file).Replace('\\', '/');
+            var entry = zip.CreateEntry(name, System.IO.Compression.CompressionLevel.Optimal);
+            entry.ExternalAttributes = Convert.ToInt32(IsMachO(file) ? "100755" : "100644", 8) << 16;   // S_IFREG, rwxr-xr-x or rw-r--r--
+            using var to = entry.Open();
+            using var from = File.OpenRead(file);
+            from.CopyTo(to);
+        }
+    }
+
+    private static bool IsMachO(string file)
+    {
+        using var s = File.OpenRead(file);
+        Span<byte> magic = stackalloc byte[4];
+        if (s.Read(magic) != 4) return false;
+        uint m = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(magic);
+        return m is 0xfeedfacf or 0xfeedface or 0xbebafeca;     // 64-bit, 32-bit, universal (as read little-endian)
+    }
+
+    /// <summary>A provisioning profile's content: the plist inside its CMS signature.</summary>
+    public static PlistDict ReadProvisioningProfile(string profile)
+    {
+        try
+        {
+            var cms = new System.Security.Cryptography.Pkcs.SignedCms();
+            cms.Decode(File.ReadAllBytes(profile));
+            return (PlistDict)Plist.Read(cms.ContentInfo.Content);
+        }
+        catch (System.Security.Cryptography.CryptographicException) { throw new PackagerError($"{profile}: not a provisioning profile"); }
     }
 
     // ---- the seal ---------------------------------------------------------------------------------------------

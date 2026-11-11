@@ -49,28 +49,40 @@ public static class IosPackager
         made.Add(sim);
 
         // a device's, when there is an identity to sign it with
+        // signed here with a certificate's .p12 (appleCertificate; its password WPFPKG_APPLE_PASSWORD), on any machine; or by
+        // codesign with an identity in a Mac's keychain (appleSigningIdentity)
         var signing = manifest.Signing;
-        if (signing.AppleSigningIdentity.Length == 0 || signing.AppleProvisioningProfile.Length == 0)
+        bool managed = signing.AppleCertificate.Length > 0;
+        if ((!managed && signing.AppleSigningIdentity.Length == 0) || signing.AppleProvisioningProfile.Length == 0)
         {
-            log("  no device .ipa: signing.appleSigningIdentity and signing.appleProvisioningProfile name the certificate and profile it is signed with");
+            log("  no device .ipa: signing.appleCertificate (a .p12) or appleSigningIdentity (a keychain's), and appleProvisioningProfile, name the certificate and profile it is signed with");
             return made;
         }
-        if (!OperatingSystem.IsMacOS()) throw new PackagerError("a device .ipa is signed on a Mac for now (codesign)");
+        if (!managed && !OperatingSystem.IsMacOS()) throw new PackagerError("a keychain identity signs on a Mac: give signing.appleCertificate (a .p12) to sign anywhere");
         string payload = Path.Combine(work, "Payload");
         if (Directory.Exists(payload)) Directory.Delete(payload, recursive: true);
         string device = Path.Combine(payload, FileName(label) + ".app");
         Fill(Path.Combine(pack.Directory, "device", "WpfRunBundle.app"), device, manifest, entry, staged, app, id, label, group, apps, installation);
         File.Copy(signing.AppleProvisioningProfile, Path.Combine(device, "embedded.mobileprovision"), overwrite: true);
-        string entitlements = Path.Combine(work, "entitlements.plist");
-        File.WriteAllBytes(entitlements, Entitlements(signing.AppleProvisioningProfile, id, group, log));
-        // what the bundle holds that is code of its own first (frameworks, dylibs), then the bundle
-        foreach (string nested in NestedCode(device))
-            Run("/usr/bin/codesign", "--force", "--sign", signing.AppleSigningIdentity, "--timestamp=none", nested);
-        Run("/usr/bin/codesign", "--force", "--sign", signing.AppleSigningIdentity, "--entitlements", entitlements, "--timestamp=none", device);
+        PlistDict entitlementsDict = Entitlements(signing.AppleProvisioningProfile, id, group, log);
+        if (managed)
+        {
+            var identity = MachOSigner.Identity.Load(signing.AppleCertificate, Environment.GetEnvironmentVariable("WPFPKG_APPLE_PASSWORD"));
+            BundleSigner.Sign(device, entitlementsDict, identity);
+            log($"  signed by {identity.Certificate.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false)}{(identity.TeamId != null ? " (team " + identity.TeamId + ")" : "")}");
+        }
+        else
+        {
+            string entitlements = Path.Combine(work, "entitlements.plist");
+            File.WriteAllBytes(entitlements, Plist.WriteXml(entitlementsDict));
+            // what the bundle holds that is code of its own first (frameworks, dylibs), then the bundle
+            foreach (string nested in NestedCode(device))
+                Run("/usr/bin/codesign", "--force", "--sign", signing.AppleSigningIdentity, "--timestamp=none", nested);
+            Run("/usr/bin/codesign", "--force", "--sign", signing.AppleSigningIdentity, "--entitlements", entitlements, "--timestamp=none", device);
+        }
         string ipa = Path.Combine(outDir, platform, FileName(label) + ".ipa");
         Directory.CreateDirectory(Path.GetDirectoryName(ipa)!);
-        if (File.Exists(ipa)) File.Delete(ipa);
-        ZipFile.CreateFromDirectory(payload, ipa, CompressionLevel.Optimal, includeBaseDirectory: true);
+        BundleSigner.WriteIpa(payload, ipa);
         log($"{ipa} ({new FileInfo(ipa).Length / (1024 * 1024)} MB)");
         made.Add(ipa);
         return made;
@@ -135,22 +147,16 @@ public static class IosPackager
     }
 
     /// <summary>The entitlements the profile grants, its application identifier made this bundle's.</summary>
-    private static byte[] Entitlements(string profile, string id, string group, Action<string> log)
+    private static PlistDict Entitlements(string profile, string id, string group, Action<string> log)
     {
-        var psi = new ProcessStartInfo("/usr/bin/security") { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (string a in new[] { "cms", "-D", "-i", profile }) psi.ArgumentList.Add(a);
-        using var p = Process.Start(psi)!;
-        string xml = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        if (p.ExitCode != 0) throw new PackagerError($"{profile}: not a provisioning profile");
-        var decoded = (PlistDict)Plist.Read(Encoding.UTF8.GetBytes(xml));
+        var decoded = BundleSigner.ReadProvisioningProfile(profile);
         var entitlements = decoded["Entitlements"] as PlistDict ?? new PlistDict();
         if (entitlements["application-identifier"] is string appId && appId.EndsWith(".*", StringComparison.Ordinal))
             entitlements["application-identifier"] = appId[..^1] + id;
         // the installation's App Group: only what the profile grants can be claimed
         if (entitlements["com.apple.security.application-groups"] is not List<object> groups || !groups.Contains(group))
             log($"  {profile} grants no App Group {group}: the apps keep a machine state each (add the group to the app id and the profile)");
-        return Plist.WriteXml(entitlements);
+        return entitlements;
     }
 
     /// <summary>The App Group the simulator template's executable is linked with (the simulator reads an app's
