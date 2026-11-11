@@ -142,6 +142,25 @@
         </DockPanel>
       </TabItem>
 
+      <TabItem Header="Paths">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Top">
+            <TextBlock Style="{StaticResource Heading}" Text="Path mappings" />
+            <TextBlock Style="{StaticResource Hint}" Text="The Windows folders the registry's values name, and what each becomes where the package is installed: ${WPFRUN_INSTALLDIR} (the installation's folder) and ${WPFRUN_PROGRAMDATA} (the machine's ProgramData). Scan finds them; add one for a folder it missed (a second drive, an older install path)." />
+          </StackPanel>
+          <StackPanel DockPanel.Dock="Right" Margin="8,0,0,0">
+            <Button Content="Add" Click="OnAddMapping" />
+            <Button Content="Remove" Click="OnRemoveMapping" />
+          </StackPanel>
+          <DataGrid x:Name="MappingsGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+              <DataGridTextColumn Header="Windows folder" Binding="{Binding From}" Width="*" />
+              <DataGridTextColumn Header="Installed as" Binding="{Binding To}" Width="*" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
+
       <TabItem Header="SQL Server">
         <StackPanel>
           <TextBlock Style="{StaticResource Heading}" Text="SQL Server" />
@@ -243,7 +262,9 @@
               <Button Grid.Row="1" Grid.Column="2" Content="Browse…" Click="OnBrowsePacks" />
             </Grid>
             <StackPanel Orientation="Horizontal" Margin="0,8,0,8">
-              <CheckBox x:Name="FastBuild" Content="For testing: nothing compressed" />
+              <CheckBox x:Name="FastBuild" Content="For testing: nothing compressed" VerticalAlignment="Center" />
+              <CheckBox x:Name="AotBuild" Content="Web pages compiled ahead of time" Margin="16,0,0,0" VerticalAlignment="Center"
+                        IsEnabled="False" ToolTipService.ShowOnDisabled="True" ToolTip="Looking for the .NET SDK and its wasm-tools workload…" />
               <Button x:Name="BuildButton" Content="Build" MinWidth="120" Margin="24,4,0,4" Click="OnBuild" />
               <TextBlock x:Name="BuildStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
             </StackPanel>

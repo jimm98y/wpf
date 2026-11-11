@@ -98,7 +98,7 @@ internal static partial class Bundle
 
     private static int Dotnet(bool verbose, params string[] args)
     {
-        var psi = new ProcessStartInfo("dotnet") { UseShellExecute = false };
+        var psi = new ProcessStartInfo(SdkDotnet()) { UseShellExecute = false };
         foreach (string a in args) psi.ArgumentList.Add(a);
         if (!verbose) psi.ArgumentList.Add("-v:q");
         using var p = Process.Start(psi)!;
@@ -107,6 +107,73 @@ internal static partial class Bundle
     }
 
     internal static string? FindFeedForPack() => FindFeed();
+
+    // the .NET SDK's dotnet: on PATH, else where its installers put it (an app opened from the Finder or a desktop
+    // menu has a PATH without /usr/local/bin or ~/.dotnet)
+    private static string SdkDotnet()
+    {
+        string name = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        // the dotnet running wpfrun, where it is an SDK (an installation's private runtime is not)
+        if (Environment.ProcessPath is string self && Path.GetFileName(self) == name && Directory.Exists(Path.Combine(Path.GetDirectoryName(self)!, "sdk")))
+            return self;
+        foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            if (File.Exists(Path.Combine(dir, name))) return Path.Combine(dir, name);
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        string[] candidates = OperatingSystem.IsWindows()
+            ? new[] { Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", name), Path.Combine(home, ".dotnet", name) }
+            : new[] { "/usr/local/share/dotnet/dotnet", "/opt/homebrew/bin/dotnet", "/usr/share/dotnet/dotnet", "/usr/lib/dotnet/dotnet", Path.Combine(home, ".dotnet", "dotnet") };
+        return candidates.FirstOrDefault(File.Exists) ?? name;
+    }
+
+    private static string? s_aotUnavailable;
+    private static bool s_aotChecked;
+
+    /// <summary>Why a page cannot be compiled ahead of time here -- no WpfWebGpu.Sdk feed beside wpfrun, no .NET
+    /// SDK, no wasm-tools workload -- or null when it can.</summary>
+    internal static string? AotUnavailable()
+    {
+        if (s_aotChecked) return s_aotUnavailable;
+        s_aotChecked = true;
+        if (FindFeed() == null) return s_aotUnavailable = "no WpfWebGpu.Sdk feed beside wpfrun (artifacts/local-feed)";
+        try
+        {
+            var psi = new ProcessStartInfo(SdkDotnet()) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            psi.ArgumentList.Add("workload");
+            psi.ArgumentList.Add("list");
+            using var p = Process.Start(psi)!;
+            string output = p.StandardOutput.ReadToEnd();
+            p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            if (p.ExitCode != 0) return s_aotUnavailable = "no .NET SDK (dotnet workload list failed)";
+            if (!output.Contains("wasm-tools", StringComparison.Ordinal)) return s_aotUnavailable = "the wasm-tools workload is not installed (dotnet workload install wasm-tools)";
+        }
+        catch (System.ComponentModel.Win32Exception) { return s_aotUnavailable = "no .NET SDK (dotnet) on PATH"; }
+        return s_aotUnavailable = null;
+    }
+
+    /// <summary>The browser page of <paramref name="exe"/> compiled ahead of time into <paramref name="outDir"/>, the
+    /// machine's state from <paramref name="stateDir"/> (registry/, ProgramData/, as wpfrun keeps it).</summary>
+    internal static bool BuildAotPage(string exe, string stateDir, string outDir)
+    {
+        string? previous = Environment.GetEnvironmentVariable("WPFRUN_STATE");
+        Environment.SetEnvironmentVariable("WPFRUN_STATE", stateDir);
+        // the publish leaves the site in wwwroot/ beside the build's leftovers; the page is that folder alone
+        string publish = outDir + ".publish";
+        try
+        {
+            if (Directory.Exists(publish)) Directory.Delete(publish, recursive: true);
+            if (Run(new[] { "--aot", "--out", publish, exe }) != 0) return false;
+            string site = Path.Combine(publish, "wwwroot");
+            if (!File.Exists(Path.Combine(site, "index.html"))) return false;
+            if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outDir))!);
+            Directory.Move(site, outDir);
+            Directory.Delete(publish, recursive: true);
+            return true;
+        }
+        catch (UserError e) { Console.Error.WriteLine("wpfrun bundle: " + e.Message); return false; }
+        finally { Environment.SetEnvironmentVariable("WPFRUN_STATE", previous); }
+    }
     internal static int DotnetForPack(bool verbose, params string[] args) => Dotnet(verbose, args);
     internal static string OpenXrLoaderForPack() => OpenXrLoader();
 
@@ -115,8 +182,9 @@ internal static partial class Bundle
     {
         for (string? d = AppContext.BaseDirectory; d != null; d = Path.GetDirectoryName(d.TrimEnd(Path.DirectorySeparatorChar)))
         {
-            string candidate = Path.Combine(d, "local-feed");
-            if (Directory.Exists(candidate) && Directory.EnumerateFiles(candidate, "WpfWebGpu.Sdk.*.nupkg").Any()) return candidate;
+            // beside wpfrun's build (artifacts/wpfrun/<rid>/launcher), or the repository's artifacts above a dev build
+            foreach (string candidate in new[] { Path.Combine(d, "local-feed"), Path.Combine(d, "artifacts", "local-feed") })
+                if (Directory.Exists(candidate) && Directory.EnumerateFiles(candidate, "WpfWebGpu.Sdk.*.nupkg").Any()) return candidate;
         }
         return null;
     }

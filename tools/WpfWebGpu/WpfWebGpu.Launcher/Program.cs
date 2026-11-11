@@ -104,7 +104,8 @@ internal static class Program
                 "compare" => CompareCommand(args[1..]),
                 "clean" => Clean(args[1..]),
                 "reg" => RegFile.Run(args[1..]),
-                "package" => WpfWebGpu.Packager.PackagerCli.Run(args[1..]),
+                "package" => PackageCommand(args[1..]),
+                "aot-page" => AotPageCommand(args[1..]),
                 "pack" => Pack.Run(args[1..]),
                 "startup" => Startup.Run(args[1..]),
                 "httpsys" => HttpSysCommand.Run(args[1..]),
@@ -180,6 +181,29 @@ internal static class Program
         // the same, quoted as a Windows command line takes it (a service's image path, a shortcut)
         Console.WriteLine($"commandline: {string.Join(' ', new[] { p.StartInfo.FileName }.Concat(p.StartInfo.ArgumentList).Select(WindowsQuote))}");
         return 0;
+    }
+
+    // `wpfrun package`: the Packager's command line, an ahead-of-time page built here with the real toolchain where
+    // the manifest asks for one (Bundle's browser head, its state the installation's)
+    private static int PackageCommand(string[] args)
+    {
+        WpfWebGpu.Packager.Desktop.WebPages.AotUnavailable = Bundle.AotUnavailable;
+        WpfWebGpu.Packager.Desktop.WebPages.AotBuilder = (page, log) => Bundle.BuildAotPage(page.Exe, page.StateDir, page.OutDir);
+        return WpfWebGpu.Packager.PackagerCli.Run(args);
+    }
+
+    // the Packager app's ahead-of-time web pages, built by this launcher beside it: `aot-page --check` prints why
+    // they cannot be (exit 1), `aot-page <exe> <state dir> <out dir>` builds one
+    private static int AotPageCommand(string[] args)
+    {
+        if (args is ["--check"])
+        {
+            string? why = Bundle.AotUnavailable();
+            if (why != null) Console.WriteLine(why);
+            return why == null ? 0 : 1;
+        }
+        if (args.Length != 3) throw new UserError("usage: wpfrun aot-page --check | aot-page <program.exe> <state dir> <out dir>");
+        return Bundle.BuildAotPage(args[0], args[1], args[2]) ? 0 : 1;
     }
 
     private static int CompareCommand(string[] args)

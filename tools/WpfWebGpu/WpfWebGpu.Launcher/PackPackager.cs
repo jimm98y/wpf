@@ -44,6 +44,14 @@ internal static class PackPackager
 
         CopyTree(Path.Combine(desktop.Directory, "runtime"), Path.Combine(root, "runtime"));
         CopyTree(published, Path.Combine(root, "app"));
+        // the stack's packages beside the launcher, for the web pages compiled ahead of time where the machine has
+        // the .NET SDK and its wasm-tools workload (the Packager offers them only then)
+        if (Bundle.FindFeedForPack() is string feed)
+            foreach (string package in Directory.EnumerateFiles(feed, "WpfWebGpu.*.nupkg"))
+            {
+                Directory.CreateDirectory(Path.Combine(root, "runtime", "launcher", "local-feed"));
+                File.Copy(package, Path.Combine(root, "runtime", "launcher", "local-feed", Path.GetFileName(package)), overwrite: true);
+            }
         int packs = 0;
         foreach (string pack in Directory.EnumerateFiles(packsDir, "*.pack"))
         {

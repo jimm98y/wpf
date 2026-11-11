@@ -40,6 +40,16 @@ public partial class MainWindow : Window
         }
         PacksFolder.Text = PackFile.DefaultFolder;
         Show(new PackageManifest(), null);
+        _ = CheckAotAsync();
+    }
+
+    // the ahead-of-time pages offered only where this machine can build them; why not, where it cannot
+    private async Task CheckAotAsync()
+    {
+        string? why = await Task.Run(AotPages.Unavailable);
+        AotBuild.IsEnabled = why == null;
+        AotBuild.ToolTip = why == null ? "Faster pages, built with this machine's .NET SDK and its wasm-tools workload (slow to build)" : "Not available: " + why;
+        if (why != null) AotBuild.IsChecked = false;
     }
 
     private static string TargetName(Target target) => target switch
@@ -61,6 +71,7 @@ public partial class MainWindow : Window
         Refresh();
         foreach (var (target, box) in _targets) box.IsChecked = manifest.Output.Targets.Contains(target);
         FastBuild.IsChecked = manifest.Output.Fast;
+        AotBuild.IsChecked = manifest.Output.Aot;
         OutputFolder.Text = manifest.Output.Directory;
     }
 
@@ -75,6 +86,8 @@ public partial class MainWindow : Window
         AppsGrid.ItemsSource = _manifest.Apps;
         ServicesGrid.ItemsSource = null;
         ServicesGrid.ItemsSource = _manifest.Services;
+        MappingsGrid.ItemsSource = null;
+        MappingsGrid.ItemsSource = _manifest.PathMappings;
     }
 
     // what the Build page holds, into the manifest
@@ -82,6 +95,7 @@ public partial class MainWindow : Window
     {
         _manifest.Output.Targets = _targets.Where(t => t.Value.IsChecked == true).Select(t => t.Key).ToList();
         _manifest.Output.Fast = FastBuild.IsChecked == true;
+        _manifest.Output.Aot = AotBuild.IsChecked == true;
         _manifest.Output.Directory = OutputFolder.Text.Trim();
     }
 
@@ -195,6 +209,21 @@ public partial class MainWindow : Window
             Error(ex.Message);
         }
         finally { Busy(false); }
+    }
+
+    // ---- path mappings --------------------------------------------------------------------------------------
+
+    private void OnAddMapping(object sender, RoutedEventArgs e)
+    {
+        MappingsGrid.CommitEdit();
+        _manifest.PathMappings.Add(new PathMapping { From = @"C:\", To = PathTokens.InstallDir });
+        Refresh();
+        MappingsGrid.SelectedIndex = _manifest.PathMappings.Count - 1;
+    }
+
+    private void OnRemoveMapping(object sender, RoutedEventArgs e)
+    {
+        if (MappingsGrid.SelectedItem is PathMapping mapping) { _manifest.PathMappings.Remove(mapping); Refresh(); }
     }
 
     // ---- signing, output ------------------------------------------------------------------------------------

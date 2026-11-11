@@ -16,6 +16,20 @@ public static class WebPages
     /// <summary>A page: the app, where it is served (its URL path) and the folder it is in (under web/).</summary>
     public sealed record Page(AppEntry App, string UrlPath, string Folder, string Built);
 
+    /// <summary>An ahead-of-time compiled page asked for (output.aot): the app's .exe, the machine's state laid out
+    /// as wpfrun keeps it (registry/*.reg, ProgramData/...), and the folder the page goes to.</summary>
+    public sealed record AotPage(string Exe, string StateDir, string OutDir);
+
+    /// <summary>
+    /// What builds an ahead-of-time compiled page -- the real toolchain (the .NET SDK with the wasm-tools workload) through
+    /// wpfrun's bundle, which the host of this engine supplies (wpfrun's own command line, the Packager app) -- or null:
+    /// where none is set, or it answers why not (<see cref="AotUnavailable"/>), the page is the interpreted template's.
+    /// </summary>
+    public static Func<AotPage, Action<string>, bool>? AotBuilder { get; set; }
+
+    /// <summary>Why an AOT page cannot be built here (no SDK, no workload, no feed), or null when it can.</summary>
+    public static Func<string?>? AotUnavailable { get; set; }
+
     /// <summary>The URL path an app's page is served at: its webPath, else /webassembly/&lt;its name, lower case&gt;.</summary>
     public static string UrlPath(PackageManifest manifest, AppEntry app)
     {
@@ -51,6 +65,7 @@ public static class WebPages
             string folder = url.Trim('/').Replace('/', '-');
             string built = Path.Combine(workDir, "web", folder);
             if (Directory.Exists(built)) Directory.Delete(built, recursive: true);
+            if (manifest.Output.Aot && TryAot(manifest, staged, entry, url, folder, built, workDir, log, pages)) continue;
             var app = MobileApp.Prepare(manifest.Inputs.InstallDir, entry, provided, new[] { refs }, Path.Combine(workDir, "web-work", folder), log, Path.Combine(pack.Directory, "frameworks"));
 
             foreach (string f in Directory.EnumerateFiles(site, "*", SearchOption.AllDirectories))
@@ -88,6 +103,41 @@ public static class WebPages
             pages.Add(new Page(entry, url, folder, built));
         }
         return pages;
+    }
+
+    // the page compiled ahead of time by the host's builder, the machine's state given it as wpfrun keeps it (the
+    // installation's paths as the page has them); false where it cannot be (the interpreted page is made instead)
+    private static bool TryAot(PackageManifest manifest, StagedState staged, AppEntry entry, string url, string folder, string built, string workDir,
+        Action<string> log, List<Page> pages)
+    {
+        string? why = AotBuilder == null ? "no ahead-of-time builder in this host" : AotUnavailable?.Invoke();
+        if (why != null)
+        {
+            log($"  web page {entry.Exe}: interpreted ({why})");
+            return false;
+        }
+        string state = Path.Combine(workDir, "web-aot-state", folder);
+        if (Directory.Exists(state)) Directory.Delete(state, recursive: true);
+        Directory.CreateDirectory(Path.Combine(state, "registry"));
+        foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg"))
+            File.WriteAllText(Path.Combine(state, "registry", Path.GetFileName(hive)), File.ReadAllText(hive)
+                .Replace(PathTokens.ProgramData, "/state/ProgramData", StringComparison.Ordinal)
+                .Replace(PathTokens.InstallDir, "/install", StringComparison.Ordinal));
+        var excludes = new GlobSet(manifest.MobileExclude);
+        foreach (var (source, target) in staged.ProgramDataFiles)
+            if (!excludes.Matches(target) && !target.Contains("/DataHistorian/", StringComparison.OrdinalIgnoreCase))
+                Copy(source, Path.Combine(state, "ProgramData", target));
+        log($"  web page {entry.Exe}: compiling ahead of time (wasm-tools)");
+        if (!AotBuilder!(new AotPage(Path.Combine(manifest.Inputs.InstallDir, entry.Exe), state, built), log) || !File.Exists(Path.Combine(built, "index.html")))
+        {
+            log($"  web page {entry.Exe}: the ahead-of-time build failed; interpreted instead");
+            if (Directory.Exists(built)) Directory.Delete(built, recursive: true);
+            return false;
+        }
+        File.WriteAllText(Path.Combine(built, "web.config"), WebConfig);
+        log($"  web page: {entry.Exe} at {url} (ahead of time)");
+        pages.Add(new Page(entry, url, folder, built));
+        return true;
     }
 
     /// <summary>A page's web.config: cross-origin isolated, and the runtime's files' content types.</summary>
