@@ -1,11 +1,16 @@
-// APK Signature Scheme v2 (Android 7+; the Packager's APKs need Android 8): the whole file signed, in a block
-// between the zip entries and the central directory. What the platform's apksigner writes, in managed code:
+// APK Signature Schemes v2 (Android 7+; the Packager's APKs need Android 8) and v3 (Android 9+), both: the whole
+// file signed, in a block between the zip entries and the central directory. What the platform's apksigner writes,
+// in managed code:
 //
 //   digest  = SHA-256 over 1 MB chunks of the entries, the central directory and its end record (whose
 //             directory offset is taken as where the block starts), each chunk 0xa5 | length | bytes, and
 //             the chunks' digests 0x5a | count | digests
 //   signer  = signed data (the digest, the certificate), its signature, the public key
-//   block   = size | (id 0x7109871a, the signers) | size | "APK Sig Block 42"
+//   block   = size | (id 0x7109871a, the v2 signers) | (id 0xf05368c0, the v3 signers) | size | "APK Sig Block 42"
+//
+// v3's signer is v2's with the SDK range it covers (28 up) in its signed data and beside it. Where both are there,
+// v2's signed data says so (the stripping-protection attribute naming scheme 3): a device that knows v3 then
+// refuses the APK if someone took the v3 block out to fall back on v2.
 //
 // The key: the user's (a PKCS#12 file, as keytool writes them), or a debug key the Packager makes once and
 // keeps, so that each build of an app installs over the one before.
@@ -18,7 +23,9 @@ namespace WpfWebGpu.Packager.Android;
 
 public static class ApkSigner
 {
-    private const uint V2BlockId = 0x7109871a;
+    private const uint V2BlockId = 0x7109871a, V3BlockId = 0xf05368c0;
+    private const uint StrippingProtection = 0xbeeff00d, V3SchemeId = 3;
+    private const uint V3MinSdk = 28, MaxSdk = int.MaxValue;
     private const uint RsaPkcs1Sha256 = 0x0103, EcdsaSha256 = 0x0201;
     private const int Chunk = 1 << 20;
 
@@ -40,23 +47,32 @@ public static class ApkSigner
         if (rsa == null && ec == null) throw new PackagerError("the signing certificate has no RSA or EC private key");
         uint algorithm = rsa != null ? RsaPkcs1Sha256 : EcdsaSha256;
 
-        // signed data: digests, certificates, additional attributes
-        byte[] signedData = Concat(
-            LengthPrefixed(LengthPrefixed(Concat(U32(algorithm), LengthPrefixed(digest)))),
-            LengthPrefixed(LengthPrefixed(certificate.RawData)),
-            LengthPrefixed(Array.Empty<byte>()));
-        byte[] signature = rsa != null
-            ? rsa.SignData(signedData, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
-            : ec!.SignData(signedData, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+        byte[] digests = LengthPrefixed(LengthPrefixed(Concat(U32(algorithm), LengthPrefixed(digest))));
+        byte[] certificates = LengthPrefixed(LengthPrefixed(certificate.RawData));
         byte[] publicKey = certificate.PublicKey.ExportSubjectPublicKeyInfo();
-        byte[] signer = Concat(
-            LengthPrefixed(signedData),
-            LengthPrefixed(LengthPrefixed(Concat(U32(algorithm), LengthPrefixed(signature)))),
-            LengthPrefixed(publicKey));
-        byte[] value = LengthPrefixed(LengthPrefixed(signer));
+        byte[] Sign(byte[] data) => rsa != null
+            ? rsa.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+            : ec!.SignData(data, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+        // the sequence of signatures (one), each algorithm | signature; the signer prefixes the sequence's length
+        byte[] Signatures(byte[] data) => LengthPrefixed(Concat(U32(algorithm), LengthPrefixed(Sign(data))));
 
-        // the block: its size (not counting this field), the pair, its size again, the magic
-        byte[] pair = Concat(U64((ulong)(4 + value.Length)), U32(V2BlockId), value);
+        // v2: signed data (digests, certificates, additional attributes), its signatures, the public key
+        byte[] v2Attributes = LengthPrefixed(LengthPrefixed(Concat(U32(StrippingProtection), U32(V3SchemeId))));
+        byte[] v2Data = Concat(digests, certificates, v2Attributes);
+        byte[] v2Signer = Concat(LengthPrefixed(v2Data), LengthPrefixed(Signatures(v2Data)), LengthPrefixed(publicKey));
+
+        // v3: the same, with the SDK range in the signed data and again beside it
+        byte[] v3Data = Concat(digests, certificates, U32(V3MinSdk), U32(MaxSdk), LengthPrefixed(Array.Empty<byte>()));
+        byte[] v3Signer = Concat(LengthPrefixed(v3Data), U32(V3MinSdk), U32(MaxSdk), LengthPrefixed(Signatures(v3Data)), LengthPrefixed(publicKey));
+
+        static byte[] Pair(uint id, byte[] signer)
+        {
+            byte[] value = LengthPrefixed(LengthPrefixed(signer));
+            return Concat(U64((ulong)(4 + value.Length)), U32(id), value);
+        }
+        byte[] pair = Concat(Pair(V2BlockId, v2Signer), Pair(V3BlockId, v3Signer));
+
+        // the block: its size (not counting this field), the pairs, its size again, the magic
         long blockSize = pair.Length + 8 + 16;
         byte[] block = Concat(U64((ulong)blockSize), pair, U64((ulong)blockSize), "APK Sig Block 42"u8.ToArray());
 
