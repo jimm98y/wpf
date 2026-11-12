@@ -33,7 +33,7 @@
 
   <ItemGroup>
     <!-- ServiceBase.EventLog. Compiled against the package; binds whatever EventLog the app runs with. -->
-    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
     <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 

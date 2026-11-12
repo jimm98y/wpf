@@ -233,16 +233,16 @@
          referenced as VENDORED local DLLs above (their PackageReference identity would make the SDK treat
          them as WindowsDesktop-framework and drop them from the wasm publish). -->
     <!-- Vendored above; ExcludeAssets=all so the package identity doesn't re-classify it as framework. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" ExcludeAssets="all" />
-    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" ExcludeAssets="all" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.15" ExcludeAssets="all" />
     <!-- Neutralize the TRANSITIVE System.Windows.Extensions (pulled by System.Security.Permissions etc.):
          its package identity would win reference resolution and be excluded from publish as WindowsDesktop-
          framework. ExcludeAssets=all suppresses all its assets so our vendored local copy (referenced above)
          is the sole provider and actually publishes. -->
-    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" ExcludeAssets="all" />
-    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.15" ExcludeAssets="all" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Keep the served JS interop modules in sync with their sources in the WPF tree.

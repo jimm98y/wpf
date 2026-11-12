@@ -74,7 +74,7 @@
   <!-- Legacy CAS types (UIPermission etc.) that Mono System.Windows.Forms references; needed on the
        bundle so the trimmer/AOT can resolve them. -->
   <ItemGroup>
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Strip the framework System.Drawing.* (dragged in transitively) so our vendored

@@ -129,24 +129,24 @@
     <!-- Support packages WPF needs off the WindowsDesktop framework reference. Identical on every
          head: on Windows they resolve to the real Win32-backed implementations, elsewhere to the
          cross-platform ones (with our shims overlaid where the framework's are throw-only). -->
-    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
-    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
-    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
-    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.15" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.15" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.15" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.15" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
     <!-- the rest of WindowsDesktop's own: an app built for it references them as part of its framework
          and ships none of them (app's configurator compiles scripts with System.CodeDom) -->
-    <PackageReference Include="System.CodeDom" Version="10.0.10" />
-    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.10" />
-    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.10" />
-    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.10" />
-    <PackageReference Include="System.Threading.AccessControl" Version="10.0.10" />
+    <PackageReference Include="System.CodeDom" Version="10.0.15" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="10.0.15" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.15" />
+    <PackageReference Include="System.Threading.AccessControl" Version="10.0.15" />
     <!-- WindowsDesktop's: the reader of every resource that is not a string (a .resx's bitmaps and icons),
          named in the resources themselves and so reached by name alone. -->
-    <PackageReference Include="System.Resources.Extensions" Version="10.0.10" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="System.Resources.Extensions" Version="10.0.15" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.15" />
 
     <!-- The font bundle, on the heads with no system fonts this renderer can use. It is a package
          rather than part of this SDK because it is 27 MB and the Windows head never reads it; see

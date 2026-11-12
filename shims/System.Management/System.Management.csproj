@@ -35,7 +35,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.CodeDom" Version="10.0.10" />
+    <PackageReference Include="System.CodeDom" Version="10.0.15" />
     <ProjectReference Include="../../tools/WpfWebGpu/WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
   </ItemGroup>
 

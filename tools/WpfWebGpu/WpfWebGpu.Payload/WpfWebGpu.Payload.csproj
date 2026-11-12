@@ -25,7 +25,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>WpfWebGpu.Payload</AssemblyName>
     <SelfContained>false</SelfContained>
-    <WpfWebGpuExtrasVersion>10.0.10</WpfWebGpuExtrasVersion>
+    <WpfWebGpuExtrasVersion>10.0.15</WpfWebGpuExtrasVersion>
     <!-- Nothing in this project is ever trimmed or run; the warnings about the payload's own code
          being empty are noise. -->
     <NoWarn>$(NoWarn);NU1603;CS7022</NoWarn>

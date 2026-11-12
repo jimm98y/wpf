@@ -137,23 +137,23 @@
   <ItemGroup>
     <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath></Reference>
     <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath></Reference>
-    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.15" ExcludeAssets="all" />
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
   </ItemGroup>
 
   <!-- Assemblies the WPF closure names but no Android path reaches. They still have to RESOLVE for
        the build to complete. -->
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
-    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
-    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.15" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.15" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.15" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.15" />
     <!-- The REAL assembly, not the WindowsDesktop reference: mono-aot-cross reads signatures out of
          it while compiling PresentationCore, and a reference assembly answers with the wrong
          identity. See WpfStageAotResolvableRefs below. -->
-    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.15" />
   </ItemGroup>
 
   <PropertyGroup>

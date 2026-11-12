@@ -18,20 +18,20 @@ This file should be imported by eng/Versions.props
     <MicrosoftPrivateWinformsPackageVersion>10.0.10-servicing.26319.104</MicrosoftPrivateWinformsPackageVersion>
     <MicrosoftSourceLinkAzureReposGitPackageVersion>8.0.0-beta.23409.2</MicrosoftSourceLinkAzureReposGitPackageVersion>
     <MicrosoftSourceLinkGitHubPackageVersion>8.0.0-beta.23409.2</MicrosoftSourceLinkGitHubPackageVersion>
-    <SystemCodeDomPackageVersion>10.0.10</SystemCodeDomPackageVersion>
-    <SystemConfigurationConfigurationManagerPackageVersion>10.0.10</SystemConfigurationConfigurationManagerPackageVersion>
-    <SystemDiagnosticsEventLogPackageVersion>10.0.10</SystemDiagnosticsEventLogPackageVersion>
-    <SystemDirectoryServicesPackageVersion>10.0.10</SystemDirectoryServicesPackageVersion>
-    <SystemDrawingCommonPackageVersion>10.0.10</SystemDrawingCommonPackageVersion>
-    <SystemFormatsNrbfPackageVersion>10.0.10</SystemFormatsNrbfPackageVersion>
-    <SystemIOPackagingPackageVersion>10.0.10</SystemIOPackagingPackageVersion>
+    <SystemCodeDomPackageVersion>10.0.15</SystemCodeDomPackageVersion>
+    <SystemConfigurationConfigurationManagerPackageVersion>10.0.15</SystemConfigurationConfigurationManagerPackageVersion>
+    <SystemDiagnosticsEventLogPackageVersion>10.0.15</SystemDiagnosticsEventLogPackageVersion>
+    <SystemDirectoryServicesPackageVersion>10.0.15</SystemDirectoryServicesPackageVersion>
+    <SystemDrawingCommonPackageVersion>10.0.15</SystemDrawingCommonPackageVersion>
+    <SystemFormatsNrbfPackageVersion>10.0.15</SystemFormatsNrbfPackageVersion>
+    <SystemIOPackagingPackageVersion>10.0.15</SystemIOPackagingPackageVersion>
     <SystemPrivateWindowsCoreTestUtilitiesPackageVersion>10.0.10-servicing.26319.104</SystemPrivateWindowsCoreTestUtilitiesPackageVersion>
-    <SystemReflectionMetadataLoadContextPackageVersion>10.0.10</SystemReflectionMetadataLoadContextPackageVersion>
-    <SystemResourcesExtensionsPackageVersion>10.0.10</SystemResourcesExtensionsPackageVersion>
-    <SystemRuntimeSerializationFormattersPackageVersion>10.0.10</SystemRuntimeSerializationFormattersPackageVersion>
-    <SystemSecurityCryptographyXmlPackageVersion>10.0.10</SystemSecurityCryptographyXmlPackageVersion>
-    <SystemSecurityPermissionsPackageVersion>10.0.10</SystemSecurityPermissionsPackageVersion>
-    <SystemWindowsExtensionsPackageVersion>10.0.10</SystemWindowsExtensionsPackageVersion>
+    <SystemReflectionMetadataLoadContextPackageVersion>10.0.15</SystemReflectionMetadataLoadContextPackageVersion>
+    <SystemResourcesExtensionsPackageVersion>10.0.15</SystemResourcesExtensionsPackageVersion>
+    <SystemRuntimeSerializationFormattersPackageVersion>10.0.15</SystemRuntimeSerializationFormattersPackageVersion>
+    <SystemSecurityCryptographyXmlPackageVersion>10.0.15</SystemSecurityCryptographyXmlPackageVersion>
+    <SystemSecurityPermissionsPackageVersion>10.0.15</SystemSecurityPermissionsPackageVersion>
+    <SystemWindowsExtensionsPackageVersion>10.0.15</SystemWindowsExtensionsPackageVersion>
     <!-- dotnet-wpf-int dependencies -->
     <MicrosoftDotNetWpfDncEngPackageVersion>10.0.5-servicing.26309.4</MicrosoftDotNetWpfDncEngPackageVersion>
   </PropertyGroup>

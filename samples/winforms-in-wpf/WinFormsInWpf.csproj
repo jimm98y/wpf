@@ -66,14 +66,14 @@
   </Target>
 
   <ItemGroup>
-    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
-    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
-    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
-    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.15" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.15" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.15" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.15" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.15" />
   </ItemGroup>
 
   <!-- wgpu-native next to the app so PresentationCore's reflection loader resolves it. -->

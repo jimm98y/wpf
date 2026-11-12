@@ -84,7 +84,7 @@
   <ItemGroup>
     <Reference Include="Microsoft.Win32.SystemEvents"><HintPath>$(_Art)/Microsoft.Win32.SystemEvents/Release/net10.0/Microsoft.Win32.SystemEvents.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Microsoft.Win32.Registry">    <HintPath>$(_Art)/Microsoft.Win32.Registry/Release/net10.0/Microsoft.Win32.Registry.dll</HintPath><Private>true</Private></Reference>
-    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.10" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="10.0.15" ExcludeAssets="all" />
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" ExcludeAssets="all" />
   </ItemGroup>
 
@@ -108,25 +108,25 @@
 
   <!-- Assemblies the WPF closure names but this app never reaches; they still have to RESOLVE. -->
   <ItemGroup>
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
-    <PackageReference Include="System.CodeDom" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" />
+    <PackageReference Include="System.CodeDom" Version="10.0.15" />
     <!-- Application's static constructor loads it (resource/pack URI support), so it is needed at
          startup, not merely at resolve time. -->
-    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.15" />
     <!-- FrameworkCompatibilityPreferences reads app.config switches during theme loading. -->
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.15" />
     <!-- Brings System.Private.Windows.Core (swapped for the fork's own build by
          sdk/WpfWebGpu.Sdk/Sdk/WindowsCore.targets), which PresentationCore's DataObject needs at runtime.
          Without it Clipboard and DragDrop throw FileNotFoundException the moment they are used. The
          packaged SDK already adds this (sdk/WpfWebGpu.Sdk/Sdk/Sdk.targets); samples that reference
          the fork by path have to say so themselves. -->
-    <PackageReference Include="System.Drawing.Common" Version="10.0.10" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.15" />
     <!-- The rest of the packaged SDK's unix set, kept in step with it: DataObject's serialisation
          path reaches System.Formats.Nrbf, and the others are named by the WPF closure. -->
-    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
-    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
-    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.15" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.15" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
   </ItemGroup>
 
   <!-- The native WebGPU backend, next to the app so the loader finds it. -->

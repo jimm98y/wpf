@@ -63,13 +63,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.IO.Packaging" Version="10.0.10" />
-    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
-    <PackageReference Include="System.Windows.Extensions" Version="10.0.10" />
-    <PackageReference Include="System.Formats.Nrbf" Version="10.0.10" />
-    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.10" />
-    <PackageReference Include="System.Security.Permissions" Version="10.0.10" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.15" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.15" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.15" />
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.15" />
+    <PackageReference Include="System.Formats.Nrbf" Version="10.0.15" />
+    <PackageReference Include="System.Diagnostics.EventLog" Version="10.0.15" />
+    <PackageReference Include="System.Security.Permissions" Version="10.0.15" />
   </ItemGroup>
 
   <!-- Our vendored Mono.System.Drawing is the sole System.Drawing.* provider (avoid CS0433 vs the
