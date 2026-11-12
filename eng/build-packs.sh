@@ -50,6 +50,18 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "error: cannot tell this machine's RID" >&2; exit 2 ;;
 esac
 
+# the Apple packs need Xcode itself: where xcode-select names the Command Line Tools (which have no iOS SDK), the
+# Xcode installed is taken for this build (DEVELOPER_DIR), the machine's choice left as it is
+if [ "$(uname -s)" = Darwin ] && [ -z "${DEVELOPER_DIR:-}" ] && [ "$(xcode-select -p 2>/dev/null)" = /Library/Developer/CommandLineTools ]; then
+  for xcode in /Applications/Xcode.app /Applications/Xcode*.app; do
+    if [ -d "$xcode/Contents/Developer" ]; then
+      export DEVELOPER_DIR="$xcode/Contents/Developer"
+      echo ">> Xcode: $DEVELOPER_DIR (xcode-select names the Command Line Tools)"
+      break
+    fi
+  done
+fi
+
 if [ "$SDK" = 1 ]; then
   echo ">> the SDK (eng/build-sdk.sh)"
   "$REPO/eng/build-sdk.sh"
