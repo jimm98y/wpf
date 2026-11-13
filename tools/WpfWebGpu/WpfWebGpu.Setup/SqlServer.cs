@@ -53,7 +53,7 @@ internal static class SqlServer
             Console.WriteLine($"  {sql.Engine}: installing instance {sql.Instance} (this takes several minutes)");
             Run(Path.Combine(extracted, "SETUP.EXE"),
                 "/Q /ACTION=Install /FEATURES=SQLEngine /IACCEPTSQLSERVERLICENSETERMS /SUPPRESSPRIVACYSTATEMENTNOTICE /UPDATEENABLED=0 "
-                + $"/INSTANCENAME={sql.Instance} /SQLSYSADMINACCOUNTS={sysadmins}/SECURITYMODE=SQL /SAPWD=\"{password}\" "
+                + $"/INSTANCENAME={sql.Instance} /SQLSYSADMINACCOUNTS={sysadmins} /SECURITYMODE=SQL /SAPWD=\"{password}\" "
                 + "/TCPENABLED=1 /BROWSERSVCSTARTUPTYPE=Automatic /SQLSVCSTARTUPTYPE=Automatic",
                 "installing");
             string kept = Keep(info, sql, password);
