@@ -23,6 +23,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // no larger than the screen it opens on (a small display, or a large scale): centred, it would start off it
+        Rect work = SystemParameters.WorkArea;
+        Width = Math.Max(MinWidth, Math.Min(Width, work.Width - 16));
+        Height = Math.Max(MinHeight, Math.Min(Height, work.Height - 16));
         KindColumn.ItemsSource = Enum.GetValues<AppKind>();
         StartColumn.ItemsSource = Enum.GetValues<StartType>();
         AccountColumn.ItemsSource = Enum.GetValues<ServiceAccount>();
