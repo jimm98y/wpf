@@ -15,7 +15,8 @@ internal static unsafe class Services
     private const uint SERVICE_CONTROL_STOP = 1, SERVICE_STOPPED = 1;
     private const uint SERVICE_CONFIG_DESCRIPTION = 1, SERVICE_CONFIG_FAILURE_ACTIONS = 2, SERVICE_CONFIG_DELAYED_AUTO_START_INFO = 3;
     private const uint DACL_SECURITY_INFORMATION = 4;
-    private const int ERROR_SERVICE_DOES_NOT_EXIST = 1060, ERROR_SERVICE_ALREADY_RUNNING = 1056, ERROR_SERVICE_NOT_ACTIVE = 1062;
+    private const int ERROR_SERVICE_DOES_NOT_EXIST = 1060, ERROR_SERVICE_ALREADY_RUNNING = 1056, ERROR_SERVICE_NOT_ACTIVE = 1062,
+        ERROR_SERVICE_REQUEST_TIMEOUT = 1053;
 
     public static void CreateOrUpdate(string name, string displayName, string command, string start, List<string> dependsOn, Dictionary<string, string> environment, string account,
         string startName = "", string description = "", bool delayedAutoStart = false, string security = "")
@@ -84,8 +85,22 @@ internal static unsafe class Services
     {
         Using(name, svc =>
         {
-            if (!StartServiceW(svc, 0, IntPtr.Zero) && Marshal.GetLastWin32Error() is int e && e != ERROR_SERVICE_ALREADY_RUNNING)
+            // the first start after the files are written can pass the manager's 30 seconds: the antivirus reads each
+            // of the runtime's new files as it is first loaded. Started again, the files read, it comes up
+            for (int attempt = 1; ; attempt++)
+            {
+                if (StartServiceW(svc, 0, IntPtr.Zero)) return;
+                int e = Marshal.GetLastWin32Error();
+                if (e == ERROR_SERVICE_ALREADY_RUNNING) return;
+                if (e == ERROR_SERVICE_REQUEST_TIMEOUT && attempt < 3)
+                {
+                    SERVICE_STATUS status;
+                    for (int i = 0; i < 20 && QueryServiceStatus(svc, &status) && status.dwCurrentState != SERVICE_STOPPED; i++) Thread.Sleep(500);
+                    continue;
+                }
                 Console.WriteLine($"  {name}: not started ({new Win32Exception(e).Message})");
+                return;
+            }
         });
     }
 
