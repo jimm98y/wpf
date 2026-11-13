@@ -4,7 +4,8 @@
 #   artifacts/local-feed/        WpfWebGpu.Sdk and its packages (eng/build-sdk.sh)
 #   artifacts/wpfrun/<rid>/      wpfrun for each desktop RID (tools/WpfWebGpu/build.sh -r <rid>)
 #   artifacts/packs/             every template the Packager fills: android, ios and visionos (on a Mac), browser,
-#                                desktop-<rid> and setup-win-<arch> for each RID, sqlserver-win-x64 and -macos
+#                                desktop-<rid> and setup-win-<arch> for each RID (and desktop-win-x86, which the Windows
+#                                installers carry for their x86 programs), sqlserver-win-x64 and -macos
 #   artifacts/Packager-<rid>/    the Packager for each host, the packs beside it, and its .zip / .tar.gz (with
 #                                --packager-without-packs an empty packs/ folder: the packs are downloaded apart,
 #                                as a release carries them -- a Packager with every pack in it passes 2 GB)
@@ -67,9 +68,13 @@ if [ "$SDK" = 1 ]; then
   "$REPO/eng/build-sdk.sh"
 fi
 
-# wpfrun for each RID, and for this machine (whose launcher makes the packs)
+# wpfrun for each RID, and for this machine (whose launcher makes the packs); with Windows, the x86 runtime too --
+# no Setup or Packager of its own: the Windows installers carry it for their programs that run as x86
 IFS=',' read -r -a RID_LIST <<< "$RIDS"
-for rid in $(printf '%s\n' "${RID_LIST[@]}" "$HOST" | awk '!seen[$0]++'); do
+DESKTOP="$RIDS"
+if printf '%s\n' "${RID_LIST[@]}" | grep -q '^win-' && ! printf '%s\n' "${RID_LIST[@]}" | grep -qx 'win-x86'; then DESKTOP="$RIDS,win-x86"; fi
+IFS=',' read -r -a DESKTOP_LIST <<< "$DESKTOP"
+for rid in $(printf '%s\n' "${DESKTOP_LIST[@]}" "$HOST" | awk '!seen[$0]++'); do
   echo ">> wpfrun for $rid"
   "$REPO/tools/WpfWebGpu/build.sh" -r "$rid"
 done
@@ -78,8 +83,8 @@ PACKS="$REPO/artifacts/packs"
 mkdir -p "$PACKS"
 
 WINDOWS=$(printf '%s\n' "${RID_LIST[@]}" | grep '^win-' | paste -sd, - || true)
-echo ">> desktop packs ($RIDS), setup ($WINDOWS), SQL Server"
-ARGS=(pack --desktop "$RIDS" --wpfrun "$REPO/artifacts/wpfrun" --sqlserver win-x64,macos --out "$PACKS")
+echo ">> desktop packs ($DESKTOP), setup ($WINDOWS), SQL Server"
+ARGS=(pack --desktop "$DESKTOP" --wpfrun "$REPO/artifacts/wpfrun" --sqlserver win-x64,macos --out "$PACKS")
 [ -n "$WINDOWS" ] && ARGS+=(--setup "$WINDOWS")
 "${WPFRUN[@]}" "${ARGS[@]}"
 

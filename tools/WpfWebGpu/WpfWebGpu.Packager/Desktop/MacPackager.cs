@@ -65,7 +65,7 @@ public static partial class MacPackager
             string label = id + "." + DesktopCommon.Segment(service.Name);
             string plist = Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist");
             Directory.CreateDirectory(Path.GetDirectoryName(plist)!);
-            File.WriteAllText(plist, Daemon(label, root, product, service, manifest.Product.OsIdentity));
+            File.WriteAllText(plist, Daemon(label, root, product, service, manifest.Product.OsIdentity, DesktopCommon.StartOf(manifest, service)));
             (service.Start == StartType.Disabled ? disabled : daemons).Add(label);
         }
         // the service manager: the services as registered (services.json, installed into the machine's state on every
@@ -185,7 +185,7 @@ public static partial class MacPackager
 
     // ---- what is installed --------------------------------------------------------------------------------
 
-    internal static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity) =>
+    internal static string Daemon(string label, string root, string product, ServiceEntry service, string osIdentity, WpfWebGpu.Services.ServiceStart? start = null) =>
         WpfWebGpu.Services.ServiceUnits.Launchd(Host(root, product, osIdentity, label[..(label.LastIndexOf('.') + 1)]), new WpfWebGpu.Services.ServiceDefinition
         {
             Unit = label,
@@ -194,7 +194,7 @@ public static partial class MacPackager
             WorkingDirectory = root + "/app/" + Path.GetDirectoryName(service.Exe.Replace('\\', '/'))!,
             Environment = DesktopCommon.ServiceEnvironment(service, osIdentity),
             Account = DesktopCommon.SystemAccount(service.Account, mac: true),
-            Start = DesktopCommon.ServiceStartOf(service.Start),
+            Start = start ?? DesktopCommon.ServiceStartOf(service.Start),
             RestartAfterFailure = service.RestartAfterFailure,
             LogName = Path.GetFileNameWithoutExtension(service.Exe),
         });

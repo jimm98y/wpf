@@ -83,7 +83,8 @@ internal static partial class Program
         {
             if (e.FullName.EndsWith('/')) continue;
             string target;
-            if (e.FullName.StartsWith("app/", StringComparison.Ordinal) || e.FullName.StartsWith("runtime/", StringComparison.Ordinal))
+            if (e.FullName.StartsWith("app/", StringComparison.Ordinal) || e.FullName.StartsWith("runtime/", StringComparison.Ordinal)
+                || e.FullName.StartsWith("runtime-", StringComparison.Ordinal))
             {
                 target = Path.Combine(root, e.FullName.Replace('/', '\\'));
                 files++;
@@ -122,7 +123,8 @@ internal static partial class Program
         foreach (var service in info.Services)
         {
             string name = ServiceName(info, service);
-            string command = Prepare(root, wpfrunCache, service.Exe, service.Args);
+            var (runtime, processor) = RuntimeOf(info, service.Exe);
+            string command = Prepare(root, runtime, processor, wpfrunCache, service.Exe, service.Args);
             Services.CreateOrUpdate(name, service.DisplayName.Length > 0 ? service.DisplayName : service.Name, command, service.Start,
                 service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment, service.Account,
                 service.StartName, service.Description, service.DelayedAutoStart, service.Security);
@@ -156,12 +158,18 @@ internal static partial class Program
         foreach (var app in info.Apps)
         {
             string exe = Path.Combine(root, "app", app.Exe.Replace('/', '\\'));
+            // its default processor's, as the launcher finds it; then one for each processor to fall back on
             Shortcut.Create(Path.Combine(menu, FileName(app.Name) + ".lnk"),
                 Path.Combine(root, "runtime", "wpfrunw.exe"),
                 $"run \"{exe}\"",
                 Path.GetDirectoryName(exe)!, exe, app.Name);
+            foreach (string processor in app.Processors)
+                Shortcut.Create(Path.Combine(menu, FileName($"{app.Name} ({processor})") + ".lnk"),
+                    Path.Combine(root, "runtime", "wpfrunw.exe"),
+                    $"run --processor {processor} \"{exe}\"",
+                    Path.GetDirectoryName(exe)!, exe, $"{app.Name} ({processor})");
         }
-        Console.WriteLine($"  {info.Apps.Count} Start menu entries in {menu}");
+        Console.WriteLine($"  {info.Apps.Count + info.Apps.Sum(a => a.Processors.Count)} Start menu entries in {menu}");
 
         // to remove it again: this program without its payload, and what it installed
         string uninstaller = Path.Combine(root, "uninstall.exe");
@@ -189,14 +197,20 @@ internal static partial class Program
         return 0;
     }
 
-    private static string Prepare(string root, string cache, string exe, List<string> args)
+    // the runtime folder of the processor a program runs as by default (runtime\: Setup's own)
+    private static (string Folder, string? Processor) RuntimeOf(SetupInfo info, string exe) =>
+        info.Programs.TryGetValue(exe, out string? processor) && info.Runtimes.TryGetValue(processor, out string? folder) ? (folder, processor) : ("runtime", null);
+
+    private static string Prepare(string root, string runtime, string? processor, string cache, string exe, List<string> args)
     {
-        var psi = new ProcessStartInfo(Path.Combine(root, "runtime", "dotnet", "dotnet.exe"))
+        var psi = new ProcessStartInfo(Path.Combine(root, runtime, "dotnet", "dotnet.exe"))
         {
             UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
         };
-        psi.ArgumentList.Add(Path.Combine(root, "runtime", "launcher", "wpfrun.dll"));
+        psi.ArgumentList.Add(Path.Combine(root, runtime, "launcher", "wpfrun.dll"));
         psi.ArgumentList.Add("prepare");
+        // the processor named: run as it here, not handed on by a setup.json an upgrade has not written yet
+        if (processor != null) { psi.ArgumentList.Add("--processor"); psi.ArgumentList.Add(processor); }
         psi.ArgumentList.Add(Path.Combine(root, "app", exe.Replace('/', '\\')));
         foreach (string a in args) psi.ArgumentList.Add(a);
         psi.Environment["WPFRUN_CACHE"] = Path.Combine(cache, "cache");

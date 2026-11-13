@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         Width = Math.Max(MinWidth, Math.Min(Width, work.Width - 16));
         Height = Math.Max(MinHeight, Math.Min(Height, work.Height - 16));
         KindColumn.ItemsSource = Enum.GetValues<AppKind>();
+        ProcessorColumn.ItemsSource = Enum.GetValues<Processor>();
         StartColumn.ItemsSource = Enum.GetValues<StartType>();
         AccountColumn.ItemsSource = Enum.GetValues<ServiceAccount>();
         foreach (Target target in Enum.GetValues<Target>())

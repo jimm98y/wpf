@@ -41,7 +41,8 @@ internal sealed class Runner
     public Prepared Prepare(IEnumerable<string> appArgs)
     {
         string rid = HostInfo.Rid;
-        string cacheDir = Path.Combine(Locations.CacheRoot, "apps", $"{App.ProgramName}-{Hash(App.Directory)}");
+        // an emulated run's (an x64 runtime on Arm) apart from the machine's own: its executable is another processor's
+        string cacheDir = Path.Combine(Locations.CacheRoot, "apps", $"{App.ProgramName}-{Hash(App.Directory)}{(ProcessorHandoff.Emulated() is { } p ? "-" + p : "")}");
         Directory.CreateDirectory(cacheDir);
         AppCaches.Use(cacheDir, App.ExeFile ?? App.Dll);
         string logPath = Path.Combine(Locations.LogRoot, $"{App.ProgramName}.log");

@@ -216,6 +216,12 @@ public sealed class SetupInfo
     public string Id { get; set; } = "";
     public List<SetupApp> Apps { get; set; } = new();
     public List<SetupService> Services { get; set; } = new();
+    /// <summary>The runtime folder of each processor the installation's programs run as ("arm64": "runtime",
+    /// "x64": "runtime-x64"): runtime\ is Setup's own processor's.</summary>
+    public Dictionary<string, string> Runtimes { get; set; } = new();
+    /// <summary>Each program's default processor, by its executable (relative to app/, '/'-separated): what the
+    /// launcher runs it as, whoever starts it.</summary>
+    public Dictionary<string, string> Programs { get; set; } = new();
     /// <summary>The SQL Server it brings (sqlserver/ in the payload), or none.</summary>
     public SetupSqlServer? SqlServer { get; set; }
 
@@ -228,6 +234,9 @@ public sealed class SetupApp
     public string Name { get; set; } = "";
     /// <summary>Relative to app/, '/'-separated.</summary>
     public string Exe { get; set; } = "";
+    /// <summary>The processors it is installed for besides its default: a Start-menu entry each ("Name (x64)"), to
+    /// fall back on.</summary>
+    public List<string> Processors { get; set; } = new();
 }
 
 public sealed class SetupService

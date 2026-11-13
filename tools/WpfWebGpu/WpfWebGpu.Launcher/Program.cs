@@ -130,7 +130,7 @@ internal static class Program
     private static int Run(string[] args, bool execute)
     {
         bool verbose = false, offline = false, isolate = false, crashReports = false;
-        string? titlePrefix = null, screenshots = null;
+        string? titlePrefix = null, screenshots = null, processor = null;
         int every = 5;
         string? target = null;
         var appArgs = new List<string>();
@@ -148,6 +148,7 @@ internal static class Program
                 case "--crash-reports": crashReports = true; break;
                 case "--screenshots": screenshots = args[++i]; break;
                 case "--every": every = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+                case "--processor": processor = args[++i].ToLowerInvariant(); break;
                 default:
                     if (a.StartsWith('-')) throw new UserError($"unknown option '{a}'.");
                     target = a;
@@ -155,6 +156,10 @@ internal static class Program
             }
         }
         if (target == null) throw new UserError("which app? Pass its .dll, .exe or folder.");
+
+        // Windows: a program of an installation that runs as another processor, run by that processor's launcher
+        if (ProcessorHandoff.Elsewhere(target, processor) is { } other)
+            return ProcessorHandoff.Run(other.Runtime, other.Processor, new[] { execute ? "run" : "prepare" }.Concat(args).ToArray());
 
         var runner = new Runner
         {

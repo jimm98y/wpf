@@ -107,7 +107,7 @@
         <DockPanel>
           <StackPanel DockPanel.Dock="Top">
             <TextBlock Style="{StaticResource Heading}" Text="Apps" />
-            <TextBlock Style="{StaticResource Hint}" Text="Every program of the installation. Mobile: made an app for phones, tablets and headsets. Web: served as a page for the browser by the desktop installations. Shortcut: in the Start menu, Applications or the app menu." />
+            <TextBlock Style="{StaticResource Hint}" Text="Every program of the installation. Mobile: made an app for phones, tablets and headsets. Web: served as a page for the browser by the desktop installations. Shortcut: in the Start menu, Applications or the app menu. arm64, x64, x86: the processors it runs as on Windows (from its .dll: an AnyCPU program as any), Default the one it runs as; the others are Start-menu entries to fall back on. Windows on Arm runs all three, Windows x64 x64 and x86." />
           </StackPanel>
           <DataGrid x:Name="AppsGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="Horizontal">
             <DataGrid.Columns>
@@ -117,6 +117,10 @@
               <DataGridCheckBoxColumn Header="Mobile" Binding="{Binding Mobile}" Width="60" />
               <DataGridCheckBoxColumn Header="Web" Binding="{Binding Web}" Width="50" />
               <DataGridCheckBoxColumn Header="Shortcut" Binding="{Binding Shortcut}" Width="70" />
+              <DataGridCheckBoxColumn Header="arm64" Binding="{Binding Arm64, UpdateSourceTrigger=PropertyChanged}" Width="50" />
+              <DataGridCheckBoxColumn Header="x64" Binding="{Binding X64, UpdateSourceTrigger=PropertyChanged}" Width="45" />
+              <DataGridCheckBoxColumn Header="x86" Binding="{Binding X86, UpdateSourceTrigger=PropertyChanged}" Width="45" />
+              <DataGridComboBoxColumn x:Name="ProcessorColumn" Header="Default" SelectedItemBinding="{Binding Processor}" Width="80" />
               <DataGridTextColumn Header="Warnings" Binding="{Binding Warnings, Converter={StaticResource Join}}" IsReadOnly="True" Width="*" />
             </DataGrid.Columns>
           </DataGrid>

@@ -90,7 +90,10 @@ public static class Scanner
                 Kind = exePe.Gui ? AppKind.Gui : IsService(dll, dir) ? AppKind.Service : AppKind.Console,
             };
             app.Shortcut = app.Kind == AppKind.Gui;
-            if (exePe.Machine == Machine.I386 || PeFile.TryRead(dll)?.Requires32Bit == true) app.Warnings.Add("32-bit only");
+            // what it is built for is its assembly's: an x86 or x64 apphost may start an AnyCPU one
+            if (PeFile.TryRead(dll)?.Requires32Bit == true) app.Warnings.Add("32-bit only");
+            (app.Processors, var processor) = Processors.Suggest(dll);
+            app.Processor = processor;
             app.Warnings.AddRange(folder.Warnings);
             if (Frameworks(config) is { Count: > 0 } fw && !fw.Contains("Microsoft.NETCore.App")) app.Warnings.Add("framework: " + string.Join(", ", fw));
             manifest.Apps.Add(app);
@@ -115,12 +118,8 @@ public static class Scanner
             foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Service))
             {
                 string name = Path.GetFileNameWithoutExtension(app.Exe);
-                // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
-                manifest.Services.Add(new ServiceEntry
-                {
-                    Name = name, DisplayName = app.Name, Exe = app.Exe,
-                    Start = app.Warnings.Contains("32-bit only") ? StartType.Disabled : StartType.Auto,
-                });
+                // (a 32-bit program's is registered disabled where no x86 runtime runs it: DesktopCommon.StartOf)
+                manifest.Services.Add(new ServiceEntry { Name = name, DisplayName = app.Name, Exe = app.Exe, Start = StartType.Auto });
             }
             AssignAccounts(manifest, entries, log);
         }
@@ -221,12 +220,7 @@ public static class Scanner
                 RestartAfterFailure = v.GetValueOrDefault("FailureActions") is byte[] fa ? RestartDelay(fa) : 0,
             };
             service.Account = AccountFor(service.StartName, name, log);
-            // a 32-bit program cannot run on the 64-bit runtime an installation carries: registered, not started
-            if (app.Warnings.Contains("32-bit only") && service.Start != StartType.Disabled)
-            {
-                log?.Invoke($"service {name}: {app.Exe} is 32-bit only; registered disabled");
-                service.Start = StartType.Disabled;
-            }
+            if (app.Warnings.Contains("32-bit only")) log?.Invoke($"service {name}: {app.Exe} is 32-bit only; it runs on Windows (x86), and is registered disabled on macOS and Linux");
             if (v.GetValueOrDefault("DependOnService") is string[] deps) service.DependsOn.AddRange(deps.Where(x => x.Length > 0));
             else if (v.GetValueOrDefault("DependOnService") is string dep && dep.Length > 0) service.DependsOn.Add(dep);
             services.Add(service);

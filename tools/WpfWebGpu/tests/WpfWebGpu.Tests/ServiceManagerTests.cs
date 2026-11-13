@@ -64,7 +64,9 @@ public class ServiceManagerTests
         Assert.Equal((@"NT SERVICE\CoreService", ServiceAccount.NetworkService), (core.StartName, core.Account));
         Assert.Equal(new[] { "OldService" }, core.DependsOn);            // Tcpip is Windows' own
         Assert.Equal("AQAUgA==", core.Security);
-        Assert.Equal(StartType.Disabled, services[1].Start);              // 32-bit only: registered, not started
+        // 32-bit only: as registered (Windows runs it as x86), and disabled where no x86 runtime runs it
+        Assert.Equal(StartType.Manual, services[1].Start);
+        Assert.Equal(WpfWebGpu.Services.ServiceStart.Disabled, WpfWebGpu.Packager.Desktop.DesktopCommon.StartOf(manifest, services[1]));
     }
 
     [Fact]

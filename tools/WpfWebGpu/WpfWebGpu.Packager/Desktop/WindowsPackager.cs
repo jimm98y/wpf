@@ -13,12 +13,25 @@ public static class WindowsPackager
 {
     /// <param name="sqlPack">the SQL Server the installation brings (sqlserver-win-x64.pack; on Arm too, emulated), or
     /// none: Setup offers it, chosen by default</param>
+    /// <param name="otherRuntime">the runtime pack of another processor its programs run as (Windows on Arm emulates
+    /// x64 and x86, Windows x64 x86), or null where the packs folder has none</param>
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, PackFile setupPack, string outDir, Action<string> log,
-        PackFile? sqlPack = null)
+        PackFile? sqlPack = null, Func<Processor, PackFile?>? otherRuntime = null)
     {
         string product = manifest.Product.Name;
         string arch = runtimePack["rid"].Split('-')[1];
         var excludes = new GlobSet(manifest.Exclude);
+
+        // the processors the programs run as here, and the runtime each needs: runtime\ this machine's own, the others
+        // runtime-<processor>\ where the packs folder has them (a program whose default is not falls back to the next)
+        Processor machine = Processors.FromRid(runtimePack["rid"]) ?? Processor.X64;
+        var runtimes = new Dictionary<Processor, (string Folder, PackFile Pack)> { [machine] = ("runtime", runtimePack) };
+        foreach (Processor p in manifest.Apps.SelectMany(a => Processors.On(a, machine)).Distinct().Where(p => p != machine))
+        {
+            if (otherRuntime?.Invoke(p) is { } pack) runtimes[p] = ("runtime-" + Processors.Name(p), pack);
+            else log($"  no desktop-{Processors.Rid(p)}.pack: its programs for {Processors.Name(p)} run as {Processors.Name(machine)} instead");
+        }
+        List<Processor> On(AppEntry a) => Processors.On(a, machine).Where(runtimes.ContainsKey).DefaultIfEmpty(machine).ToList();
         var info = new SetupInfo
         {
             Product = product,
@@ -26,7 +39,9 @@ public static class WindowsPackager
             Publisher = manifest.Product.Publisher,
             Id = manifest.Product.IdPrefix + "." + DesktopCommon.Segment(product),
             Apps = manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut)
-                .Select(a => new SetupApp { Name = DesktopCommon.AppName(a), Exe = a.Exe }).ToList(),
+                .Select(a => new SetupApp { Name = DesktopCommon.AppName(a), Exe = a.Exe, Processors = On(a).Skip(1).Select(Processors.Name).ToList() }).ToList(),
+            Runtimes = runtimes.ToDictionary(r => Processors.Name(r.Key), r => r.Value.Folder),
+            Programs = manifest.Apps.ToDictionary(a => a.Exe, a => Processors.Name(On(a)[0]), StringComparer.OrdinalIgnoreCase),
             Services = manifest.Services.Select(s => new SetupService
             {
                 Name = s.Name, DisplayName = s.DisplayName, Exe = s.Exe, Args = s.Args.ToList(),
@@ -60,9 +75,13 @@ public static class WindowsPackager
                     Add(zip, f, "app/" + rel);
                     files++;
                 }
-                string runtime = Path.Combine(runtimePack.Directory, "runtime");
-                foreach (string f in Directory.EnumerateFiles(runtime, "*", SearchOption.AllDirectories))
-                    Add(zip, Signed(f, certificate, manifest.Signing.TimestampUrl, outDir), "runtime/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
+                foreach (var (p, (folder, pack)) in runtimes)
+                {
+                    string runtime = Path.Combine(pack.Directory, "runtime");
+                    foreach (string f in Directory.EnumerateFiles(runtime, "*", SearchOption.AllDirectories))
+                        Add(zip, Signed(f, certificate, manifest.Signing.TimestampUrl, outDir), folder + "/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
+                    if (p != machine) log($"  the {Processors.Name(p)} runtime ({folder}\\): {string.Join(", ", manifest.Apps.Where(a => On(a).Contains(p)).Select(a => DesktopCommon.AppName(a) + (On(a)[0] == p ? "" : " (to fall back on)")))}");
+                }
                 foreach (var (source, target) in staged.ProgramDataFiles) Add(zip, source, "programdata/" + target);
                 foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg")) Add(zip, hive, "registry/" + Path.GetFileName(hive));
                 if (sqlPack != null)

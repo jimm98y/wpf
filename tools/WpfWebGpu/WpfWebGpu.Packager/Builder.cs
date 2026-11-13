@@ -80,13 +80,18 @@ public static class Builder
         }
         if (targets.Contains(Target.Windows))
         {
+            // a Setup per machine there is a Setup.exe for (setup-win-<arch>.pack); the other runtimes (win-x86) are
+            // carried by them, for the programs that run as that processor
             var rids = Directory.Exists(packsFolder)
-                ? Directory.EnumerateFiles(packsFolder, "desktop-win-*.pack").Select(f => Path.GetFileNameWithoutExtension(f)["desktop-".Length..]).Order().ToList()
+                ? Directory.EnumerateFiles(packsFolder, "desktop-win-*.pack").Select(f => Path.GetFileNameWithoutExtension(f)["desktop-".Length..])
+                    .Where(rid => File.Exists(Path.Combine(packsFolder, "setup-" + rid + ".pack"))).Order().ToList()
                 : new List<string>();
-            if (rids.Count == 0) throw new PackagerError($"no desktop-win-<arch>.pack in {packsFolder}: the Windows runtime is not installed");
+            if (rids.Count == 0) throw new PackagerError($"no desktop-win-<arch>.pack and setup-win-<arch>.pack in {packsFolder}: the Windows runtime is not installed");
+            PackFile? Runtime(Processor p) =>
+                File.Exists(Path.Combine(packsFolder, "desktop-" + Processors.Rid(p) + ".pack")) ? PackFile.Open(packsFolder, "desktop-" + Processors.Rid(p)) : null;
             foreach (string rid in rids)
                 made.Add(Desktop.WindowsPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log,
-                    SqlServerPack(manifest, packsFolder, "win-x64")));
+                    SqlServerPack(manifest, packsFolder, "win-x64"), Runtime));
         }
         if (targets.Contains(Target.IOS))
         {

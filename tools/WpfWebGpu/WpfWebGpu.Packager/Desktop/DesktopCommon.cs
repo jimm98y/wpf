@@ -40,7 +40,7 @@ internal static class DesktopCommon
                 DisplayName = s.DisplayName.Length > 0 ? s.DisplayName : s.Name,
                 Description = s.Description,
                 PathName = "\"" + program + "\"" + string.Concat(s.Args.Select(a => " " + (a.Contains(' ') ? "\"" + a + "\"" : a))),
-                Start = ServiceStartOf(s.Start),
+                Start = StartOf(manifest, s),
                 DelayedAutoStart = s.DelayedAutoStart,
                 StartName = s.StartName.Length > 0 ? s.StartName : s.Account switch
                 {
@@ -126,6 +126,17 @@ internal static class DesktopCommon
         var env = new Dictionary<string, string>(service.Environment);
         foreach (var (key, value) in HostEnvironment(osIdentity)) env.TryAdd(key, value);
         return env;
+    }
+
+    /// <summary>A service's start type on macOS or Linux: a 32-bit program's is disabled -- no x86 runtime runs it
+    /// there (Windows has one: its installer carries it) -- registered, as its key is on Windows, but not started.</summary>
+    public static WpfWebGpu.Services.ServiceStart StartOf(PackageManifest manifest, ServiceEntry service)
+    {
+        var app = manifest.Apps.FirstOrDefault(a => a.Exe.Equals(service.Exe, StringComparison.OrdinalIgnoreCase));
+        bool x86Only = app != null && (app.Processors.Count > 0 || app.Processor != null
+            ? !app.Has(Processor.Arm64) && !app.Has(Processor.X64)
+            : app.Warnings.Contains("32-bit only"));
+        return x86Only ? WpfWebGpu.Services.ServiceStart.Disabled : ServiceStartOf(service.Start);
     }
 
     public static WpfWebGpu.Services.ServiceStart ServiceStartOf(StartType start) => start switch

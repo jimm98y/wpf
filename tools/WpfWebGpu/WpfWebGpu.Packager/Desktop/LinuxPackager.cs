@@ -256,7 +256,7 @@ public static partial class LinuxPackager
             WorkingDirectory = root + "/app/" + Path.GetDirectoryName(service.Exe.Replace('\\', '/'))!,
             Environment = DesktopCommon.ServiceEnvironment(service, manifest.Product.OsIdentity),
             Account = DesktopCommon.SystemAccount(service.Account, mac: false),
-            Start = DesktopCommon.ServiceStartOf(service.Start),
+            Start = DesktopCommon.StartOf(manifest, service),
             RestartAfterFailure = service.RestartAfterFailure,
             DependsOn = service.DependsOn.Select(d => UnitName(pkg, d)).ToList(),
             LogName = Path.GetFileNameWithoutExtension(service.Exe),

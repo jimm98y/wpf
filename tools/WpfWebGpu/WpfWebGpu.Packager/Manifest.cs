@@ -98,7 +98,33 @@ public sealed class AppEntry
     public bool Shortcut { get; set; }
     /// <summary>Why it may not run off Windows (32-bit only, mixed-mode C++/CLI, native code); informative.</summary>
     public List<string> Warnings { get; set; } = new();
+    /// <summary>The processors it runs as on Windows, each on a runtime of its own the installer carries: an AnyCPU
+    /// program as any (Windows on Arm runs x64 and x86 programs too, Windows x64 x86 ones); empty: its default alone.</summary>
+    public List<Processor> Processors { get; set; } = new();
+    /// <summary>The processor it runs as by default (its Start-menu entry, its service, a program starting it); the
+    /// others it is included for are there to fall back on ("Name (x64)" in the Start menu). Null: the machine's own.
+    /// One the machine cannot run (arm64 on Windows x64) gives way to the next it can.</summary>
+    public Processor? Processor { get; set; }
+
+    // the Packager app's check boxes
+    [JsonIgnore] public bool Arm64 { get => Has(Packager.Processor.Arm64); set => Set(Packager.Processor.Arm64, value); }
+    [JsonIgnore] public bool X64 { get => Has(Packager.Processor.X64); set => Set(Packager.Processor.X64, value); }
+    [JsonIgnore] public bool X86 { get => Has(Packager.Processor.X86); set => Set(Packager.Processor.X86, value); }
+
+    /// <summary>Whether it is included for <paramref name="p"/>: one of its processors, or its default.</summary>
+    public bool Has(Processor p) => Processors.Contains(p) || Processor == p;
+
+    private void Set(Processor p, bool on)
+    {
+        if (on && !Processors.Contains(p)) Processors.Add(p);
+        if (!on) { Processors.Remove(p); if (Processor == p) Processor = Processors.Count > 0 ? Processors[0] : null; }
+        Processors.Sort();
+    }
 }
+
+/// <summary>A Windows processor a program runs as.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<Processor>))]
+public enum Processor { Arm64, X64, X86 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<StartType>))]
 public enum StartType { Auto, Manual, Disabled }
