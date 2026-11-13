@@ -154,6 +154,14 @@ internal sealed class Runner
             // The ProtectedData shim's keys are not set here: on macOS they are in the login keychain,
             // where the shim moves the ones it used to keep in this state folder (dpapi/).
         }
+        else
+        {
+            // Windows: the same, for the app's own Process.Start of another of the installation's programs, whose own
+            // executable looks for a .NET installed on the machine. The console dotnet.exe, whatever started this
+            // one: a console program started from a window program gets a console window of its own, as on Windows
+            psi.Environment["WPFWEBGPU_LAUNCHER"] = psi.FileName;
+            psi.Environment["WPFWEBGPU_LAUNCHER_DLL"] = typeof(Runner).Assembly.Location;
+        }
         // The app's own children must not inherit a startup hook a parent shell may have set.
         psi.Environment.Remove("DOTNET_STARTUP_HOOKS");
         // A gen0 budget for a desktop UI that redraws whole windows: the runtime sizes it from the CPU's

@@ -294,11 +294,11 @@ public static class WindowsPaths
 
     // ---- System.Diagnostics.Process ----
     //
-    // A Windows .NET program an app starts (Workbench's tools menu: the server location utility, the trace
-    // configurator) is a PE file this system cannot execute: Process.Start failed, the app took that as
-    // the tool not being there, and nothing opened. It is run as the app itself was, through the launcher
-    // (WPFWEBGPU_LAUNCHER, set by it): `wpfrun run <exe> <arguments>`. Anything else -- a native program, a
-    // document, a URL -- is started as it was.
+    // A Windows .NET program an app starts (a tools menu's utilities, a configurator) is a PE file this system
+    // cannot execute: Process.Start failed, the app took that as the tool not being there, and nothing opened. On
+    // Windows its own executable looks for a .NET installed on the machine, which an installation of this stack does
+    // not need. It is run as the app itself was, through the launcher (WPFWEBGPU_LAUNCHER, set by it): `wpfrun run
+    // <exe> <arguments>`. Anything else -- a native program, a document, a URL -- is started as it was.
 
     /// <summary>The Terminal Services session a process runs in: where the platform cannot say (iOS, the
     /// browser: "Operation is not supported"), the interactive session, 1, as on a Windows desktop.</summary>
@@ -353,7 +353,7 @@ public static class WindowsPaths
 
     private static System.Diagnostics.ProcessStartInfo Launchable(System.Diagnostics.ProcessStartInfo psi)
     {
-        if (s_windows || psi == null || string.IsNullOrEmpty(psi.FileName)) return psi!;
+        if (psi == null || string.IsNullOrEmpty(psi.FileName)) return psi!;
         AddressByLocalName(psi);
         string? launcher = Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER");
         string exe = Disk(psi.FileName)!;
@@ -379,6 +379,8 @@ public static class WindowsPaths
         if (string.IsNullOrEmpty(psi.WorkingDirectory)) psi.WorkingDirectory = Path.GetDirectoryName(exe)!;
         else psi.WorkingDirectory = Disk(psi.WorkingDirectory)!;
         bool elevate = psi.UseShellExecute && string.Equals(psi.Verb, "runas", StringComparison.OrdinalIgnoreCase);
+        // Windows: elevated as ShellExecute elevates (the UAC prompt), the launcher the program it asks for
+        if (s_windows && elevate) return psi;
         psi.UseShellExecute = false;
         if (elevate) Elevated(psi);
         return psi;
