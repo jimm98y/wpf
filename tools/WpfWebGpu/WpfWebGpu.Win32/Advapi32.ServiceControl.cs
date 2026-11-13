@@ -6,7 +6,8 @@
 // the service's security descriptor and the caller's account, as the SCM decides -- OpenService refuses the access
 // a descriptor does not grant, and starting or stopping is done by root or the service manager's daemon. A service a
 // program creates (an elevated one: the SCM lets administrators alone) is written as the package writes those it
-// installs, a launchd daemon or a systemd unit running its program on the installation's runtime.
+// installs, a launchd daemon or a systemd unit running its program on the installation's runtime. The handles to a
+// service are counted by the daemon, for a deleted one goes once it has stopped and the last is closed.
 
 using WpfWebGpu.Services;
 
@@ -75,11 +76,8 @@ public static unsafe partial class Exports
             SetLastError(ERROR_SERVICE_DOES_NOT_EXIST);    // OpenService takes the key name, not the display name
             return 0;
         }
-        if (service.MarkedForDelete)
-        {
-            SetLastError(ServiceManager.ERROR_SERVICE_MARKED_FOR_DELETE);
-            return 0;
-        }
+        // a deleted service is opened while it is still there (stopped and its last handle closed, it is gone), as
+        // the SCM opens one
         // the access asked for, against the service's descriptor (generic and standard rights mapped as the SCM maps them)
         uint specific = MapServiceAccess(access);
         if (!OperatingSystem.IsWindows() && !WindowsAccounts.AccessAllowed(ServiceDatabase.DescriptorOf(service), WindowsAccounts.TokenOf(WindowsAccounts.CurrentUid()), specific))
@@ -87,7 +85,14 @@ public static unsafe partial class Exports
             SetLastError(ServiceManager.ERROR_ACCESS_DENIED);
             return 0;
         }
-        return NewHandle(new ServiceHandle(service.Name, specific));
+        return OpenedHandle(service.Name, specific);
+    }
+
+    // a handle the service manager counts, as the SCM counts them: a deleted service goes once the last is closed
+    private static nint OpenedHandle(string name, uint access)
+    {
+        ServiceManager.Holding(name, open: true);
+        return NewHandle(new ServiceHandle(name, access));
     }
 
     // GENERIC_READ/WRITE/EXECUTE/ALL to the service rights they stand for (SERVICE_ALL_ACCESS is 0xF01FF)
@@ -102,7 +107,14 @@ public static unsafe partial class Exports
     }
 
     [Win32Export("CloseServiceHandle")]
-    public static int CloseServiceHandle(nint handle) => Handle(handle) is ScmHandle or ServiceHandle ? CloseHandle(handle) : Fail(ERROR_INVALID_HANDLE);
+    public static int CloseServiceHandle(nint handle)
+    {
+        object? h = Handle(handle);
+        if (h is not (ScmHandle or ServiceHandle)) return Fail(ERROR_INVALID_HANDLE);
+        int closed = CloseHandle(handle);
+        if (h is ServiceHandle service) ServiceManager.Holding(service.Name, open: false);
+        return closed;
+    }
 
     private static int Fail(int error) { SetLastError(error); return FALSE; }
 
@@ -207,6 +219,8 @@ public static unsafe partial class Exports
     private static int ChangeServiceConfigCore(nint handle, uint start, bool otherStrings, bool otherValues)
     {
         if (ServiceOf(handle, ServiceManager.ChangeConfig) is not { } h) return FALSE;
+        // a deleted service is changed no more, whatever is asked
+        if (ServiceManager.Database().Find(h.Name) is { MarkedForDelete: true }) return Fail(ServiceManager.ERROR_SERVICE_MARKED_FOR_DELETE);
         // the start type is the service manager's to change; the rest is how the installer set the service up
         if (otherStrings || otherValues)
         {
@@ -320,7 +334,7 @@ public static unsafe partial class Exports
         };
         if (ServiceRequest(() => ServiceManager.Create(request)) == FALSE) return 0;
         // the creator gets the access it asked for (its own service, as an administrator)
-        return NewHandle(new ServiceHandle(name, MapServiceAccess(access)));
+        return OpenedHandle(name, MapServiceAccess(access));
     }
 
     [Win32Export("DeleteService")]

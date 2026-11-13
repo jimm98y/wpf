@@ -3,8 +3,10 @@
 // (the SCM's own descriptor grants SC_MANAGER_CREATE_SERVICE to administrators and SYSTEM alone: an elevated
 // program, root here); deleting takes the service's DELETE right. The service is written as the package writes those
 // it installs (ServiceUnits) -- a launchd daemon, a systemd unit under /etc, as an administrator's -- and kept in the
-// database; it starts with the system if it is automatic, but not now (CreateService does not start it). A service
-// deleted while it runs is marked, refuses what is asked of it but stopping, and goes once it has stopped.
+// database; it starts with the system if it is automatic, but not now (CreateService does not start it). A deleted
+// service is marked -- still opened, queried and stopped, its starting refused as a disabled one's, changing or
+// deleting it again as marked -- and goes once it has stopped and the last handle to it is closed (the daemon counts
+// the handles each process opens), as the SCM removes it.
 
 using System.Text;
 using System.Text.Json;
@@ -185,30 +187,32 @@ public static partial class ServiceControl
         db.Save(databasePath);
     }
 
+    // as the SCM: marked, and gone once it has stopped and the last handle to it is closed (the caller's own among them)
     private static void Delete(string? databasePath, ServiceDatabase db, ServiceRecord service)
     {
-        if (ServiceManager.StatusOf(db, service).State is not ServiceState.Stopped)
-        {
-            // as the SCM: marked, and gone once it stops
-            service.MarkedForDelete = true;
-            if (databasePath != null) db.Save(databasePath);
-            return;
-        }
-        Remove(db, service);
-        if (databasePath != null) db.Save(databasePath);
+        service.MarkedForDelete = true;
+        if (databasePath == null) { db.Services.Remove(service); return; }
+        db.Save(databasePath);
+        RemoveStoppedDeleted(databasePath);
     }
 
-    /// <summary>Removes the services deleted while they ran that have stopped since.</summary>
+    /// <summary>Whether a process holds a handle to a service, as the service manager's daemon counts them; null
+    /// outside the daemon.</summary>
+    public static Func<string, bool>? Held { get; set; }
+
+    /// <summary>Removes the deleted services that have stopped and that no handle is open to any more.</summary>
     public static void RemoveStoppedDeleted(string? databasePath)
     {
         if (databasePath == null) return;
+        // the daemon counts the handles: where it runs, it is the one to tell when the last has closed
+        if (Held == null && ServiceBroker.SocketPath(databasePath) is { } socket && File.Exists(socket)) return;
         var db = ServiceDatabase.Load(databasePath);
         var marked = db.Services.Where(s => s.MarkedForDelete).ToList();
         if (marked.Count == 0) return;
         var statuses = ServiceManager.Statuses(db);
         bool changed = false;
         foreach (var s in marked)
-            if (statuses.GetValueOrDefault(s.Name).State is ServiceState.Stopped or (ServiceState)0) { Remove(db, s); changed = true; }
+            if (statuses.GetValueOrDefault(s.Name).State is ServiceState.Stopped or (ServiceState)0 && Held?.Invoke(s.Name) != true) { Remove(db, s); changed = true; }
         if (changed) db.Save(databasePath);
     }
 

@@ -5,8 +5,8 @@ using Xunit;
 namespace WpfWebGpu.Tests;
 
 // Creating and deleting services (WpfWebGpu.Services/ServiceCreation.cs, advapi32's CreateService and DeleteService):
-// a command line read as the SCM reads it, creating refused to all but administrators, a service deleted while it ran
-// opened no more and removed once it stops, and the unit a created service runs as.
+// a command line read as the SCM reads it, creating refused to all but administrators, a deleted service still opened
+// and removed once it has stopped and its last handle is closed, and the unit a created service runs as.
 [Collection(ServiceDatabaseEnvironment.Name)]
 public class ServiceCreationTests
 {
@@ -85,7 +85,44 @@ public class ServiceCreationTests
     }
 
     [Fact]
-    public unsafe void The_stand_ins_refuse_a_user_creating_and_opening_a_deleted_service()
+    public async Task A_deleted_service_goes_once_stopped_and_its_last_handle_closed()
+    {
+        if (OperatingSystem.IsWindows() || WindowsAccounts.CurrentUid() == 0) return;
+        string dir = TestEnvironment.NewDirectory("scm-handles");
+        string path = Path.Combine(dir, ServiceDatabase.FileName);
+        new ServiceDatabase
+        {
+            Host = new ServiceHost { Root = dir, State = dir, UnitPrefix = "test.wpfwebgpu." },
+            Services = { new ServiceRecord { Name = "Held", Unit = "test.wpfwebgpu.held", Security = AllToEveryone() } },
+        }.Save(path);
+        using var stop = new CancellationTokenSource();
+        var serving = ServiceBroker.Serve(path, _ => { }, stop.Token);
+        for (int i = 0; i < 100 && !File.Exists(ServiceBroker.SocketPath(path)); i++) await Task.Delay(20);
+        try
+        {
+            // this process holds two handles; deleting marks it (it is stopped: it would be gone at once with none)
+            ServiceBroker.Request(path, "open", "Held", "");
+            ServiceBroker.Request(path, "open", "Held", "");
+            ServiceBroker.Request(path, "delete", "Held", "");
+            Assert.True(ServiceDatabase.Load(path).Find("Held")?.MarkedForDelete);
+            // as the SCM answers a deleted service: starting it as a disabled one, deleting it again as marked
+            Assert.Equal(ServiceManager.ERROR_SERVICE_DISABLED, Assert.Throws<ServiceException>(() => ServiceBroker.Request(path, "start", "Held", "")).Error);
+            Assert.Equal(ServiceManager.ERROR_SERVICE_MARKED_FOR_DELETE, Assert.Throws<ServiceException>(() => ServiceBroker.Request(path, "delete", "Held", "")).Error);
+            ServiceBroker.Request(path, "close", "Held", "");
+            Assert.NotNull(ServiceDatabase.Load(path).Find("Held"));
+            // the last handle closed: gone
+            ServiceBroker.Request(path, "close", "Held", "");
+            Assert.Null(ServiceDatabase.Load(path).Find("Held"));
+        }
+        finally
+        {
+            stop.Cancel();
+            await serving;
+        }
+    }
+
+    [Fact]
+    public unsafe void The_stand_ins_refuse_a_user_creating_and_open_a_deleted_service()
     {
         if (OperatingSystem.IsWindows() || WindowsAccounts.CurrentUid() == 0) return;
         string dir = TestEnvironment.NewDirectory("scm-create-exports");
@@ -114,8 +151,12 @@ public class ServiceCreationTests
                 Assert.Equal(0, Call("CreateServiceW", scm, Pointer.Box(name, typeof(char*)), NoString, 0xF01FFu, 0x10u, 3u, 1u,
                     Pointer.Box(program, typeof(char*)), NoString, Pointer.Box(null, typeof(uint*)), NoString, NoString, NoString));
             }
+            // a deleted service still there is opened, as the SCM opens one
+            nint opened;
             fixed (char* going = "Going")
-                Assert.Equal(0, Call("OpenServiceW", scm, Pointer.Box(going, typeof(char*)), 0x4u));
+                opened = Call("OpenServiceW", scm, Pointer.Box(going, typeof(char*)), 0x4u);
+            Assert.NotEqual(0, opened);
+            Assert.Equal(1, Call("CloseServiceHandle", opened));
             Assert.Equal(1, Call("CloseServiceHandle", scm));
         }
         finally

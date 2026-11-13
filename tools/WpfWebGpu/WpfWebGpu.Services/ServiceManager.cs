@@ -103,6 +103,16 @@ public static partial class ServiceManager
     public static void Stop(string name) => Control("stop", name, "");
     public static void SetStart(string name, ServiceStart start) => Control("config", name, start.ToString());
 
+    /// <summary>A handle to the service opened (<paramref name="open"/>) or closed: the service manager's daemon counts
+    /// them, as the SCM does, for a deleted service goes only once the last is closed. Nothing where there is no
+    /// daemon, nor on Windows (the SCM itself).</summary>
+    public static void Holding(string name, bool open)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try { ServiceBroker.Request(ServiceDatabase.DefaultPath(), open ? "open" : "close", name, ""); }
+        catch (ServiceException) { }
+    }
+
     // root acts itself; anyone else asks the daemon
     internal static void Control(string op, string name, string arg)
     {
@@ -144,7 +154,11 @@ public static partial class ServiceControl
         if (right == 0) throw new ServiceException(ServiceManager.ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
         if (!WindowsAccounts.AccessAllowed(ServiceDatabase.DescriptorOf(service), WindowsAccounts.TokenOf(caller), right))
             throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, $"Access is denied ({WindowsAccounts.Describe(caller)}, {service.Name}).");
-        if (service.MarkedForDelete && op != "stop") throw MarkedForDelete();
+        // deleted, not yet gone: it is still queried and stopped; starting it is refused as a disabled one's (as the
+        // SCM answers), changing or deleting it again as marked
+        if (service.MarkedForDelete && op == "start")
+            throw new ServiceException(ServiceManager.ERROR_SERVICE_DISABLED, "The service cannot be started, either because it is disabled or because it has no enabled devices associated with it.");
+        if (service.MarkedForDelete && op is "delete" or "config") throw MarkedForDelete();
         switch (op)
         {
             case "delete": Delete(databasePath, db, service); break;
@@ -280,23 +294,63 @@ public static class ServiceBroker
         File.SetUnixFileMode(socketPath, (UnixFileMode)Convert.ToInt32("666", 8));   // anyone may ask; the descriptor decides
         listener.Listen(16);
         log($"service manager: {databasePath}, requests at {socketPath}");
-        // a service deleted while it ran goes once it has stopped, however it stopped
+        // a deleted service goes once it has stopped, however it stopped, and its last handle is closed (or the
+        // process holding it has gone)
+        ServiceControl.Held = IsHeld;
         _ = Task.Run(async () =>
         {
             while (!stop.IsCancellationRequested)
             {
-                try { await Task.Delay(TimeSpan.FromSeconds(5), stop); } catch (OperationCanceledException) { break; }
+                try { await Task.Delay(TimeSpan.FromSeconds(2), stop); } catch (OperationCanceledException) { break; }
                 try { ServiceControl.RemoveStoppedDeleted(databasePath); }
                 catch (Exception e) { log("service manager: removing deleted services: " + e.Message); }
             }
         });
-        while (!stop.IsCancellationRequested)
+        try
         {
-            Socket client;
-            try { client = await listener.AcceptAsync(stop); }
-            catch (OperationCanceledException) { break; }
-            _ = Task.Run(() => Handle(client, databasePath, log));
+            while (!stop.IsCancellationRequested)
+            {
+                Socket client;
+                try { client = await listener.AcceptAsync(stop); }
+                catch (OperationCanceledException) { break; }
+                _ = Task.Run(() => Handle(client, databasePath, log));
+            }
         }
+        finally
+        {
+            ServiceControl.Held = null;
+            lock (s_holders) s_holders.Clear();
+        }
+    }
+
+    // the handles open to each service: the process holding each, by its id
+    private static readonly Dictionary<string, List<int>> s_holders = new(StringComparer.OrdinalIgnoreCase);
+
+    private static void Hold(string name, int pid, bool open)
+    {
+        lock (s_holders)
+        {
+            if (open) { if (!s_holders.TryGetValue(name, out var list)) s_holders[name] = list = new(); list.Add(pid); }
+            else if (s_holders.TryGetValue(name, out var list)) { list.Remove(pid); if (list.Count == 0) s_holders.Remove(name); }
+        }
+    }
+
+    // whether a live process holds a handle to the service: a process that ended has closed its handles
+    private static bool IsHeld(string name)
+    {
+        lock (s_holders)
+        {
+            if (!s_holders.TryGetValue(name, out var list)) return false;
+            list.RemoveAll(pid => !Alive(pid));
+            if (list.Count == 0) s_holders.Remove(name);
+            return list.Count > 0;
+        }
+    }
+
+    private static bool Alive(int pid)
+    {
+        try { using var p = System.Diagnostics.Process.GetProcessById(pid); return !p.HasExited; }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException) { return false; }
     }
 
     private static void Handle(Socket client, string databasePath, Action<string> log)
@@ -311,7 +365,16 @@ public static class ServiceBroker
                 uint uid = PeerUid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's account is unknown).");
                 string[] parts = (reader.ReadLine() ?? "").Split('\t');
                 if (parts.Length < 3) throw new ServiceException(87, "The parameter is incorrect.");
-                if (parts[0] == "logon")
+                if (parts[0] is "open" or "close")
+                {
+                    // a handle's opening or closing, by the process at the other end; the last one closed lets a
+                    // deleted service go
+                    int pid = PeerPid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's process is unknown).");
+                    Hold(parts[1], pid, parts[0] == "open");
+                    if (parts[0] == "close") ServiceControl.RemoveStoppedDeleted(databasePath);
+                    reply = "0\t";
+                }
+                else if (parts[0] == "logon")
                 {
                     // a local account's password, checked for a caller that may not read others' (LocalLogon); the
                     // password is not logged, and a wrong one waits as PAM makes it wait
@@ -341,6 +404,19 @@ public static class ServiceBroker
             }
             try { stream.Write(Encoding.UTF8.GetBytes(reply + "\n")); } catch (IOException) { }
         }
+    }
+
+    // the process at the other end of the socket: LOCAL_PEERPID on macOS, SO_PEERCRED's pid (offset 0) on Linux
+    private static int? PeerPid(Socket socket)
+    {
+        Span<byte> cred = stackalloc byte[128];
+        try
+        {
+            int n = OperatingSystem.IsMacOS() ? socket.GetRawSocketOption(0, 2, cred)
+                  : OperatingSystem.IsLinux() ? socket.GetRawSocketOption(1, 17, cred) : 0;
+            return n >= 4 ? BitConverter.ToInt32(cred[..4]) : null;
+        }
+        catch (SocketException) { return null; }
     }
 
     // the account at the other end of the socket: LOCAL_PEERCRED's xucred (cr_version, cr_uid, ...) on macOS,
