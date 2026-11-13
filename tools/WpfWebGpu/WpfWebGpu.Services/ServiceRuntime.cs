@@ -18,9 +18,12 @@ public static partial class ServiceManager
     /// executable; null to register it as given.</summary>
     public static string? OnInstallationRuntime(string commandLine)
     {
-        if (!OperatingSystem.IsWindows() || Environment.ProcessPath is not { } process) return null;
-        // <root>\runtime\dotnet\dotnet.exe (wpfrun starts every program with it), the installation's setup.json at <root>
-        string? runtime = Path.GetDirectoryName(Path.GetDirectoryName(process));
+        if (!OperatingSystem.IsWindows()) return null;
+        // the runtime this process runs on: <root>\runtime\dotnet\shared\Microsoft.NETCore.App\<version>\ (the program
+        // runs as its own executable, so the process's path says nothing of it); the installation's setup.json at <root>
+        string? framework = Path.GetDirectoryName(typeof(object).Assembly.Location);
+        string? runtime = framework;
+        for (int i = 0; i < 4 && runtime != null; i++) runtime = Path.GetDirectoryName(runtime);
         string? root = runtime == null ? null : Path.GetDirectoryName(runtime);
         if (runtime == null || root == null) return null;
         string dotnet = Path.Combine(runtime, "dotnet", "dotnet.exe"), wpfrun = Path.Combine(runtime, "launcher", "wpfrun.dll"), setup = Path.Combine(root, "setup.json");

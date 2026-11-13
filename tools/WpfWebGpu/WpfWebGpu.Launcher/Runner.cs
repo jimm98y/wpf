@@ -170,9 +170,9 @@ internal sealed class Runner
         string processName = Environment.GetEnvironmentVariable("WPFRUN_PROCESS_NAME") is { Length: > 0 } named ? named : App.ProgramName;
         psi.Environment.Remove("WPFRUN_PROCESS_NAME");
         string dotnetRoot = Path.GetDirectoryName(psi.FileName)!;
-        if (!HostInfo.IsWindows && Environment.GetEnvironmentVariable("WPFRUN_DOTNET_EXEC") != "1"
+        if (Environment.GetEnvironmentVariable("WPFRUN_DOTNET_EXEC") != "1"
             && ProgramHost.Template(dotnetRoot) is { } template
-            && ProgramHost.Make(template, cacheDir, processName, OverlayDir, rc, deps, probeRoots) is { } exe)
+            && ProgramHost.Make(template, cacheDir, processName, OverlayDir, rc, deps, probeRoots, App.Dll, dotnetRoot) is { } exe)
         {
             var own = new ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = psi.WorkingDirectory };
             own.Environment.Clear();

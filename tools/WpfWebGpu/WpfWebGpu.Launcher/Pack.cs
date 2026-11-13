@@ -235,7 +235,7 @@ internal static class Pack
             PackPackager.WindowsLauncher(rid, version, Path.Combine(runtime, "wpfrunw.exe"), @"launcher\wpfrun.dll", @"..\dotnet");
         }
         // the programs' own executables are .NET's apphost, patched per program where it runs (ProgramHost)
-        if (!windows) File.Copy(AppHost(rid, version), Path.Combine(runtime, "launcher", "apphost"), overwrite: true);
+        File.Copy(AppHost(rid, version), Path.Combine(runtime, "launcher", windows ? "apphost.exe" : "apphost"), overwrite: true);
         if (windows)
             File.WriteAllText(Path.Combine(runtime, "run.cmd"), "@\"%~dp0dotnet\\dotnet.exe\" \"%~dp0launcher\\wpfrun.dll\" run %*\r\n");
         else
