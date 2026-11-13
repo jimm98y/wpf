@@ -7,8 +7,8 @@
 //                                     Contents/Resources/{runtime,app,packs}
 //   Linux     Packager-<rid>/packager (the same script), runtime/, app/, packs/
 //   Windows   Packager-<rid>\Packager.exe  .NET's apphost made a window program (no console), wpfrun.dll its app and
-//                                     runtime\dotnet the .NET it starts (found beside it: the apphost's app-relative
-//                                     search), Packager.wpfrun saying what it runs (LauncherStub); runtime\, app\, packs\
+//                                     runtime\dotnet the .NET it starts (the apphost's app-relative search, from
+//                                     wpfrun.dll's folder), Packager.wpfrun saying what it runs (LauncherStub); runtime\, app\, packs\
 //
 // Written beside the packs folder (<packs>/../Packager-<rid>/), and archived as it is handed out beside it: a .zip
 // for Windows and macOS (the .app in it, the programs' modes kept), a .tar.gz for Linux. The app is published from
@@ -116,7 +116,7 @@ internal static class PackPackager
         }
         else
         {
-            WindowsLauncher(rid, desktop["dotnet"], Path.Combine(root, "Packager.exe"));
+            WindowsLauncher(rid, desktop["dotnet"], Path.Combine(root, "Packager.exe"), @"runtime\launcher\wpfrun.dll", @"..\dotnet");
             File.WriteAllText(Path.Combine(root, "Packager.wpfrun"),
                 "# what Packager.exe runs (LauncherStub): wpfrun, given these before its own arguments\r\nrun\r\n@app\\Packager.exe\r\nset WPFPKG_PACKS=@packs\r\n");
         }
@@ -125,9 +125,11 @@ internal static class PackPackager
         return 0;
     }
 
-    // .NET's apphost for Windows, pointed at runtime\launcher\wpfrun.dll and at runtime\dotnet for the .NET it starts,
-    // made a window program: written with the SDK's HostWriter (Microsoft.NET.HostModel), loaded from the SDK this runs on
-    private static void WindowsLauncher(string rid, string dotnetVersion, string destination)
+    // .NET's apphost for Windows, pointed at wpfrun.dll (<paramref name="app"/>, from the executable's folder) and at the
+    // .NET it starts (<paramref name="dotnet"/>, from wpfrun.dll's folder: the host takes an app-relative .NET from the
+    // app's folder), made a window program: written with the SDK's HostWriter (Microsoft.NET.HostModel), loaded from the
+    // SDK this runs on
+    internal static void WindowsLauncher(string rid, string dotnetVersion, string destination, string app, string dotnet)
     {
         string template = Pack.AppHostFor(rid, dotnetVersion);
         string sdkRoot = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath!)!, "sdk");
@@ -141,13 +143,13 @@ internal static class PackPackager
         object options = Activator.CreateInstance(optionsType)!;
         Type location = optionsType.GetNestedType("SearchLocation")!;
         optionsType.GetProperty("Location")!.SetValue(options, Enum.Parse(location, "AppRelative"));
-        optionsType.GetProperty("AppRelativeDotNet")!.SetValue(options, @"runtime\dotnet");
+        optionsType.GetProperty("AppRelativeDotNet")!.SetValue(options, dotnet);
         MethodInfo create = writer.GetMethod("CreateAppHost", BindingFlags.Public | BindingFlags.Static)!;
         object?[] arguments = create.GetParameters().Select(p => p.Name switch
         {
             "appHostSourceFilePath" => template,
             "appHostDestinationFilePath" => destination,
-            "appBinaryFilePath" => @"runtime\launcher\wpfrun.dll",
+            "appBinaryFilePath" => app,
             "windowsGraphicalUserInterface" => true,
             "dotNetSearchOptions" => options,
             _ => p.HasDefaultValue ? p.DefaultValue : (p.ParameterType == typeof(bool) ? false : null),

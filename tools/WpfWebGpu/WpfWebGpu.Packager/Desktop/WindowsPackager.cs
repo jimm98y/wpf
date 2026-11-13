@@ -101,7 +101,7 @@ public static class WindowsPackager
         return setup;
     }
 
-    // a program of the runtime that is not signed, or no longer is (dotnetw.exe: dotnet.exe made a window program),
+    // a program of the runtime that is not signed, or no longer is (wpfrunw.exe: .NET's apphost written for wpfrun),
     // signed with the installation's certificate -- a copy, in the work folder. Programs only: the libraries are
     // others' as they were published (an unsigned one is not the installation's to sign).
     private static string Signed(string file, System.Security.Cryptography.X509Certificates.X509Certificate2? certificate, string timestampUrl, string outDir)

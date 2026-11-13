@@ -19,7 +19,7 @@ public static partial class ServiceManager
     public static string? OnInstallationRuntime(string commandLine)
     {
         if (!OperatingSystem.IsWindows() || Environment.ProcessPath is not { } process) return null;
-        // <root>\runtime\dotnet\dotnet.exe (or dotnetw.exe), the installation's setup.json at <root>
+        // <root>\runtime\dotnet\dotnet.exe (wpfrun starts every program with it), the installation's setup.json at <root>
         string? runtime = Path.GetDirectoryName(Path.GetDirectoryName(process));
         string? root = runtime == null ? null : Path.GetDirectoryName(runtime);
         if (runtime == null || root == null) return null;

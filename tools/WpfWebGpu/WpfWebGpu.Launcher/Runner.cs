@@ -199,9 +199,17 @@ internal sealed class Runner
             Console.Error.WriteLine($"wpfrun: {p.StartInfo.FileName} {string.Join(' ', p.StartInfo.ArgumentList.Select(Quote))}");
         }
         Console.Error.WriteLine($"wpfrun: log {p.LogPath}");
-        // Windows: a launcher with no console of its own (dotnetw.exe, a shortcut's) starts the app without one, as
+        // Windows: a launcher with no console of its own (wpfrunw.exe, a shortcut's) starts the app without one, as
         // Explorer starts a window app; otherwise dotnet.exe, a console program, opened a console window beside it
-        if (HostInfo.IsWindows && GetConsoleWindow() == IntPtr.Zero) p.StartInfo.CreateNoWindow = true;
+        // -- and what it writes goes where this launcher's output was sent (a script's file or pipe): a program started
+        // without a console of its own gets a hidden one, not its parent's handles
+        bool relayOut = false, relayError = false;
+        if (HostInfo.IsWindows && GetConsoleWindow() == IntPtr.Zero)
+        {
+            p.StartInfo.CreateNoWindow = true;
+            p.StartInfo.RedirectStandardOutput = relayOut = Console.IsOutputRedirected;
+            p.StartInfo.RedirectStandardError = relayError = Console.IsErrorRedirected;
+        }
         // the program's own executable: this process handed over to it, so it is the process that was started (its
         // name, its pid for launchd, its exit status)
         if (!HostInfo.IsWindows && Path.GetFileNameWithoutExtension(p.StartInfo.FileName) != "dotnet")
@@ -210,6 +218,9 @@ internal sealed class Runner
             Console.Error.WriteLine($"wpfrun: could not hand over to {p.StartInfo.FileName} (error {Marshal.GetLastPInvokeError()}); it runs as a child");
         }
         using var process = Process.Start(p.StartInfo) ?? throw new UserError("could not start dotnet.");
+        Task relayed = Task.WhenAll(
+            relayOut ? process.StandardOutput.BaseStream.CopyToAsync(Console.OpenStandardOutput()) : Task.CompletedTask,
+            relayError ? process.StandardError.BaseStream.CopyToAsync(Console.OpenStandardError()) : Task.CompletedTask);
 
         // wpfrun is only a parent: whatever stops it stops the app too, so killing the launcher (a
         // terminal closing, a test runner's timeout) never leaves an app running on its own.
@@ -226,6 +237,7 @@ internal sealed class Runner
             }
         }
         process.WaitForExit();
+        relayed.Wait();
         foreach (var r in forward) r.Dispose();
         // macOS: an abort ends the app with status 6, quietly (the bootstrap's QuietAborts): reported here,
         // with the status a shell shows for an abort -- unless the log says the app exited with 6 itself.

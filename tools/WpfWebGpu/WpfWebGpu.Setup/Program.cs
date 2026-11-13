@@ -157,8 +157,8 @@ internal static partial class Program
         {
             string exe = Path.Combine(root, "app", app.Exe.Replace('/', '\\'));
             Shortcut.Create(Path.Combine(menu, FileName(app.Name) + ".lnk"),
-                Path.Combine(root, "runtime", "dotnet", "dotnetw.exe"),
-                $"\"{Path.Combine(root, "runtime", "launcher", "wpfrun.dll")}\" run \"{exe}\"",
+                Path.Combine(root, "runtime", "wpfrunw.exe"),
+                $"run \"{exe}\"",
                 Path.GetDirectoryName(exe)!, exe, app.Name);
         }
         Console.WriteLine($"  {info.Apps.Count} Start menu entries in {menu}");

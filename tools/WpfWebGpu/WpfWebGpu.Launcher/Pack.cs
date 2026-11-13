@@ -229,13 +229,10 @@ internal static class Pack
         bool windows = rid.StartsWith("win", StringComparison.Ordinal);
         if (windows)
         {
-            // dotnetw.exe: the runtime's dotnet.exe as a window program (its PE subsystem GUI), for the Start menu's
-            // shortcuts: it finds the runtime beside itself as dotnet.exe does, and opens no console window
-            byte[] exe = File.ReadAllBytes(Path.Combine(runtime, "dotnet", "dotnet.exe"));
-            int pe = BitConverter.ToInt32(exe, 0x3C);
-            if (BitConverter.ToUInt32(exe, pe) != 0x00004550) throw new UserError("dotnet.exe is not a PE file");
-            BitConverter.GetBytes((ushort)2 /* IMAGE_SUBSYSTEM_WINDOWS_GUI */).CopyTo(exe, pe + 24 + 68);
-            File.WriteAllBytes(Path.Combine(runtime, "dotnet", "dotnetw.exe"), exe);
+            // wpfrunw.exe: wpfrun as a window program, for the Start menu's shortcuts -- .NET's apphost pointed at
+            // launcher\wpfrun.dll and at the runtime beside it, opening no console window. (dotnet.exe itself made a
+            // window program does not run: the .NET host runs as dotnet only under that name.)
+            PackPackager.WindowsLauncher(rid, version, Path.Combine(runtime, "wpfrunw.exe"), @"launcher\wpfrun.dll", @"..\dotnet");
         }
         // the programs' own executables are .NET's apphost, patched per program where it runs (ProgramHost)
         if (!windows) File.Copy(AppHost(rid, version), Path.Combine(runtime, "launcher", "apphost"), overwrite: true);

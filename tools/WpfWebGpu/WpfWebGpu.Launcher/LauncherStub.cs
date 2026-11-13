@@ -18,7 +18,7 @@ internal static class LauncherStub
         string? exe = Environment.ProcessPath;
         if (exe == null) return args;
         string name = Path.GetFileNameWithoutExtension(exe);
-        if (name.Equals("dotnet", StringComparison.OrdinalIgnoreCase) || name.Equals("dotnetw", StringComparison.OrdinalIgnoreCase)) return args;
+        if (name.Equals("dotnet", StringComparison.OrdinalIgnoreCase) || name.Equals("wpfrunw", StringComparison.OrdinalIgnoreCase)) return args;
         string stub = Path.Combine(Path.GetDirectoryName(exe)!, name + ".wpfrun");
         if (!File.Exists(stub)) return args;
         string here = Path.GetDirectoryName(stub)!;
