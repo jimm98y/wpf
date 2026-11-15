@@ -33,30 +33,11 @@ namespace System.Printing
     /// <summary>A printer, as far as WPF's printing API is concerned.</summary>
     public partial class PrintQueue : PrintSystemObject
     {
-        private readonly PrinterInfo _printer;
-
-        internal PrintQueue(PrinterInfo printer)
-        {
-            _printer = printer;
-        }
-
-        /// <summary>
-        /// The name the platform knows this printer by, which is what a job is submitted to.
-        ///
-        /// An OVERRIDE, not a new property. The reference assembly declares Name once, as a virtual
-        /// on PrintSystemObject, so everything compiled against it -- PrintDialog included -- calls
-        /// PrintSystemObject::get_Name. Declaring it here instead of overriding leaves that slot
-        /// empty, and the call fails at runtime with MissingMethodException rather than at build.
-        /// </summary>
-        public override string Name => _printer.Name ?? string.Empty;
-
         /// <summary>The name to show a user. Falls back to the queue name.</summary>
-        public string FullName => string.IsNullOrEmpty(_printer.DisplayName) ? Name : _printer.DisplayName;
+        public string FullName => _printer == null || string.IsNullOrEmpty(_printer.DisplayName) ? Name : _printer.DisplayName;
 
         /// <summary>Whether this is the system default.</summary>
-        public bool IsDefault => _printer.IsDefault;
-
-        public string Comment => _printer.Location ?? string.Empty;
+        public bool IsDefault => _state?.IsDefault ?? _printer?.IsDefault ?? false;
 
         /// <summary>
         /// Set by the Windows print dialog on the queue it hands back.
@@ -73,7 +54,7 @@ namespace System.Printing
         /// paginated onto, so getting it wrong reflows every page.
         /// </summary>
         internal Windows.Size DefaultPageSize
-            => _printer.PageWidth > 0 && _printer.PageHeight > 0
+            => _printer != null && _printer.PageWidth > 0 && _printer.PageHeight > 0
                 ? new Windows.Size(_printer.PageWidth, _printer.PageHeight)
                 : new Windows.Size(816, 1056);
 
@@ -139,14 +120,18 @@ namespace System.Printing
         public static int MaxPrintSchemaVersion => 1;
 
         /// <summary>The ticket a job uses when the caller has not supplied one.</summary>
-        public PrintTicket DefaultPrintTicket => _defaultTicket ??= new PrintTicket();
-
-        private PrintTicket _defaultTicket;
-
-        public PrintTicket UserPrintTicket
+        public virtual PrintTicket DefaultPrintTicket
         {
-            get => DefaultPrintTicket;
+            get => _defaultTicket ??= new PrintTicket();
             set => _defaultTicket = value;
+        }
+
+        private PrintTicket _defaultTicket, _userTicket;
+
+        public virtual PrintTicket UserPrintTicket
+        {
+            get => _userTicket ?? DefaultPrintTicket;
+            set => _userTicket = value;
         }
 
         public PrintJobSettings CurrentJobSettings => _jobSettings ??= new PrintJobSettings();
@@ -309,101 +294,6 @@ namespace System.Printing
     }
 
     /// <summary>The printers a print server offers.</summary>
-    public partial class PrintQueueCollection : PrintSystemObjects, IEnumerable<PrintQueue>, IEnumerable, IDisposable
-    {
-        private readonly List<PrintQueue> _queues;
-
-        internal PrintQueueCollection(List<PrintQueue> queues)
-        {
-            _queues = queues ?? new List<PrintQueue>();
-        }
-
-        public IEnumerator<PrintQueue> GetEnumerator() => _queues.GetEnumerator();
-
-        IEnumerator IEnumerable.GetEnumerator() => _queues.GetEnumerator();
-
-        public void Add(PrintQueue printQueue) => _queues.Add(printQueue);
-
-        public override void Dispose() { }
-    }
-
-    /// <summary>A source of print queues.</summary>
-    public partial class PrintServer : PrintSystemObject
-    {
-        public PrintServer() { }
-
-        public PrintServer(string path) { Name = path; }
-
-        public PrintQueueCollection GetPrintQueues() => new PrintQueueCollection(Discover());
-
-        public PrintQueueCollection GetPrintQueues(EnumeratedPrintQueueTypes[] enumerationFlag)
-            => GetPrintQueues();
-
-        // The filtered overloads. The filter names which properties to fetch eagerly, which is an
-        // optimisation for a queue model that loads them one spooler round-trip at a time; this one
-        // has already got everything the platform gave it, so there is nothing to defer and nothing
-        // to filter. They exist because PrintDlgExMarshaler calls the two-argument form, and a
-        // reference assembly that declares a method the implementation does not have is a
-        // MissingMethodException the compiler cannot warn about -- which is exactly how the Windows
-        // print dialog was failing.
-
-        public PrintQueueCollection GetPrintQueues(PrintQueueIndexedProperty[] propertiesFilter)
-            => GetPrintQueues();
-
-        public PrintQueueCollection GetPrintQueues(PrintQueueIndexedProperty[] propertiesFilter,
-                                                   EnumeratedPrintQueueTypes[] enumerationFlag)
-            => GetPrintQueues();
-
-        public PrintQueueCollection GetPrintQueues(string[] propertiesFilter)
-            => GetPrintQueues();
-
-        public PrintQueueCollection GetPrintQueues(string[] propertiesFilter,
-                                                   EnumeratedPrintQueueTypes[] enumerationFlag)
-            => GetPrintQueues();
-
-        internal static List<PrintQueue> Discover()
-        {
-            var queues = new List<PrintQueue>();
-
-            foreach (PrinterInfo printer in PlatformPrint.EnumeratePrinters())
-            {
-                queues.Add(new PrintQueue(printer));
-            }
-
-            return queues;
-        }
-    }
-
-    /// <summary>The print server on this machine.</summary>
-    public sealed partial class LocalPrintServer : PrintServer
-    {
-        public LocalPrintServer() { }
-
-        public LocalPrintServer(string path) : base(path) { }
-
-        /// <summary>
-        /// The system's default printer, or null when there is not one. Null is a state
-        /// PrintDialog already handles: it is what "no printer installed" has always looked like.
-        /// </summary>
-        public PrintQueue DefaultPrintQueue
-        {
-            get
-            {
-                List<PrintQueue> queues = Discover();
-
-                foreach (PrintQueue queue in queues)
-                {
-                    if (queue.IsDefault) return queue;
-                }
-
-                return queues.Count != 0 ? queues[0] : null;
-            }
-        }
-
-        public static PrintQueue GetDefaultPrintQueue() => new LocalPrintServer().DefaultPrintQueue;
-    }
-
-    /// <summary>The area of a page a printer can actually mark, in WPF units.</summary>
     public partial class PrintDocumentImageableArea
     {
         internal PrintDocumentImageableArea() { }
@@ -429,27 +319,6 @@ namespace System.Printing
         public string Description { get; set; }
 
         public PrintTicket CurrentPrintTicket { get; set; }
-    }
-
-    public abstract partial class PrintSystemObject : IDisposable
-    {
-        protected PrintSystemObject() { }
-
-        /// <summary>
-        /// Declared HERE because that is where the reference assembly declares it. Callers compiled
-        /// against the contract bind to this slot, so a derived class that hides it rather than
-        /// overriding it produces a MissingMethodException the compiler cannot warn about.
-        /// </summary>
-        public virtual string Name { get; internal set; } = string.Empty;
-
-        public virtual void Dispose() { }
-    }
-
-    public abstract partial class PrintSystemObjects : IDisposable
-    {
-        protected PrintSystemObjects() { }
-
-        public virtual void Dispose() { }
     }
 
     internal class PrintSystemDispatcherObject : Windows.Threading.DispatcherObject
@@ -489,17 +358,4 @@ namespace System.Printing
         DefaultPrintTicket = 19,
     }
 
-    public enum EnumeratedPrintQueueTypes
-    {
-        Connections = 5,
-        Local = 6,
-        Shared = 8,
-        PushedMachineConnection = 15,
-        PushedUserConnection = 16,
-        EnumerateFromLocalPrintServer = 20,
-        Fax = 21,
-        WorkOffline = 22,
-        PublishedInDirectoryServices = 23,
-        TerminalServer = 24,
-    }
 }

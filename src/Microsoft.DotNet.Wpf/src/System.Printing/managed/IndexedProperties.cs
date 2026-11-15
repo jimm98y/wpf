@@ -78,6 +78,21 @@ namespace System.Printing.IndexedProperties
         /// <summary>Whether the value has been changed by a caller and not yet committed.</summary>
         internal bool IsDirty { get; set; }
 
+        /// <summary>The value changed: the object's from the spooler (initialised), else the user's (dirty).</summary>
+        internal void Changed()
+        {
+            if (IsInternallyInitialized)
+            {
+                IsInternallyInitialized = false;
+                IsInitialized = true;
+                IsDirty = false;
+            }
+            else
+            {
+                IsDirty = true;
+            }
+        }
+
         public void Dispose()
         {
             Dispose(true);
