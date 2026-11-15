@@ -240,7 +240,7 @@ namespace Wpf.WinFormsInterop.Tests
                 actions.Add(component, pushed);
                 Assert.True(actions.Contains(component));
                 Assert.Equal(2, actions.GetComponentActions(component).Count);
-                Assert.Single(actions.GetComponentActions(component, ComponentActionsType.Service));
+                Assert.Single(actions.GetComponentActions(component, System.ComponentModel.Design.ComponentActionsType.Service));
                 actions.Remove(pushed);
                 Assert.False(actions.Contains(component));
                 actions.Add(component, pushed);

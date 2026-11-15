@@ -41,6 +41,102 @@ namespace System.ComponentModel.Design.Serialization
 	[EditorBrowsable (EditorBrowsableState.Never)]
 	public abstract class CodeDomSerializerBase
 	{
+		// ---- the target-framework helpers (.NET's) ---------------------------------------------------------
+		//
+		// A host that designs for another framework (Visual Studio's multitargeting) answers
+		// TypeDescriptionProviderService with a provider over the target framework's metadata; a value type's
+		// members are read through it. Without that service, the runtime's TypeDescriptor answers.
+
+		protected static TypeDescriptionProvider GetTargetFrameworkProvider (IServiceProvider provider, object instance)
+		{
+			return provider.GetService (typeof (TypeDescriptionProviderService)) is TypeDescriptionProviderService service
+				? service.GetProvider (instance) : null;
+		}
+
+		static TypeDescriptionProvider TargetProviderFor (IDesignerSerializationManager manager, object instance)
+		{
+			Type type = instance.GetType ();
+			if (!type.IsValueType)
+				return null;
+			TypeDescriptionProvider target = GetTargetFrameworkProvider (manager, instance);
+			if (target == null)
+				return null;
+			if (target.IsSupportedType (type))
+				return target;
+			TargetFrameworkError (manager, type);
+			return null;
+		}
+
+		static void TargetFrameworkError (IDesignerSerializationManager manager, Type type)
+		{
+			CodeStatement statement = manager.Context [typeof (CodeStatement)] as CodeStatement;
+			throw new CodeDomSerializerException (string.Format ("Type '{0}' is not available in the target framework.", type.FullName), statement?.LinePragma) {
+				HelpLink = "The variable '{0}' is either undeclared or was never assigned.",
+			};
+		}
+
+		protected static Type GetReflectionTypeFromTypeHelper (IDesignerSerializationManager manager, Type type)
+		{
+			if (type == null || manager == null)
+				return null;
+			if (manager.GetService (typeof (TypeDescriptionProviderService)) is TypeDescriptionProviderService service
+				&& service.GetProvider (type) is TypeDescriptionProvider target) {
+				if (target.IsSupportedType (type))
+					return target.GetReflectionType (type);
+				TargetFrameworkError (manager, type);
+			}
+			return TypeDescriptor.GetReflectionType (type);
+		}
+
+		protected static Type GetReflectionTypeHelper (IDesignerSerializationManager manager, object instance)
+		{
+			if (instance == null || manager == null)
+				return null;
+			TypeDescriptionProvider target = TargetProviderFor (manager, instance);
+			return target != null ? target.GetReflectionType (instance) : TypeDescriptor.GetReflectionType (instance);
+		}
+
+		protected static PropertyDescriptorCollection GetPropertiesHelper (IDesignerSerializationManager manager, object instance, Attribute [] attributes)
+		{
+			if (instance == null || manager == null)
+				return null;
+			if (TargetProviderFor (manager, instance)?.GetTypeDescriptor (instance) is ICustomTypeDescriptor target)
+				return attributes == null ? target.GetProperties () : target.GetProperties (attributes);
+			return attributes == null ? TypeDescriptor.GetProperties (instance) : TypeDescriptor.GetProperties (instance, attributes);
+		}
+
+		protected static EventDescriptorCollection GetEventsHelper (IDesignerSerializationManager manager, object instance, Attribute [] attributes)
+		{
+			if (instance == null || manager == null)
+				return null;
+			if (TargetProviderFor (manager, instance)?.GetTypeDescriptor (instance) is ICustomTypeDescriptor target)
+				return attributes == null ? target.GetEvents () : target.GetEvents (attributes);
+			return attributes == null ? TypeDescriptor.GetEvents (instance) : TypeDescriptor.GetEvents (instance, attributes);
+		}
+
+		protected static AttributeCollection GetAttributesHelper (IDesignerSerializationManager manager, object instance)
+		{
+			if (instance == null || manager == null)
+				return null;
+			if (TargetProviderFor (manager, instance)?.GetTypeDescriptor (instance) is ICustomTypeDescriptor target)
+				return target.GetAttributes ();
+			return TypeDescriptor.GetAttributes (instance);
+		}
+
+		protected static AttributeCollection GetAttributesFromTypeHelper (IDesignerSerializationManager manager, Type type)
+		{
+			if (type == null || manager == null)
+				return null;
+			if (type.IsValueType && manager.GetService (typeof (TypeDescriptionProviderService)) is TypeDescriptionProviderService service
+				&& service.GetProvider (type) is TypeDescriptionProvider target) {
+				if (!target.IsSupportedType (type))
+					TargetFrameworkError (manager, type);
+				else if (target.GetTypeDescriptor (type) is ICustomTypeDescriptor descriptor)
+					return descriptor.GetAttributes ();
+			}
+			return TypeDescriptor.GetAttributes (type);
+		}
+
 
 		// MSDN says that if the deserialization fails a CodeExpression is returned
 		//

@@ -170,10 +170,13 @@ namespace System.ComponentModel.Design
 
 		public virtual void InitializeNewComponent (IDictionary defaultValues)
 		{
-			// Reset
-			//
-			OnSetComponentDefaults ();
+			// .NET's: a new component's string default property set to its name, unless the designer says not
+			if (SetTextualDefaultProperty)
+				OnSetComponentDefaults ();
 		}
+
+		/// <summary>Whether a new component's string default property is set to its name (InitializeNewComponent).</summary>
+		protected virtual bool SetTextualDefaultProperty => true;
 
 		// MSDN: The default implementation of this method does nothing.
 		//
@@ -286,8 +289,9 @@ namespace System.ComponentModel.Design
 			if (_component != null && _component.Site != null) {
 				PropertyDescriptor property = TypeDescriptor.GetDefaultProperty (_component);
 				if (property != null && property.PropertyType.Equals (typeof (string))) {
+					// .NET's: only a property not set yet
 					string propertyValue = (string)property.GetValue (_component);
-					if (propertyValue != null && propertyValue.Length != 0)
+					if (string.IsNullOrEmpty (propertyValue))
 						property.SetValue (_component, _component.Site.Name);
 				}
 			}

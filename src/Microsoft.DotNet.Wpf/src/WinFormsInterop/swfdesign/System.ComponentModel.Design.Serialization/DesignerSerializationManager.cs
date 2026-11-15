@@ -340,6 +340,13 @@ namespace System.ComponentModel.Design.Serialization
 			}
 		}
 				
+		/// <summary>.NET's: the runtime type of the name, through the host's type resolution where it has one.</summary>
+		public Type GetRuntimeType (string typeName)
+		{
+			ITypeResolutionService typeResSvc = this.GetService (typeof (ITypeResolutionService)) as ITypeResolutionService;
+			return typeResSvc == null ? Type.GetType (typeName) : typeResSvc.GetType (typeName);
+		}
+
 		protected virtual Type GetType (string typeName)
 		{
 			if (typeName == null)

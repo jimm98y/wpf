@@ -43,6 +43,10 @@ namespace System.Windows.Forms.Design
 
 	public class ParentControlDesigner : ControlDesigner
 	{
+		/// <summary>Whether a component may be added to this parent (.NET's: always, unless a derived designer says
+		/// otherwise).</summary>
+		protected internal virtual bool CanAddComponent (IComponent component) => true;
+
 
 		public ParentControlDesigner ()
 		{

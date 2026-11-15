@@ -166,6 +166,9 @@ namespace System.ComponentModel.Design
 			}
 		}
 
+		/// <summary>Whether the surface is being loaded by the host's design-time environment loader.</summary>
+		public bool DtelLoading { get; set; }
+
 		public bool IsLoaded {
 			get { return _isLoaded; }
 		}

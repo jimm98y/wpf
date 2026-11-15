@@ -34,6 +34,9 @@ using System.Collections;
 namespace System.ComponentModel.Design
 {
 	public abstract class DesignerActionItem {
+		/// <summary>Whether the item shows in the source view's smart tag as well as the designer's.</summary>
+		public bool ShowInSourceView { get; set; } = true;
+
 		bool allow_associate;
 		string category;
 		string description;
