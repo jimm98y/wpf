@@ -78,6 +78,8 @@
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.EventLog/System.Diagnostics.EventLog.csproj" />
     <!-- SoundPlayer and SystemSounds on the OS's audio, X509Certificate2UI on Windows' dialogs -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Windows.Extensions/System.Windows.Extensions.csproj" />
+    <!-- RegistryKey's ACL extensions on the key's own methods -->
+    <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.Win32.Registry.AccessControl/Microsoft.Win32.Registry.AccessControl.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Diagnostics.PerformanceCounter/System.Diagnostics.PerformanceCounter.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Security.Cryptography.ProtectedData/System.Security.Cryptography.ProtectedData.csproj" />
     <ProjectReference Include="$(_WpfWebGpuShims)System.Threading.AccessControl/System.Threading.AccessControl.csproj" />

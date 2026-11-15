@@ -1,0 +1,1 @@
+T:Microsoft.Win32.RegistryAclExtensions
