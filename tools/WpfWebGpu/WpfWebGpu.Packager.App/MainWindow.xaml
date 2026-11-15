@@ -10,7 +10,7 @@
 
   <DockPanel>
     <!-- the manifest: what is packaged and how, saved and opened again -->
-    <Border DockPanel.Dock="Top" BorderBrush="#DDD" BorderThickness="0,0,0,1" Padding="12,8">
+    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="12,8">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
           <Button Content="New" Click="OnNew" />
@@ -18,7 +18,7 @@
           <Button Content="Save" Click="OnSave" />
           <Button Content="Save As…" Click="OnSaveAs" />
         </StackPanel>
-        <TextBlock x:Name="ManifestPath" VerticalAlignment="Center" Foreground="#555" TextTrimming="CharacterEllipsis" Text="A new manifest" />
+        <TextBlock x:Name="ManifestPath" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" Text="A new manifest" />
       </DockPanel>
     </Border>
 
@@ -67,7 +67,7 @@
 
             <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
               <Button x:Name="ScanButton" Content="Scan" Margin="0,4" MinWidth="120" Click="OnScan" />
-              <TextBlock x:Name="ScanStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
+              <TextBlock x:Name="ScanStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             </StackPanel>
           </StackPanel>
         </ScrollViewer>
@@ -269,8 +269,8 @@
               <CheckBox x:Name="FastBuild" Content="For testing: nothing compressed" VerticalAlignment="Center" />
               <CheckBox x:Name="AotBuild" Content="Web pages compiled ahead of time" Margin="16,0,0,0" VerticalAlignment="Center"
                         IsEnabled="False" ToolTipService.ShowOnDisabled="True" ToolTip="Looking for the .NET SDK and its wasm-tools workload…" />
-              <Button x:Name="BuildButton" Content="Build" MinWidth="120" Margin="24,4,0,4" Click="OnBuild" />
-              <TextBlock x:Name="BuildStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="#555" />
+              <Button x:Name="BuildButton" Content="Build" Style="{StaticResource AccentButtonStyle}" MinWidth="120" Margin="24,4,0,4" Click="OnBuild" />
+              <TextBlock x:Name="BuildStatus" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             </StackPanel>
           </StackPanel>
           <TextBox x:Name="Log" IsReadOnly="True" FontFamily="Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12"
