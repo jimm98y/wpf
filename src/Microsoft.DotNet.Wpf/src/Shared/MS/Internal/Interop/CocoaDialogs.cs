@@ -56,7 +56,10 @@ namespace MS.Internal.Interop
         /// <summary>
         /// Shows an NSOpenPanel. Returns the selected paths, or null when cancelled.
         /// </summary>
-        public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories, bool showHiddenFiles = false)
+        public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories)
+            => ShowOpenPanel(title, initialDirectory, multiselect, chooseDirectories, showHiddenFiles: false);
+
+        public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories, bool showHiddenFiles)
         {
             EnsureApplication();
             IntPtr panel = Send(Cls("NSOpenPanel"), Sel("openPanel"));
@@ -90,7 +93,10 @@ namespace MS.Internal.Interop
         /// <summary>
         /// Shows an NSSavePanel. Returns the chosen path, or null when cancelled.
         /// </summary>
-        public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName, bool showHiddenFiles = false)
+        public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName)
+            => ShowSavePanel(title, initialDirectory, defaultFileName, showHiddenFiles: false);
+
+        public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName, bool showHiddenFiles)
         {
             EnsureApplication();
             IntPtr panel = Send(Cls("NSSavePanel"), Sel("savePanel"));
