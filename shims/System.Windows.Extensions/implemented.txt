@@ -1,0 +1,6 @@
+T:System.Media.SoundPlayer
+T:System.Media.SystemSound
+T:System.Media.SystemSounds
+T:System.Security.Cryptography.X509Certificates.X509Certificate2UI
+T:System.Security.Cryptography.X509Certificates.X509SelectionFlag
+T:System.Xaml.Permissions.XamlAccessLevel

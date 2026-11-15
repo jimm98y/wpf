@@ -555,14 +555,14 @@
   <!-- Overlay the cross-platform shims over whatever the runtime packages dropped in the output (same strong-name
        identity, so the load binds the shim):
          lib/wpf-desktop's shims       every desktop head, Windows included: Microsoft.Win32.SystemEvents, EventLog,
-                                       PerformanceCounter, ProtectedData and Threading.AccessControl are the Windows
+                                       PerformanceCounter, ProtectedData, Threading.AccessControl and Windows.Extensions are the Windows
                                        Desktop Runtime's, which an app here does not need, and Microsoft.Win32.Registry
                                        goes through the one implementation on every OS; on Windows each forwards to
                                        the OS (the broadcasts, the Event Log, DPAPI, the kernel's objects, advapi32);
          lib/wpf-unix's                unix and Android only: System.Security.AccessControl and Principal.Windows,
                                        .NET's own runtime's, which throw off Windows and stay .NET's on Windows. -->
   <ItemGroup Condition="'$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(_WpfWebGpuBrowser)' != 'true' and '$(_WpfWebGpuIos)' != 'true'">
-    <_WpfWebGpuOverlayShim Include="Microsoft.Win32.SystemEvents;Microsoft.Win32.Registry;System.Diagnostics.EventLog;System.Diagnostics.PerformanceCounter;System.Security.Cryptography.ProtectedData;System.Threading.AccessControl" Folder="wpf-desktop" />
+    <_WpfWebGpuOverlayShim Include="Microsoft.Win32.SystemEvents;Microsoft.Win32.Registry;System.Diagnostics.EventLog;System.Diagnostics.PerformanceCounter;System.Security.Cryptography.ProtectedData;System.Threading.AccessControl;System.Windows.Extensions" Folder="wpf-desktop" />
     <_WpfWebGpuOverlayShim Include="System.Security.AccessControl;System.Security.Principal.Windows" Folder="wpf-unix"
                            Condition="'$(_WpfWebGpuUnix)' == 'true' or '$(_WpfWebGpuAndroid)' == 'true'" />
   </ItemGroup>

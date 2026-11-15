@@ -134,6 +134,7 @@
     <None Include="$(WpfBin)System.Diagnostics.PerformanceCounter/Release/net10.0/System.Diagnostics.PerformanceCounter.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)System.Security.Cryptography.ProtectedData/Release/net10.0/System.Security.Cryptography.ProtectedData.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <None Include="$(WpfBin)System.Threading.AccessControl/Release/net10.0/System.Threading.AccessControl.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
+    <None Include="$(WpfBin)System.Windows.Extensions/Release/net10.0/System.Windows.Extensions.dll" Pack="true" PackagePath="lib/wpf-desktop/" />
     <!-- off Windows only: .NET's own runtime's, which throw there and stay .NET's on Windows; what the access
          control lists above are kept with. Not referenced at compile time (the framework's are), overlaid. -->
     <None Include="$(WpfBin)System.Security.AccessControl/Release/net10.0/System.Security.AccessControl.dll" Pack="true" PackagePath="lib/wpf-unix/" />
