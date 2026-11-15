@@ -16,10 +16,13 @@
 //     WebGPU render pass, one surface: no intermediate bitmap, no readback, no second swap chain,
 //     and no airspace, which is the defect that defined the Windows-only original.
 //
-// Why it is NOT an HwndHost. The original derives from HwndHost and hands WPF a child HWND. There
-// are no HWNDs here -- the driver's handles are managed Hwnd objects, and the whole point of the
-// port is not to require Win32 -- so this derives from FrameworkElement and bridges at the scene
-// level instead. <see cref="Handle"/> is therefore IntPtr.Zero; see the note on it.
+// An HwndHost, as the original is, without an HWND. The original hands WPF a child window; here the
+// driver's handles are managed Hwnd objects, so BuildWindowCore hands back the container form's
+// handle and HwndHost runs in its foreign mode (HwndHostForeignContent): none of its Win32 calls are
+// made, and this class does the presenting itself, at the scene level as above. What an app reaches
+// through HwndHost is real: Handle is the container's handle (Control.FromHandle finds the form),
+// the container's messages go through WndProc and the MessageHook handlers before the form sees
+// them, and DpiChanged, UpdateWindowPos and the keyboard-sink members are HwndHost's own.
 //
 // Coordinates: the driver works in 96dpi points, which are also WPF's DIPs, so the two agree on
 // sizes; EmbeddedItem wants a DEVICE-pixel rect plus the point->device scale, which is this
@@ -33,6 +36,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Runtime.InteropServices;
 using Microsoft.Wpf.Interop.WebGpu.Composition;
 using SD = System.Drawing;
 using SWF = System.Windows.Forms;
@@ -48,7 +52,7 @@ using WpfDragDropKeyStates = System.Windows.DragDropKeyStates;
 namespace System.Windows.Forms.Integration
 {
     /// <summary>Hosts a Windows Forms <see cref="SWF.Control"/> inside a WPF element tree.</summary>
-    public partial class WindowsFormsHost : FrameworkElement, IDisposable
+    public partial class WindowsFormsHost : HwndHost, IKeyboardInputSink
     {
         // The driver only records scenes in GPU-raster mode; without it every hosted window paints
         // into a backing bitmap that nothing on this path ever reads, and the host renders empty.
@@ -163,7 +167,7 @@ namespace System.Windows.Forms.Integration
             if (emptied != null) Retire(emptied);
         }
 
-        private readonly SWF.Form _container;      // the hosted surface; registered with the driver, never shown as an OS window
+        private readonly HostContainer _container; // the hosted surface; registered with the driver, never shown as an OS window
         private XplatUIWebGpu _driver;
         private SWF.Control _child;
         private int _formOx, _formOy;              // the container's origin in the driver's screen space, refreshed each frame
@@ -187,7 +191,7 @@ namespace System.Windows.Forms.Integration
             // Borderless and never shown: the driver registers the window tree and paints it, but
             // with no per-OS host attached to this form it never reaches a screen of its own. Its
             // pixels only exist as the scene this element composites.
-            _container = new SWF.Form
+            _container = new HostContainer(this)
             {
                 FormBorderStyle = SWF.FormBorderStyle.None,
                 ShowInTaskbar = false,
@@ -202,6 +206,11 @@ namespace System.Windows.Forms.Integration
             SWF.PresentationHost.Suppress(_container);
 
             Focusable = true;                      // or typed text can never reach the hosted controls
+
+            // HwndHost offers BuildWindowCore's handle to the foreign-content claimant before it would
+            // treat it as a Win32 window; it has to be listening by the time this host enters a tree.
+            ForeignHwndHostContent.Install();
+
             Loaded += (s, e) => Attach();
             Unloaded += (s, e) => Detach();
         }
@@ -238,35 +247,71 @@ namespace System.Windows.Forms.Integration
 
         protected virtual void OnChildChanged(ChildChangedEventArgs e) => ChildChanged?.Invoke(this, e);
 
-        /// <summary>
-        /// Always <see cref="IntPtr.Zero"/>: this host has no OS window.
-        /// </summary>
-        /// <remarks>
-        /// The Windows-only original inherits this from HwndHost, where it is a real child HWND, and
-        /// app code uses it to reach the hosted content with Win32 calls (SetWindowPos to force a
-        /// resize, SetFocus, and so on). None of that applies here -- WPF layout sizes this element
-        /// and the scene follows it -- and there is no handle that would make those calls meaningful.
-        /// Zero rather than a driver handle precisely so that the usual `if (h == IntPtr.Zero)
-        /// return;` guard in such code takes the early exit instead of P/Invoking into a user32 that
-        /// does not exist on this platform.
-        /// </remarks>
-        public IntPtr Handle => IntPtr.Zero;
+        // ---- the hosted window (HwndHost) ---------------------------------------------------------
 
-        public void Dispose()
+        /// <summary>The container form's handle: the window HwndHost hosts, in its foreign mode.</summary>
+        protected override HandleRef BuildWindowCore(HandleRef hwndParent)
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
+            ForeignHwndHostContent.Install();
+            return new HandleRef(this, _container.Handle);
         }
 
-        protected virtual void Dispose(bool disposing)
+        /// <summary>The hosted window's end: the container form, and the child in it, disposed (as the
+        /// original disposes its adapter).</summary>
+        protected override void DestroyWindowCore(HandleRef hwnd) => DisposeContainer();
+
+        /// <summary>The container's messages, before the form handles them: the original's WndProc, which
+        /// leaves them to HwndHost's.</summary>
+        protected override IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+            => base.WndProc(hwnd, msg, wParam, lParam, ref handled);
+
+        protected override void Dispose(bool disposing)
         {
-            if (_disposed) return;
-            _disposed = true;
-            if (!disposing) return;
+            if (!_disposed)
+            {
+                _disposed = true;
+                if (disposing)
+                {
+                    Detach();
+                    _child = null;
+                }
+            }
+            // HwndHost destroys the hosted window (DestroyWindowCore) when it was built; one that never
+            // entered a window was never built, and its container goes here.
+            base.Dispose(disposing);
+            if (disposing) DisposeContainer();
+        }
+
+        private void DisposeContainer()
+        {
             Detach();
-            _child = null;
+            if (_container.IsDisposed) return;
             SWF.EmbeddedScenes.SetPlacement(_container, null);
             _container.Dispose();
+        }
+
+        /// <summary>
+        /// The container form. Its messages pass through the host first -- WndProc, then the
+        /// MessageHook handlers -- as a child window's do once HwndHost has subclassed it; a message the
+        /// host handled is not handed to the form.
+        /// </summary>
+        private sealed class HostContainer : SWF.Form
+        {
+            private readonly WindowsFormsHost _host;
+
+            public HostContainer(WindowsFormsHost host) => _host = host;
+
+            protected override void WndProc(ref SWF.Message m)
+            {
+                bool handled = false;
+                IntPtr result = HwndHostForeignContent.DispatchMessage(_host, m.HWnd, m.Msg, m.WParam, m.LParam, ref handled);
+                if (handled)
+                {
+                    m.Result = result;
+                    return;
+                }
+                base.WndProc(ref m);
+            }
         }
 
         // ---- layout ------------------------------------------------------------------------------

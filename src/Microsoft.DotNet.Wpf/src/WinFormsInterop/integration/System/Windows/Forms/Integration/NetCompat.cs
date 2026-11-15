@@ -107,7 +107,7 @@ namespace System.Windows.Forms.Integration
         }
 
         /// <summary>Moves keyboard focus into the hosted control, as Tab into the host does.</summary>
-        public bool TabInto(TraversalRequest request)
+        public virtual bool TabInto(TraversalRequest request)
         {
             if (Child == null || !Child.CanFocus) return false;
             return Child.Focus();

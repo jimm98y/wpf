@@ -589,6 +589,13 @@ namespace System.Windows.Interop
                 // We only allow the changes that are coming from Avalon layout. The hwnd is not allowed to change by itself.
                 // So the size of the hwnd should always be RenderSize and the position be where layout puts it.
                 case WindowMessage.WM_WINDOWPOSCHANGING:
+                    // A foreign child is placed by its claimant from this element's transform, in its
+                    // own coordinate space; forcing the Win32 client rect on it would move it there.
+                    if (IsNotWin32Window)
+                    {
+                        break;
+                    }
+
                     PresentationSource source = PresentationSource.CriticalFromVisual(this, false /* enable2DTo3DTransition */);
 
                     if (source != null)
@@ -636,6 +643,13 @@ namespace System.Windows.Interop
 
 
                 case WindowMessage.WM_GETOBJECT:
+                    // UIA's reply is a Win32 one (LresultFromObject); a foreign child is reached
+                    // through this element's automation peer instead.
+                    if (IsNotWin32Window)
+                    {
+                        break;
+                    }
+
                     handled = true;
                     return OnWmGetObject(wParam, lParam);
             }
@@ -1220,6 +1234,20 @@ namespace System.Windows.Interop
             _hwnd = new HandleRef(null, IntPtr.Zero);
 
             DestroyWindowCore(hwnd);
+        }
+
+        /// <summary>
+        /// A message of a claimed foreign child, delivered by its claimant: the WndProc override and the
+        /// MessageHook handlers see it as they see a subclassed child window's (HwndHostForeignContent).
+        /// </summary>
+        internal IntPtr ForeignWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (!_isForeignChild || _isDisposed || hwnd != _hwnd.Handle)
+            {
+                return IntPtr.Zero;
+            }
+
+            return SubclassWndProc(hwnd, msg, wParam, lParam, ref handled);
         }
 
         private object AsyncDestroyWindow(object arg)

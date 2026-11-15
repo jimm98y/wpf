@@ -11377,6 +11377,7 @@ namespace System.Windows.Interop
         public static System.Action<System.Windows.Interop.HwndHost, System.IntPtr> Detach { get { throw null; } set { } }
         public static System.Action<System.Windows.Interop.HwndHost, System.IntPtr, int, int, int, int> SetBounds { get { throw null; } set { } }
         public static System.Action<System.Windows.Interop.HwndHost, System.IntPtr, bool> SetVisible { get { throw null; } set { } }
+        public static System.IntPtr DispatchMessage(System.Windows.Interop.HwndHost host, System.IntPtr hwnd, int msg, System.IntPtr wParam, System.IntPtr lParam, ref bool handled) { throw null; }
     }
     public abstract partial class HwndHost : System.Windows.FrameworkElement, System.IDisposable, System.Windows.Interop.IKeyboardInputSink, System.Windows.Interop.IWin32Window
     {

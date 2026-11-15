@@ -10,16 +10,17 @@
 // objects and every window is composited through WebGPU, so IsWindow(handle) is false and BuildWindow
 // throws ChildWindowNotCreated before the host has a chance to do anything.
 //
-// WindowsFormsHost sidesteps that by deriving from FrameworkElement instead and bridging at the
-// scene level. Applications that subclass HwndHost DIRECTLY cannot: SharpDevelop's
+// So HwndHost asks here first: WindowsFormsHost, whose BuildWindowCore returns its container form's
+// handle, and applications that subclass HwndHost themselves -- SharpDevelop's
 // CustomWindowsFormsHost, for one, derives from HwndHost to get its own keyboard routing, and hands
 // back a WinForms Control's Handle.
 //
-// So HwndHost asks here first. If something claims the handle, the host runs in FOREIGN mode: the
-// Win32 paths are skipped and the claimant owns presentation, hit-testing and lifetime. Nothing in
-// PresentationFramework knows how that is done - the delegates are filled in by
-// WindowsFormsIntegration, which is the assembly that can see both WPF and the driver. That keeps
-// the dependency direction the rest of the fork maintains: WPF never references the backend.
+// If something claims the handle, the host runs in FOREIGN mode: the Win32 paths are skipped and the
+// claimant owns presentation, hit-testing and lifetime, and delivers the child's messages to the
+// host's WndProc and MessageHook (DispatchMessage). Nothing in PresentationFramework knows how that is
+// done - the delegates are filled in by WindowsFormsIntegration, which is the assembly that can see
+// both WPF and the driver. That keeps the dependency direction the rest of the fork maintains: WPF
+// never references the backend.
 //
 
 using System;
@@ -49,6 +50,18 @@ namespace System.Windows.Interop
 
         /// <summary>Called when the host's visibility changes.</summary>
         public static Action<HwndHost, IntPtr, bool> SetVisible { get; set; }
+
+        /// <summary>
+        /// Delivers a message of a claimed child to the host -- its <c>WndProc</c> override, then its
+        /// <c>MessageHook</c> handlers -- as subclassing a child window would on Win32. A claimant calls
+        /// this before handling the message itself, and leaves it alone when <paramref name="handled"/>
+        /// comes back true. Messages for any other handle are ignored.
+        /// </summary>
+        public static IntPtr DispatchMessage(HwndHost host, IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            ArgumentNullException.ThrowIfNull(host);
+            return host.ForeignWndProc(hwnd, msg, wParam, lParam, ref handled);
+        }
 
         internal static bool TryAttach(HwndHost host, IntPtr handle)
         {

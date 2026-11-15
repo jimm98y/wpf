@@ -63,6 +63,12 @@ namespace System.Windows.Forms.Integration
 
         private static bool OnAttach(HwndHost host, IntPtr handle)
         {
+            // A WindowsFormsHost's handle is its own container form, which it composites itself.
+            if (host is WindowsFormsHost)
+            {
+                return XplatUIWebGpu.GetInstance()?.KnowsWindow(handle) == true;
+            }
+
             if (Environment.GetEnvironmentVariable("WF_TRACE_WINDOWS") == "1")
                 Console.Error.WriteLine($"foreign claim: host={host?.GetType().Name} handle=0x{handle.ToInt64():x} " +
                     $"known={XplatUIWebGpu.GetInstance()?.KnowsWindow(handle)}");
@@ -105,6 +111,11 @@ namespace System.Windows.Forms.Integration
 
         private static void OnDetach(HwndHost host, IntPtr handle)
         {
+            if (host is WindowsFormsHost)
+            {
+                return;     // nothing was claimed; the host tears its container down itself
+            }
+
             ForeignHwndHostContent claim = null;
             lock (s_lock)
             {
