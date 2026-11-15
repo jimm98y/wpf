@@ -4,7 +4,7 @@
 
 namespace System.Drawing.Imaging
 {
-    public sealed class Encoder
+    public sealed partial class Encoder
     {
         public static readonly Encoder Compression = new Encoder(new Guid(unchecked((int)0xe09d739d), unchecked((short)0xccd4), unchecked((short)0x44ee), new byte[] { 0x8e, 0xba, 0x3f, 0xbf, 0x8b, 0xe4, 0xfc, 0x58 }));
         public static readonly Encoder ColorDepth = new Encoder(new Guid(0x66087055, unchecked((short)0xad66), unchecked((short)0x4c7c), new byte[] { 0x9a, 0x18, 0x38, 0xa2, 0x31, 0x0b, 0x83, 0x37 }));

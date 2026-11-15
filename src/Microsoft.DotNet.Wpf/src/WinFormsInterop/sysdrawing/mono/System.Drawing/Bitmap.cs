@@ -58,7 +58,7 @@ namespace System.Drawing
 	[Serializable]
 	[ComVisible (true)]
 	[Editor ("System.Drawing.Design.BitmapEditor, " + Consts.AssemblySystem_Drawing_Design, typeof (System.Drawing.Design.UITypeEditor))]
-	public sealed class Bitmap : Image
+	public sealed partial class Bitmap : Image
 	{
 		#region constructors
 		// constructors

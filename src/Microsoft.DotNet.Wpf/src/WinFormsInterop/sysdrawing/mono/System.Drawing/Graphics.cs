@@ -964,7 +964,9 @@ namespace System.Drawing
 		public GraphicsContainer BeginContainer ()
 		{
 			CheckUse ();
+			SavedContext context = NewContext ();
 			int token = BeginContainerState (null, RectangleF.Empty, RectangleF.Empty, GraphicsUnit.Pixel);
+			PushContext (context, token, cumulative: false);
 			return new GraphicsContainer ((uint) token);
 		}
 
@@ -980,7 +982,9 @@ namespace System.Drawing
 			// GdipBeginContainer: the source unit must be a real one (not World or Display).
 			if (unit < GraphicsUnit.Pixel || unit > GraphicsUnit.Millimeter)
 				throw new ArgumentException ("Parameter is not valid.");
+			SavedContext context = NewContext ();
 			int token = BeginContainerState (true, dstrect, srcrect, unit);
+			PushContext (context, token, cumulative: false);
 			return new GraphicsContainer ((uint) token);
 		}
 
@@ -4011,6 +4015,7 @@ namespace System.Drawing
 			// GpGraphics::EndContainer: Restore with the container's id.
 			mf_rec?.EndContainer (container.NativeObject);
 			RestoreState ((int) container.NativeObject);
+			PopContext ((int) container.NativeObject);
 			
 		}
 
@@ -5427,6 +5432,7 @@ namespace System.Drawing
 			int token = gstate.nativeState;
 			mf_rec?.Restore ((uint) token);
 			RestoreState (token);
+			PopContext (token);
 		}
 
 		public void RotateTransform (float angle)
@@ -5448,7 +5454,10 @@ namespace System.Drawing
 		public GraphicsState Save ()
 		{
 			CheckUse ();
-			return new GraphicsState (SaveState (false));
+			SavedContext context = NewContext ();
+			int token = SaveState (false);
+			PushContext (context, token, cumulative: true);
+			return new GraphicsState (token);
 		}
 
 		public void ScaleTransform (float sx, float sy)
@@ -5967,17 +5976,13 @@ namespace System.Drawing
 			}
 		}
 
-		// .NET: { the current clip (an infinite one for none), the current transform } -- this Graphics' own state;
-		// it is not a container of a printing Graphics, so there is no outer context to accumulate.
+		// .NET: { the cumulative clip (an empty region for none), the cumulative transform } -- what the device
+		// sees through the containers and saves this Graphics is inside (see GetContextInfo(out PointF, out Region)).
 		[EditorBrowsable (EditorBrowsableState.Never)]
 		public object GetContextInfo ()
 		{
-			Region clip = Clip;
-			if (clip.IsInfinite (this)) {
-				clip.Dispose ();
-				clip = new Region ();
-			}
-			return new object [] { clip, Transform };
+			ContextInfo (out System.Numerics.Matrix3x2 cumulative, calculateClip: true, out Region clip);
+			return new object [] { clip ?? new Region (), new Matrix (cumulative) };
 		}
 	}
 }

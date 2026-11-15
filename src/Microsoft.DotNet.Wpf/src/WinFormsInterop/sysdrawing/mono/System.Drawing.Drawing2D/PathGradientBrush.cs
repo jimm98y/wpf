@@ -40,7 +40,7 @@ namespace System.Drawing.Drawing2D {
 	// @1800604f0, SetBlend @18006f460 / GetBlend @1801abc28, SetPresetBlend @180070108 /
 	// GetPresetBlend @18013e7b0, the copy ctor @18000acf0. GDI+ stores the blend and the preset
 	// blend reversed and inverted (1 - x, last first), so a value read back is 1 - (1 - x).
-	public sealed class PathGradientBrush : Brush {
+	public sealed partial class PathGradientBrush : Brush {
 
 		// +0x88 the path (null for a point-built brush), +0x90 the points, +0xa0 their count
 		GpPath _path;

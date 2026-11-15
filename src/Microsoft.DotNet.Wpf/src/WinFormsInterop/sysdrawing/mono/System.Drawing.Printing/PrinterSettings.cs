@@ -339,22 +339,16 @@ namespace System.Drawing.Printing
 
 		public IntPtr GetHdevmode()
 		{
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			return DevModeInterop.GetHdevmode (this, DefaultPageSettings);
 		}
 
 		public IntPtr GetHdevmode(PageSettings pageSettings)
 		{
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			return DevModeInterop.GetHdevmode (this, pageSettings);
 		}
 
 		public IntPtr GetHdevnames()
 		{
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			return DevModeInterop.GetHdevnames (this);
 		}
 		
@@ -415,8 +409,6 @@ namespace System.Drawing.Printing
 
 		public void SetHdevmode(IntPtr hdevmode)
 		{
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			if (hdevmode == IntPtr.Zero)
 				throw new ArgumentException (nameof (hdevmode));
 			DevModeInterop.SetHdevmode (this, hdevmode);
@@ -424,8 +416,6 @@ namespace System.Drawing.Printing
 
 		public void SetHdevnames(IntPtr hdevnames)
 		{
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			if (hdevnames == IntPtr.Zero)
 				throw new ArgumentException (nameof (hdevnames));
 			PrinterName = DevModeInterop.ReadDevice (hdevnames);

@@ -56,7 +56,7 @@ namespace System.Drawing
 #endif
 	[TypeConverter(typeof(IconConverter))]
 
-	public sealed class Icon : MarshalByRefObject, ISerializable, ICloneable, IDisposable, IHasSize
+	public sealed partial class Icon : MarshalByRefObject, ISerializable, ICloneable, IDisposable, IHasSize
 	{
 		// What .NET compares an entry's depth against: a 32-bit display.
 		const int DisplayBitDepth = 32;
@@ -68,7 +68,7 @@ namespace System.Drawing
 		private bool hasBest;
 
 		private IntPtr handle = IntPtr.Zero;
-		private bool ownHandle = true;
+		internal bool ownHandle = true;
 		private bool undisposable;
 		private bool disposed;
 		private Bitmap bitmap;   // GetInternalBitmap's cache

@@ -38,7 +38,7 @@ namespace System.Drawing.Drawing2D
 	// row vectors) with GDI+'s arithmetic for every operation, read out of gdiplus.dll -- the
 	// operand order of each product and sum, the complexity flags, the invertibility tolerance, and
 	// the flat API's own rounding of integer points ((int)(v + 0.5), truncated).
-	public sealed class Matrix : MarshalByRefObject, IDisposable
+	public sealed partial class Matrix : MarshalByRefObject, IDisposable
 	{
 		internal GpMatrix Gp;
 

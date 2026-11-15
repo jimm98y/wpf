@@ -230,14 +230,10 @@ namespace System.Drawing.Printing
 
 
 		public void CopyToHdevmode (IntPtr hdevmode){
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			DevModeInterop.CopyToHdevmode (this, hdevmode);
 		}
 
 		public void SetHdevmode (IntPtr hdevmode){
-			if (!OperatingSystem.IsWindows ())
-				throw new PlatformNotSupportedException ("A DEVMODE is a Windows printer structure.");
 			if (hdevmode == IntPtr.Zero)
 				throw new ArgumentException (nameof (hdevmode));
 			DevModeInterop.SetPageHdevmode (this, hdevmode);

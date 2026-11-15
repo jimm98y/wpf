@@ -33,7 +33,7 @@ namespace System.Drawing {
 
 	// LAME: I don't see why the "old" (win 2.x) names were exposed in the fx :|
 
-	public sealed class SystemIcons {
+	public sealed partial class SystemIcons {
 
 		static Icon[] icons;
 		private const int Application_Winlogo = 0;

@@ -42,7 +42,7 @@ namespace System.Drawing
 	[ComVisible (true)]
 	[Editor ("System.Drawing.Design.FontEditor, " + Consts.AssemblySystem_Drawing_Design, typeof (System.Drawing.Design.UITypeEditor))]
 	[TypeConverter (typeof (FontConverter))]
-	public sealed class Font : MarshalByRefObject, ISerializable, ICloneable, IDisposable
+	public sealed partial class Font : MarshalByRefObject, ISerializable, ICloneable, IDisposable
 	{
 		private IntPtr	fontObject = IntPtr.Zero;
 		private string  systemFontName;

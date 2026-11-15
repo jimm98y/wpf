@@ -6,8 +6,10 @@
 // was created with no DEVMODE at all, so copies, orientation, duplex and paper never reached the
 // printer.
 //
-// Windows only: these are winspool and kernel32 calls, and every caller is behind
-// OperatingSystem.IsWindows().
+// On Windows the DEVMODE is the driver's (winspool) in a GlobalAlloc block. Elsewhere there is no driver to
+// ask: the DEVMODE is written from the settings themselves, every field the settings carry marked present,
+// in memory the Win32 layer's GlobalLock / GlobalFree take as theirs (malloc, locked in place) -- so an
+// application that hands it to a print dialog, keeps it, or frees it does what it does on Windows.
 
 using System.Runtime.InteropServices;
 
@@ -29,20 +31,77 @@ namespace System.Drawing.Printing
 		private static extern bool ClosePrinter (IntPtr printer);
 		[DllImport ("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
 		private static extern int DocumentPropertiesW (IntPtr hwnd, IntPtr printer, string device, IntPtr output, IntPtr input, int mode);
-		[DllImport ("kernel32.dll", SetLastError = true)]
-		internal static extern IntPtr GlobalAlloc (uint flags, UIntPtr bytes);
-		[DllImport ("kernel32.dll", SetLastError = true)]
-		internal static extern IntPtr GlobalLock (IntPtr h);
-		[DllImport ("kernel32.dll", SetLastError = true)]
-		internal static extern bool GlobalUnlock (IntPtr h);
-		[DllImport ("kernel32.dll", SetLastError = true)]
-		internal static extern IntPtr GlobalFree (IntPtr h);
-		[DllImport ("kernel32.dll")]
-		private static extern UIntPtr GlobalSize (IntPtr h);
+		[DllImport ("kernel32.dll", EntryPoint = "GlobalAlloc", SetLastError = true)]
+		private static extern IntPtr Win32GlobalAlloc (uint flags, UIntPtr bytes);
+		[DllImport ("kernel32.dll", EntryPoint = "GlobalLock", SetLastError = true)]
+		private static extern IntPtr Win32GlobalLock (IntPtr h);
+		[DllImport ("kernel32.dll", EntryPoint = "GlobalUnlock", SetLastError = true)]
+		private static extern bool Win32GlobalUnlock (IntPtr h);
+		[DllImport ("kernel32.dll", EntryPoint = "GlobalFree", SetLastError = true)]
+		private static extern IntPtr Win32GlobalFree (IntPtr h);
+
+		// GlobalAlloc's block: Windows' own; elsewhere zeroed malloc memory, a pointer that is its own lock.
+		internal static unsafe IntPtr GlobalAlloc (uint flags, UIntPtr bytes) =>
+			OperatingSystem.IsWindows () ? Win32GlobalAlloc (flags, bytes) : (IntPtr) System.Runtime.InteropServices.NativeMemory.AllocZeroed (Math.Max ((nuint) bytes, 1));
+
+		internal static IntPtr GlobalLock (IntPtr h) => OperatingSystem.IsWindows () ? Win32GlobalLock (h) : h;
+
+		internal static bool GlobalUnlock (IntPtr h) => OperatingSystem.IsWindows () ? Win32GlobalUnlock (h) : false;
+
+		internal static unsafe IntPtr GlobalFree (IntPtr h)
+		{
+			if (OperatingSystem.IsWindows ())
+				return Win32GlobalFree (h);
+			System.Runtime.InteropServices.NativeMemory.Free ((void*) h);
+			return IntPtr.Zero;
+		}
+
+		// DEVMODEW's other fields this writes: the device's name (32 characters), the version, the size.
+		private const int OffSpecVersion = 64, OffSize = 68, OffPrintQuality = 90, OffYResolution = 96, DevModeSize = 220;
+		private const int DM_DEFAULTSOURCE = 0x200, DM_PRINTQUALITY = 0x400, DM_YRESOLUTION = 0x2000;
+
+		/// <summary>No driver to ask: the DEVMODE the settings make, every field they carry present.</summary>
+		private static IntPtr SettingsDevmode (PrinterSettings settings, PageSettings page)
+		{
+			if (!settings.IsValid)
+				throw new InvalidPrinterException (settings);
+			IntPtr handle = GlobalAlloc (GMEM_MOVEABLE, (UIntPtr) DevModeSize);
+			IntPtr dm = GlobalLock (handle);
+			string device = settings.PrinterName ?? "";
+			if (device.Length > 31)
+				device = device.Substring (0, 31);
+			for (int i = 0; i < device.Length; i++)
+				Marshal.WriteInt16 (dm, i * 2, device [i]);
+			Marshal.WriteInt16 (dm, OffSpecVersion, 0x0401);
+			Marshal.WriteInt16 (dm, OffSize, DevModeSize);
+			int fields = DM_ORIENTATION | DM_PAPERSIZE | DM_COPIES | DM_COLOR | DM_COLLATE | DM_DEFAULTSOURCE;
+			if (settings.CanDuplex)
+				fields |= DM_DUPLEX;
+			PageSettings p = page ?? settings.DefaultPageSettings;
+			PrinterResolution res = p?.PrinterResolution;
+			if (res != null) {
+				fields |= DM_PRINTQUALITY | DM_YRESOLUTION;
+				Marshal.WriteInt16 (dm, OffPrintQuality, (short) (res.Kind == PrinterResolutionKind.Custom ? res.X : (int) res.Kind));
+				Marshal.WriteInt16 (dm, OffYResolution, (short) (res.Kind == PrinterResolutionKind.Custom ? res.Y : 0));
+			}
+			PaperSource source = p?.PaperSource;
+			if (source != null)
+				Marshal.WriteInt16 (dm, OffDefaultSource, (short) source.RawKind);
+			Marshal.WriteInt32 (dm, OffFields, fields);
+			Marshal.WriteInt16 (dm, OffCopies, settings.Copies);
+			Marshal.WriteInt16 (dm, OffCollate, (short) (settings.Collate ? 1 : 0));
+			Marshal.WriteInt16 (dm, OffDuplex, (short) (settings.Duplex == Duplex.Default ? Duplex.Simplex : settings.Duplex));
+			if (p != null)
+				CopyPage (p, dm, fields);
+			GlobalUnlock (handle);
+			return handle;
+		}
 
 		/// <summary>PrinterSettings.GetHdevmode(PageSettings): the driver's DEVMODE with the settings in it.</summary>
 		internal static IntPtr GetHdevmode (PrinterSettings settings, PageSettings page)
 		{
+			if (!OperatingSystem.IsWindows ())
+				return SettingsDevmode (settings, page);
 			string name = settings.PrinterName;
 			if (!OpenPrinterW (name, out IntPtr printer, IntPtr.Zero))
 				throw new InvalidPrinterException (settings);

@@ -10,7 +10,7 @@ namespace System.Drawing.Imaging
     /// Defines a 5 x 5 matrix that contains the homogeneous coordinates for the RGBA space.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
-    public sealed class ColorMatrix
+    public sealed partial class ColorMatrix
     {
         private float _matrix00;
         private float _matrix01;

@@ -8,7 +8,7 @@ namespace System.Drawing.Drawing2D
 {
     // A managed GDI+ path iterator (WebGpuBackend.Gdip.GpPathIterator), over a snapshot of the path
     // taken when it is made, as GDI+ iterates a copy of the path's data.
-    public sealed class GraphicsPathIterator : MarshalByRefObject, IDisposable
+    public sealed partial class GraphicsPathIterator : MarshalByRefObject, IDisposable
     {
         private readonly GpPathIterator _it;
 
