@@ -157,6 +157,9 @@
          WinForms carries 55 [Designer] attributes pointing at an assembly that is not there. -->
     <_Proj Include="$(_Src)WinFormsInterop/System.Design.WebGpu.csproj" Condition="'$(SkipWinForms)' != 'true'" />
     <_Proj Include="$(_Src)WinFormsInterop/swfdesign-facade/System.Windows.Forms.Design.Facade.csproj" Condition="'$(SkipWinForms)' != 'true'" />
+    <!-- Visual Basic's application framework (WindowsFormsApplicationBase, My.Computer): .NET's own VB source,
+         vendored under WinFormsInterop/vbforms, built against the WinForms above. -->
+    <_Proj Include="$(_Src)WinFormsInterop/vbforms/Microsoft.VisualBasic.Forms.WebGpu.vbproj" Condition="'$(SkipWinForms)' != 'true'" />
 
     <!-- The cross-platform WebView2 stand-ins, carrying the real package's strong-name identity so
          an app that references Microsoft.Web.WebView2 binds to these instead. Sdk.targets references

@@ -186,6 +186,8 @@
          others do: Microsoft.WindowsDesktop.App is never an option here. -->
     <None Include="$(WinFormsInteropDir)bin/Release/net10.0/System.Design.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)bin/Release/net10.0/System.Design.dll')" />
     <None Include="$(WinFormsInteropDir)swfdesign-facade/bin/Release/net10.0/System.Windows.Forms.Design.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)swfdesign-facade/bin/Release/net10.0/System.Windows.Forms.Design.dll')" />
+    <!-- Visual Basic's application framework, which a VB WinForms app with My.Application references. -->
+    <None Include="$(WinFormsInteropDir)vbforms/bin/Release/net10.0/Microsoft.VisualBasic.Forms.dll" Pack="true" PackagePath="lib/wpf-winforms/" Condition="Exists('$(WinFormsInteropDir)vbforms/bin/Release/net10.0/Microsoft.VisualBasic.Forms.dll')" />
 
     <!-- WebView2, for BOTH UI stacks and on EVERY head.
 

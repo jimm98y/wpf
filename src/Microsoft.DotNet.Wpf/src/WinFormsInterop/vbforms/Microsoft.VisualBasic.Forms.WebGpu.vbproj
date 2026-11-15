@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Microsoft.VisualBasic.Forms: Visual Basic's application framework for WinForms (WindowsFormsApplicationBase,
+    the splash screen and single-instance start, My.Computer, My.Application's forms): .NET's own source
+    (dotnet/winforms, MIT; vendored here), built against this WinForms. A VB WinForms app with the application
+    framework references it, and did not start without it.
+
+    Public-signed with Microsoft's key and versioned as .NET's, so the identity a VB app was compiled against
+    (Microsoft.VisualBasic.Forms, Version=10.0.0.0, PublicKeyToken=b03f5f7f11d50a3a) binds to this one.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Microsoft.VisualBasic.Forms</AssemblyName>
+    <RootNamespace></RootNamespace>
+    <AssemblyVersion>10.0.0.0</AssemblyVersion>
+    <FileVersion>99.0.0.0</FileVersion>
+    <Deterministic>true</Deterministic>
+    <OptionExplicit>On</OptionExplicit>
+    <OptionStrict>On</OptionStrict>
+    <OptionInfer>Off</OptionInfer>
+    <OptionCompare>Binary</OptionCompare>
+    <LangVersion>Latest</LangVersion>
+    <VBRuntime>None</VBRuntime>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <RunAnalyzers>false</RunAnalyzers>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)../../../../../eng/snk/MSFT.snk</AssemblyOriginatorKeyFile>
+    <NoWarn>$(NoWarn);BC42016;BC40000;BC42353;BC42354;BC42355</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../System.Windows.Forms.WebGpu.csproj" />
+    <ProjectReference Include="../sysdrawing/System.Drawing.WebGpu.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Update="Resources/SR.resx" LogicalName="System.SR.resources" />
+    <EmbeddedResource Update="Resources/Microsoft/VisualBasic/MyServices/Internal/ProgressDialog.resx"
+                      LogicalName="Microsoft.VisualBasic.MyServices.Internal.ProgressDialog.resources" />
+    <EmbeddedResource Update="Resources/Microsoft/VisualBasic/CompilerServices/VBInputBox.resx"
+                      LogicalName="Microsoft.VisualBasic.CompilerServices.VBInputBox.resources" />
+  </ItemGroup>
+
+</Project>

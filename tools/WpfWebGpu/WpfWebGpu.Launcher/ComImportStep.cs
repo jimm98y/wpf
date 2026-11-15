@@ -46,6 +46,15 @@ internal static class ComImportStep
     {
     };
 
+    /// <summary>The overlay's assemblies that are .NET's own source built unchanged (vendored), which P/Invoke
+    /// Windows and take Windows paths as an app does: rewritten as an app's assemblies are, onto the stack's
+    /// implementations. Visual Basic's application framework calls kernel32 and user32 directly (My.Computer's
+    /// memory and keyboard, Shell, AppActivate), and off Windows found no such library.</summary>
+    internal static readonly HashSet<string> OverlayAsApp = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Microsoft.VisualBasic.Forms",
+    };
+
     /// <summary>WPF_COMIMPORT_REWRITE: on (default), off, or a ';'-separated list of assembly names.</summary>
     internal static Func<string, bool> Scope(string? setting)
     {
@@ -128,11 +137,14 @@ internal static class ComImportStep
         var files = new List<AppFile>();
         foreach (var (libKey, libNode) in target.ToList())
         {
-            if (libKey == DepsMerger.OverlayLibrary || libKey.StartsWith("WpfWebGpu.", StringComparison.Ordinal)) continue;      // the stack's own: never
+            bool fromOverlay = libKey == DepsMerger.OverlayLibrary;
+            if (!fromOverlay && libKey.StartsWith("WpfWebGpu.", StringComparison.Ordinal)) continue;      // the stack's own: never
             if (libNode is not JsonObject lib || lib["runtime"] is not JsonObject runtime) continue;
             foreach (var (asset, props) in runtime.ToList())
             {
-                string file = Path.Combine(appDir, asset);
+                // of the overlay, only what is .NET's own code built unchanged and calls Windows as an app does
+                if (fromOverlay && !OverlayAsApp.Contains(Path.GetFileNameWithoutExtension(asset))) continue;
+                string file = Path.Combine(fromOverlay ? overlayDir : appDir, asset);
                 if (!File.Exists(file)) continue;
                 var known = files.FirstOrDefault(x => string.Equals(x.File, file, StringComparison.OrdinalIgnoreCase));
                 if (known != null) { known.Entries.Add((runtime, asset)); continue; }
