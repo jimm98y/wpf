@@ -345,7 +345,53 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected override void OnValidating (CancelEventArgs e)
 		{
+			PerformTypeValidation (e);
 			base.OnValidating (e);
+		}
+
+		// .NET's: with a ValidatingType, the text (the prompt left out) parsed to it as data binding parses a
+		// value, the outcome raised as TypeValidationCompleted, whose Cancel cancels the Validating.
+		object PerformTypeValidation (CancelEventArgs e)
+		{
+			object parsed = null;
+			if (validating_type == null)
+				return null;
+			string message = null;
+			if (!is_empty_mask && !provider.MaskCompleted) {
+				message = "Mask input is not complete.";
+			} else {
+				string text = is_empty_mask ? base.Text : provider.ToString (false, provider.IncludeLiterals);
+				try {
+					parsed = ParseAs (text, validating_type, format_provider);
+				} catch (Exception exception) when (!(exception is OutOfMemoryException)) {
+					if (exception.InnerException != null)
+						exception = exception.InnerException;
+					message = exception.GetType () + ": " + exception.Message;
+				}
+			}
+			bool valid = message == null;
+			var tve = new TypeValidationEventArgs (validating_type, valid, parsed, valid ? "Type validation succeeded." : message);
+			(Events [TypeValidationCompletedEvent] as TypeValidationEventHandler)?.Invoke (this, tve);
+			if (e != null)
+				e.Cancel = tve.Cancel;
+			return parsed;
+		}
+
+		// Formatter.ParseObject from a string: the type's converter, else its Parse(string[, provider]), else a
+		// conversion of the string.
+		static object ParseAs (string text, Type type, IFormatProvider formatProvider)
+		{
+			CultureInfo culture = formatProvider as CultureInfo ?? CultureInfo.CurrentCulture;
+			TypeConverter converter = TypeDescriptor.GetConverter (type);
+			if (converter != null && converter.GetType () != typeof (TypeConverter) && converter.CanConvertFrom (typeof (string)))
+				return converter.ConvertFrom (null, culture, text);
+			System.Reflection.MethodInfo parse = type.GetMethod ("Parse", new [] { typeof (string), typeof (IFormatProvider) });
+			if (parse != null && parse.IsStatic)
+				return parse.Invoke (null, new object [] { text, formatProvider ?? culture });
+			parse = type.GetMethod ("Parse", new [] { typeof (string) });
+			if (parse != null && parse.IsStatic)
+				return parse.Invoke (null, new object [] { text });
+			return Convert.ChangeType (text, type, formatProvider ?? culture);
 		}
 
 		//[SecurityPermission (SecurityAction.LinkDemand, Flags = SecurityPermissionFlag.UnmanagedCode)]
@@ -377,9 +423,10 @@ namespace System.Windows.Forms
 			// Do nothing, not supported by MTB.
 		}
 		
+		/// <summary>The text parsed to the ValidatingType (null without one), TypeValidationCompleted raised.</summary>
 		public object ValidateText ()
 		{
-			throw new NotImplementedException ();
+			return PerformTypeValidation (null);
 		}
 
 		//[SecurityPermission (SecurityAction.LinkDemand, Flags = SecurityPermissionFlag.UnmanagedCode)]

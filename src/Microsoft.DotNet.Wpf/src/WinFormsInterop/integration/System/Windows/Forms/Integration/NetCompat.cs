@@ -193,6 +193,11 @@ namespace System.Windows.Forms.Integration
 
     public class LayoutExceptionEventArgs : IntegrationExceptionEventArgs
     {
+        // .NET's: a layout failure, not thrown unless a handler asks for it
+        public LayoutExceptionEventArgs(Exception exception) : base(false, exception)
+        {
+        }
+
         public LayoutExceptionEventArgs(object element, bool throwException, Exception exception) : base(throwException, exception)
         {
             Element = element ?? throw new ArgumentNullException(nameof(element));

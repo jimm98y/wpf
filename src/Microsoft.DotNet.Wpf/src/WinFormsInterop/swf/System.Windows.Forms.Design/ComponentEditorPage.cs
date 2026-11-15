@@ -43,6 +43,7 @@ namespace System.Windows.Forms.Design
 
 		public ComponentEditorPage ()
 		{
+			Visible = false;
 		}
 
 		[Browsable (false)]
@@ -64,10 +65,12 @@ namespace System.Windows.Forms.Design
 			set { component = value; }
 		}
 
-		[MonoTODO ("Find out what this does.")]
+		// .NET's: a page has no border or caption of its own
 		protected override CreateParams CreateParams {
 			get {
-				throw new NotImplementedException ();
+				CreateParams cp = base.CreateParams;
+				cp.Style &= ~(int) (WindowStyles.WS_BORDER | WindowStyles.WS_OVERLAPPED | WindowStyles.WS_DLGFRAME);
+				return cp;
 			}
 		}
 
@@ -77,7 +80,7 @@ namespace System.Windows.Forms.Design
 		}
 
 		public Icon Icon {
-			get { return icon; }
+			get { return icon ??= new Icon (typeof (ComponentEditorPage), "ComponentEditorPage"); }
 			set { icon = value; }
 		}
 
@@ -102,13 +105,14 @@ namespace System.Windows.Forms.Design
 
 		public virtual void Activate ()
 		{
-			Visible = true;
-			firstActivate = false;
 			if (loadRequired) {
 				EnterLoadingMode ();
 				LoadComponent ();
 				ExitLoadingMode ();
+				loadRequired = false;
 			}
+			Visible = true;
+			firstActivate = false;
 		}
 
 		public virtual void ApplyChanges ()
@@ -158,14 +162,16 @@ namespace System.Windows.Forms.Design
 
 		protected abstract void LoadComponent ();
 
-		[MonoTODO ("Find out what this does.")]
+		// .NET's: after an apply the page loads the component again, now or when next shown
 		public virtual void OnApplyComplete ()
 		{
+			ReloadComponent ();
 		}
 
 		protected virtual void ReloadComponent ()
 		{
-			loadRequired = true;
+			if (!Visible)
+				loadRequired = true;
 		}
 
 		protected abstract void SaveComponent ();
@@ -176,9 +182,11 @@ namespace System.Windows.Forms.Design
 			ReloadComponent ();
 		}
 
-		[MonoTODO ("Find out what this does.")]
+		// .NET's: a change made by the user (not by loading) marks the page, and the form, dirty
 		protected virtual void SetDirty ()
 		{
+			if (!IsLoading () && pageSite != null)
+				pageSite.SetDirty ();
 		}
 
 		public virtual void SetSite (IComponentEditorPageSite site)

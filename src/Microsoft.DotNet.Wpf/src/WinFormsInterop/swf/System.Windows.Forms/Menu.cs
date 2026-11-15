@@ -92,7 +92,14 @@ namespace System.Windows.Forms
 		[DesignerSerializationVisibilityAttribute(DesignerSerializationVisibility.Hidden)]
 		public MenuItem MdiListItem {
 			get {
-				throw new NotImplementedException ();
+				// .NET Framework's: the first item marked MdiList, depth first through the submenus
+				foreach (MenuItem item in MenuItems) {
+					if (item.MdiList)
+						return item;
+					if (item.IsParent && item.MdiListItem is MenuItem inner)
+						return inner;
+				}
+				return null;
 			}
 		}
 

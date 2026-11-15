@@ -42,9 +42,10 @@ namespace System.Windows.Forms
 
 
 		#region Public Instance Properties
+		// .NET Framework's: the one table style given
 		public static DataGridTableStyle[] CreateGridTables (DataGridTableStyle gridTable, object dataSource, string dataMember, BindingContext bindingManager)
 		{
-			throw new NotImplementedException ();
+			return new DataGridTableStyle [] { gridTable };
 		}
 		#endregion	// Public Instance Properties
 	}

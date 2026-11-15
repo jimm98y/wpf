@@ -1083,10 +1083,20 @@ namespace System.Windows.Forms
 			return CreateGridColumn (prop, false);
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		// .NET Framework's: a check box column for a bool, a text box column otherwise -- dates formatted short,
+		// numbers general.
 		protected virtual DataGridColumnStyle CreateGridColumn (PropertyDescriptor prop, bool isDefault)
 		{
-			throw new NotImplementedException();
+			Type type = prop.PropertyType;
+			if (type == typeof (bool))
+				return new DataGridBoolColumn (prop, isDefault);
+			if (type == typeof (DateTime))
+				return new DataGridTextBoxColumn (prop, "d", isDefault);
+			if (type == typeof (short) || type == typeof (int) || type == typeof (long) || type == typeof (ushort) || type == typeof (uint)
+				|| type == typeof (ulong) || type == typeof (decimal) || type == typeof (double) || type == typeof (float)
+				|| type == typeof (byte) || type == typeof (sbyte))
+				return new DataGridTextBoxColumn (prop, "G", isDefault);
+			return new DataGridTextBoxColumn (prop, isDefault);
 		}
 
 		protected override void Dispose (bool disposing)

@@ -353,10 +353,16 @@ namespace System.Windows.Forms
 			}
 		}
 
-		[MonoTODO ("Not implemented, will throw NotImplementedException")]
+		// .NET's (Control.ValidateActiveControl): the active control of the navigator's container -- or of the
+		// first container out from it that has one -- validated as a change of focus validates it.
 		public bool Validate ()
 		{
-			throw new NotImplementedException();
+			if (!CausesValidation)
+				return true;
+			ContainerControl container = GetContainerControl () as ContainerControl;
+			while (container != null && container.ActiveControl == null && container.Parent?.GetContainerControl () is ContainerControl outer && outer != container)
+				container = outer;
+			return container == null || container.Validate (true);
 		}
 
 		#endregion

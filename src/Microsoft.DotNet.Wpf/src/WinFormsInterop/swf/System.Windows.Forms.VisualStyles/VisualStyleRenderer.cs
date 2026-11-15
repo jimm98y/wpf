@@ -238,23 +238,15 @@ namespace System.Windows.Forms.VisualStyles
 
 		}
 		
-		[MonoTODO(@"I can't get MS's to return anything but null, so I can't really get this one right")]
+		// .NET's: the theme's font for the part, null where the part has none
 		public Font GetFont (IDeviceContext dc, FontProperty prop)
 		{
-			throw new NotImplementedException();
-			//if (dc == null)
-			//        throw new ArgumentNullException ("dc");
-			//if (!Enum.IsDefined (typeof (FontProperty), prop))
-			//        throw new System.ComponentModel.InvalidEnumArgumentException ("prop", (int)prop, typeof (FontProperty));
-
-			//UXTheme.LOGFONT lf = new UXTheme.LOGFONT();
-
-			//UXTheme.GetThemeFont (theme, dc.GetHdc (), this.part, this.state, (int)prop, out lf);
-			//IntPtr fontPtr = UXTheme.CreateFontIndirect(lf);
-			//dc.ReleaseHdc();
-
-			//return Font.FromLogFont(lf);
-			//return null;
+			if (dc == null)
+				throw new ArgumentNullException ("dc");
+			if (!Enum.IsDefined (typeof (FontProperty), prop))
+				throw new System.ComponentModel.InvalidEnumArgumentException ("prop", (int)prop, typeof (FontProperty));
+			last_hresult = VisualStyles.UxThemeGetThemeFont (theme, dc, this.part, this.state, prop, out Font font);
+			return last_hresult < 0 ? null : font;
 		}
 		
 		public int GetInteger (IntegerProperty prop)

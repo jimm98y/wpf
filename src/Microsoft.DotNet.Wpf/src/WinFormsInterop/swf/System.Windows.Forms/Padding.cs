@@ -32,7 +32,7 @@ namespace System.Windows.Forms {
 
 	[Serializable]
 	[TypeConverter(typeof(PaddingConverter))]
-	public struct Padding {
+	public struct Padding : IEquatable<Padding> {
 
 		//NOTE: "_var" field name is required by serialization.
 		private int _bottom;
@@ -138,6 +138,9 @@ namespace System.Windows.Forms {
 			}
 			return false;
 		}
+
+		public readonly bool Equals (Padding other) =>
+			_left == other.Left && _top == other.Top && _right == other.Right && _bottom == other.Bottom;
 
 		public override int GetHashCode () {
 			return _top ^ _bottom ^ _left ^ _right;

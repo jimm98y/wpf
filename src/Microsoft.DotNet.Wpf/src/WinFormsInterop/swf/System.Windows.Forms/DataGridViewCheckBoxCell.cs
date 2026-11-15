@@ -466,9 +466,17 @@ namespace System.Windows.Forms {
 					if (Owner.ReadOnly) {
 						return "";
 					}
-					// return "Press to check" if the check box is not selected
-					// and "Press to uncheck" if the check box is selected
-					throw new NotImplementedException();
+					// .NET's: what pressing it does to the state the cell shows
+					bool check = true;
+					switch (Owner.FormattedValue) {
+					case CheckState state:
+						check = state == CheckState.Unchecked;
+						break;
+					case bool value:
+						check = !value;
+						break;
+					}
+					return check ? "Press to check" : "Press to uncheck";
 				}
 			}
 

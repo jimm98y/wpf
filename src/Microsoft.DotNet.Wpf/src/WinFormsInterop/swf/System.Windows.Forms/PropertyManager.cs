@@ -163,7 +163,8 @@ namespace System.Windows.Forms {
 
 		protected override void OnCurrentItemChanged (EventArgs ea)
 		{
-			throw new NotImplementedException ();
+			PushData ();
+			onCurrentItemChangedHandler?.Invoke (this, ea);
 		}
 	}
 }

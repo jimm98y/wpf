@@ -153,10 +153,21 @@ namespace System.Windows.Forms
 			return new PropertyDescriptorCollection (new PropertyDescriptor [0]);
 		}
 
+		// .NET's: the data member's property put in front of the accessors
 		public static PropertyDescriptorCollection GetListItemProperties (object dataSource, string dataMember, 
 			PropertyDescriptor [] listAccessors)
 		{
-			throw new NotImplementedException ();
+			dataSource = GetList (dataSource);
+			if (!string.IsNullOrEmpty (dataMember)) {
+				PropertyDescriptor member = GetListItemProperties (dataSource).Find (dataMember, true);
+				if (member == null)
+					throw new ArgumentException (string.Format ("DataMember property '{0}' cannot be found on the DataSource.", dataMember));
+				var accessors = new PropertyDescriptor [(listAccessors?.Length ?? 0) + 1];
+				accessors [0] = member;
+				listAccessors?.CopyTo (accessors, 1);
+				listAccessors = accessors;
+			}
+			return GetListItemProperties (dataSource, listAccessors);
 		}
 
 		public static string GetListName (object list, PropertyDescriptor [] listAccessors)

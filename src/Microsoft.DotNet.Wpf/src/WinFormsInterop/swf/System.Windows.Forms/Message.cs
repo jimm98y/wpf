@@ -31,7 +31,7 @@ using System.Text;
 using System.Diagnostics;
 
 namespace System.Windows.Forms {
-	public struct Message {
+	public struct Message : IEquatable<Message> {
 		private int	msg;
 		private IntPtr	hwnd;
 		private IntPtr	lParam;
@@ -99,6 +99,8 @@ namespace System.Windows.Forms {
 				(this.wParam == ((Message)o).wParam) && 
 				(this.result == ((Message)o).result));
 		}
+
+		public readonly bool Equals (Message other) => this == other;
 
 		public override int GetHashCode() {
 			return base.GetHashCode();

@@ -47,6 +47,7 @@ namespace System.Windows.Forms.VisualStyles
 		HRESULT UxThemeGetThemeColor (IntPtr hTheme, int iPartId, int iStateId, ColorProperty prop, out Color result);
 		HRESULT UxThemeGetThemeEnumValue (IntPtr hTheme, int iPartId, int iStateId, EnumProperty prop, out int result);
 		HRESULT UxThemeGetThemeFilename (IntPtr hTheme, int iPartId, int iStateId, FilenameProperty prop, out string result);
+		HRESULT UxThemeGetThemeFont (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, FontProperty prop, out Font result);
 		HRESULT UxThemeGetThemeInt (IntPtr hTheme, int iPartId, int iStateId, IntegerProperty prop, out int result);
 		HRESULT UxThemeGetThemeMargins (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, MarginProperty prop, out Padding result);
 		HRESULT UxThemeGetThemePartSize (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, Rectangle bounds, ThemeSizeType type, out Size result);

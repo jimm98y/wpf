@@ -25,6 +25,7 @@ namespace System.Windows.Forms.VisualStyles
 		private const int S_OK = 0;
 		private const int E_NOTIMPL = unchecked ((int) 0x80004001);
 		private const int E_FAIL = unchecked ((int) 0x80004005);
+		private const int E_PROP_ID_UNSUPPORTED = unchecked ((int) 0x80070490);
 
 		// A theme "handle" is an index into this list, plus one so that zero stays "no theme".
 		private static readonly List<string> s_classes = new List<string> ();
@@ -362,6 +363,19 @@ namespace System.Windows.Forms.VisualStyles
 			=> Win11ThemeColors.TryGet (ClassOf (hTheme), iPartId, iStateId, (int) prop, out result) ? S_OK : E_NOTIMPL;
 		public int UxThemeGetThemeEnumValue (IntPtr hTheme, int iPartId, int iStateId, EnumProperty prop, out int result) { result = 0; return E_NOTIMPL; }
 		public int UxThemeGetThemeFilename (IntPtr hTheme, int iPartId, int iStateId, FilenameProperty prop, out string result) { result = string.Empty; return E_NOTIMPL; }
+
+		// GetThemeFont as Windows 11's aero.msstyles answers it (read from uxtheme): the one glyph font is the edit's
+		// password part (EP_PASSWORD), Segoe UI at 12 pixels; no other part has one (E_PROP_ID_UNSUPPORTED).
+		public int UxThemeGetThemeFont (IntPtr hTheme, IDeviceContext dc, int iPartId, int iStateId, FontProperty prop, out Font result)
+		{
+			result = null;
+			if (prop != FontProperty.GlyphFont || ClassOf (hTheme) != "EDIT" || iPartId != 4)
+				return E_PROP_ID_UNSUPPORTED;
+			var lf = new System.Drawing.Interop.LOGFONT { lfHeight = -12, lfWeight = 400, lfCharSet = 1, lfQuality = 5 };
+			"Segoe UI".AsSpan ().CopyTo (lf.lfFaceName);
+			result = Font.FromLogFont (lf);
+			return S_OK;
+		}
 		public int UxThemeGetThemeInt (IntPtr hTheme, int iPartId, int iStateId, IntegerProperty prop, out int result) { result = 0; return E_NOTIMPL; }
 		public int UxThemeGetThemePosition (IntPtr hTheme, int iPartId, int iStateId, PointProperty prop, out Point result) { result = Point.Empty; return E_NOTIMPL; }
 		public int UxThemeGetThemeString (IntPtr hTheme, int iPartId, int iStateId, StringProperty prop, out string result) { result = string.Empty; return E_NOTIMPL; }

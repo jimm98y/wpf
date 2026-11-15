@@ -1,5 +1,6 @@
 <Project>
   <ItemGroup>
+    <EmbeddedResource Include="swf/resources/ComponentEditorPage.ico"><LogicalName>System.Windows.Forms.Design.ComponentEditorPage</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/SplitterNS.cur"><LogicalName>System.Windows.Forms.SplitterNS.cur</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/SplitterWE.cur"><LogicalName>System.Windows.Forms.SplitterWE.cur</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="swf/resources/NESW.cur"><LogicalName>System.Windows.Forms.NESW.cur</LogicalName></EmbeddedResource>
