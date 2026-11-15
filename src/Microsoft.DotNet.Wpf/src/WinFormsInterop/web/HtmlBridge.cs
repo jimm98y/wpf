@@ -33,7 +33,7 @@ using MS.Internal.Interop.WebView;
 
 namespace System.Windows.Forms
 {
-    internal sealed class HtmlBridge
+    internal sealed partial class HtmlBridge
     {
         /// <summary>The page-side array that holds elements with no expression of their own.</summary>
         private const string SlotArray = "window.__wfSlots";
@@ -50,6 +50,8 @@ namespace System.Windows.Forms
         internal void OnDocumentChanged()
         {
             _nextSlot = 0;
+            // the listeners were the old document's (HtmlDom.cs)
+            Events.Clear();
         }
 
         internal static string SlotExpression(int slot) =>

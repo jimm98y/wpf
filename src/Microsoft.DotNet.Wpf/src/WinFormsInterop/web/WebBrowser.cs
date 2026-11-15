@@ -36,7 +36,7 @@ using MS.Internal.Interop.WebView;
 namespace System.Windows.Forms
 {
     /// <summary>A control that displays web pages.</summary>
-    public class WebBrowser : Control
+    public partial class WebBrowser : WebBrowserBase
     {
         private IWebViewBackend _backend;
         private IntPtr _hostWindow;
@@ -128,8 +128,11 @@ namespace System.Windows.Forms
                     "No web engine is available on this platform, so web content cannot be hosted.");
             }
 
+            // macOS: the host's window is the form's content view, which the engine (a WKWebView) is laid over --
+            // there is no child window to make, as for WPF's WebView2 there
             _hostWindow = WebViewHostWindow.Create(parentWindow,
-                                                   Math.Max(1, Width), Math.Max(1, Height));
+                                                   Math.Max(1, Width), Math.Max(1, Height),
+                                                   parentIsContentView: OperatingSystem.IsMacOS());
 
             if (_hostWindow == IntPtr.Zero)
             {
@@ -145,10 +148,12 @@ namespace System.Windows.Forms
             _backend.DocumentTitleChanged += OnBackendDocumentTitleChanged;
             _backend.WebMessageReceived += OnBackendWebMessageReceived;
             _backend.NewWindowRequested += OnBackendNewWindowRequested;
+            _backend.DownloadStarting += OnBackendDownloadStarting;
 
             _readyState = WebBrowserReadyState.Loading;
 
-            Task attach = _backend.AttachAsync(_hostWindow);
+            // the engine attaches to what the handle stands for (the content view itself on macOS)
+            Task attach = _backend.AttachAsync(WebViewHostWindow.AttachTarget(_hostWindow));
 
             // Watched from a Timer rather than continued with ContinueWith + BeginInvoke.
             //
@@ -363,27 +368,53 @@ namespace System.Windows.Forms
 
         public void Navigate(Uri url, string targetFrameName)
         {
-            if (!string.IsNullOrEmpty(targetFrameName))
+            if (NavigateFrame(url, targetFrameName))
             {
-                // Targeting a named frame is a WebOC behaviour no engine here has. Refusing beats
-                // replacing the whole page, which is what ignoring it would do.
-                throw new NotSupportedException(
-                    "Navigating a named target frame is not supported by this engine.");
+                return;
             }
 
             Url = url;
         }
 
+        public void Navigate(string urlString, string targetFrameName, byte[] postData, string additionalHeaders) =>
+            Navigate(new Uri(urlString, UriKind.Absolute), targetFrameName, postData, additionalHeaders);
+
         public void Navigate(Uri url, string targetFrameName, byte[] postData, string additionalHeaders)
         {
-            if (!string.IsNullOrEmpty(targetFrameName))
+            if (NavigateFrame(url, targetFrameName))
             {
-                throw new NotSupportedException(
-                    "Navigating a named target frame is not supported by this engine.");
+                return;
             }
 
             _url = url;
+            if (postData is null)
+            {
+                Url = url;
+                return;
+            }
+
             WhenReady(() => _backend.NavigateWithPost(url.AbsoluteUri, postData, additionalHeaders));
+        }
+
+        /// <summary>A named target, as the WebOC took it: the frame of that name, or a new window where the page has
+        /// none (and for _blank); false for the control itself (no name, _self, _top, _parent at the top).</summary>
+        private bool NavigateFrame(Uri url, string targetFrameName)
+        {
+            if (url is null)
+            {
+                throw new ArgumentNullException(nameof(url));
+            }
+
+            if (string.IsNullOrEmpty(targetFrameName) || targetFrameName is "_self" or "_top" or "_parent")
+            {
+                return false;
+            }
+
+            string href = MS.Internal.Interop.WebView.WebViewScript.ToJson(url.AbsoluteUri);
+            string name = MS.Internal.Interop.WebView.WebViewScript.ToJson(targetFrameName);
+            WhenReady(() => _ = _backend.ExecuteScriptAsync(
+                "(function(u,n){var f=n!=='_blank'&&window.frames[n];if(f){f.location.href=u;}else{window.open(u,n);}})(" + href + ", " + name + ")"));
+            return true;
         }
 
         public bool GoBack()
@@ -415,7 +446,12 @@ namespace System.Windows.Forms
         public void Refresh(WebBrowserRefreshOption opt) =>
             WhenReady(() => _backend.Reload(opt == WebBrowserRefreshOption.Completely));
 
-        public void Stop() => WhenReady(() => _backend.Stop());
+        public void Stop()
+        {
+            WhenReady(() => _backend.Stop());
+            // the document's Stop event (mshtml's onstop): the browser's, not the page's
+            Document?.RaiseStop();
+        }
 
         public void Print() =>
             // window.print() is the only printing primitive every engine exposes; the WebOC's
@@ -468,7 +504,10 @@ namespace System.Windows.Forms
 
             WebViewHostWindow.Move(_hostWindow, device.X, device.Y, device.Width, device.Height);
 
-            _backend.SetBounds(0, 0, device.Width, device.Height, scale);
+            // filling its host window; on macOS, where the engine is laid over the window itself, at the control's
+            // place in it
+            bool placedInWindow = OperatingSystem.IsMacOS();
+            _backend.SetBounds(placedInWindow ? device.X : 0, placedInWindow ? device.Y : 0, device.Width, device.Height, scale);
             _backend.SetVisible(Visible && shown);
         }
 
@@ -478,6 +517,7 @@ namespace System.Windows.Forms
         {
             _readyState = WebBrowserReadyState.Loading;
             _navigatedRaised = false;
+            OnProgressChanged(new WebBrowserProgressChangedEventArgs(0, 100));
 
             if (!AllowNavigation && _url is not null)
             {
@@ -525,6 +565,10 @@ namespace System.Windows.Forms
                 _statusText = string.Empty;
                 OnStatusTextChanged(EventArgs.Empty);
             }
+
+            InstallPageSettings();
+            OnProgressChanged(new WebBrowserProgressChangedEventArgs(100, 100));
+            NavigationStateChanged();
 
             Uri uri = Uri.TryCreate(_backend.Source, UriKind.Absolute, out Uri parsed) ? parsed : _url;
             OnDocumentCompleted(new WebBrowserDocumentCompletedEventArgs(uri));
@@ -640,13 +684,13 @@ namespace System.Windows.Forms
         /// used it for: the source handed to AxHost.ConnectionPointCookie. Events reach the sink by
         /// name, which is how a dispinterface behaves anyway.
         /// </remarks>
-        protected object ActiveXInstance => _eventSource;
+        internal override object ActiveXInstanceCore => _eventSource;
 
         /// <summary>
         /// Called once the browser is ready for a host to attach its event sink. Override to
         /// connect; call base first.
         /// </summary>
-        protected virtual void CreateSink()
+        protected override void CreateSink()
         {
         }
 
@@ -654,7 +698,7 @@ namespace System.Windows.Forms
         /// Called when the browser is going away and the host should drop its sink. Override to
         /// disconnect; call base last.
         /// </summary>
-        protected virtual void DetachSink()
+        protected override void DetachSink()
         {
         }
 
@@ -700,6 +744,13 @@ namespace System.Windows.Forms
         private void OnBackendWebMessageReceived(object sender, WebViewMessageReceivedEventArgs e)
         {
             string message = e?.WebMessageAsString;
+            // an event of the page's document, an element or a window (HtmlDom.cs)
+            if (message is not null && message.StartsWith(HtmlEvents.MessagePrefix, StringComparison.Ordinal))
+            {
+                _bridge.Events.Dispatch(message.Substring(HtmlEvents.MessagePrefix.Length));
+                return;
+            }
+
             if (message is null || !message.StartsWith(StatusMessagePrefix, StringComparison.Ordinal))
             {
                 return;

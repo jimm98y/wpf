@@ -36,98 +36,7 @@ using MS.Internal.Interop.WebView;
 namespace System.Windows.Forms
 {
     /// <summary>The document currently loaded in a <see cref="WebBrowser"/>.</summary>
-    public sealed class HtmlDocument : IEquatable<HtmlDocument>
-    {
-        private readonly HtmlBridge _bridge;
-
-        internal HtmlDocument(HtmlBridge bridge)
-        {
-            _bridge = bridge;
-        }
-
-        /// <summary>The document's title.</summary>
-        public string Title
-        {
-            get => _bridge.EvalString("document.title");
-            set => _bridge.Eval("document.title = " + WebViewScript.ToJson(value));
-        }
-
-        /// <summary>The document's URL, or null before anything has loaded.</summary>
-        public Uri Url
-        {
-            get
-            {
-                string href = _bridge.EvalString("document.location ? document.location.href : null");
-                return Uri.TryCreate(href, UriKind.Absolute, out Uri parsed) ? parsed : null;
-            }
-        }
-
-        /// <summary>The document's domain.</summary>
-        public string Domain => _bridge.EvalString("document.domain");
-
-        /// <summary>The &lt;body&gt; element, or null if the document has none yet.</summary>
-        public HtmlElement Body =>
-            _bridge.Exists("document.body") ? new HtmlElement(_bridge, "document.body") : null;
-
-        /// <summary>The root &lt;html&gt; element.</summary>
-        public HtmlElement DocumentElement =>
-            _bridge.Exists("document.documentElement")
-                ? new HtmlElement(_bridge, "document.documentElement")
-                : null;
-
-        /// <summary>The window this document is displayed in.</summary>
-        public HtmlWindow Window => new HtmlWindow(_bridge);
-
-        /// <summary>The element with the given id, or null.</summary>
-        public HtmlElement GetElementById(string id)
-        {
-            string expression = "document.getElementById(" + WebViewScript.ToJson(id) + ")";
-            return _bridge.Exists(expression) ? new HtmlElement(_bridge, expression) : null;
-        }
-
-        /// <summary>All elements with the given tag name.</summary>
-        public HtmlElementCollection GetElementsByTagName(string tagName)
-        {
-            string expression = "document.getElementsByTagName(" + WebViewScript.ToJson(tagName) + ")";
-            return new HtmlElementCollection(_bridge, expression);
-        }
-
-        /// <summary>Every element in the document.</summary>
-        public HtmlElementCollection All => new HtmlElementCollection(_bridge, "document.all");
-
-        /// <summary>Create a detached element. Append it with <see cref="HtmlElement.AppendChild"/>.</summary>
-        public HtmlElement CreateElement(string elementTag)
-        {
-            // Parked on a document-scoped array so a later call can still name it: a created element
-            // has no id and no position in the tree, so there would otherwise be no expression that
-            // finds it again.
-            int slot = _bridge.Park("document.createElement(" + WebViewScript.ToJson(elementTag) + ")");
-            return new HtmlElement(_bridge, HtmlBridge.SlotExpression(slot));
-        }
-
-        /// <summary>Call a function defined in the page.</summary>
-        public object InvokeScript(string scriptName) => InvokeScript(scriptName, null);
-
-        /// <summary>Call a function defined in the page, with arguments.</summary>
-        public object InvokeScript(string scriptName, object[] args) =>
-            _bridge.Invoke(WebViewScript.BuildInvokeExpression(scriptName, args));
-
-        /// <summary>Replace the document's contents.</summary>
-        public void Write(string text) =>
-            _bridge.Eval("document.open(); document.write(" + WebViewScript.ToJson(text) + "); document.close();");
-
-        /// <summary>The document's cookies, in the usual "a=1; b=2" form.</summary>
-        public string Cookie
-        {
-            get => _bridge.EvalString("document.cookie");
-            set => _bridge.Eval("document.cookie = " + WebViewScript.ToJson(value));
-        }
-
-        public bool Equals(HtmlDocument other) => other is not null;
-    }
-
-    /// <summary>One element in an <see cref="HtmlDocument"/>.</summary>
-    public sealed class HtmlElement : IEquatable<HtmlElement>
+    public sealed partial class HtmlElement : IEquatable<HtmlElement>
     {
         private readonly HtmlBridge _bridge;
 
@@ -208,7 +117,7 @@ namespace System.Windows.Forms
 
         public HtmlElementCollection Children => new HtmlElementCollection(_bridge, _path + ".children");
 
-        public HtmlDocument Document => new HtmlDocument(_bridge);
+        public HtmlDocument Document => new HtmlDocument(_bridge, _path + ".ownerDocument");
 
         /// <summary>The element's offset rectangle, in CSS pixels.</summary>
         public System.Drawing.Rectangle OffsetRectangle
@@ -318,7 +227,7 @@ namespace System.Windows.Forms
     }
 
     /// <summary>A live collection of elements.</summary>
-    public sealed class HtmlElementCollection : ICollection
+    public sealed partial class HtmlElementCollection : ICollection
     {
         private readonly HtmlBridge _bridge;
         private readonly string _path;
@@ -390,68 +299,4 @@ namespace System.Windows.Forms
     }
 
     /// <summary>The window an <see cref="HtmlDocument"/> is displayed in.</summary>
-    public sealed class HtmlWindow
-    {
-        private readonly HtmlBridge _bridge;
-
-        internal HtmlWindow(HtmlBridge bridge)
-        {
-            _bridge = bridge;
-        }
-
-        public HtmlDocument Document => new HtmlDocument(_bridge);
-
-        public string Name
-        {
-            get => _bridge.EvalString("window.name");
-            set => _bridge.Eval("window.name = " + WebViewScript.ToJson(value));
-        }
-
-        public Uri Url
-        {
-            get
-            {
-                string href = _bridge.EvalString("window.location.href");
-                return Uri.TryCreate(href, UriKind.Absolute, out Uri parsed) ? parsed : null;
-            }
-        }
-
-        public System.Drawing.Size Size
-        {
-            get
-            {
-                string json = _bridge.EvalRaw("[window.innerWidth, window.innerHeight]");
-                int[] v = HtmlBridge.ReadIntArray(json);
-                return v.Length == 2 ? new System.Drawing.Size(v[0], v[1]) : System.Drawing.Size.Empty;
-            }
-        }
-
-        public void Alert(string message) => _bridge.Eval("window.alert(" + WebViewScript.ToJson(message) + ")");
-
-        public bool Confirm(string message) =>
-            _bridge.EvalBool("window.confirm(" + WebViewScript.ToJson(message) + ")");
-
-        public string Prompt(string message, string defaultInputValue) =>
-            _bridge.EvalString("window.prompt(" + WebViewScript.ToJson(message) + ", " +
-                               WebViewScript.ToJson(defaultInputValue) + ")");
-
-        public void ScrollTo(int x, int y) => _bridge.Eval("window.scrollTo(" + x + ", " + y + ")");
-
-        public void Navigate(string urlString) =>
-            _bridge.Eval("window.location.href = " + WebViewScript.ToJson(urlString));
-
-        /// <summary>
-        /// Open a new browser window. Not implemented: nothing behind this seam can hand back a
-        /// second window as an HtmlWindow -- a popup belongs to the engine, not to this process --
-        /// and returning null would look like a blocked popup rather than an unimplemented call.
-        /// </summary>
-        public HtmlWindow Open(string urlString, string target, string windowOptions, bool replaceEntry) =>
-            throw new NotSupportedException(
-                "Opening a new browser window is not supported by this engine.");
-
-        public object DomWindow =>
-            throw new NotSupportedException(
-                "There is no COM window object behind this engine. Use the WebBrowser's script and " +
-                "message APIs instead.");
-    }
 }
