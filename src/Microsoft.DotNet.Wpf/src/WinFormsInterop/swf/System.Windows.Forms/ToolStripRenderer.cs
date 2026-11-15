@@ -34,7 +34,7 @@ using System.Drawing.Drawing2D;
 
 namespace System.Windows.Forms
 {
-	public abstract class ToolStripRenderer
+	public abstract partial class ToolStripRenderer
 	{
 		// .NET's DisabledImageColorMatrix (light mode): MultiplyColorMatrix(diag(1, 1, 1, 0.7, 0),
 		// luminance-with-a-0.38-lift), which computes the SECOND times the first -- luminance,

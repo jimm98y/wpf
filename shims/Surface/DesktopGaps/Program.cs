@@ -76,7 +76,7 @@ foreach (var f in Directory.GetFiles(refDir, "*.dll").OrderBy(x => x))
         var it = implAsm == null ? null : Find(name, rt.FullName);
         var rms = rt.Methods.Where(Visible).Select(Sig).ToList();
         rms.AddRange(rt.Fields.Where(x => x.IsPublic || x.IsFamily).Select(x => "F:" + x.Name));
-        rms.AddRange(rt.Events.Select(x => "E:" + x.Name));
+        rms.AddRange(rt.Events.Where(x => x.AddMethod != null && Visible(x.AddMethod)).Select(x => "E:" + x.Name));
         if (it == null) { missT++; members += rms.Count; missM += rms.Count; w.WriteLine($"  MISSING TYPE {rt.FullName}"); continue; }
         var im = new Dictionary<string, MethodDefinition>(); var ifsBase = new HashSet<string>();
         for (var cur = it; cur != null;)

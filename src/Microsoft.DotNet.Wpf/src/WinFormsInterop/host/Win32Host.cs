@@ -347,6 +347,39 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     }
 
     /// <summary>Form.WindowState was set: the real window follows, as ShowWindow does it for stock.</summary>
+    // Form.FormCornerPreference, FormBorderColor, FormCaptionBackColor, FormCaptionTextColor: what .NET's Form sets
+    // with DwmSetWindowAttribute (Windows 11; earlier Windows ignore them); FormScreenCaptureMode its display
+    // affinity (SetWindowDisplayAffinity)
+    private static void ApplyFrameAttributes(Form form)
+    {
+        Win32Host host = null;
+        lock (s_byHwnd)
+            foreach (Win32Host h in s_byHwnd.Values)
+                if (!h.FormGone && ReferenceEquals(h._form, form)) { host = h; break; }
+        if (host != null && host._hwnd != IntPtr.Zero) ApplyFrameAttributes(host);
+    }
+
+    private static void ApplyFrameAttributes(Win32Host host)
+    {
+        const int DWMWA_BORDER_COLOR = 34, DWMWA_CAPTION_COLOR = 35, DWMWA_TEXT_COLOR = 36, DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        const uint DWMWA_COLOR_DEFAULT = 0xFFFFFFFF;
+        Form form = host._form;
+        static uint ColorRef(System.Drawing.Color c) => c.IsEmpty ? DWMWA_COLOR_DEFAULT : (uint)(c.R | (c.G << 8) | (c.B << 16));
+        int corner = (int)form.FormCornerPreference;
+        DwmSetWindowAttribute(host._hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(int));
+        uint border = ColorRef(form.FormBorderColor), caption = ColorRef(form.FormCaptionBackColor), text = ColorRef(form.FormCaptionTextColor);
+        DwmSetWindowAttribute(host._hwnd, DWMWA_BORDER_COLOR, &border, sizeof(uint));
+        DwmSetWindowAttribute(host._hwnd, DWMWA_CAPTION_COLOR, &caption, sizeof(uint));
+        DwmSetWindowAttribute(host._hwnd, DWMWA_TEXT_COLOR, &text, sizeof(uint));
+        // WDA_NONE, WDA_MONITOR (shown black), WDA_EXCLUDEFROMCAPTURE (not shown); reset to none first, as .NET does
+        SetWindowDisplayAffinity(host._hwnd, 0);
+        uint affinity = form.FormScreenCaptureMode switch { ScreenCaptureMode.HideContent => 1u, ScreenCaptureMode.HideWindow => 0x11u, _ => 0u };
+        if (affinity != 0) SetWindowDisplayAffinity(host._hwnd, affinity);
+    }
+
+    [DllImport("dwmapi")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, void* value, int size);
+    [DllImport("user32")] private static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
+
     private static void ApplyWindowState(IntPtr formHandle, FormWindowState state)
     {
         Win32Host host = null;
@@ -499,6 +532,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         System.Windows.Forms.XplatUIWebGpu.FrameChanged += OnFrameChanged;
         System.Windows.Forms.XplatUIWebGpu.BeginWindowMove ??= h => BeginSystemCommand(h, 0xF012);     // SC_MOVE | HTCAPTION
         System.Windows.Forms.XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
+        System.Windows.Forms.XplatUIWebGpu.FrameAttributesRequested ??= ApplyFrameAttributes;
         System.Windows.Forms.XplatUIWebGpu.BeginWindowSize ??= (h, edge) => BeginSystemCommand(h, 0xF000 | edge);   // SC_SIZE | WMSZ_*
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
@@ -531,6 +565,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
             // windows (EnumWindows, GetForegroundWindow, Process.MainWindowHandle) is answered with,
             // since the form's Handle is the stack's and not this HWND (WpfWebGpu.Win32, Windows.cs).
             if (_hwnd != IntPtr.Zero && _form.IsHandleCreated) SetPropW(_hwnd, StackHandleProperty, _form.Handle);
+            // the frame's attributes the form was given before its window existed (Form.FormCornerPreference ...)
+            if (_hwnd != IntPtr.Zero && _form.HasFrameAttributes) ApplyFrameAttributes(this);
         }
         finally { s_creating = null; Marshal.FreeHGlobal(title); }
         if (_hwnd == IntPtr.Zero)

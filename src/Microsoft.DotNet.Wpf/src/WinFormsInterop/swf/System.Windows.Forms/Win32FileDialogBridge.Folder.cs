@@ -23,13 +23,18 @@ namespace System.Windows.Forms
 
         private const uint CLSCTX_INPROC_SERVER = 1;
         private const uint FOS_NOCHANGEDIR = 0x8, FOS_PICKFOLDERS = 0x20, FOS_FORCEFILESYSTEM = 0x40,
-                           FOS_PATHMUSTEXIST = 0x800, FOS_FILEMUSTEXIST = 0x1000;
+                           FOS_PATHMUSTEXIST = 0x800, FOS_FILEMUSTEXIST = 0x1000, FOS_ALLOWMULTISELECT = 0x200,
+                           FOS_HIDEPINNEDPLACES = 0x40000, FOS_OKBUTTONNEEDSINTERACTION = 0x200000,
+                           FOS_DONTADDTORECENT = 0x2000000, FOS_FORCESHOWHIDDEN = 0x10000000;
         private const uint SIGDN_FILESYSPATH = 0x80058000;
         private const int ERROR_CANCELLED_HR = unchecked ((int) 0x800704C7);
 
         // IFileDialog vtable slots (IUnknown 0-2, IModalWindow::Show 3, then IFileDialog in order).
         private const int Slot_Show = 3, Slot_SetOptions = 9, Slot_GetOptions = 10, Slot_SetFolder = 12,
-                          Slot_SetFileName = 15, Slot_SetTitle = 17, Slot_GetResult = 20;
+                          Slot_SetFileName = 15, Slot_SetTitle = 17, Slot_GetResult = 20, Slot_SetClientGuid = 24,
+                          Slot_GetResults = 27;
+        // IShellItemArray::GetCount, GetItemAt.
+        private const int Slot_ArrayGetCount = 7, Slot_ArrayGetItemAt = 8;
         // IShellItem::GetDisplayName; IFileDialogCustomize::AddText.
         private const int Slot_GetDisplayName = 5, Slot_AddText = 11;
 
@@ -63,6 +68,17 @@ namespace System.Windows.Forms
         private static unsafe int CallPtr (IntPtr o, int slot, IntPtr arg)
             => ((delegate* unmanaged[Stdcall]<IntPtr, IntPtr, int>) Vtbl (o) [slot]) (o, arg);
 
+        // an IShellItem's file system path
+        private static unsafe string PathOf (IntPtr item)
+        {
+            char* name;
+            if (((delegate* unmanaged[Stdcall]<IntPtr, uint, char**, int>) Vtbl (item) [Slot_GetDisplayName]) (item, SIGDN_FILESYSPATH, &name) < 0)
+                return null;
+            string path = new string (name);
+            Marshal.FreeCoTaskMem ((IntPtr) name);
+            return path;
+        }
+
         /// <summary>The shell's folder picker is there on every Windows this runs on.</summary>
         public bool SupportsFolder => true;
 
@@ -70,9 +86,19 @@ namespace System.Windows.Forms
         /// starting in the initial directory, the current selection preselected (its parent opened,
         /// its name in the field), and the description either as the title or as a line of text in
         /// the dialog.</summary>
-        public unsafe bool ShowFolder (FolderDialogRequest request, out string selectedPath)
+        public bool ShowFolder (FolderDialogRequest request, out string selectedPath)
         {
-            selectedPath = null;
+            bool ok = ShowFolders (request, out string [] paths);
+            selectedPath = ok ? paths [0] : null;
+            return ok;
+        }
+
+        /// <summary>As .NET's FolderBrowserDialog: one folder, or several (FOS_ALLOWMULTISELECT, read back with
+        /// IFileOpenDialog::GetResults), with its other options (hidden items, the recent list, OK needing
+        /// interaction, the pinned places, the client GUID the dialog keeps its state under).</summary>
+        public unsafe bool ShowFolders (FolderDialogRequest request, out string [] selectedPaths)
+        {
+            selectedPaths = null;
             if (CoCreateInstance (CLSID_FileOpenDialog, IntPtr.Zero, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog, out IntPtr dialog) < 0
                 || dialog == IntPtr.Zero)
                 return false;
@@ -80,7 +106,14 @@ namespace System.Windows.Forms
                 uint options;
                 ((delegate* unmanaged[Stdcall]<IntPtr, uint*, int>) Vtbl (dialog) [Slot_GetOptions]) (dialog, &options);
                 options |= FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST | FOS_NOCHANGEDIR;
+                if (request.Multiselect) options |= FOS_ALLOWMULTISELECT;
+                if (request.ShowHiddenFiles) options |= FOS_FORCESHOWHIDDEN;
+                if (!request.AddToRecent) options |= FOS_DONTADDTORECENT;
+                if (request.OkRequiresInteraction) options |= FOS_OKBUTTONNEEDSINTERACTION;
+                if (!request.ShowPinnedPlaces) options |= FOS_HIDEPINNEDPLACES;
                 ((delegate* unmanaged[Stdcall]<IntPtr, uint, int>) Vtbl (dialog) [Slot_SetOptions]) (dialog, options);
+                if (request.ClientGuid is Guid client)
+                    ((delegate* unmanaged[Stdcall]<IntPtr, Guid*, int>) Vtbl (dialog) [Slot_SetClientGuid]) (dialog, &client);
 
                 if (!string.IsNullOrEmpty (request.InitialDirectory))
                     SetFolder (dialog, request.InitialDirectory);
@@ -122,16 +155,40 @@ namespace System.Windows.Forms
                     return false;
                 }
 
+                if (request.Multiselect) {
+                    IntPtr items;
+                    if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>) Vtbl (dialog) [Slot_GetResults]) (dialog, &items) < 0 || items == IntPtr.Zero)
+                        return false;
+                    try {
+                        uint count;
+                        if (((delegate* unmanaged[Stdcall]<IntPtr, uint*, int>) Vtbl (items) [Slot_ArrayGetCount]) (items, &count) < 0)
+                            return false;
+                        var paths = new System.Collections.Generic.List<string> ((int) count);
+                        for (uint i = 0; i < count; i++) {
+                            IntPtr one;
+                            if (((delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, int>) Vtbl (items) [Slot_ArrayGetItemAt]) (items, i, &one) < 0 || one == IntPtr.Zero)
+                                continue;
+                            try {
+                                if (PathOf (one) is string path)
+                                    paths.Add (path);
+                            } finally {
+                                Release (one);
+                            }
+                        }
+                        selectedPaths = paths.Count > 0 ? paths.ToArray () : null;
+                        return selectedPaths != null;
+                    } finally {
+                        Release (items);
+                    }
+                }
+
                 IntPtr item;
                 if (((delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>) Vtbl (dialog) [Slot_GetResult]) (dialog, &item) < 0 || item == IntPtr.Zero)
                     return false;
                 try {
-                    char* name;
-                    if (((delegate* unmanaged[Stdcall]<IntPtr, uint, char**, int>) Vtbl (item) [Slot_GetDisplayName]) (item, SIGDN_FILESYSPATH, &name) < 0)
-                        return false;
-                    selectedPath = new string (name);
-                    Marshal.FreeCoTaskMem ((IntPtr) name);
-                    return true;
+                    string chosen = PathOf (item);
+                    selectedPaths = chosen != null ? new [] { chosen } : null;
+                    return chosen != null;
                 } finally {
                     Release (item);
                 }

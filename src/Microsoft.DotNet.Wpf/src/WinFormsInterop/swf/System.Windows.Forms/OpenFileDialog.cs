@@ -32,7 +32,7 @@ using System.Drawing;
 using System.IO;
 
 namespace System.Windows.Forms {
-	public sealed class OpenFileDialog : FileDialog {
+	public sealed partial class OpenFileDialog : FileDialog {
 		#region Public Constructors
 		public OpenFileDialog ()
 		{

@@ -129,12 +129,12 @@ namespace System.Windows.Forms
 					g.FillRectangle (shadow, v.Left - i + 1, bottom, v.Width + 2 * i - 2, 1);
 				}
 				// the caption and the edge, as Windows 11 draws them with accent colour off
-				using (var caption = new SolidBrush (active ? Color.White : Color.FromArgb (243, 243, 243)))
+				using (var caption = new SolidBrush (!_form.FormCaptionBackColor.IsEmpty ? _form.FormCaptionBackColor : active ? Color.White : Color.FromArgb (243, 243, 243)))
 					g.FillRectangle (caption, v.Left, v.Top, v.Width, f.Top);
 				using (var sides = new SolidBrush (_form.BackColor))
 					g.FillRectangle (sides, v.Left, f.Top, v.Width, v.Height - f.Top);
 				int line = Math.Max (1, Px (1));
-				using (var edge = new Pen (active ? Color.FromArgb (120, 120, 120) : Color.FromArgb (170, 170, 170), line))
+				using (var edge = new Pen (!_form.FormBorderColor.IsEmpty ? _form.FormBorderColor : active ? Color.FromArgb (120, 120, 120) : Color.FromArgb (170, 170, 170), line))
 					g.DrawRectangle (edge, v.Left + (line - 1) / 2f, v.Top + (line - 1) / 2f, v.Width - line, v.Height - line);
 
 				Rectangle c = Caption (window);
@@ -142,7 +142,7 @@ namespace System.Windows.Forms
 				// the title: the caption font, from the left edge to the buttons
 				Font font = SystemFonts.CaptionFont ?? Control.DefaultFont;
 				var title = new Rectangle (c.Left + Px (11), c.Top, (close.IsEmpty ? c.Right : close.Left) - c.Left - Px (11), c.Height);
-				TextRenderer.DrawText (g, _form.Text, font, title, active ? Color.Black : Color.FromArgb (150, 150, 150),
+				TextRenderer.DrawText (g, _form.Text, font, title, !_form.FormCaptionTextColor.IsEmpty ? _form.FormCaptionTextColor : active ? Color.Black : Color.FromArgb (150, 150, 150),
 					TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
 
 				if (!close.IsEmpty) {

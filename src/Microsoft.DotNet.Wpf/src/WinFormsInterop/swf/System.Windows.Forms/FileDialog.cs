@@ -45,7 +45,7 @@ namespace System.Windows.Forms
 	#region FileDialog
 	[DefaultProperty ("FileName")]
 	[DefaultEvent ("FileOk")]
-	public abstract class FileDialog : CommonDialog
+	public abstract partial class FileDialog : CommonDialog
 	{
 		protected static readonly object EventFileOk = new object ();
 		private static int MaxFileNameItems = 10;
@@ -634,6 +634,7 @@ namespace System.Windows.Forms
 		
 		public override void Reset ()
 		{
+			ResetModernOptions ();
 			addExtension = true;
 			checkFileExists = false;
 			checkPathExists = true;
@@ -749,6 +750,9 @@ namespace System.Windows.Forms
 				CheckFileExists = CheckFileExists,
 				Multiselect = multiSelect,
 				OverwritePrompt = fileDialogType == FileDialogType.SaveFileDialog && overwritePrompt,
+				ShowHiddenFiles = ShowHiddenFiles,
+				AddToRecent = AddToRecent,
+				ClientGuid = ClientGuid,
 			};
 		}
 

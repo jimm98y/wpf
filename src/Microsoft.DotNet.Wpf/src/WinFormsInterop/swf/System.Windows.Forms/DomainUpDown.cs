@@ -41,7 +41,7 @@ namespace System.Windows.Forms
 	[DefaultBindingProperty ("SelectedItem")]
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[ComVisible (true)]
-	public class DomainUpDown : UpDownBase {
+	public partial class DomainUpDown : UpDownBase {
 		#region Local Variables
 		private DomainUpDownItemCollection	items;
 		private int				selected_index = -1;
@@ -104,7 +104,7 @@ namespace System.Windows.Forms
 
 		#region DomainUpDownAccessibleObject sub-class
 		[ComVisible(true)]
-		public class DomainUpDownAccessibleObject : ControlAccessibleObject {
+		public partial class DomainUpDownAccessibleObject : ControlAccessibleObject {
 			#region DomainUpDownAccessibleObject Local Variables
 			//private Control	owner;
 			#endregion	// DomainUpDownAccessibleObject Local Variables

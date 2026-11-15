@@ -47,7 +47,7 @@ namespace System.Windows.Forms
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[ComVisible (true)]
 	[Docking (DockingBehavior.Ask)]
-	public class ListView : Control
+	public partial class ListView : Control
 	{
 		private ItemActivation activation = ItemActivation.Standard;
 		private ListViewAlignment alignment = ListViewAlignment.Top;
@@ -1917,6 +1917,9 @@ namespace System.Windows.Forms
 
 					x = UseCustomColumnWidth ? col * custom_column_width : col * (item_size.Width + x_spacing);
 					y = row * (item_size.Height + y_spacing) + group_items_loc.Y;
+					// a collapsed group's items are not shown, hit or drawn
+					if (group.IsCollapsed)
+						y = ListViewGroup.HiddenItemY;
 
 					SetItemLocation (display_index, x, y, row + starting_row, col);
 					SetItemAtDisplayIndex (display_index, i);
@@ -1976,12 +1979,19 @@ namespace System.Windows.Forms
 			// bottom and the right.
 			Rectangle client_area = Rectangle.Inflate (FullClient, -BorderInset, -BorderInset);
 			int header_height = Font.Height + 15; // one line height + some padding
+			// a subtitle is a line of its own under the header (modern/ListViewGroups.Modern.cs)
+			if (!string.IsNullOrEmpty (group.Subtitle))
+				header_height += Font.Height;
 
 			group.HeaderBounds = new Rectangle (0, y_origin, client_area.Width - v_scroll.Width, header_height);
 			group.items_area_location = new Point (0, y_origin + header_height);
 
-			int items_area_height = ((item_height + y_spacing) * rows);
-			return header_height + items_area_height + 10; // Add a small bottom margin
+			// a collapsed group shows its header (and footer) only
+			int items_area_height = group.IsCollapsed ? 0 : ((item_height + y_spacing) * rows);
+			int footer_height = string.IsNullOrEmpty (group.Footer) ? 0 : Font.Height + 6;
+			group.footer_bounds = footer_height == 0 ? Rectangle.Empty
+				: new Rectangle (0, y_origin + header_height + items_area_height, client_area.Width - v_scroll.Width, footer_height);
+			return header_height + items_area_height + footer_height + 10; // Add a small bottom margin
 		}
 
 		void CalculateDetailsGroupItemsCount ()
@@ -2079,7 +2089,7 @@ namespace System.Windows.Forms
 					Point group_items_loc = group.items_area_location;
 					display_index = group.starting_item + current_item;
 
-					y = item_y = current_item * (item_height + 2) + group_items_loc.Y;
+					y = item_y = group.IsCollapsed ? ListViewGroup.HiddenItemY : current_item * (item_height + 2) + group_items_loc.Y;
 					SetItemLocation (display_index, 0, item_y, 0, 0);
 					SetItemAtDisplayIndex (display_index, i);
 				} else
@@ -2756,6 +2766,9 @@ namespace System.Windows.Forms
 			{
 				owner.OnMouseDown (owner.TranslateMouseEventArgs (me));
 				if (owner.items.Count == 0)
+					return;
+				// a group header's chevron and task link (modern/ListViewGroups.Modern.cs)
+				if (owner.UsingGroups && me.Button == MouseButtons.Left && owner.GroupHeaderClicked (new Point (me.X, me.Y), me.Clicks))
 					return;
 
 				bool box_selecting = false;

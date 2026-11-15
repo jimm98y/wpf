@@ -733,6 +733,11 @@ namespace MS.Internal.Interop
 namespace MS.Internal.Interop.Wayland
 {
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("linux")]
+    public static partial class LinuxDesktopSettings
+    {
+        public static bool IsSystemDarkTheme() { throw null; }
+    }
+    [System.Runtime.Versioning.SupportedOSPlatformAttribute("linux")]
     public sealed partial class WaylandWindow : MS.Internal.Interop.IPlatformWindow
     {
         public WaylandWindow() { }

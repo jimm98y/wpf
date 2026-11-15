@@ -36,7 +36,7 @@ using System.Collections.Specialized;
 using System.ComponentModel;
 
 namespace System.Windows.Forms {
-	public sealed class Clipboard {
+	public sealed partial class Clipboard {
 		#region Local Variables
 		#endregion	// Local Variables
 

@@ -29,7 +29,7 @@ namespace System.Windows.Forms
         {
             filterIndex = request.FilterIndex;
             fileNames = MS.Internal.Interop.CocoaDialogs.ShowOpenPanel (request.Title, request.InitialDirectory,
-                request.Multiselect, chooseDirectories: false);
+                request.Multiselect, chooseDirectories: false, request.ShowHiddenFiles);
             return fileNames != null && fileNames.Length > 0;
         }
 
@@ -41,7 +41,7 @@ namespace System.Windows.Forms
             string dir = request.InitialDirectory;
             if (string.IsNullOrEmpty (dir) && !string.IsNullOrEmpty (request.FileName))
                 dir = Path.GetDirectoryName (request.FileName);
-            string chosen = MS.Internal.Interop.CocoaDialogs.ShowSavePanel (request.Title, dir, suggested);
+            string chosen = MS.Internal.Interop.CocoaDialogs.ShowSavePanel (request.Title, dir, suggested, request.ShowHiddenFiles);
             if (chosen == null)
                 return false;
             // NSSavePanel asks about replacing a file itself; it adds no extension, so WinForms'
@@ -54,12 +54,19 @@ namespace System.Windows.Forms
 
         public bool ShowFolder (FolderDialogRequest request, out string selectedPath)
         {
+            bool ok = ShowFolders (request, out string [] paths);
+            selectedPath = ok ? paths [0] : null;
+            return ok;
+        }
+
+        public bool ShowFolders (FolderDialogRequest request, out string [] selectedPaths)
+        {
             string start = request.InitialDirectory;
             if (string.IsNullOrEmpty (start) && !string.IsNullOrEmpty (request.SelectedPath))
                 start = request.SelectedPath;
-            string [] chosen = MS.Internal.Interop.CocoaDialogs.ShowOpenPanel (request.Description, start, false, chooseDirectories: true);
-            selectedPath = chosen != null && chosen.Length > 0 ? chosen [0] : null;
-            return selectedPath != null;
+            selectedPaths = MS.Internal.Interop.CocoaDialogs.ShowOpenPanel (request.Description, start, request.Multiselect,
+                chooseDirectories: true, request.ShowHiddenFiles);
+            return selectedPaths != null && selectedPaths.Length > 0;
         }
     }
 }

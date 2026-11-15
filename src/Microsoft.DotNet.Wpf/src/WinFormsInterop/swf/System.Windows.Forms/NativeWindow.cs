@@ -39,7 +39,7 @@ using System.Drawing;
 
 namespace System.Windows.Forms
 {
-	public class NativeWindow : MarshalByRefObject, IWin32Window
+	public partial class NativeWindow : MarshalByRefObject, IWin32Window
 	{
 		IntPtr window_handle = IntPtr.Zero;
 		static Hashtable window_collection = new Hashtable();
@@ -234,6 +234,17 @@ namespace System.Windows.Forms
 
 		protected virtual void WndProc(ref Message m)
 		{
+			// .NET: a child window's DPI change, given to its subclass first (modern/Small.Modern.cs)
+			switch (m.Msg) {
+			case XplatUIWebGpu.WM_DPICHANGED_BEFOREPARENT:
+				WmDpiChangedBeforeParent (ref m);
+				m.Result = IntPtr.Zero;
+				break;
+			case XplatUIWebGpu.WM_DPICHANGED_AFTERPARENT:
+				WmDpiChangedAfterParent (ref m);
+				m.Result = IntPtr.Zero;
+				break;
+			}
 			DefWndProc(ref m);
 		}
 

@@ -35,7 +35,7 @@ namespace System.Windows.Forms
 {
 	[DefaultProperty ("DropDownItems")]
 	[Designer ("System.Windows.Forms.Design.ToolStripMenuItemDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
-	public abstract class ToolStripDropDownItem : ToolStripItem
+	public abstract partial class ToolStripDropDownItem : ToolStripItem
 	{
 		internal ToolStripDropDown drop_down;
 		private ToolStripDropDownDirection drop_down_direction;

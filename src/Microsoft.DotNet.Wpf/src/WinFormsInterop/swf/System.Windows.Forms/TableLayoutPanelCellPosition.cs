@@ -32,7 +32,7 @@ using System.ComponentModel;
 namespace System.Windows.Forms
 {
 	[TypeConverter (typeof (TableLayoutPanelCellPositionTypeConverter))]
-	public struct TableLayoutPanelCellPosition {
+	public partial struct TableLayoutPanelCellPosition {
 		int column, row;
 
 		public TableLayoutPanelCellPosition (int column, int row)

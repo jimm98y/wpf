@@ -52,6 +52,8 @@ namespace System.Windows.Forms {
 		DoubleBuffer		= 0x00010000,
 
 		OptimizedDoubleBuffer	= 0x00020000,
-		UseTextForAccessibility	= 0x00040000
+		UseTextForAccessibility	= 0x00040000,
+		// .NET 9: the control takes the dark mode theme of its own accord
+		ApplyThemingImplicitly	= 0x00080000
 	}
 }

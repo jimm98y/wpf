@@ -43,7 +43,7 @@ namespace System.Windows.Forms
 	[Designer("System.Windows.Forms.Design.PropertyGridDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[ComVisible (true)]
-	public class PropertyGrid : System.Windows.Forms.ContainerControl, ComponentModel.Com2Interop.IComPropertyBrowser 
+	public partial class PropertyGrid : System.Windows.Forms.ContainerControl, ComponentModel.Com2Interop.IComPropertyBrowser 
 	{
 		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
 		internal override bool GdiTextOnMemorySurface => true;

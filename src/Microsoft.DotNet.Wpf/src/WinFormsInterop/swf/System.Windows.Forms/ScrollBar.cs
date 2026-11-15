@@ -41,7 +41,7 @@ namespace System.Windows.Forms
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[DefaultEvent ("Scroll")]
 	[DefaultProperty ("Value")]
-	public abstract class ScrollBar : Control
+	public abstract partial class ScrollBar : Control
 	{
 		#region Local Variables
 		private int position;

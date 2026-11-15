@@ -36,7 +36,7 @@ namespace System.Windows.Forms {
 	[DefaultEvent ("HelpRequest")]
 	[DefaultProperty ("SelectedPath")]
 	[Designer ("System.Windows.Forms.Design.FolderBrowserDialogDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
-	public sealed class FolderBrowserDialog : CommonDialog
+	public sealed partial class FolderBrowserDialog : CommonDialog
 	{
 		#region Local Variables
 		private Environment.SpecialFolder rootFolder = Environment.SpecialFolder.Desktop;
@@ -238,6 +238,7 @@ namespace System.Windows.Forms {
 					value = string.Empty;
 				selectedPath = value;
 				old_selectedPath = value;
+				_selectedPaths = new [] { value };
 			}
 			get {
 				return selectedPath;
@@ -264,6 +265,7 @@ namespace System.Windows.Forms {
 		#region Public Instance Methods
 		public override void Reset ()
 		{
+			ResetModernOptions ();
 			Description = string.Empty;
 			RootFolder = Environment.SpecialFolder.Desktop;
 			selectedPath = string.Empty;
@@ -275,6 +277,13 @@ namespace System.Windows.Forms {
 				Description = descriptionLabel.Text,
 				UseDescriptionForTitle = useDescriptionForTitle,
 				SelectedPath = selectedPath,
+				InitialDirectory = InitialDirectory,
+				Multiselect = Multiselect,
+				ShowHiddenFiles = ShowHiddenFiles,
+				AddToRecent = AddToRecent,
+				OkRequiresInteraction = OkRequiresInteraction,
+				ShowPinnedPlaces = ShowPinnedPlaces,
+				ClientGuid = ClientGuid,
 			};
 
 		/// <summary>The platform's folder picker, not waited for: see CommonDialog.ShowDialogAsync.</summary>
@@ -283,10 +292,10 @@ namespace System.Windows.Forms {
 			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
 			if (bridge == null || !bridge.SupportsFolder)
 				return await base.ShowDialogAsync ();
-			var answer = await bridge.ShowFolderAsync (PlatformRequest ());
+			var answer = await bridge.ShowFoldersAsync (PlatformRequest ());
 			if (!answer.ok)
 				return DialogResult.Cancel;
-			selectedPath = answer.selectedPath;
+			Chosen (answer.selectedPaths);
 			return DialogResult.OK;
 		}
 
@@ -299,10 +308,9 @@ namespace System.Windows.Forms {
 			IFileDialogBridge bridge = XplatUIWebGpu.FileDialogBridge;
 			if (bridge != null && bridge.SupportsFolder) {
 				ranOnPlatform = true;
-				string picked;
-				if (!bridge.ShowFolder (PlatformRequest (), out picked))
+				if (!bridge.ShowFolders (PlatformRequest (), out string [] picked))
 					return false;
-				selectedPath = picked;
+				Chosen (picked);
 				return true;
 			}
 
@@ -329,6 +337,8 @@ namespace System.Windows.Forms {
 		void OnClickOKButton (object sender, EventArgs e)
 		{
 			WriteConfigValues ();
+			// the managed tree picks one folder
+			_selectedPaths = string.IsNullOrEmpty (selectedPath) ? Array.Empty<string> () : new [] { selectedPath };
 			
 			form.DialogResult = DialogResult.OK;
 		}

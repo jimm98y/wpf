@@ -69,6 +69,8 @@ namespace System.Windows.Forms
         private const int OFN_PATHMUSTEXIST = 0x00000800;
         private const int OFN_FILEMUSTEXIST = 0x00001000;
         private const int OFN_EXPLORER = 0x00080000;
+        private const int OFN_DONTADDTORECENT = 0x02000000;
+        private const int OFN_FORCESHOWHIDDEN = 0x10000000;
 
         [DllImport("comdlg32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool GetOpenFileNameW(ref OPENFILENAME ofn);
@@ -139,6 +141,8 @@ namespace System.Windows.Forms
                 {
                     ofn.Flags |= OFN_OVERWRITEPROMPT;
                 }
+                if (request.ShowHiddenFiles) ofn.Flags |= OFN_FORCESHOWHIDDEN;
+                if (!request.AddToRecent) ofn.Flags |= OFN_DONTADDTORECENT;
 
                 // In comctl32 v6, as CommonDialog.ShowDialog's ThemingScope runs every dialog.
                 bool ok;

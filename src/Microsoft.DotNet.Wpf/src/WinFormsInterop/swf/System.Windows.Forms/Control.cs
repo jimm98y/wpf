@@ -251,7 +251,7 @@ namespace System.Windows.Forms
 		
 		#region Public Classes
 		[ComVisible(true)]
-		public class ControlAccessibleObject : AccessibleObject {
+		public partial class ControlAccessibleObject : AccessibleObject {
 			IntPtr handle;
 
 			#region ControlAccessibleObject Constructors
@@ -907,11 +907,7 @@ namespace System.Windows.Forms
 			// the plain base one). A WPF thread keeps its DispatcherSynchronizationContext -- taking
 			// it over sent every await made after a WinForms control was created on that thread to
 			// a queue the WPF dispatcher never runs (Workbench never got past "Connecting...").
-			if (WindowsFormsSynchronizationContext.AutoInstall) {
-				SynchronizationContext current = SynchronizationContext.Current;
-				if (current == null || current.GetType () == typeof (SynchronizationContext))
-					SynchronizationContext.SetSynchronizationContext (new WindowsFormsSynchronizationContext ());
-			}
+			WindowsFormsSynchronizationContext.InstallIfNeeded ();
 
 			anchor_style = AnchorStyles.Top | AnchorStyles.Left;
 
@@ -2910,22 +2906,14 @@ namespace System.Windows.Forms
 		[Localizable(true)]
 		[MWFCategory("Behavior")]
 		public ImeMode ImeMode {
+			// through ImeModeBase, which a control may override (modern/Control.Modern.cs)
 			get {
-				if (ime_mode == ImeMode.Inherit) {
-					if (parent != null)
-						return parent.ImeMode;
-					else
-						return ImeMode.NoControl; // default value
-				}
-				return ime_mode;
+				ImeMode mode = ImeModeBase;
+				return mode == ImeMode.OnHalf ? ImeMode.On : mode;
 			}
 
 			set {
-				if (ime_mode != value) {
-					ime_mode = value;
-
-					OnImeModeChanged(EventArgs.Empty);
-				}
+				ImeModeBase = value;
 			}
 		}
 

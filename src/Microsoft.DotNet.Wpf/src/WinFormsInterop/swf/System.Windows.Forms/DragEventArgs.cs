@@ -31,7 +31,7 @@ using System.Runtime.InteropServices;
 
 namespace System.Windows.Forms {
 	[ComVisible(true)]
-	public class DragEventArgs : EventArgs {
+	public partial class DragEventArgs : EventArgs {
 		internal int			x;
 		internal int			y;
 		internal int			keystate;

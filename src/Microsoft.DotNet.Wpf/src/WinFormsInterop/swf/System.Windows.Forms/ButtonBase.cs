@@ -34,7 +34,7 @@ namespace System.Windows.Forms {
 	[ComVisible (true)]
 	[Designer ("System.Windows.Forms.Design.ButtonBaseDesigner, " + Consts.AssemblySystem_Design,
 		   "System.ComponentModel.Design.IDesigner")]
-	public abstract class ButtonBase : Control
+	public abstract partial class ButtonBase : Control
 	{
 		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
 		internal override bool GdiTextOnMemorySurface => true;

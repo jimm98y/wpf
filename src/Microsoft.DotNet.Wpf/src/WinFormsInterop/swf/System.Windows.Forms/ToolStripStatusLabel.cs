@@ -35,7 +35,7 @@ using System.Windows.Forms.Design;
 namespace System.Windows.Forms
 {
 	[ToolStripItemDesignerAvailability (ToolStripItemDesignerAvailability.StatusStrip)]
-	public class ToolStripStatusLabel : ToolStripLabel
+	public partial class ToolStripStatusLabel : ToolStripLabel
 	{
 		private ToolStripStatusLabelBorderSides border_sides;
 		private Border3DStyle border_style;

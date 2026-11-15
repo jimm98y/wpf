@@ -28,7 +28,7 @@ using System.Drawing;
 
 namespace System.Windows.Forms {
 
-	public class DrawItemEventArgs : EventArgs {
+	public partial class DrawItemEventArgs : EventArgs {
 
 		Graphics graphics;
 		Font font;

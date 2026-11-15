@@ -30,6 +30,8 @@ namespace System.Windows.Forms.VisualStyles
 {
 	public enum FontProperty
 	{
+		// .NET: a part's text font (TMT_FONT)
+		TextFont = 210,
 		GlyphFont = 2601
 	}
 }

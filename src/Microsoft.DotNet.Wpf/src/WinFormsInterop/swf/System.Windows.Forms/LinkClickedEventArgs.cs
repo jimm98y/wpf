@@ -31,7 +31,7 @@ using System.Runtime.InteropServices;
 namespace System.Windows.Forms 
 {
 	[ComVisible(true)]
-	public class LinkClickedEventArgs : EventArgs 
+	public partial class LinkClickedEventArgs : EventArgs 
 	{		
 		private string link_text;				
 		

@@ -45,7 +45,7 @@ using System.Drawing.Text;
 
 namespace System.Windows.Forms
 {
-	public sealed class TextRenderer
+	public sealed partial class TextRenderer
 	{
 		private TextRenderer ()
 		{

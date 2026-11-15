@@ -36,7 +36,7 @@ using System.Runtime.InteropServices;
 
 namespace System.Windows.Forms {
 	[ClassInterface(ClassInterfaceType.None)]
-	public class DataObject : IDataObject, System.Runtime.InteropServices.ComTypes.IDataObject
+	public partial class DataObject : IDataObject, System.Runtime.InteropServices.ComTypes.IDataObject
 	 {
 		#region DataObject.Entry Class
 		private class Entry {

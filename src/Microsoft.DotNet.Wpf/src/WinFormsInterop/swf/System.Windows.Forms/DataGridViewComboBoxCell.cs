@@ -31,7 +31,7 @@ using System.Drawing;
 
 namespace System.Windows.Forms {
 
-	public class DataGridViewComboBoxCell : DataGridViewCell {
+	public partial class DataGridViewComboBoxCell : DataGridViewCell {
 
 		private bool autoComplete;
 		private object dataSource;

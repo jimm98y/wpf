@@ -32,7 +32,7 @@ using System.ComponentModel;
 
 namespace System.Windows.Forms
 {
-	public class SystemInformation
+	public partial class SystemInformation
 	{
 		private SystemInformation ()
 		{

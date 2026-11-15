@@ -64,9 +64,8 @@
          the non-managed tree when swf/ was vendored, but they are pure managed XML handling
          and consumers do use them (SharpDevelop's ResXConverter does not compile without). -->
     <Compile Include="swf/System.Resources/**/*.cs" />
-    <!-- ResXResourceSet derives from ResourceSet and drives its protected Reader/Table
-         members, which modern .NET no longer exposes. Nothing needs the set type - consumers
-         use the reader and writer directly - so it is left out rather than rewritten. -->
+    <!-- Mono's ResXResourceSet drives ResourceSet's protected Reader/Table members, which modern
+         .NET no longer exposes; .NET's, which needs neither, is in modern/ResXResourceSet.cs. -->
     <Compile Remove="swf/System.Resources/ResXResourceSet.cs" />
     <Compile Include="swf/Assembly/**/*.cs" />
 
@@ -94,6 +93,11 @@
          ours. Mono's own WebBrowser (which drove Gecko) was pruned at vendoring; the event args,
          WebBrowserReadyState and the dialog forms it left behind are reused by these. -->
     <Compile Include="web/*.cs" />
+
+    <!-- What .NET's WinForms has that Mono's did not (the APIs of .NET 5 to 10: TaskDialog, InvokeAsync, typed and
+         JSON clipboard data, commands, the ambient DataContext ...), ported from dotnet/winforms. Ours, outside the
+         vendored swf/ like web/; the swf/ classes they extend are only made partial. -->
+    <Compile Include="modern/*.cs" />
 
     <!-- The cross-platform engine seam, compiled in by source. Internal, and never crossing an
          assembly boundary, which is why PresentationFramework and Microsoft.Web.WebView2.Core each

@@ -39,7 +39,7 @@ namespace System.Windows.Forms {
 	[ToolboxItem(false)]
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[ComVisible (true)]
-	public abstract class AxHost : Control, ISupportInitialize, ICustomTypeDescriptor {
+	public abstract partial class AxHost : Control, ISupportInitialize, ICustomTypeDescriptor {
 		#region AxHost Subclasses
 		#region AxHost.ActiveXInvokeKind Enum
 		public enum ActiveXInvokeKind {
@@ -149,7 +149,7 @@ namespace System.Windows.Forms {
 		#region AxHost.State Class
 		[Serializable]
 		[TypeConverter("System.ComponentModel.TypeConverter, " + Consts.AssemblySystem)]
-		public class State : ISerializable {
+		public partial class State : ISerializable {
 			public State (Stream ms, int storageType, bool manualUpdate, string licKey)
 			{
 				//throw NotSupported ();

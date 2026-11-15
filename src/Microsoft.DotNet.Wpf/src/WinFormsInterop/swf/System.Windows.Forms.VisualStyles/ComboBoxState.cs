@@ -33,6 +33,8 @@ namespace System.Windows.Forms.VisualStyles
 		Normal = 1,
 		Hot = 2,
 		Pressed = 3,
-		Disabled = 4
+		Disabled = 4,
+		// .NET: a focused box's drop-down arrow
+		Focused = 5
 	}
 }

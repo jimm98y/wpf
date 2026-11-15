@@ -571,6 +571,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         SendVoidPtr(win, Sel("setContentView:"), view);
 
         _window = win; _imageView = view;
+        if (_form.FormScreenCaptureMode != ScreenCaptureMode.Allow) ApplySharingType(win, _form.FormScreenCaptureMode);
         WinFormsWebGpu.Accessibility.AutomationSource.Register(this);
         // the title bar's close button asks the form, as Windows' does (WindowShouldClose)
         SendVoidPtr(win, Sel("setDelegate:"), CloseDelegate());
@@ -1167,6 +1168,25 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
 
     /// <summary>Form.WindowState was set: miniaturize, zoom or restore the window. Nothing listened
     /// here (only the Windows host did), so a form's own minimize and maximize buttons did nothing.</summary>
+    private static void ApplyFrameAttributes(Form form)
+    {
+        CocoaHost host = null;
+        lock (s_live)
+            foreach (CocoaHost h in s_live)
+                if (ReferenceEquals(h._form, form)) { host = h; break; }
+        if (host == null) return;
+        ScreenCaptureMode mode = form.FormScreenCaptureMode;
+        OnMain(() =>
+        {
+            if (host._window != IntPtr.Zero && !host._closed) ApplySharingType(host._window, mode);
+        });
+    }
+
+    // NSWindowSharingNone keeps the window out of screenshots, recordings and screen sharing (WDA_EXCLUDEFROMCAPTURE;
+    // macOS has no black-box WDA_MONITOR, so HideContent hides it too); NSWindowSharingReadOnly is the default
+    private static void ApplySharingType(IntPtr window, ScreenCaptureMode mode) =>
+        SendVoidNInt(window, Sel("setSharingType:"), mode == ScreenCaptureMode.Allow ? 1 : 0);
+
     private static void ApplyWindowState(IntPtr formHandle, FormWindowState state)
     {
         CocoaHost host = null;
@@ -1633,6 +1653,9 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         // Form.WindowState set by the application (DotNetBar's own caption buttons post SC_MINIMIZE,
         // which the driver makes Minimized): the real window follows, as ShowWindow does on Windows.
         System.Windows.Forms.XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
+        // Form.FormScreenCaptureMode: the window's sharing type (the frame's colours and corners are AppKit's own,
+        // as they are a window manager's that does not take DWM's attributes)
+        System.Windows.Forms.XplatUIWebGpu.FrameAttributesRequested ??= ApplyFrameAttributes;
         // for long work the main thread does outside WinForms (rewriting an assembly as it loads): it can
         // keep the work other threads queue for it moving (see MainWork)
         if (AppContext.GetData("WinFormsWebGpu.DrainMainWork") == null) AppContext.SetData("WinFormsWebGpu.DrainMainWork", (Action)DrainMainWork);

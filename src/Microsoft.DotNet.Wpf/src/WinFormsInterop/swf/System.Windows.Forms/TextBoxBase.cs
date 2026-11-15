@@ -44,7 +44,7 @@ namespace System.Windows.Forms
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[DefaultEvent("TextChanged")]
 	[Designer("System.Windows.Forms.Design.TextBoxBaseDesigner, " + Consts.AssemblySystem_Design)]
-	public abstract class TextBoxBase : Control
+	public abstract partial class TextBoxBase : Control
 	{
 		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
 		internal override bool GdiTextOnMemorySurface => true;
@@ -1889,6 +1889,10 @@ namespace System.Windows.Forms
 			
 			// Draw the viewable document
 			document.Draw(g, clippingArea);
+
+			// an empty TextBox's PlaceholderText (modern/TextBox.Modern.cs)
+			if (this is TextBox box && box.ShouldRenderPlaceholderText ())
+				box.DrawPlaceholderText (g);
 
 			// Between non-client bars the corner is non-client too, and the frame paints it.
 			Rectangle corner = nc_hscroll && nc_vscroll ? Rectangle.Empty : ScrollBarCorner;

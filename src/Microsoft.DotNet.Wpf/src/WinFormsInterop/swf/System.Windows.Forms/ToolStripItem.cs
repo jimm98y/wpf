@@ -40,7 +40,7 @@ namespace System.Windows.Forms
 	[DesignTimeVisible (false)]
 	[ToolboxItem (false)]
 	[Designer ("System.Windows.Forms.Design.ToolStripItemDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
-	public abstract partial class ToolStripItem : Component, IDropTarget, IComponent, IDisposable, IArrangedElement
+	public abstract partial class ToolStripItem : BindableComponent, IDropTarget, IComponent, IDisposable, IArrangedElement
 	{
 		#region Private Variables
 		private AccessibleObject accessibility_object;
@@ -397,9 +397,16 @@ namespace System.Windows.Forms
 			set { 
 				if (this.enabled != value) {
 					this.enabled = value; 
+					// disabled: no longer selected or pressed (.NET)
+					if (!value && is_selected) {
+						is_selected = false;
+						is_pressed = false;
+						OnUIASelectionChanged ();
+					}
 					OnEnabledChanged (EventArgs.Empty); 
 					this.Invalidate ();
 				}
+				OnInternalEnabledChanged (EventArgs.Empty);
 			}
 		}
 
@@ -1034,6 +1041,7 @@ namespace System.Windows.Forms
 			EventHandler eh = (EventHandler)(Events [ClickEvent]);
 			if (eh != null)
 				eh (this, e);
+			OnRequestCommandExecute (e);
 		}
 
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
@@ -2052,6 +2060,8 @@ namespace System.Windows.Forms
 
 		internal void OnUIASelectionChanged ()
 		{
+			// every change of is_selected comes here: .NET's SelectedChanged (modern/ToolStripItem.Modern.cs)
+			OnSelectedChanged (EventArgs.Empty);
 			EventHandler eh = (EventHandler)(Events [UIASelectionChangedEvent]);
 			if (eh != null)
 				eh (this, EventArgs.Empty);

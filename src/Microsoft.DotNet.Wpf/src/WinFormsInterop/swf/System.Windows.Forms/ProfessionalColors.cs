@@ -31,7 +31,7 @@ using System.Windows.Forms.VisualStyles;
 
 namespace System.Windows.Forms
 {
-	public sealed class ProfessionalColors
+	public sealed partial class ProfessionalColors
 	{
 		private static ProfessionalColorTable color_table = new ProfessionalColorTable();
 

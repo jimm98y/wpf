@@ -36,7 +36,7 @@ namespace System.Windows.Forms
 {
 	[Serializable]
 	[TypeConverter(typeof(LinkArea.LinkAreaConverter))]
-	public struct LinkArea
+	public partial struct LinkArea
 	{
 		#region LinkAreaConverter Class
 		public class LinkAreaConverter : TypeConverter {

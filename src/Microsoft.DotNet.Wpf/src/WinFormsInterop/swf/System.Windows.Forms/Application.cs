@@ -697,9 +697,10 @@ namespace System.Windows.Forms
 				
 			RunLoop (false, context);
 			
-			// Reset the sync context back to the default
+			// the context the thread had before (.NET's ThreadContext.Dispose: Uninstall(turnOffAutoInstall: false),
+			// so a later loop on the thread installs one again)
 			if (SynchronizationContext.Current is WindowsFormsSynchronizationContext)
-				WindowsFormsSynchronizationContext.Uninstall ();
+				WindowsFormsSynchronizationContext.Uninstall (turnOffAutoInstall: false);
 		}
 
 		private const string WinFormsToolkit = "winforms";

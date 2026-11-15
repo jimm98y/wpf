@@ -39,7 +39,7 @@ namespace System.Windows.Forms {
 	[ComVisible(true)]
 	[ClassInterface (ClassInterfaceType.AutoDispatch)]
 	[Designer ("System.Windows.Forms.Design.TextBoxDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
-	public class TextBox : TextBoxBase {
+	public partial class TextBox : TextBoxBase {
 		#region Variables
 		private ContextMenu	menu;
 		private MenuItem	undo;
@@ -594,6 +594,9 @@ namespace System.Windows.Forms {
 		protected override void OnGotFocus (EventArgs e)
 		{
 			base.OnGotFocus (e);
+			// the placeholder goes while the box has focus (modern/TextBox.Modern.cs)
+			if (ShouldRenderPlaceholderText (ignoreFocus: true))
+				Invalidate ();
 			if (selection_length == -1 && !has_been_focused)
 				SelectAllNoScroll ();
 			has_been_focused = true;

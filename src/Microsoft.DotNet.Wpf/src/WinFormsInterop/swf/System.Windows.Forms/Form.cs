@@ -2038,6 +2038,9 @@ namespace System.Windows.Forms {
 			base.Dispose (disposing);
 			
 			Application.RemoveForm (this);
+			// an awaited ShowAsync ends (modern/Form.Modern.cs)
+			if (disposing)
+				CompleteShowAsync ();
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
@@ -2098,6 +2101,8 @@ namespace System.Windows.Forms {
 		protected override void OnHandleCreated(EventArgs e) {
 			XplatUI.SetBorderStyle(window.Handle, form_border_style);
 			base.OnHandleCreated (e);
+			// the frame's attributes set before the window existed (modern/Form.Modern.cs)
+			ApplyFrameAttributesOnHandleCreated ();
 		}
 
 		[EditorBrowsable(EditorBrowsableState.Advanced)]
@@ -3324,8 +3329,13 @@ namespace System.Windows.Forms {
 		protected virtual void OnFormClosed (FormClosedEventArgs e) {
 			Application.RemoveForm (this);
 			FormClosedEventHandler eh = (FormClosedEventHandler)(Events[FormClosedEvent]);
-			if (eh != null)
-				eh (this, e);
+			try {
+				if (eh != null)
+					eh (this, e);
+				// this ends an awaited ShowAsync (modern/Form.Modern.cs)
+				CompleteShowAsync ();
+			} catch (Exception ex) when (FailShowAsync (ex)) {
+			}
 
 			foreach (Form form in disabled_by_showdialog)
 			{

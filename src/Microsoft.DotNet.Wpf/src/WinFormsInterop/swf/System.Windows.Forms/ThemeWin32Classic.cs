@@ -41,7 +41,7 @@ using System.Windows.Forms.Theming;
 namespace System.Windows.Forms
 {
 
-	internal class ThemeWin32Classic : Theme
+	internal partial class ThemeWin32Classic : Theme
 	{		
 		public override Version Version {
 			get {
@@ -3416,9 +3416,46 @@ namespace System.Windows.Forms
 			}
 
 			sformat.LineAlignment = StringAlignment.Near;
+			// the title image, before the header (ListView.GroupImageList)
+			Image title_image = group.TitleImage;
+			if (title_image != null) {
+				int image_size = Math.Min (title_image.Height, text_height);
+				dc.DrawImage (title_image, new Rectangle (text_bounds.Left, text_bounds.Top, image_size, image_size));
+				text_bounds.X += image_size + 4;
+				text_bounds.Width -= image_size + 4;
+			}
+			// the task link and the chevron, at the end of the header's line
+			Rectangle chevron = group.ChevronBounds;
+			if (!chevron.IsEmpty) {
+				text_bounds.Width = Math.Max (0, chevron.Left - text_bounds.Left);
+				DrawListViewGroupChevron (dc, chevron, group.IsCollapsed);
+			}
+			Rectangle task_link = group.TaskLinkBounds;
+			if (!task_link.IsEmpty) {
+				using (Font link_font = new Font (control.Font, FontStyle.Underline))
+					dc.DrawStringMono (group.TaskLink, link_font, SystemBrushes.HotTrack, task_link);
+				text_bounds.Width = Math.Max (0, task_link.Left - text_bounds.Left - 8);
+			}
 			dc.DrawStringMono (group.Header, font, SystemBrushes.Highlight, text_bounds, sformat);
+			// the subtitle, a line of its own under the header
+			if (!string.IsNullOrEmpty (group.Subtitle)) {
+				Rectangle subtitle = new Rectangle (text_bounds.Left, text_bounds.Top + control.Font.Height, text_bounds.Width, control.Font.Height);
+				dc.DrawStringMono (group.Subtitle, control.Font, SystemBrushes.GrayText, subtitle, sformat);
+				text_height += control.Font.Height;
+			}
 			dc.DrawLine (pen, header_bounds.Left, header_bounds.Top + text_height, header_bounds.Left + ListViewGroupLineWidth, 
 					header_bounds.Top + text_height);
+			// the footer, under the group's items
+			Rectangle footer = group.FooterBounds;
+			if (!footer.IsEmpty) {
+				footer.Offset (8, 2);
+				footer.Inflate (-8, 0);
+				using (StringFormat footer_format = new StringFormat ()) {
+					footer_format.Alignment = group.FooterAlignment == HorizontalAlignment.Center ? StringAlignment.Center
+						: group.FooterAlignment == HorizontalAlignment.Right ? StringAlignment.Far : StringAlignment.Near;
+					dc.DrawStringMono (group.Footer, control.Font, SystemBrushes.GrayText, footer, footer_format);
+				}
+			}
 
 			sformat.Dispose ();
 			font.Dispose ();

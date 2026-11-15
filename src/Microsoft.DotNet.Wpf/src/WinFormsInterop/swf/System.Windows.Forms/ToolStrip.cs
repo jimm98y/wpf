@@ -42,7 +42,7 @@ namespace System.Windows.Forms
 	[DefaultProperty ("Items")]
 	[Designer ("System.Windows.Forms.Design.ToolStripDesigner, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.IDesigner")]
 	[DesignerSerializer ("System.Windows.Forms.Design.ToolStripCodeDomSerializer, " + Consts.AssemblySystem_Design, "System.ComponentModel.Design.Serialization.CodeDomSerializer, " + Consts.AssemblySystem_Design)]
-	public class ToolStrip : ScrollableControl, IComponent, IDisposable, IToolStripData, IArrangedContainer
+	public partial class ToolStrip : ScrollableControl, IComponent, IDisposable, IToolStripData, IArrangedContainer
 	{
 		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
 		internal override bool GdiTextOnMemorySurface => true;

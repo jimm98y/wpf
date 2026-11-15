@@ -28,7 +28,7 @@ using System.ComponentModel;
 
 namespace System.Windows.Forms {
 
-	public class DataGridViewRowCancelEventArgs : CancelEventArgs {
+	public partial class DataGridViewRowCancelEventArgs : CancelEventArgs {
 
 		DataGridViewRow dataGridViewRow;
 
@@ -38,6 +38,7 @@ namespace System.Windows.Forms {
 
 		public DataGridViewRow Row {
 			get { return dataGridViewRow; }
+			set { dataGridViewRow = value; }
 		}
 
 	}

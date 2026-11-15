@@ -36,5 +36,7 @@ namespace System.Windows.Forms
 		Button1 = 0,
 		Button2 = 0x100,
 		Button3 = 0x200,
+		// .NET: a help button's place, the fourth (MB_DEFBUTTON4)
+		Button4 = 0x300,
 	}
 }

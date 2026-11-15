@@ -24,7 +24,7 @@ using System.Runtime.Versioning;
 namespace MS.Internal.Interop.Wayland
 {
     [SupportedOSPlatform("linux")]
-    internal static class LinuxDesktopSettings
+    public static class LinuxDesktopSettings
     {
         private const string PortalService = "org.freedesktop.portal.Desktop";
         private const string PortalPath = "/org/freedesktop/portal/desktop";
@@ -42,7 +42,8 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>Raised (on the pump thread) when the desktop's colour scheme changes.</summary>
         internal static event Action? SystemAppearanceChanged;
 
-        internal static bool IsSystemDarkTheme()
+        // public: WinForms' Application.SystemColorMode asks it too
+        public static bool IsSystemDarkTheme()
         {
             if (s_queried) return s_isDark;
             s_queried = true;

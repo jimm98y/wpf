@@ -56,11 +56,13 @@ namespace MS.Internal.Interop
         /// <summary>
         /// Shows an NSOpenPanel. Returns the selected paths, or null when cancelled.
         /// </summary>
-        public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories)
+        public static string[] ShowOpenPanel(string title, string initialDirectory, bool multiselect, bool chooseDirectories, bool showHiddenFiles = false)
         {
             EnsureApplication();
             IntPtr panel = Send(Cls("NSOpenPanel"), Sel("openPanel"));
             ConfigurePanel(panel, title, initialDirectory);
+            // a dialog's ShowHiddenFiles (WinForms' OFN_FORCESHOWHIDDEN, WPF's ShowHiddenItems)
+            if (showHiddenFiles) SendVoidBool(panel, Sel("setShowsHiddenFiles:"), true);
             SendVoidBool(panel, Sel("setCanChooseFiles:"), !chooseDirectories);
             SendVoidBool(panel, Sel("setCanChooseDirectories:"), chooseDirectories);
             SendVoidBool(panel, Sel("setAllowsMultipleSelection:"), multiselect);
@@ -88,11 +90,12 @@ namespace MS.Internal.Interop
         /// <summary>
         /// Shows an NSSavePanel. Returns the chosen path, or null when cancelled.
         /// </summary>
-        public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName)
+        public static string ShowSavePanel(string title, string initialDirectory, string defaultFileName, bool showHiddenFiles = false)
         {
             EnsureApplication();
             IntPtr panel = Send(Cls("NSSavePanel"), Sel("savePanel"));
             ConfigurePanel(panel, title, initialDirectory);
+            if (showHiddenFiles) SendVoidBool(panel, Sel("setShowsHiddenFiles:"), true);
             if (!string.IsNullOrEmpty(defaultFileName))
             {
                 SendVoidPtr(panel, Sel("setNameFieldStringValue:"), NSStr(defaultFileName));

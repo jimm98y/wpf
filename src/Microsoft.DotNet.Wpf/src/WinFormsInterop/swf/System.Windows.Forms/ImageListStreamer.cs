@@ -37,7 +37,7 @@ using System.Runtime.InteropServices;
 
 namespace System.Windows.Forms {
 	[Serializable]
-	public sealed class ImageListStreamer : ISerializable {
+	public sealed partial class ImageListStreamer : ISerializable {
 		readonly ImageList.ImageCollection imageCollection;
 		Image [] images;
 		Size image_size;

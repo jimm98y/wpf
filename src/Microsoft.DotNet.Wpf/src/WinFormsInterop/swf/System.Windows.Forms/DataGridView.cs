@@ -42,7 +42,7 @@ namespace System.Windows.Forms {
 	[ComplexBindingProperties ("DataSource", "DataMember")]
 	[DefaultEvent ("CellContentClick")]
 	[Docking (DockingBehavior.Ask)]
-	public class DataGridView : Control, ISupportInitialize, IBindableComponent, IDropTarget
+	public partial class DataGridView : Control, ISupportInitialize, IBindableComponent, IDropTarget
 	{
 
 		private DataGridViewAdvancedBorderStyle adjustedTopLeftHeaderBorderStyle;

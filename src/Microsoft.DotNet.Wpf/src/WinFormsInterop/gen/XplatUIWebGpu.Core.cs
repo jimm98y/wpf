@@ -187,6 +187,7 @@ namespace System.Windows.Forms
 		}
 		// WF_DRIVER_TRACE=1: what the driver is asked to do; =stack: with who asked, where that is the question
 		private static readonly bool Trace = Environment.GetEnvironmentVariable("WF_DRIVER_TRACE") is "1" or "stack";
+		private static readonly bool s_traceInvoke = Environment.GetEnvironmentVariable("WF_INVOKE_TRACE") == "1";
 		private static readonly bool TraceStacks = Environment.GetEnvironmentVariable("WF_DRIVER_TRACE") == "stack";
 		private static void T(string s) { if (Trace) Console.WriteLine("[drv] " + s); }
 
@@ -2130,6 +2131,7 @@ namespace System.Windows.Forms
 			// delegate here, the way XplatUIWin32 runs it out of its GetMessage.
 			if (msg.message == Msg.WM_ASYNC_MESSAGE)
 			{
+				if (s_traceInvoke) Console.Error.WriteLine($"[invoke] run h={msg.hwnd} on {Environment.CurrentManagedThreadId}");
 				XplatUIDriverSupport.ExecuteClientMessage((GCHandle)msg.lParam);
 				return IntPtr.Zero;
 			}
@@ -2177,6 +2179,7 @@ namespace System.Windows.Forms
 		/// </remarks>
 		internal override void SendAsyncMethod(AsyncMethodData method)
 		{
+			if (s_traceInvoke) { MsgQueue tq = QueueFor(method.Handle); Console.Error.WriteLine($"[invoke] post h={method.Handle} from {Environment.CurrentManagedThreadId} to queue of {tq.Owner.ManagedThreadId} ({tq.Owner.ThreadState}) pending={tq.Messages.Count} {method.Method?.Method?.Name}"); }
 			Enqueue(method.Handle, new MSG
 			{
 				hwnd = method.Handle,

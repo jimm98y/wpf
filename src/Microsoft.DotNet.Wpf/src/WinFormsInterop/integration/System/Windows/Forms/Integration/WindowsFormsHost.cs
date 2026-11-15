@@ -619,6 +619,38 @@ namespace System.Windows.Forms.Integration
                 if (!string.IsNullOrEmpty(request.FileName)) dlg.FileName = request.FileName;
                 if (!string.IsNullOrEmpty(request.DefaultExt)) dlg.DefaultExt = request.DefaultExt;
                 dlg.AddExtension = request.AddExtension;
+                dlg.ShowHiddenItems = request.ShowHiddenFiles;
+                dlg.AddToRecent = request.AddToRecent;
+                if (request.ClientGuid is Guid client) dlg.ClientGuid = client;
+            }
+
+            private static Microsoft.Win32.OpenFolderDialog FolderDialog(SWF.FolderDialogRequest request)
+            {
+                var dlg = new Microsoft.Win32.OpenFolderDialog();
+                if (!string.IsNullOrEmpty(request.Description)) dlg.Title = request.Description;
+                if (!string.IsNullOrEmpty(request.InitialDirectory)) dlg.InitialDirectory = request.InitialDirectory;
+                if (!string.IsNullOrEmpty(request.SelectedPath)) dlg.FolderName = request.SelectedPath;
+                dlg.Multiselect = request.Multiselect;
+                dlg.ShowHiddenItems = request.ShowHiddenFiles;
+                dlg.AddToRecent = request.AddToRecent;
+                if (request.ClientGuid is Guid client) dlg.ClientGuid = client;
+                return dlg;
+            }
+
+            public bool ShowFolders(SWF.FolderDialogRequest request, out string[] selectedPaths)
+            {
+                selectedPaths = null;
+                var dlg = FolderDialog(request);
+                if (dlg.ShowDialog(OwnerWindow()) != true) return false;
+                selectedPaths = request.Multiselect ? dlg.FolderNames : new[] { dlg.FolderName };
+                return true;
+            }
+
+            public async System.Threading.Tasks.Task<(bool ok, string[] selectedPaths)> ShowFoldersAsync(SWF.FolderDialogRequest request)
+            {
+                var dlg = FolderDialog(request);
+                if (await dlg.ShowDialogAsync(OwnerWindow()) != true) return (false, null);
+                return (true, request.Multiselect ? dlg.FolderNames : new[] { dlg.FolderName });
             }
 
             /// <summary>Parent the dialog on the window the user is looking at, so it centres on it

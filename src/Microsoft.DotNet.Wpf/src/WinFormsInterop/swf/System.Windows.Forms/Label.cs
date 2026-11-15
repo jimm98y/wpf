@@ -43,7 +43,7 @@ namespace System.Windows.Forms
 	[ComVisible (true)]
 	[ToolboxItem ("System.Windows.Forms.Design.AutoSizeToolboxItem," + Consts.AssemblySystem_Design)]
 	[DefaultBindingProperty ("Text")]
-	public class Label : Control
+	public partial class Label : Control
 	{
 		// Draws into a memory DC on Windows (double-buffered), where win32k blends its text.
 		internal override bool GdiTextOnMemorySurface => true;
@@ -699,6 +699,9 @@ namespace System.Windows.Forms
 
 		protected override void OnTextChanged (EventArgs e)
 		{
+			// a live region says its new text (modern/Small.Modern.cs)
+			if (LiveSetting != System.Windows.Forms.Automation.AutomationLiveSetting.Off && IsAccessibilityObjectCreated)
+				AccessibilityObject.RaiseLiveRegionChanged ();
 			base.OnTextChanged (e);
 			if (SelfSizing)
 				CalcAutoSize ();

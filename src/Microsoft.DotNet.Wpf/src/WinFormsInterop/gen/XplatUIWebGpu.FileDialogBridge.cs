@@ -28,6 +28,12 @@ namespace System.Windows.Forms
         public bool CheckFileExists;
         public bool Multiselect;
         public bool OverwritePrompt;
+        /// <summary>FileDialog.ShowHiddenFiles: hidden and system files shown (OFN_FORCESHOWHIDDEN).</summary>
+        public bool ShowHiddenFiles;
+        /// <summary>FileDialog.AddToRecent: what is chosen goes on the recent list (not OFN_DONTADDTORECENT).</summary>
+        public bool AddToRecent = true;
+        /// <summary>FileDialog.ClientGuid: the dialog's own remembered state (IFileDialog::SetClientGuid).</summary>
+        public Guid? ClientGuid;
     }
 
     /// <summary>What a folder browser is asking for, in FolderBrowserDialog's terms.</summary>
@@ -37,6 +43,15 @@ namespace System.Windows.Forms
         public bool UseDescriptionForTitle;
         public string InitialDirectory;
         public string SelectedPath;
+        /// <summary>FolderBrowserDialog.Multiselect: several folders may be chosen (FOS_ALLOWMULTISELECT).</summary>
+        public bool Multiselect;
+        public bool ShowHiddenFiles;
+        public bool AddToRecent = true;
+        /// <summary>FolderBrowserDialog.OkRequiresInteraction: OK disabled until the user navigates or edits.</summary>
+        public bool OkRequiresInteraction;
+        /// <summary>FolderBrowserDialog.ShowPinnedPlaces: the navigation pane's pinned places shown.</summary>
+        public bool ShowPinnedPlaces = true;
+        public Guid? ClientGuid;
     }
 
     /// <summary>
@@ -72,6 +87,21 @@ namespace System.Windows.Forms
         {
             bool ok = ShowFolder(request, out string path);
             return System.Threading.Tasks.Task.FromResult((ok, path));
+        }
+
+        /// <summary>The folders chosen, several where the request allows it (FolderBrowserDialog.Multiselect); a
+        /// bridge whose picker takes one folder answers with that one.</summary>
+        bool ShowFolders(FolderDialogRequest request, out string[] selectedPaths)
+        {
+            bool ok = ShowFolder(request, out string path);
+            selectedPaths = ok ? new[] { path } : null;
+            return ok;
+        }
+
+        async System.Threading.Tasks.Task<(bool ok, string[] selectedPaths)> ShowFoldersAsync(FolderDialogRequest request)
+        {
+            var (ok, path) = await ShowFolderAsync(request);
+            return (ok, ok ? new[] { path } : null);
         }
 
         /// <summary>SaveFileDialog.CommitAsync: hand a file the application has written to the

@@ -35,7 +35,7 @@ namespace System.Windows.Forms {
 	[ProvideProperty("IconPadding", "System.Windows.Forms.Control, " + Consts.AssemblySystem_Windows_Forms)]
 	[ProvideProperty("Error", "System.Windows.Forms.Control, " + Consts.AssemblySystem_Windows_Forms)]
 	[ComplexBindingProperties ("DataSource", "DataMember")]
-	public class ErrorProvider : Component, IExtenderProvider, ISupportInitialize
+	public partial class ErrorProvider : Component, IExtenderProvider, ISupportInitialize
 	{
 		private class ErrorWindow : UserControl
 		{

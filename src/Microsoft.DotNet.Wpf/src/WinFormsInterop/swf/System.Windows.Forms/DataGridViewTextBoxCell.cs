@@ -30,7 +30,7 @@ using System.Drawing;
 
 namespace System.Windows.Forms {
 
-	public class DataGridViewTextBoxCell : DataGridViewCell {
+	public partial class DataGridViewTextBoxCell : DataGridViewCell {
 
 		private int maxInputLength = 32767;
 		private DataGridViewTextBoxEditingControl editingControl;
