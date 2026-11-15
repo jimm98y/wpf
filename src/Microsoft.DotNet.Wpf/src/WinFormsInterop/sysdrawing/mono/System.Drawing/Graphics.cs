@@ -3107,9 +3107,12 @@ namespace System.Drawing
 				while (start < line.Length) {
 					int fit = FitCount (line, start, emPx, sims, family, width);
 					int brk = -1;
-					for (int i = start + fit - 1; i > start; i--)
-						if (line[i] == ' ') { brk = i; break; }
-					int take = brk > start ? brk - start : fit;
+					// what is left fits: it is the last line, whole (searching it for a space split
+					// every wrapped paragraph's last line at its last word)
+					if (start + fit < line.Length)
+						for (int i = start + fit; i > start; i--)
+							if (line[i] == ' ') { brk = i; break; }
+					int take = start + fit >= line.Length ? line.Length - start : brk > start ? brk - start : fit;
 					outLines.Add (line.Substring (start, take));
 					start += take;
 					while (start < line.Length && line[start] == ' ') start++;
@@ -3117,6 +3120,10 @@ namespace System.Drawing
 			}
 			return outLines.ToArray ();
 		}
+
+		// the width a line has: the rectangle's less the margins at its ends (Margins: what MeasureString
+		// counts too, so a string is broken where it is measured); none for no rectangle
+		static float WrapWidth (float width, Font font, StringFormat format) => width <= 0 ? width : Math.Max (1f, width - Margins (font, format));
 
 		/// <summary>How many characters from <paramref name="start"/> fit in <paramref name="width"/>,
 		/// at least one so a column narrower than a single glyph still makes progress.</summary>
@@ -3869,7 +3876,8 @@ namespace System.Drawing
 				// application sat three pixels to the left of the same caption in Windows. Centred text
 				// is left alone: the margins either side of it very nearly cancel.
 				float overhang = Overhang (font, format);
-				string[] lines = WrapLines (text, emPx, sims, family, layoutRectangle.Width, format);
+				// a line fits the rectangle less the margin GDI+ leaves at either end of it
+				string[] lines = WrapLines (text, emPx, sims, family, WrapWidth (layoutRectangle.Width, font, format), format);
 				// A line of text is taller than its em square: the font's line height adds the
 				// descender and its leading. Stepping by the em size instead packed every
 				// multi-line run tighter than the same text drawn by Windows.
@@ -5069,28 +5077,79 @@ namespace System.Drawing
 		private Region[] MeasureCharacterRangesManaged (string text, Font font, RectangleF layoutRect,
 			StringFormat stringFormat, int regcount)
 		{
+			// Laid out as the managed DrawString lays the same string out (its lines, line height, left
+			// margin and alignment), since what measures ranges draws them with it: a LinkLabel draws its
+			// text clipped to each piece's region. Measured on one line, the pieces of a label that wrapped
+			// had no region past its first line, and only that line was ever drawn.
 			CharacterRange[] ranges = stringFormat.MeasurableCharacterRanges;
 			Region[] regions = new Region [regcount];
-			float em = font.SizeInPoints * EmDpiY / 72f;
+			float emPx = font.SizeInPoints * EmDpiY / 72f;
+			int sims = (font.Bold ? 1 : 0) | (font.Italic ? 2 : 0)
+				   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0)
+				   | (gpos_kerning && !no_kerning ? WebGpuBackend.TextMetrics.GposKerning : 0)
+				   | (BiLevelText ? WebGpuBackend.TextMetrics.BiLevel : 0)
+				   | (memory_surface_text ? WebGpuBackend.TextMetrics.MemorySurface : 0);
+			string family = font.FontFamily?.Name;
+			float overhang = Overhang (font, stringFormat);
+			string[] lines = WrapLines (text, emPx, sims, family, WrapWidth (layoutRect.Width, font, stringFormat), stringFormat);
 
-			for (int i = 0; i < regcount; i++) {
-				CharacterRange range = (ranges != null && i < ranges.Length)
-					? ranges [i] : new CharacterRange (0, text.Length);
+			// where each line starts in the string (the breaks drop the spaces they fall on)
+			int[] starts = new int [lines.Length];
+			int pos = 0;
+			for (int i = 0; i < lines.Length; i++) {
+				string line = lines [i].TrimEnd ('\r');
+				lines [i] = line;
+				if (line.Length == 0) {
+					starts [i] = pos;
+					int nl = text.IndexOf ('\n', pos);
+					pos = nl < 0 ? text.Length : nl + 1;
+					continue;
+				}
+				int at = text.IndexOf (line, pos, StringComparison.Ordinal);
+				if (at < 0)
+					at = pos;
+				starts [i] = at;
+				pos = at + line.Length;
+			}
 
+			float lineHeight = font.GetHeight ();
+			if (lineHeight <= 0)
+				lineHeight = emPx;
+			float ty = layoutRect.Y;
+			if (layoutRect.Height > 0) {
+				float totalH = lineHeight * lines.Length;
+				if (stringFormat.LineAlignment == StringAlignment.Center)
+					ty += (layoutRect.Height - totalH) / 2f;
+				else if (stringFormat.LineAlignment == StringAlignment.Far)
+					ty += layoutRect.Height - totalH;
+			}
+
+			for (int r = 0; r < regcount; r++) {
+				CharacterRange range = (ranges != null && r < ranges.Length) ? ranges [r] : new CharacterRange (0, text.Length);
 				int first = Math.Max (0, Math.Min (range.First, text.Length));
-				int length = Math.Max (0, Math.Min (range.Length, text.Length - first));
-
-				float x = 0f, unused;
-				if (first > 0)
-					WebGpuBackend.GpuRaster.MeasureText (text.Substring (0, first), em, out x, out unused);
-
-				float w = 0f, h;
-				WebGpuBackend.GpuRaster.MeasureText (length > 0 ? text.Substring (first, length) : "I", em, out w, out h);
-				h = font.GetHeight () > 0 ? font.GetHeight () : h;
-				if (length == 0)
-					w = 0f;
-
-				regions [i] = new Region (new RectangleF (layoutRect.X + x, layoutRect.Y, w, h));
+				int end = Math.Max (first, Math.Min (first + Math.Max (0, range.Length), text.Length));
+				var region = new Region ();
+				region.MakeEmpty ();
+				for (int i = 0; i < lines.Length; i++) {
+					string line = lines [i];
+					int lineStart = starts [i], lineEnd = lineStart + line.Length;
+					int a = Math.Max (first, lineStart), b = Math.Min (end, lineEnd);
+					if (a >= b)
+						continue;
+					float x0 = 0f, w, unused;
+					if (a > lineStart)
+						WebGpuBackend.GpuRaster.MeasureText (line.Substring (0, a - lineStart), emPx, sims, family, out x0, out unused);
+					WebGpuBackend.GpuRaster.MeasureText (line.Substring (a - lineStart, b - a), emPx, sims, family, out w, out unused);
+					float tx = layoutRect.X;
+					if (layoutRect.Width > 0 && stringFormat.Alignment != StringAlignment.Near) {
+						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float mw, out unused);
+						tx += stringFormat.Alignment == StringAlignment.Center ? (layoutRect.Width - mw) / 2f : layoutRect.Width - mw - overhang;
+					} else {
+						tx += overhang;
+					}
+					region.Union (new RectangleF (tx + x0, ty + i * lineHeight, w, lineHeight));
+				}
+				regions [r] = region;
 			}
 
 			return regions;
@@ -5149,7 +5208,8 @@ namespace System.Drawing
 				// margin counted in, or the last letter or two run out of the room measured for them.
 				float margin = Margins (font, managedFormat);
 				if (layoutRect.Width > 0) {
-						string[] wrapped = WrapLines (text, em, simulations, measureFamily, layoutRect.Width, null);
+						// broken as the drawing breaks it: in the rectangle less its margins
+						string[] wrapped = WrapLines (text, em, simulations, measureFamily, WrapWidth (layoutRect.Width, font, managedFormat), null);
 						float widest = 0f;
 						foreach (string line in wrapped) {
 							WebGpuBackend.GpuRaster.MeasureText (line, em, simulations, measureFamily, out float lw, out float _);
