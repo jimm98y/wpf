@@ -15,34 +15,6 @@ namespace System.Diagnostics
         void CloseData();
         void CollectData(int id, System.IntPtr valueName, System.IntPtr data, int totalBytes, out System.IntPtr res);
     }
-    public partial class InstanceData
-    {
-        public InstanceData(string instanceName, System.Diagnostics.CounterSample sample) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public string InstanceName { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public long RawValue { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Diagnostics.CounterSample Sample { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-    }
-    public partial class InstanceDataCollection : System.Collections.DictionaryBase
-    {
-        [System.ObsoleteAttribute("This constructor has been deprecated. Use System.Diagnostics.InstanceDataCollectionCollection.get_Item to get an instance of this collection instead.")]
-        public InstanceDataCollection(string counterName) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public string CounterName { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Diagnostics.InstanceData this[string instanceName] { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Collections.ICollection Keys { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Collections.ICollection Values { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public bool Contains(string instanceName) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void CopyTo(System.Diagnostics.InstanceData[] instances, int index) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-    }
-    public partial class InstanceDataCollectionCollection : System.Collections.DictionaryBase
-    {
-        [System.ObsoleteAttribute("This constructor has been deprecated. Use System.Diagnostics.PerformanceCounterCategory.ReadCategory() to get an instance of this collection instead.")]
-        public InstanceDataCollectionCollection() { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public System.Diagnostics.InstanceDataCollection this[string counterName] { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Collections.ICollection Keys { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Collections.ICollection Values { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public bool Contains(string counterName) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void CopyTo(System.Diagnostics.InstanceDataCollection[] counters, int index) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-    }
     public enum PerformanceCounterCategoryType
     {
         Unknown = -1,
@@ -53,15 +25,6 @@ namespace System.Diagnostics
     {
         Global = 0,
         Process = 1,
-    }
-    public sealed partial class PerformanceCounterManager : System.Diagnostics.ICollectData
-    {
-        [System.ObsoleteAttribute("PerformanceCounterManager has been deprecated. Use the PerformanceCounters through the System.Diagnostics.PerformanceCounter class instead.")]
-        public PerformanceCounterManager() { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        [System.ObsoleteAttribute("PerformanceCounterManager has been deprecated. Use the PerformanceCounters through the System.Diagnostics.PerformanceCounter class instead.")]
-        void System.Diagnostics.ICollectData.CloseData() { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        [System.ObsoleteAttribute("PerformanceCounterManager has been deprecated. Use the PerformanceCounters through the System.Diagnostics.PerformanceCounter class instead.")]
-        void System.Diagnostics.ICollectData.CollectData(int callIdx, System.IntPtr valueNamePtr, System.IntPtr dataPtr, int totalBytes, out System.IntPtr res) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
     }
     public enum PerformanceCounterType
     {
@@ -97,37 +60,6 @@ namespace System.Diagnostics
 }
 namespace System.Diagnostics.PerformanceData
 {
-    public sealed partial class CounterData
-    {
-        internal CounterData() { }
-        public long RawValue { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public long Value { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public void Decrement() { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void Increment() { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void IncrementBy(long value) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-    }
-    public partial class CounterSet : System.IDisposable
-    {
-        public CounterSet(System.Guid providerGuid, System.Guid counterSetGuid, System.Diagnostics.PerformanceData.CounterSetInstanceType instanceType) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void AddCounter(int counterId, System.Diagnostics.PerformanceData.CounterType counterType) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void AddCounter(int counterId, System.Diagnostics.PerformanceData.CounterType counterType, string counterName) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public System.Diagnostics.PerformanceData.CounterSetInstance CreateCounterSetInstance(string instanceName) { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); }
-        public void Dispose() { }
-        protected virtual void Dispose(bool disposing) { }
-    }
-    public sealed partial class CounterSetInstance : System.IDisposable
-    {
-        internal CounterSetInstance() { }
-        public System.Diagnostics.PerformanceData.CounterSetInstanceCounterDataSet Counters { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public void Dispose() { }
-    }
-    public sealed partial class CounterSetInstanceCounterDataSet : System.IDisposable
-    {
-        internal CounterSetInstanceCounterDataSet() { }
-        public System.Diagnostics.PerformanceData.CounterData this[int counterId] { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public System.Diagnostics.PerformanceData.CounterData this[string counterName] { get { throw new System.PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform."); } }
-        public void Dispose() { }
-    }
     public enum CounterSetInstanceType
     {
         Single = 0,

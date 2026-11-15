@@ -368,7 +368,34 @@ namespace System.Diagnostics
             new PerformanceCounterCategory(categoryName, machineName).InstanceExists(instanceName);
 
         // Reading a whole category at once is not implemented.
-        public InstanceDataCollectionCollection ReadCategory() => throw new PlatformNotSupportedException("System.Diagnostics.PerformanceCounter is not supported on this platform.");
+        /// <summary>Every counter's reading for every instance, read now; a base counter is read with the counter
+        /// it is the base of, not on its own (as .NET's).</summary>
+        public InstanceDataCollectionCollection ReadCategory()
+        {
+            Category category = Resolve();
+#pragma warning disable CS0618
+            var data = new InstanceDataCollectionCollection();
+            string[] instances = category.InstanceNames();
+            bool single = category.Type != PerformanceCounterCategoryType.MultiInstance;
+            foreach (var counter in category.Counters)
+            {
+                if (IsBase(counter.Type))
+                    continue;
+                var values = new InstanceDataCollection(counter.Name);
+                foreach (string instance in single ? new[] { "" } : instances)
+                {
+                    string name = single ? InstanceDataCollection.SingleInstanceName : instance;
+                    values.Add(name, new InstanceData(name, category.Read(counter.Name, instance)));
+                }
+                data.Add(counter.Name, values);
+            }
+#pragma warning restore CS0618
+            return data;
+        }
+
+        private static bool IsBase(PerformanceCounterType type) =>
+            type is PerformanceCounterType.AverageBase or PerformanceCounterType.CounterMultiBase
+                or PerformanceCounterType.RawBase or PerformanceCounterType.SampleBase;
 
         private Category Resolve()
         {

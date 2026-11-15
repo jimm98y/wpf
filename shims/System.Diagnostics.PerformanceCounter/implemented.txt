@@ -4,3 +4,11 @@ T:System.Diagnostics.CounterSample
 T:System.Diagnostics.CounterSampleCalculator
 T:System.Diagnostics.PerformanceCounter
 T:System.Diagnostics.PerformanceCounterCategory
+T:System.Diagnostics.InstanceData
+T:System.Diagnostics.InstanceDataCollection
+T:System.Diagnostics.InstanceDataCollectionCollection
+T:System.Diagnostics.PerformanceCounterManager
+T:System.Diagnostics.PerformanceData.CounterData
+T:System.Diagnostics.PerformanceData.CounterSet
+T:System.Diagnostics.PerformanceData.CounterSetInstance
+T:System.Diagnostics.PerformanceData.CounterSetInstanceCounterDataSet
