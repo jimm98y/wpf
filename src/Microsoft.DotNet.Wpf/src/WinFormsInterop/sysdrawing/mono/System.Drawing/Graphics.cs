@@ -3520,10 +3520,12 @@ namespace System.Drawing
 		/// instead of blending them (GpGraphics.TextLevelsSink) -- the blend is the window's, against
 		/// the paper under it. What the engine fills or strokes instead (a path realization, an
 		/// underline) is drawn as the image it made. Modelled outside containers, at a whole-pixel
-		/// offset; false otherwise (the caller's old path).</summary>
+		/// offset; false otherwise (the caller's old path). Inside a container too: the container's
+		/// transform is composed onto the scratch surface's world (left out, a tab strip that paints in
+		/// one drew its trimmed captions whole and over each other).</summary>
 		bool DrawGdiPlusThroughEngine (string s, Font font, Brush brush, RectangleF rect, StringFormat format)
 		{
-			if (rec_in_container || font.FontFamily == null || !(brush is SolidBrush))
+			if (font.FontFamily == null || !(brush is SolidBrush))
 				return false;
 			float [] wm = RecordingMatrix ();
 			GpuRecorder.GetTranslation (out float tx, out float ty);
@@ -3582,7 +3584,14 @@ namespace System.Drawing
 					g.PageUnit = rec_unit == GraphicsUnit.Display ? GraphicsUnit.Pixel : rec_unit;
 					g.PageScale = rec_page_scale;
 					float pf = PageFactor;
-					g.SetRecWorld (RecWorld);
+					// A container sits outside the page: device = world, page, container. On the scratch
+					// surface it goes into the world, conjugated by the page scale (a uniform scale: only
+					// its offset changes).
+					if (rec_in_container) {
+						float [] c = rec_container;
+						g.SetRecWorld (GpMatrix.Multiply (RecWorld, new GpMatrix (c [0], c [1], c [2], c [3], c [4] / pf, c [5] / pf)));
+					} else
+						g.SetRecWorld (RecWorld);
 					g.RecordedCombine (new [] { 1f, 0f, 0f, 1f, -bx / pf, -by / pf }, Drawing2D.MatrixOrder.Append);
 					g.recorded_text_hint = recorded_text_hint;
 					g.recorded_text_contrast = recorded_text_contrast;
@@ -5789,6 +5798,31 @@ namespace System.Drawing
 				mf_rec?.SetCompositingMode (value);
 				GpuRecorder?.SetCompositingMode (value == CompositingMode.SourceCopy);
 			}
+		}
+
+		/// <summary>
+		/// A bitmap's drawing is recorded (Bitmap.DeferDrawing) and rasterized from the recording when
+		/// its pixels are needed -- by the renderer's rules, not GDI+'s. Under SourceCopy they part: GDI+
+		/// writes an antialiased edge as the source scaled by its coverage, the renderer blends it with
+		/// what is there. A popup's shadow, cleared opaque black and then drawn over in fading rings, kept
+		/// the black wherever a ring only grazed a pixel -- a dark dot in its corner. From its first
+		/// antialiased shape under SourceCopy (GeometryEngine) the GDI+ engine draws for such a Graphics;
+		/// it rasterizes what was recorded first, and takes over the clip the recording kept. Not inside a container, whose transform the engine would not
+		/// have.
+		/// </summary>
+		void AttachEngine ()
+		{
+			if (gp != null || mf_rec != null || print_mode || rec_in_container || hdc_surface != null)
+				return;
+			Bitmap target = image_target;
+			if (target?.managed == null)
+				return;
+			GdipFrame frame = target.managed.Frame;
+			if (!WebGpuBackend.Gdip.GpScan.Supports (frame.Format))
+				return;
+			gp = new GpGraphics (frame);
+			if (rec_clip != null)
+				gp.AdoptClips (RecordingClipState ());
 		}
 
 		public CompositingQuality CompositingQuality {

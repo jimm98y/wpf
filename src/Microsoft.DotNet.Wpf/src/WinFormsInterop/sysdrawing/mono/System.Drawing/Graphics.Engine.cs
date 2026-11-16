@@ -111,8 +111,22 @@ namespace System.Drawing
 
 		// ---- the verbs the engine draws ----------------------------------------------------------
 
+		/// <summary>Whether the engine draws this Graphics' shapes. On a bitmap whose drawing is recorded
+		/// (Bitmap.DeferDrawing) it is attached for an antialiased shape under SourceCopy, which the
+		/// recording cannot carry as GDI+ draws it (see AttachEngine); everything else stays recorded --
+		/// a back buffer copied in with SourceCopy at every paint was otherwise rasterized on the CPU at
+		/// every step of a live resize.</summary>
+		bool GeometryEngine ()
+		{
+			if (gp == null && _compositingMode == CompositingMode.SourceCopy
+			    && (gpu_smoothing == SmoothingMode.AntiAlias || gpu_smoothing == SmoothingMode.HighQuality))
+				AttachEngine ();
+			return gp != null;
+		}
+
 		bool EngineFillPath (Brush brush, GpPath path)
 		{
+			if (!GeometryEngine ()) return false;
 			GpGraphics e = Engine ();
 			if (e == null) return false;
 			return e.FillPath (brush, path.PointArray (), path.TypeArray (), path.FillMode);
@@ -129,7 +143,7 @@ namespace System.Drawing
 		bool EngineFillPolygon (Brush brush, PointF [] pts, FillMode mode)
 		{
 			if (mf_rec != null) { mf_rec.FillPolygon (brush, pts, mode); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath (mode);
 			p.AddPolygon (pts, pts.Length);
 			return EngineFillPath (brush, p);
@@ -138,7 +152,7 @@ namespace System.Drawing
 		bool EngineFillEllipse (Brush brush, float x, float y, float w, float h)
 		{
 			if (mf_rec != null) { mf_rec.FillEllipse (brush, new RectangleF (x, y, w, h)); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath ();
 			p.AddEllipse (x, y, w, h);
 			return EngineFillPath (brush, p);
@@ -147,7 +161,7 @@ namespace System.Drawing
 		bool EngineFillPie (Brush brush, float x, float y, float w, float h, float start, float sweep)
 		{
 			if (mf_rec != null) { mf_rec.FillPie (brush, new RectangleF (x, y, w, h), start, sweep); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath ();
 			p.AddPie (x, y, w, h, start, sweep);
 			return EngineFillPath (brush, p);
@@ -156,7 +170,7 @@ namespace System.Drawing
 		bool EngineFillClosedCurve (Brush brush, PointF [] pts, float tension, FillMode mode)
 		{
 			if (mf_rec != null) { mf_rec.FillClosedCurve (brush, pts, tension, mode); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath (mode);
 			p.AddClosedCurve (pts, pts.Length, tension);
 			return EngineFillPath (brush, p);
@@ -183,7 +197,7 @@ namespace System.Drawing
 
 		bool EngineDrawPath (Pen pen, GpPath path)
 		{
-			if (pen == null || path == null || gp == null) return false;
+			if (pen == null || path == null || !GeometryEngine ()) return false;
 			GpGraphics e = Engine ();
 			if (e == null) return false;
 			return e.DrawPath (pen, path);
@@ -195,7 +209,7 @@ namespace System.Drawing
 		{
 			if (pen == null || pts == null) return false;
 			if (mf_rec != null) { mf_rec.DrawLines (pen, pts, closed); return true; }
-			if (pts.Length < 2 || gp == null) return false;
+			if (pts.Length < 2 || !GeometryEngine ()) return false;
 			var types = new byte [pts.Length];
 			for (int i = 1; i < types.Length; i++) types [i] = 1;
 			if (closed) types [types.Length - 1] |= 0x80;
@@ -222,7 +236,7 @@ namespace System.Drawing
 		{
 			if (pen == null) return false;
 			if (mf_rec != null) { mf_rec.DrawArc (pen, new RectangleF (x, y, w, h), start, sweep); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath ();
 			if (!p.AddArc (x, y, w, h, start, sweep)) return false;
 			return EngineDrawPath (pen, p);
@@ -232,7 +246,7 @@ namespace System.Drawing
 		{
 			if (pen == null) return false;
 			if (mf_rec != null) { mf_rec.DrawEllipse (pen, new RectangleF (x, y, w, h)); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath ();
 			p.AddEllipse (x, y, w, h);
 			return EngineDrawPath (pen, p);
@@ -242,7 +256,7 @@ namespace System.Drawing
 		{
 			if (pen == null) return false;
 			if (mf_rec != null) { mf_rec.DrawPie (pen, new RectangleF (x, y, w, h), start, sweep); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			var p = new GpPath ();
 			p.AddPie (x, y, w, h, start, sweep);
 			return EngineDrawPath (pen, p);
@@ -252,7 +266,7 @@ namespace System.Drawing
 		{
 			if (pen == null || pts == null) return false;
 			if (mf_rec != null) { mf_rec.DrawBeziers (pen, pts); return true; }
-			if (gp == null) return false;
+			if (!GeometryEngine ()) return false;
 			if (pts.Length < 4) return true;
 			var p = new GpPath ();
 			if (!p.AddBeziers (pts, pts.Length)) return false;
@@ -263,7 +277,7 @@ namespace System.Drawing
 		{
 			if (pen == null || pts == null) return false;
 			if (mf_rec != null) { mf_rec.DrawCurve (pen, pts, offset, segments, tension); return true; }
-			if (pts.Length < 2 || gp == null) return false;
+			if (pts.Length < 2 || !GeometryEngine ()) return false;
 			var p = new GpPath ();
 			if (!p.AddCurve (pts, pts.Length, tension, offset, segments)) return false;
 			return EngineDrawPath (pen, p);
@@ -273,7 +287,7 @@ namespace System.Drawing
 		{
 			if (pen == null || pts == null) return false;
 			if (mf_rec != null) { mf_rec.DrawClosedCurve (pen, pts, tension); return true; }
-			if (pts.Length < 3 || gp == null) return false;
+			if (pts.Length < 3 || !GeometryEngine ()) return false;
 			var p = new GpPath ();
 			if (!p.AddClosedCurve (pts, pts.Length, tension)) return false;
 			return EngineDrawPath (pen, p);

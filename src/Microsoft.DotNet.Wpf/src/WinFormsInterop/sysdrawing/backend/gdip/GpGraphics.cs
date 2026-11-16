@@ -296,6 +296,19 @@ namespace System.Drawing.WebGpuBackend.Gdip
 
         public void ResetClip () { _ctx.AppClip = null; UpdateVisibleClip (); }
 
+        /// <summary>Takes over another context's clips, in the same device space: the current one and
+        /// those of its saved states, with their tags, so that a later Restore finds them. The rest of
+        /// each state (page, world, quality) is the caller's to set before the next verb.</summary>
+        internal void AdoptClips (GpGraphics from)
+        {
+            _ctx.AppClip = from._ctx.AppClip?.Clone ();
+            _ctx.Tag = from._ctx.Tag;
+            _saved.Clear ();
+            foreach (Context c in from._saved)
+                _saved.Add (new Context { AppClip = c.AppClip?.Clone (), Tag = c.Tag, IsContainer = c.IsContainer });
+            UpdateVisibleClip ();
+        }
+
         /// <summary>CombineClip(rect): the rectangle in world space, combined in device space.</summary>
         public void CombineClip (RectangleF r, CombineMode mode)
         {
