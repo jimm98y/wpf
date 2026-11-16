@@ -43,6 +43,9 @@ namespace Microsoft.Wpf.Interop.WebGpu
                 return WGPUStatus.Error;
             }
             WGPUStatus status = wgpuSurfacePresent(surface);
+            // a present inside a window change, shown with it (Composition.Platform.MacTransactionPresent)
+            if (OperatingSystem.IsMacOS() && Composition.Platform.MacTransactionPresent.Active)
+                Composition.Platform.MacTransactionPresent.PresentKept();
             if (status == WGPUStatus.Success) wgpuTextureRelease(texture);
             else System.Threading.Interlocked.Increment(ref s_abandonedSurfaceTextures);
             return status;
