@@ -20,6 +20,8 @@ namespace MS.Internal.Interop
         // Uniform Type Identifiers for the standard pasteboard representations.
         public const string TypeString = "public.utf8-plain-text";
         public const string TypePng = "public.png";
+        public const string TypeHtml = "public.html";
+        public const string TypeRtf = "public.rtf";
 
         /// <summary>True when running on macOS, where the NSPasteboard bridge is usable.</summary>
         public static bool IsAvailable => OperatingSystem.IsMacOS();
@@ -137,6 +139,68 @@ namespace MS.Internal.Interop
         /// <summary>True when the pasteboard currently holds data of the given UTI type.</summary>
         public static bool ContainsData(string type) => IsAvailable && GetData(type) is not null;
 
+        /// <summary>
+        /// Replaces the pasteboard contents with several representations at once: the files (if any)
+        /// as pasteboard items of their own -- the way Finder puts several files there -- and every other
+        /// type on the first item. Written one at a time, each write cleared the one before, and a copy
+        /// that offers text and RTF (a rich text box) left only whichever came last.
+        /// </summary>
+        public static void SetMany(System.Collections.Generic.IReadOnlyList<(string Type, byte[] Data)> items, string[] filePaths)
+        {
+            if (!IsAvailable)
+            {
+                return;
+            }
+
+            IntPtr pb = GeneralPasteboard();
+            Send(pb, Sel("clearContents"));
+            if (filePaths is { Length: > 0 })
+            {
+                IntPtr urls = Send(Cls("NSMutableArray"), Sel("array"));
+                foreach (string path in filePaths)
+                {
+                    if (string.IsNullOrEmpty(path)) continue;
+                    IntPtr url = Send(Cls("NSURL"), Sel("fileURLWithPath:"), NSStr(path));
+                    if (url != IntPtr.Zero) Send(urls, Sel("addObject:"), url);
+                }
+                SendBool1(pb, Sel("writeObjects:"), urls);
+            }
+            foreach ((string type, byte[] data) in items)
+            {
+                if (data is null) continue;
+                SendBool(pb, Sel("setData:forType:"), NSData(data), NSStr(type));
+            }
+        }
+
+        /// <summary>The paths of the files on the pasteboard (file URLs only), or null when there are none.</summary>
+        public static string[] GetFilePaths()
+        {
+            if (!IsAvailable)
+            {
+                return null;
+            }
+
+            IntPtr classes = Send(Cls("NSArray"), Sel("arrayWithObject:"), Cls("NSURL"));
+            IntPtr yes = SendBoolArg(Cls("NSNumber"), Sel("numberWithBool:"), true);
+            IntPtr options = Send(Cls("NSDictionary"), Sel("dictionaryWithObject:forKey:"), yes, NSStr("NSPasteboardURLReadingFileURLsOnlyKey"));
+            IntPtr urls = Send(GeneralPasteboard(), Sel("readObjectsForClasses:options:"), classes, options);
+            nint count = urls == IntPtr.Zero ? 0 : SendNInt(urls, Sel("count"));
+            if (count <= 0)
+            {
+                return null;
+            }
+
+            var paths = new System.Collections.Generic.List<string>((int)count);
+            for (nint i = 0; i < count; i++)
+            {
+                IntPtr url = SendIndex(urls, Sel("objectAtIndex:"), (nuint)i);
+                IntPtr path = url == IntPtr.Zero ? IntPtr.Zero : Send(url, Sel("path"));
+                string s = path == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(Send(path, Sel("UTF8String")));
+                if (!string.IsNullOrEmpty(s)) paths.Add(s);
+            }
+            return paths.Count > 0 ? paths.ToArray() : null;
+        }
+
         // ---- Objective-C runtime ----------------------------------------------------
 
         private const string ObjC = "/usr/lib/libobjc.A.dylib";
@@ -174,5 +238,9 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool(IntPtr receiver, IntPtr selector, IntPtr arg1, IntPtr arg2);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrUtf8(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.LPUTF8Str)] string arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendDataWithBytes(IntPtr receiver, IntPtr selector, IntPtr bytes, nuint length);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr Send(IntPtr receiver, IntPtr selector, IntPtr arg1, IntPtr arg2);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBool1(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendBoolArg(IntPtr receiver, IntPtr selector, [MarshalAs(UnmanagedType.I1)] bool arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendIndex(IntPtr receiver, IntPtr selector, nuint index);
     }
 }

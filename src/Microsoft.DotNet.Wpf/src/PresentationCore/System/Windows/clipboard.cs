@@ -317,10 +317,7 @@ public static class Clipboard
             target.Clear();
             if (data is IDataObject source)
             {
-                foreach (string format in source.GetFormats())
-                {
-                    target.SetData(format, source.GetData(format));
-                }
+                target.SetAll(source);
             }
             else
             {

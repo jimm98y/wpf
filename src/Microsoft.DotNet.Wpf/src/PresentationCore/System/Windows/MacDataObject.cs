@@ -37,6 +37,12 @@ internal sealed class MacDataObject : IDataObject
         || format == DataFormats.Dib
         || format == "PNG";
 
+    // Formats the system clipboard also carries across applications: HTML (the CF_HTML string WPF's
+    // "HTML Format" holds; the system gets the fragment), RTF and a file list.
+    private static bool IsHtmlFormat(string format) => format == DataFormats.Html;
+    private static bool IsRtfFormat(string format) => format == DataFormats.Rtf;
+    private static bool IsFileFormat(string format) => format == DataFormats.FileDrop;
+
     // Non-bridged formats live here for the lifetime of this object.
     private readonly Dictionary<string, object?> _store = new(StringComparer.Ordinal);
 
@@ -69,6 +75,21 @@ internal sealed class MacDataObject : IDataObject
             return png is null ? null : DecodePng(png);
         }
 
+        if (IsHtmlFormat(format) && PlatformClipboard.GetData(ClipboardFormat.Html) is { } html)
+        {
+            return PlatformClipboard.ToCfHtml(System.Text.Encoding.UTF8.GetString(html));
+        }
+
+        if (IsRtfFormat(format) && PlatformClipboard.GetData(ClipboardFormat.Rtf) is { } rtf)
+        {
+            return System.Text.Encoding.UTF8.GetString(rtf);
+        }
+
+        if (IsFileFormat(format) && PlatformClipboard.GetFileList() is { } files)
+        {
+            return files;
+        }
+
         return _store.TryGetValue(format, out object? value) ? value : null;
     }
 
@@ -93,6 +114,13 @@ internal sealed class MacDataObject : IDataObject
             return PlatformClipboard.ContainsData(ClipboardFormat.Png);
         }
 
+        if ((IsHtmlFormat(format) && PlatformClipboard.ContainsData(ClipboardFormat.Html))
+            || (IsRtfFormat(format) && PlatformClipboard.ContainsData(ClipboardFormat.Rtf))
+            || (IsFileFormat(format) && PlatformClipboard.ContainsData(ClipboardFormat.FileList)))
+        {
+            return true;
+        }
+
         return _store.ContainsKey(format);
     }
 
@@ -112,7 +140,14 @@ internal sealed class MacDataObject : IDataObject
             formats.Add(DataFormats.Bitmap);
         }
 
-        formats.AddRange(_store.Keys);
+        if (PlatformClipboard.ContainsData(ClipboardFormat.Html)) formats.Add(DataFormats.Html);
+        if (PlatformClipboard.ContainsData(ClipboardFormat.Rtf)) formats.Add(DataFormats.Rtf);
+        if (PlatformClipboard.ContainsData(ClipboardFormat.FileList)) formats.Add(DataFormats.FileDrop);
+
+        foreach (string key in _store.Keys)
+        {
+            if (!formats.Contains(key)) formats.Add(key);
+        }
         return formats.ToArray();
     }
 
@@ -147,7 +182,81 @@ internal sealed class MacDataObject : IDataObject
             return;
         }
 
+        if (ToSystem(format, data) is { } item)
+        {
+            PlatformClipboard.SetFormats(new[] { item });
+            return;
+        }
+
         _store[format] = data;
+    }
+
+    /// <summary>
+    ///  Puts every format of <paramref name="source"/> on the clipboard: what the system clipboard
+    ///  carries across applications in one write, the rest in process. Set one format at a time, each
+    ///  system write replaced the one before -- a rich text box's copy (text, RTF, XAML) reached other
+    ///  applications as whichever bridged format came last.
+    /// </summary>
+    public void SetAll(IDataObject source)
+    {
+        var items = new List<KeyValuePair<ClipboardFormat, byte[]>>();
+        bool text = false, image = false;
+        foreach (string format in source.GetFormats())
+        {
+            object? data = source.GetData(format);
+            if (IsTextFormat(format))
+            {
+                if (!text && data is not null)
+                {
+                    items.Add(new(ClipboardFormat.Text, System.Text.Encoding.UTF8.GetBytes(data.ToString() ?? string.Empty)));
+                    text = true;
+                }
+            }
+            else if (IsImageFormat(format))
+            {
+                if (!image && data is BitmapSource bitmap)
+                {
+                    items.Add(new(ClipboardFormat.Png, EncodePng(bitmap)));
+                    image = true;
+                }
+            }
+            else if (ToSystem(format, data) is { } item)
+            {
+                items.Add(item);
+            }
+            else
+            {
+                _store[format] = data;
+            }
+        }
+        PlatformClipboard.SetFormats(items);
+    }
+
+    private static KeyValuePair<ClipboardFormat, byte[]>? ToSystem(string format, object? data)
+    {
+        if (IsHtmlFormat(format) && data is string html)
+        {
+            return new(ClipboardFormat.Html, System.Text.Encoding.UTF8.GetBytes(PlatformClipboard.HtmlFragment(html)));
+        }
+        if (IsRtfFormat(format) && data is string rtf)
+        {
+            return new(ClipboardFormat.Rtf, System.Text.Encoding.UTF8.GetBytes(rtf));
+        }
+        if (IsFileFormat(format))
+        {
+            string[]? files = data switch
+            {
+                string[] a => a,
+                System.Collections.Specialized.StringCollection c => System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Cast<string>(c)),
+                string one => new[] { one },
+                _ => null,
+            };
+            if (files is { Length: > 0 })
+            {
+                return new(ClipboardFormat.FileList, PlatformClipboard.EncodeFileList(files));
+            }
+        }
+        return null;
     }
 
     private static byte[] EncodePng(BitmapSource bitmap)

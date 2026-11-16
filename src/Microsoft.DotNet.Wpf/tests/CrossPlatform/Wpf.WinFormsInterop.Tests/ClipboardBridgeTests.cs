@@ -57,6 +57,7 @@ namespace Wpf.WinFormsInterop.Tests
         {
             IntPtr h = _driver.ClipboardOpen(false);
             _driver.ClipboardStore(h, "copied", Id(DataFormats.UnicodeText), null, true);
+            _driver.ClipboardClose(h);       // a data object reaches the system at the close, as one write
 
             Assert.Equal("copied", _fake.Text);
         }
@@ -86,6 +87,7 @@ namespace Wpf.WinFormsInterop.Tests
         {
             IntPtr h = _driver.ClipboardOpen(false);
             _driver.ClipboardStore(h, "ours", Id(DataFormats.UnicodeText), null, true);
+            _driver.ClipboardClose(h);
 
             _fake.Text = "newer, from elsewhere";
 

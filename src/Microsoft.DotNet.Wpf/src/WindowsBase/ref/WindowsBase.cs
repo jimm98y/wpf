@@ -578,15 +578,44 @@ namespace MS.Internal.Interop
     }
     public static partial class MacClipboard
     {
+        public const string TypeHtml = "public.html";
         public const string TypePng = "public.png";
+        public const string TypeRtf = "public.rtf";
         public const string TypeString = "public.utf8-plain-text";
         public static bool IsAvailable { get { throw null; } }
         public static void Clear() { }
         public static bool ContainsData(string type) { throw null; }
         public static bool ContainsString() { throw null; }
         public static byte[] GetData(string type) { throw null; }
+        public static string[] GetFilePaths() { throw null; }
         public static string GetString() { throw null; }
         public static void SetData(string type, byte[] data) { }
+        public static void SetMany(System.Collections.Generic.IReadOnlyList<(string Type, byte[] Data)> items, string[] filePaths) { }
+        public static void SetString(string value) { }
+    }
+    public enum ClipboardFormat
+    {
+        Text = 0,
+        Png = 1,
+        Html = 2,
+        Rtf = 3,
+        FileList = 4,
+    }
+    public static partial class PlatformClipboard
+    {
+        public static bool IsAvailable { get { throw null; } }
+        public static void Clear() { }
+        public static bool ContainsData(MS.Internal.Interop.ClipboardFormat format) { throw null; }
+        public static bool ContainsString() { throw null; }
+        public static string[] DecodeFileList(byte[] uriList) { throw null; }
+        public static byte[] EncodeFileList(string[] paths) { throw null; }
+        public static byte[] GetData(MS.Internal.Interop.ClipboardFormat format) { throw null; }
+        public static string[] GetFileList() { throw null; }
+        public static string HtmlFragment(string cfHtml) { throw null; }
+        public static string ToCfHtml(string fragment) { throw null; }
+        public static string GetString() { throw null; }
+        public static void SetData(MS.Internal.Interop.ClipboardFormat format, byte[] data) { }
+        public static void SetFormats(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<MS.Internal.Interop.ClipboardFormat, byte[]>> items) { }
         public static void SetString(string value) { }
     }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("ios")]

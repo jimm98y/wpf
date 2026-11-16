@@ -142,6 +142,75 @@ namespace Wpf.Platform.Tests
         }
 
         /// <summary>
+        /// Several kinds written at once all stay: a copy that offers text, HTML and RTF (a rich text
+        /// box, a grid) must reach other applications as all three. Each kind written on its own used
+        /// to replace the one before, so only the last survived.
+        /// </summary>
+        [Fact]
+        public void SeveralFormats_SurviveTogether()
+        {
+            RequireWritableClipboard();
+            Assert.SkipUnless(OperatingSystem.IsMacOS() || OperatingSystem.IsLinux(), "this head's clipboard carries text and PNG only");
+
+            string? previous = SafeGetString();
+            try
+            {
+                byte[] text = System.Text.Encoding.UTF8.GetBytes("plain caf\u00e9");
+                byte[] html = System.Text.Encoding.UTF8.GetBytes("<b>bold</b>");
+                byte[] rtf = System.Text.Encoding.UTF8.GetBytes(@"{\rtf1 rich}");
+                PlatformClipboard.SetFormats(new[]
+                {
+                    new System.Collections.Generic.KeyValuePair<ClipboardFormat, byte[]>(ClipboardFormat.Text, text),
+                    new System.Collections.Generic.KeyValuePair<ClipboardFormat, byte[]>(ClipboardFormat.Html, html),
+                    new System.Collections.Generic.KeyValuePair<ClipboardFormat, byte[]>(ClipboardFormat.Rtf, rtf),
+                });
+
+                Assert.Equal("plain caf\u00e9", PlatformClipboard.GetString());
+                Assert.Equal(html, PlatformClipboard.GetData(ClipboardFormat.Html));
+                Assert.Equal(rtf, PlatformClipboard.GetData(ClipboardFormat.Rtf));
+                Assert.False(PlatformClipboard.ContainsData(ClipboardFormat.FileList));
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(previous)) SafeSetString(previous!);
+            }
+        }
+
+        /// <summary>A file list goes out as the files themselves (Finder pastes them) and comes back as paths.</summary>
+        [Fact]
+        public void FileList_RoundTripsAsPaths()
+        {
+            RequireWritableClipboard();
+            Assert.SkipUnless(OperatingSystem.IsMacOS() || OperatingSystem.IsLinux(), "this head's clipboard carries text and PNG only");
+
+            string? previous = SafeGetString();
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "clipfiles-" + System.Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(dir);
+            try
+            {
+                string a = System.IO.Path.Combine(dir, "a.txt"), b = System.IO.Path.Combine(dir, "with space.txt");
+                System.IO.File.WriteAllText(a, "a");
+                System.IO.File.WriteAllText(b, "b");
+                PlatformClipboard.SetFormats(new[]
+                {
+                    new System.Collections.Generic.KeyValuePair<ClipboardFormat, byte[]>(ClipboardFormat.FileList, PlatformClipboard.EncodeFileList(new[] { a, b })),
+                    new System.Collections.Generic.KeyValuePair<ClipboardFormat, byte[]>(ClipboardFormat.Text, System.Text.Encoding.UTF8.GetBytes("two files")),
+                });
+
+                string[]? files = PlatformClipboard.GetFileList();
+                Assert.NotNull(files);
+                Assert.Equal(new[] { a, b }, System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(files!, f => System.IO.Path.GetFullPath(f).Replace("/private/var/", "/var/"))),
+                    System.StringComparer.Ordinal);
+                Assert.Equal("two files", PlatformClipboard.GetString());
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(previous)) SafeSetString(previous!);
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        /// <summary>
         /// Clear must actually clear. A no-op Clear is invisible in every other test here -- they all
         /// write before they read -- and leaves stale content readable after an app thinks it wiped it.
         /// </summary>

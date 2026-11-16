@@ -39,6 +39,9 @@ namespace MS.Internal.Interop.Wayland
     {
         internal const string TypeString = "text/plain;charset=utf-8";
         internal const string TypePng = "image/png";
+        internal const string TypeHtml = "text/html";
+        internal const string TypeRtf = "text/rtf";
+        internal const string TypeUriList = "text/uri-list";
 
         // Offered alongside the canonical type, because older clients ask for these spellings.
         private static readonly string[] TextTypes =
@@ -60,11 +63,11 @@ namespace MS.Internal.Interop.Wayland
         private static readonly HashSet<string> s_currentTypes = new(StringComparer.Ordinal);
 
         // What we are currently offering, kept alive because the compositor calls back into it.
+        // Each type offered has its own bytes: one copy can offer text, HTML and RTF together, and a
+        // reader asking for one of them gets that one.
         private static IntPtr s_source;
-        private static byte[]? s_sourceBytes;
-        private static string[]? s_sourceTypes;
-        private static byte[]? s_deferredBytes;
-        private static string[]? s_deferredTypes;
+        private static Dictionary<string, byte[]>? s_sourcePayloads;
+        private static Dictionary<string, byte[]>? s_deferredPayloads;
 
         internal static bool IsAvailable => WaylandDisplay.IsActive && WaylandDisplay.DataDeviceManager != IntPtr.Zero;
 
@@ -294,7 +297,7 @@ namespace MS.Internal.Interop.Wayland
                 // where a selection carries one fixed payload.
                 byte[]? bytes = WaylandDragDrop.IsOurDragSource(source)
                     ? WaylandDragDrop.WriteForSource(source, Marshal.PtrToStringUTF8(mimeType) ?? string.Empty)
-                    : s_sourceBytes;
+                    : (s_sourcePayloads is { } payloads && payloads.TryGetValue(Marshal.PtrToStringUTF8(mimeType) ?? string.Empty, out byte[]? own) ? own : null);
 
                 if (bytes is not null)
                 {
@@ -335,8 +338,7 @@ namespace MS.Internal.Interop.Wayland
                 if (s_source == source)
                 {
                     s_source = IntPtr.Zero;
-                    s_sourceBytes = null;
-                    s_sourceTypes = null;
+                    s_sourcePayloads = null;
                 }
                 Wl.Destroy(source, WL_DATA_SOURCE_DESTROY);
             }
@@ -380,6 +382,31 @@ namespace MS.Internal.Interop.Wayland
 
         private static void Offer(byte[] bytes, string[] mimeTypes)
         {
+            var payloads = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach (string t in mimeTypes) payloads[t] = bytes;
+            Offer(payloads);
+        }
+
+        /// <summary>Offers several types at once, each with its own bytes.</summary>
+        internal static void OfferMany(IReadOnlyList<(string[] MimeTypes, byte[] Data)> items)
+        {
+            var payloads = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            foreach ((string[] types, byte[] data) in items)
+            {
+                if (data is null) continue;
+                foreach (string t in types) payloads.TryAdd(t, data);
+            }
+            if (payloads.Count > 0) Offer(payloads);
+            else Clear();
+        }
+
+        internal static readonly string[] HtmlTypes = { TypeHtml };
+        internal static readonly string[] RtfTypes = { TypeRtf, "application/rtf" };
+        internal static readonly string[] UriListTypes = { TypeUriList };
+        internal static string[] TextMimeTypes => TextTypes;
+
+        private static void Offer(Dictionary<string, byte[]> payloads)
+        {
             EnsureDataDevice();
             if (s_dataDevice == IntPtr.Zero) return;
 
@@ -388,8 +415,7 @@ namespace MS.Internal.Interop.Wayland
             {
                 // No input yet: the compositor would reject this. Remember it and publish on the
                 // first real event rather than losing the caller's data silently.
-                s_deferredBytes = bytes;
-                s_deferredTypes = mimeTypes;
+                s_deferredPayloads = payloads;
                 WaylandDisplay.LogSink?.Invoke("clipboard set before any input; deferred until the first event.");
                 return;
             }
@@ -400,14 +426,13 @@ namespace MS.Internal.Interop.Wayland
             if (source == IntPtr.Zero) return;
 
             Wl.wl_proxy_add_listener(source, s_dataSourceListener, IntPtr.Zero);
-            foreach (string t in mimeTypes)
+            foreach (string t in payloads.Keys)
             {
                 Wl.Request(source, WL_DATA_SOURCE_OFFER, WlArgument.Ptr(Wl.Utf8(t)));
             }
 
             s_source = source;
-            s_sourceBytes = bytes;
-            s_sourceTypes = mimeTypes;
+            s_sourcePayloads = payloads;
 
             Wl.Request(s_dataDevice, WL_DATA_DEVICE_SET_SELECTION, WlArgument.Ptr(source), WlArgument.UInt(serial));
             WaylandDisplay.Flush();
@@ -420,14 +445,11 @@ namespace MS.Internal.Interop.Wayland
         /// </summary>
         private static byte[]? TryReadOwnSelection(string[] mimeTypes)
         {
-            if (s_source == IntPtr.Zero || s_sourceBytes is null || s_sourceTypes is null) return null;
+            if (s_source == IntPtr.Zero || s_sourcePayloads is null) return null;
 
             foreach (string wanted in mimeTypes)
             {
-                foreach (string offered in s_sourceTypes)
-                {
-                    if (string.Equals(wanted, offered, StringComparison.Ordinal)) return s_sourceBytes;
-                }
+                if (s_sourcePayloads.TryGetValue(wanted, out byte[]? bytes)) return bytes;
             }
             return null;
         }
@@ -435,12 +457,10 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>Publish anything that was set before the first input event (see Offer).</summary>
         internal static void FlushDeferred()
         {
-            if (s_deferredBytes is null || WaylandInput.LastInputSerial == 0) return;
-            byte[] bytes = s_deferredBytes;
-            string[] types = s_deferredTypes ?? TextTypes;
-            s_deferredBytes = null;
-            s_deferredTypes = null;
-            Offer(bytes, types);
+            if (s_deferredPayloads is null || WaylandInput.LastInputSerial == 0) return;
+            Dictionary<string, byte[]> payloads = s_deferredPayloads;
+            s_deferredPayloads = null;
+            Offer(payloads);
         }
 
         // ---- The MacClipboard-shaped surface ---------------------------------------------------
@@ -455,7 +475,7 @@ namespace MS.Internal.Interop.Wayland
             Wl.Request(s_dataDevice, WL_DATA_DEVICE_SET_SELECTION, WlArgument.Ptr(IntPtr.Zero), WlArgument.UInt(serial));
             WaylandDisplay.Flush();
             s_source = IntPtr.Zero;
-            s_sourceBytes = null;
+            s_sourcePayloads = null;
         }
 
         internal static void SetString(string value) => Offer(Encoding.UTF8.GetBytes(value ?? string.Empty), TextTypes);
