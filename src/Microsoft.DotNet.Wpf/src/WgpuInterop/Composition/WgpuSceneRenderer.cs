@@ -1678,6 +1678,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             finally { _eye = outer; }
         }
 
+        /// <summary>
+        /// A rectangular clip of a visual drawn rotated or skewed is a turned rectangle on the device.
+        /// As a scissor it is that rectangle's upright bounding box, and a rotated control's content
+        /// showed outside it, up to the box. Then it clips as a geometry, the way a non-rectangular
+        /// clip does (the scissor, a box around it, stays).
+        /// </summary>
+        private static void SetTurnedClip(SceneVisual v, Matrix3x2 world)
+        {
+            if (v.ClipGeometry != null || v.Clip is not { } r || (MathF.Abs(world.M12) <= 1e-6f && MathF.Abs(world.M21) <= 1e-6f))
+            {
+                v.TurnedClip = null;
+                return;
+            }
+            if (v.TurnedClip != null && v.TurnedClipRect.Equals(r)) return;
+            var f = new PathFigure(new Vector2(r.X, r.Y)) { Closed = true };
+            f.Segments.Add(new LineSegment(new Vector2(r.X + r.Width, r.Y)));
+            f.Segments.Add(new LineSegment(new Vector2(r.X + r.Width, r.Y + r.Height)));
+            f.Segments.Add(new LineSegment(new Vector2(r.X, r.Y + r.Height)));
+            v.TurnedClip = new PathGeometry(FillRule.NonZero, new List<PathFigure> { f });
+            v.TurnedClipRect = r;
+        }
+
+        /// <summary>The geometry the visual is clipped by: its own, or its rectangle turned (SetTurnedClip).</summary>
+        private static PathGeometry? ClipGeo(SceneVisual v) => v.ClipGeometry ?? v.TurnedClip;
+
         private void CollectVisualCore(SceneVisual v, Matrix3x2 parentWorld, double inheritedOpacity, Scissor parentClip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
         {
@@ -1686,6 +1711,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Scissor clip = parentClip;
             if (v.Clip.HasValue)
                 clip = Intersect(parentClip, DeviceBounds(v.Clip.Value, world, width, height));
+            SetTurnedClip(v, world);
             if (_cullData != null && ReferenceEquals(outData, _cullData) && CullVisual(v, clip))
                 return;
 
@@ -1705,7 +1731,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // 2.19/2.67/3.05 ms uncached against 2.55/2.73/2.56 ms cached -- no reliable win,
             // and all of it inside the ~2.3 ms readback floor. The command is still decoded so
             // the intent is recorded; honour it only if a case is found where it actually pays.
-            bool needsLayer = v.Effect != null || v.ClipGeometry != null || v.OpacityMask != null
+            bool needsLayer = v.Effect != null || ClipGeo(v) != null || v.OpacityMask != null
                 || (vOpacity < 0.999 && CountDrawables(v) > 1)
                 // a window's surface (SceneVisual.CacheAsSurface), unless it holds a nested full-target pass
                 || (v.CacheAsSurface && s_surfaces && !_directSurfaces.Contains(v.Serial) && !HasNestedFullTargetContent(v));
@@ -1722,7 +1748,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // edges cover a pixel all or nothing), without an offscreen texture and, where the GPU
             // rasterizer is off (virgl), a mask rasterized on the CPU every frame -- most of a resize
             // frame once a DotNetBar back buffer was drawn as the scene it recorded.
-            if (v.ClipGeometry is { } rectClip && v.Effect == null && v.OpacityMask == null
+            if (ClipGeo(v) is { } rectClip && v.Effect == null && v.OpacityMask == null
                 && !(vOpacity < 0.999 && CountDrawables(v) > 1)
                 && !(v.CacheAsSurface && s_surfaces && !_directSurfaces.Contains(v.Serial))
                 && PixelRectClip(rectClip, world, out List<Scissor> rects))
@@ -1767,7 +1793,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             else
             {
-                Scissor cb = v.ClipGeometry is { } cg
+                Scissor cb = ClipGeo(v) is { } cg
                     ? GeoDeviceBounds(cg, world, width, height)
                     : ContentDeviceBounds(v, world, width, height);
                 if (v.Effect is BlurEffect be) cb = EffectRegion(cb, be.Radius, 0, 0, UnboundedScissor);
@@ -1882,7 +1908,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // for it (slow on the GL backend) and never drawn from again -- ~40 of them a frame,
                     // most of the time a resize step took. What stays as it is is kept from its second
                     // frame on.
-                    if (v.CacheAsSurface && s_surfaces && !fullTarget && v.Effect == null && v.ClipGeometry == null
+                    if (v.CacheAsSurface && s_surfaces && !fullTarget && v.Effect == null && ClipGeo(v) == null
                         && v.OpacityMask == null && !(vOpacity < 0.999 && CountDrawables(v) > 1)
                         && !_surfaceSightings.ContainsKey(key))
                     {
@@ -2016,7 +2042,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         private long ShadowSilhouetteKey(SceneVisual v, Matrix3x2 world, Scissor region, DropShadowEffect ds)
         {
-            if (v.ClipGeometry is not null || v.OpacityMask is not null || v.Content.Count == 0) return 0;
+            if (ClipGeo(v) is not null || v.OpacityMask is not null || v.Content.Count == 0) return 0;
             if (MathF.Abs(world.M12) > 1e-6f || MathF.Abs(world.M21) > 1e-6f || world.M11 <= 0f || world.M22 <= 0f) return 0;
             (Geometry? g, Brush? brush) = v.Content[0] switch
             {
@@ -2199,7 +2225,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 (cl.CovTex, cl.CovView) = CreateOwnedLayerTexture(rw, rh);
                 plan.Add(new LayerPass(cl.CovView, true, default, covData, ReadbackFormat) { OriginX = rx, OriginY = ry, TexW = rw, TexH = rh });
             }
-            if (v.ClipGeometry is { } clipGeom)
+            if (ClipGeo(v) is { } clipGeom)
             {
                 // Region-sized geometry-clip mask (rasterized once, cached with the layer) --
                 // not a full-window 6.8M-pixel raster. GPU-rasterized by default.
@@ -2580,7 +2606,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly bool s_layerSubpixel = Environment.GetEnvironmentVariable("WPF_LAYER_SUBPIXEL") != "0";
 
         /// <summary>A layer made only for its opacity: no clip geometry, opacity mask or effect.</summary>
-        private static bool PlainOpacityLayer(SceneVisual v) => v.ClipGeometry is null && v.OpacityMask is null && v.Effect is null;
+        private static bool PlainOpacityLayer(SceneVisual v) => ClipGeo(v) is null && v.OpacityMask is null && v.Effect is null;
 
         /// <summary>The current pass's NDC-to-device mapping, as PaperUnder measures its draws.</summary>
         private Func<Vector2, Vector2> BackdropMapping(int width, int height)
@@ -2731,7 +2757,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             else if (!fullTarget) { HV(PhaseQ(world.M31 - region.X, nudgeX)); HV(PhaseQ(world.M32 - region.Y, nudgeY)); }
             float bx = world.M31, by = world.M32;
             // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
-            if (v.ClipGeometry is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
+            if (ClipGeo(v) is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
             else if (v.OpacityMask is { } om) { HV(104); HashBrush(om); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
             else switch (v.Effect)
             {
@@ -2827,6 +2853,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // change inside it must move the layer-cache key or the group renders stale.
                 case NestedVisualDraw nv:
                     HV(9);
+                    {
+                        Matrix3x2 nl = nv.Visual.LocalToParent;   // a rotated fill's scope carries its transform
+                        HF(nl.M11); HF(nl.M12); HF(nl.M21); HF(nl.M22); HF(nl.M31); HF(nl.M32);
+                    }
                     if (nv.Visual.OpacityMask is { } nvm) HashBrush(nvm);
                     foreach (DrawingPrimitive np0 in nv.Visual.Content) foreach (DrawingPrimitive np in WpfTextRunDraw.Expand(np0)) HashPrimitive(np);
                     break;

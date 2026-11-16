@@ -326,6 +326,10 @@ namespace WgpuInterop.Tests.Harness
         public static byte[] PushEffectRecord()
         { var b = new Buf(); b.U32(8); b.U32(0x55); return b.ToArray(); }
 
+        /// <summary>MILCMD_PUSH_TRANSFORM (0x51): hTransform@0, pad@4.</summary>
+        public static byte[] PushTransformRecord(uint hTransform)
+        { var b = new Buf(); b.U32(16); b.U32(0x51); b.U32(hTransform); b.U32(0); return b.ToArray(); }
+
         public static byte[] PushClipRecord(uint hClip)
         { var b = new Buf(); b.U32(16); b.U32(0x4d); b.U32(hClip); b.U32(0); return b.ToArray(); }
 

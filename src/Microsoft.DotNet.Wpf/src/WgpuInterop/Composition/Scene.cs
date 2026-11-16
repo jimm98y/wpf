@@ -852,6 +852,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public PathGeometry? ClipGeometry { get; set; }
 
+        /// <summary><see cref="Clip"/> as a geometry while the visual is drawn rotated or skewed, where a
+        /// rectangle is no longer one on the device (the renderer sets it each frame it draws the visual).</summary>
+        internal PathGeometry? TurnedClip;
+        internal Rect TurnedClipRect;
+
         /// <summary>Optional post-processing effect applied to the rendered subtree.</summary>
         public Effect? Effect { get; set; }
 

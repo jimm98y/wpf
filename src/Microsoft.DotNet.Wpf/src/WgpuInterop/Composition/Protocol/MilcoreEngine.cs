@@ -1771,8 +1771,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     GeometryDrawing d => d.Geometry,
                     _ => null,
                 };
-                if (g is null) continue;
-                Rect b = GeometryBounds(g);
+                Rect b;
+                if (g is not null) b = GeometryBounds(g);
+                else if (p is NestedVisualDraw nv)
+                {
+                    b = VisualSubtreeBounds(nv.Visual, nv.Visual.LocalToParent);
+                    if (b.Width <= 0 || b.Height <= 0) continue;
+                }
+                else continue;
                 minX = Math.Min(minX, b.X); minY = Math.Min(minY, b.Y);
                 maxX = Math.Max(maxX, b.X + b.Width); maxY = Math.Max(maxY, b.Y + b.Height);
                 any = true;
@@ -1993,6 +1999,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     _ => null,
                 };
                 if (g is not null) Union(TransformRect(GeometryBounds(g), acc));
+                else if (p is NestedVisualDraw nv)
+                {
+                    Rect nb = VisualSubtreeBounds(nv.Visual, nv.Visual.LocalToParent * acc);
+                    if (nb.Width > 0 && nb.Height > 0) Union(nb);
+                }
             }
             foreach (SceneVisual c in v.Children)
             {
@@ -2652,6 +2663,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Emit a fill and/or stroke for a geometry, applying the push state.</summary>
         private void EmitDrawing(List<DrawingPrimitive> output, Geometry geometry, uint hBrush, uint hPen, RenderState state)
         {
+            // A brush is laid out over the geometry's bounds in the space it is drawn in: a
+            // VisualBrush or gradient filling a rotated rectangle turns with it. Baking a rotation
+            // into the geometry and resolving the brush over the result's axis-aligned box drew the
+            // picture straight, stretched over that box and cut by the rotated outline -- an editor's
+            // rotation preview (a VisualBrush of the element in a rotated DrawingGroup) did not turn
+            // until the gesture ended. Such a drawing goes into a scope that carries the transform,
+            // drawn in its own space.
+            if (IsRotated(state.Transform) && (HasSpatialBrush(hBrush) || (hPen != 0 && _pens.TryGetValue(hPen, out MilPen rp) && HasSpatialBrush(rp.BrushHandle)))
+                && Matrix3x2.Invert(state.Transform, out Matrix3x2 toLocal))
+            {
+                var scope = new SceneVisual { Transform = state.Transform };
+                RenderState local = state;
+                local.Transform = Matrix3x2.Identity;
+                local.Clip = state.Clip is null ? null : TransformGeometry(state.Clip, toLocal);
+                EmitDrawing(scope.Content, geometry, hBrush, hPen, local);
+                if (scope.Content.Count > 0) output.Add(new NestedVisualDraw(scope));
+                return;
+            }
+
             Geometry tg = TransformGeometry(geometry, state.Transform);
             Rect bounds = GeometryBounds(tg);                 // brush bounds = transformed geometry
             Geometry g = state.Clip is null
@@ -2686,6 +2716,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (fill != null || strokeBrush != null)
                 output.Add(new GeometryDrawing(g, fill, strokeBrush, strokeStyle));
         }
+
+        private static bool IsRotated(Matrix3x2 m) => MathF.Abs(m.M12) > 1e-6f || MathF.Abs(m.M21) > 1e-6f;
+
+        /// <summary>Whether the brush is laid out in space (a gradient, an image or content brush),
+        /// so that a rotation of what it fills shows in it; a solid colour does not care.</summary>
+        private bool HasSpatialBrush(uint h) =>
+            h != 0 && (_gradients.ContainsKey(h) || _imageBrushes.ContainsKey(h) || _contentBrushes.ContainsKey(h));
 
         /// <summary>Whether any path figure in <paramref name="g"/> is not filled.</summary>
         private static bool HasUnfilledFigure(Geometry g)
