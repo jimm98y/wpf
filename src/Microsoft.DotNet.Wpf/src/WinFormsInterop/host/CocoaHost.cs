@@ -603,7 +603,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
             SendVoidPtr(mask, Sel("addSublayer:"), piece);
         }
         SendVoidPtr(layer, Sel("setMask:"), mask);
-        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' region of {scans.Length} rectangle(s) applied: frame {frame}, content {bounds.w}x{bounds.h}pt, k={_k}, region bounds {RectangleF.Union(scans[0], scans[^1])}, form {_form.Bounds} client {_form.ClientSize} border={_form.FormBorderStyle}");
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' region of {scans.Length} rectangle(s) applied: frame {frame}, content {bounds.w}x{bounds.h}pt, k={_k}, region bounds {(scans.Length == 0 ? RectangleF.Empty : RectangleF.Union(scans[0], scans[^1]))}, form {_form.Bounds} client {_form.ClientSize} border={_form.FormBorderStyle}");
     }
 
     // Form.Opacity: Windows' layered window alpha (SetLayeredWindowAttributes, LWA_ALPHA) -- the whole
@@ -1105,7 +1105,12 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
                 EmbeddedScenes.Pump();
                 t2 = System.Diagnostics.Stopwatch.GetTimestamp();
                 if (s_traceResize) Microsoft.Wpf.Interop.WebGpu.Composition.WgpuSceneRenderer.PerfReset();
-                host.Present();
+                // shown with the frame change AppKit is making, not a display refresh after it: a step
+                // behind, everything placed relative to the window's size (the caption, centred) jumped
+                // back and forth as a maximize animated
+                Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacTransactionPresent.Begin();
+                try { host.Present(); }
+                finally { Microsoft.Wpf.Interop.WebGpu.Composition.Platform.MacTransactionPresent.End(); }
             }
             finally
             {
@@ -1375,10 +1380,25 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
     {
         if (_window == IntPtr.Zero || _form.IsDisposed || !_form.IsHandleCreated) return;
         FormWindowState state = (nint)Send(_window, Sel("isMiniaturized")) != 0 ? FormWindowState.Minimized
-            : (nint)Send(_window, Sel("isZoomed")) != 0 ? FormWindowState.Maximized : FormWindowState.Normal;
+            : (nint)Send(_window, Sel("isZoomed")) != 0 || _reportedState == FormWindowState.Maximized && CoversVisibleFrame()
+                ? FormWindowState.Maximized : FormWindowState.Normal;
         if (state == _reportedState) return;
         _reportedState = state;
         _driver.HostWindowState(_form.Handle, state);
+    }
+
+    /// <summary>
+    /// Whether the window covers the whole visible frame of its screen. A maximized Win32 window lies past
+    /// its work area by its frame, and a form that draws its own frame puts itself there (DotNetBar's
+    /// ribbon form: -5, -4 and 9 x 9 larger); AppKit, whose zoomed frame is exactly the visible one, calls
+    /// that not zoomed -- reported so, the form restored itself the moment it was maximized.
+    /// </summary>
+    private bool CoversVisibleFrame()
+    {
+        IntPtr screen = Send(_window, Sel("screen"));
+        if (screen == IntPtr.Zero) return false;
+        NSRect v = SendRectRet(screen, Sel("visibleFrame")), f = SendRectRet(_window, Sel("frame"));
+        return f.x <= v.x + 0.5 && f.y <= v.y + 0.5 && f.x + f.w >= v.x + v.w - 0.5 && f.y + f.h >= v.y + v.h - 0.5;
     }
 
     private void SyncFrame()
@@ -1755,7 +1775,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
 
         // Inside a resize callback (an app's Resize handler calling DoEvents) the queue is AppKit's
         // tracking loop's: see CocoaWindow.PumpEventsCore.
-        while (s_inResize == 0)
+        while (s_inResize == 0 && !InAppKitTrackingMode())
         {
             IntPtr evt = SendNextEvent(App(), Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
                 unchecked((nuint)ulong.MaxValue), IntPtr.Zero, NSStr("kCFRunLoopDefaultMode"), true);
@@ -1768,6 +1788,31 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         // new window at once -- out of the Dock, with a native title bar over the form's own caption.
         return (nint)Send(_window, Sel("isVisible")) != 0 || (nint)Send(_window, Sel("isMiniaturized")) != 0;
     }
+
+    /// <summary>
+    /// Whether the run loop is turning in a mode of AppKit's own (NSEventTrackingRunLoopMode: a live
+    /// resize, a window drag, a menu): an AppKit loop is on the stack, waiting on the queue for the
+    /// events that end it. Its timers and sources still run -- WPF's dispatcher among them -- and a pump
+    /// reached from one that read the queue took the button's release the resize loop was waiting for:
+    /// the loop waited on, and the application took no input at all until it was killed. The resize
+    /// callback's own guard (s_inResize) covers only what runs inside that callback. At the top level
+    /// the run loop runs in no mode, and inside the dispatcher's own turn of it in the default one.
+    /// </summary>
+    private static bool InAppKitTrackingMode()
+    {
+        IntPtr current = CFRunLoopCopyCurrentMode(CFRunLoopGetCurrent());
+        if (current == IntPtr.Zero) return false;
+        try { return !SendBoolPtr(current, Sel("isEqualToString:"), NSStr("kCFRunLoopDefaultMode")); }
+        finally { CFRelease(current); }
+    }
+
+    private const string CoreFoundationLib = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+    [DllImport(CoreFoundationLib)] private static extern IntPtr CFRunLoopGetCurrent();
+    [DllImport(CoreFoundationLib)] private static extern IntPtr CFRunLoopCopyCurrentMode(IntPtr runLoop);
+    [DllImport(CoreFoundationLib)] private static extern void CFRelease(IntPtr cf);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")]
+    [return: MarshalAs(UnmanagedType.I1)]
+    private static extern bool SendBoolPtr(IntPtr r, IntPtr s, IntPtr a);
 
     // ---- one event queue, several owners -------------------------------------------------
     //
@@ -2241,17 +2286,11 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
     private bool IsResizable() => _form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow
                                   && _form.WindowState == FormWindowState.Normal;
 
-    private NSPoint ScreenPoint(NSPoint inWindow)
-    {
-        NSRect frame = SendRectRet(_window, Sel("frame"));
-        return new NSPoint { x = frame.x + inWindow.x, y = frame.y + inWindow.y };
-    }
-
     private void BeginSizing(int hit, NSPoint loc)
     {
         _sizingHit = hit;
         _sizingFrame = SendRectRet(_window, Sel("frame"));
-        _sizingStart = ScreenPoint(loc);
+        _sizingStart = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
     }
 
     /// <summary>A mouse event during sizing: the frame follows a drag, a release ends it. True when
@@ -2260,7 +2299,11 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
     {
         if (type == 2) { _sizingHit = 0; return true; }
         if (type != 6) return type == 5 || type == 1;
-        NSPoint p = ScreenPoint(loc);
+        // The pointer on the screen, not the event's point in the window: that is measured from where
+        // the window was when the event was queued, and each step of the drag moves the window. Taken
+        // against the frame as it is now, a queued event counted the last step again -- the bottom
+        // edge ran away from the pointer, faster each step, until the window was 0 high and gone.
+        NSPoint p = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
         double dx = p.x - _sizingStart.x, dy = p.y - _sizingStart.y;   // Cocoa: y grows upwards
         NSRect f = _sizingFrame;
         bool left = _sizingHit is HTLEFT or HTTOPLEFT or HTBOTTOMLEFT;
