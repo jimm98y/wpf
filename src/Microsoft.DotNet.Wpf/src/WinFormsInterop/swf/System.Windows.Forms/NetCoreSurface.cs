@@ -44,6 +44,11 @@ namespace System.Windows.Forms
 			if (ScaleHelper.IsResolved || ScaleHelper.ManifestMode != null)
 				return false;
 			ScaleHelper.s_requested = highDpiMode;
+			// Applied now, as .NET applies it (SetProcessDpiAwarenessContext): what the application reads
+			// from here on -- the screen's DPI from a Graphics, a font's height -- is the mode's. Held
+			// until the first control instead, an application that sized its icons from the screen's DPI
+			// in between got 96 and drew 16-pixel icons on a 192-dpi display.
+			ScaleHelper.ApplyRequested ();
 			return true;
 		}
 

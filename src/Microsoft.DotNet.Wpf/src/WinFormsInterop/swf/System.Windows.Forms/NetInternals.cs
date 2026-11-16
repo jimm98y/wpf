@@ -221,6 +221,9 @@ namespace System.Windows.Forms
 		/// messages): a PerMonitorV2 application whose process the OS made per-monitor aware.</summary>
 		internal static bool IsThreadPerMonitorV2Aware { get { Resolve (); return s_perMonitorV2; } }
 
+		/// <summary>SetHighDpiMode: the mode it asked for is the process's now.</summary>
+		internal static void ApplyRequested () => Resolve ();
+
 		private static void Resolve ()
 		{
 			if (s_resolved)

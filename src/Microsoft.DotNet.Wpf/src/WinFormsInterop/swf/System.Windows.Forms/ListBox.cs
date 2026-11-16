@@ -442,6 +442,11 @@ namespace System.Windows.Forms
 
 		public virtual int ItemHeight {
 			get {
+				// .NET's: a list box drawn by the control itself has the font's height (LB_GETITEMHEIGHT);
+				// the height set is the owner-drawn rows'. A localizable form's resources carry
+				// ItemHeight = 13, and taking it here clipped every row of a 200% list box to 13 pixels.
+				if (DrawMode == DrawMode.Normal)
+					return TextLineHeight + ExtraItemHeight;
 				if (item_height == -1) {
 					// The list box control's: the font's TEXTMETRIC height (32 for 9pt at 200%).
 					item_height = TextLineHeight + ExtraItemHeight;
@@ -992,7 +997,7 @@ namespace System.Windows.Forms
 			if (use_tabstops)
 				StringFormat.SetTabStops (0, new float [] {(float)(Font.Height * 3.7)});
 
-			if (explicit_item_height) {
+			if (explicit_item_height && DrawMode != DrawMode.Normal) {
 				base.Refresh ();
 			} else {
 				item_height = TextLineHeight + ExtraItemHeight;

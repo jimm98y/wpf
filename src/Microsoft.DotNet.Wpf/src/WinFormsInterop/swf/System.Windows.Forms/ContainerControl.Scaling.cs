@@ -44,6 +44,8 @@ namespace System.Windows.Forms
 				if (value.Width < 0 || value.Height < 0)
 					throw new ArgumentOutOfRangeException (nameof (value), value, "AutoScaleDimensions must not be negative.");
 				_autoScaleDimensions = value;
+				if (s_traceAutoScale && this is Form)
+					Console.Error.WriteLine ($"[autoscale] {GetType ().Name} AutoScaleDimensions = {value} (mode {_autoScaleMode}, suspended {layout_suspended})");
 				if (!_autoScaleDimensions.IsEmpty)
 					LayoutScalingNeeded ();
 			}
@@ -72,6 +74,8 @@ namespace System.Windows.Forms
 				if (!Enum.IsDefined (typeof (AutoScaleMode), value))
 					throw new InvalidEnumArgumentException (nameof (value), (int) value, typeof (AutoScaleMode));
 				bool scalingNeeded = false;
+				if (s_traceAutoScale && this is Form)
+					Console.Error.WriteLine ($"[autoscale] {GetType ().Name} AutoScaleMode {_autoScaleMode} -> {value} (dimensions {_autoScaleDimensions}, suspended {layout_suspended}){Environment.NewLine}{new System.Diagnostics.StackTrace (1, false)}");
 				if (value != _autoScaleMode) {
 					// Dimensions designed for another mode mean nothing in this one.
 					if (_autoScaleMode != AutoScaleMode.Inherit)
@@ -227,6 +231,9 @@ namespace System.Windows.Forms
 		/// <summary>Scales the controls by the auto-scale factor.</summary>
 		public void PerformAutoScale () => PerformAutoScale (includedBounds: true, excludedBounds: true);
 
+		// WF_TRACE_AUTOSCALE=1: each container's auto-scaling -- what it was designed at, what it measures now.
+		private static readonly bool s_traceAutoScale = Environment.GetEnvironmentVariable ("WF_TRACE_AUTOSCALE") == "1";
+
 		private void PerformAutoScale (bool includedBounds, bool excludedBounds, bool causedByFontChanged = false)
 		{
 			bool suspended = false;
@@ -240,6 +247,8 @@ namespace System.Windows.Forms
 					// is scaled by its parent's factor.
 					if (AutoScaleMode == AutoScaleMode.Inherit)
 						autoScaleFactor = GetParentAutoScaleFactor ();
+					if (s_traceAutoScale)
+						Console.Error.WriteLine ($"[autoscale] {GetType ().Name} '{Name}' mode={AutoScaleMode} saved={AutoScaleDimensions} current={CurrentAutoScaleDimensions} factor={autoScaleFactor} font={Font.Name} {Font.SizeInPoints}pt h={Font.Height} dpi={DeviceDpi} display={System.Drawing.WebGpuBackend.DisplayDpi.X} thread={Environment.CurrentManagedThreadId}");
 
 					if (autoScaleFactor.Width != 1.0F || autoScaleFactor.Height != 1.0F) {
 						SizeF included = includedBounds ? autoScaleFactor : SizeF.Empty;
@@ -261,6 +270,8 @@ namespace System.Windows.Forms
 
 		private void PerformNeededAutoScaleOnLayout ()
 		{
+			if (s_traceAutoScale && this is Form)
+				Console.Error.WriteLine ($"[autoscale] {GetType ().Name} layout resuming: scaling needed {_stateScalingNeededOnLayout}, mode {_autoScaleMode}, dimensions {_autoScaleDimensions}");
 			if (_stateScalingNeededOnLayout)
 				PerformAutoScale (_stateScalingNeededOnLayout, false);
 		}

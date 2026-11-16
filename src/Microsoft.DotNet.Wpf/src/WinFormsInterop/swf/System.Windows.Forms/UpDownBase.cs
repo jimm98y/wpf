@@ -802,6 +802,11 @@ namespace System.Windows.Forms
 			// {99,1,16,21} in a 116x23 spin box while leaving the EDIT inset by two, so the two do
 			// not come out of one rectangle. Placed here rather than by widening the display area:
 			// that moved the text along with it, and the text was already where Windows has it.
+			// The buttons are .NET's _defaultButtonsWidth wide at the control's DPI, worked out again on
+			// every layout: their own width is not kept, or a form's auto-scaling scaled it a second time
+			// (16 at 192 dpi is 32, which a 2.17 font scale made 69) and the edit was left a sliver.
+			if (spnSpinner != null)
+				spnSpinner.Width = LogicalToDeviceUnits (16);
 			if (spnSpinner != null && ClientSize.Width > 18 && ClientSize.Height > 2) {
 				int w = spnSpinner.Width;
 				spnSpinner.SetBounds (ClientSize.Width - 1 - w, 1, w, ClientSize.Height - 2);
@@ -927,11 +932,19 @@ namespace System.Windows.Forms
 			case Msg.WM_CHAR:
 				XplatUI.SendMessage (txtView.Handle, (Msg) m.Msg, m.WParam, m.LParam);
 				break;
+			// .NET's: focus coming to the control goes on to its text box -- made the active control the
+			// first time, focused again after -- and focus leaving it is the default handling's. Clearing
+			// the active control on WM_KILLFOCUS refocused the control itself, whose WM_SETFOCUS focused
+			// the text box, whose focus took it from the control again: an up-down that was the first
+			// control of a form overflowed the stack as the form came up.
 			case Msg.WM_SETFOCUS:
-				ActiveControl = txtView;
+				if (ActiveControl == null)
+					ActiveControl = txtView;
+				else if (txtView.IsHandleCreated && !txtView.Focused)
+					XplatUI.SetFocus (txtView.Handle);
 				break;
 			case Msg.WM_KILLFOCUS:
-				ActiveControl = null;
+				DefWndProc (ref m);
 				break;
 			default:
 				base.WndProc (ref m);
