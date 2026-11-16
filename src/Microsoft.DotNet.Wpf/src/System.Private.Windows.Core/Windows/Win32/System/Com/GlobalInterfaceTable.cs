@@ -13,8 +13,21 @@ internal static unsafe partial class GlobalInterfaceTable
 {
     private static readonly IGlobalInterfaceTable* s_globalInterfaceTable;
 
+    // Off Windows there is no OLE and no apartments to marshal between: the table is the process's own,
+    // a reference held per cookie, as the global interface table holds one. WPF's DataObject is a COM
+    // composition registered here, and making one -- an application starting a drag -- threw for want
+    // of OLE32 and took the application down.
+    private static readonly bool s_inProcess = !OperatingSystem.IsWindows();
+    private static readonly Dictionary<uint, nint> s_table = [];
+    private static uint s_nextCookie;
+
     static GlobalInterfaceTable()
     {
+        if (s_inProcess)
+        {
+            return;
+        }
+
         Guid guid = CLSID.StdGlobalInterfaceTable;
 
         fixed (IGlobalInterfaceTable** git = &s_globalInterfaceTable)
@@ -37,6 +50,18 @@ internal static unsafe partial class GlobalInterfaceTable
         where TInterface : unmanaged, IComIID
     {
         uint cookie;
+        if (s_inProcess)
+        {
+            ((IUnknown*)@interface)->AddRef();
+            lock (s_table)
+            {
+                cookie = ++s_nextCookie;
+                s_table[cookie] = (nint)@interface;
+            }
+
+            return cookie;
+        }
+
         HRESULT hr = s_globalInterfaceTable->RegisterInterfaceInGlobal(
             (IUnknown*)@interface,
             IID.Get<TInterface>(),
@@ -53,8 +78,38 @@ internal static unsafe partial class GlobalInterfaceTable
         where TInterface : unmanaged, IComIID
     {
         ComScope<TInterface> @interface = new(null);
-        result = s_globalInterfaceTable->GetInterfaceFromGlobal(cookie, IID.Get<TInterface>(), @interface);
+        result = GetFromGlobal(cookie, *IID.Get<TInterface>(), out void* found);
+        if (result.Succeeded)
+        {
+            @interface = new((TInterface*)found);
+        }
+
         return @interface;
+    }
+
+    /// <summary>GetInterfaceFromGlobal: the registered interface, queried for <paramref name="iid"/>.</summary>
+    private static HRESULT GetFromGlobal(uint cookie, in Guid iid, out void* ppObj)
+    {
+        if (!s_inProcess)
+        {
+            return s_globalInterfaceTable->GetInterfaceFromGlobal(cookie, iid, out ppObj);
+        }
+
+        ppObj = null;
+        nint registered;
+        lock (s_table)
+        {
+            if (!s_table.TryGetValue(cookie, out registered))
+            {
+                return HRESULT.E_INVALIDARG;
+            }
+        }
+
+        fixed (Guid* riid = &iid)
+        fixed (void** result = &ppObj)
+        {
+            return ((IUnknown*)registered)->QueryInterface(riid, result);
+        }
     }
 
     /// <summary>
@@ -63,6 +118,21 @@ internal static unsafe partial class GlobalInterfaceTable
     /// </summary>
     public static HRESULT RevokeInterface(uint cookie)
     {
+        if (s_inProcess)
+        {
+            nint registered;
+            lock (s_table)
+            {
+                if (!s_table.Remove(cookie, out registered))
+                {
+                    return HRESULT.E_INVALIDARG;
+                }
+            }
+
+            ((IUnknown*)registered)->Release();
+            return HRESULT.S_OK;
+        }
+
         HRESULT hr = s_globalInterfaceTable->RevokeInterfaceFromGlobal(cookie);
         Debug.WriteLineIf(hr.Failed, $"{nameof(GlobalInterfaceTable)}: Failed to revoke interface.");
         return hr;

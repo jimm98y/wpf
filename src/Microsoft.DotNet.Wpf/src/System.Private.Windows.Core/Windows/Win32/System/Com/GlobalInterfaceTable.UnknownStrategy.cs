@@ -23,7 +23,7 @@ internal static unsafe partial class GlobalInterfaceTable
         }
 
         int IIUnknownStrategy.QueryInterface(void* instancePtr, in Guid iid, out void* ppObj)
-            => s_globalInterfaceTable->GetInterfaceFromGlobal(_cookie, iid, out ppObj);
+            => GetFromGlobal(_cookie, iid, out ppObj);
 
         int IIUnknownStrategy.Release(void* instancePtr)
         {
