@@ -1726,12 +1726,38 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         return null;
     }
 
+    /// <summary>
+    /// The host a key AppKit gave to no window belongs to: the active form's (or the modal dialog over it).
+    /// On Windows a foreground application always has an active window, and the keyboard is its focus
+    /// window's. Here a closing window can leave AppKit with no key window at all -- a WPF dialog over a
+    /// form (a configuration dialog, say) promotes only another WPF window when it goes -- and every key
+    /// after it went to AppKit, which beeped: Delete and the arrows did nothing on the display until the
+    /// form was clicked. The form's window is made key again, so the keys that follow are its own.
+    /// </summary>
+    private static CocoaHost HostForWindowlessKey(IntPtr evt)
+    {
+        if (Send(evt, Sel("window")) != IntPtr.Zero) return null;
+        nint type = (nint)Send(evt, Sel("type"));
+        if (type != 10 && type != 11 && type != 12) return null;
+        if (Send(App(), Sel("keyWindow")) != IntPtr.Zero) return null;
+        CocoaHost host = ModalHost();
+        if (host == null && s_lastActive != null && s_live.Contains(s_lastActive) && s_lastActive._window != IntPtr.Zero && s_lastActive._form.Visible)
+            host = s_lastActive;
+        if (host == null)
+            foreach (CocoaHost h in s_live)
+                if (h._window != IntPtr.Zero && h._form.Visible && h._form.Enabled) { host = h; break; }
+        if (host == null) return null;
+        if (KeyTrace.On) KeyTrace.Log($"cocoa key event with no window -> the active form '{host._form.Text}', made key");
+        SendVoidPtr(host._window, Sel("makeKeyWindow"), IntPtr.Zero);
+        return host;
+    }
+
     private static bool RouteFromWpf(IntPtr evt)
     {
         if (KeyTrace.On && (nint)Send(evt, Sel("type")) is 10 or 11)
             KeyTrace.Log($"cocoa key event (from WPF's pump) code {(nint)Send(evt, Sel("keyCode"))} window 0x{Send(evt, Sel("window")):x} host {(HostFor(Send(evt, Sel("window"))) != null)}");
         if (BlockedByModal(evt)) return true;
-        CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
+        CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt) ?? HostForWindowlessKey(evt);
         if (host == null) return FilterEmbeddedPress(evt);
         host.HandleEvent(evt);
         return true;
@@ -1803,7 +1829,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
             KeyTrace.Log($"cocoa key event type {(nint)Send(evt, Sel("type"))} code {(nint)Send(evt, Sel("keyCode"))} window 0x{w:x} host {(HostFor(w) != null)} key 0x{Send(App(), Sel("keyWindow")):x} wpfDispatch {(s_wpfDispatch != null)} blocked {BlockedByModal(evt)}");
         }
         if (BlockedByModal(evt)) return;
-        CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt);
+        CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt) ?? HostForWindowlessKey(evt);
         if (host != null) host.HandleEvent(evt);
         else if (FilterEmbeddedPress(evt)) return;
         else if (s_wpfDispatch != null) s_wpfDispatch(evt);

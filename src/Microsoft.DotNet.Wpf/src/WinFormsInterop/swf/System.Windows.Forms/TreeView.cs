@@ -160,6 +160,10 @@ namespace System.Windows.Forms {
 			string_format = new StringFormat ();
 			string_format.LineAlignment = StringAlignment.Center;
 			string_format.Alignment = StringAlignment.Center;
+			// One line, as comctl32 draws a label (DT_SINGLELINE). The node rectangle is three pixels
+			// narrower than the text's measure (GetNodeWidth), and a wrapping format broke every label
+			// there: "Trend Viewer" drew as "Trend" over a clipped "Viewer", "Chart" as "Char".
+			string_format.FormatFlags |= StringFormatFlags.NoWrap;
 
 			vbar.Visible = false;
 			hbar.Visible = false;
