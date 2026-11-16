@@ -750,21 +750,52 @@ public static class WindowsPaths
             return address;
         if (address.StartsWith("file:", StringComparison.OrdinalIgnoreCase) && Uri.TryCreate(address, UriKind.Absolute, out Uri? u))
             return WebAddress(u).ToString();
-        string? native = Native(address);
-        return native != null && native.StartsWith('/') ? native : address;
+        // Disk: the drives as this system has them (C:\ProgramData is the machine state's), not only the separators
+        string? disk = Disk(address);
+        return disk != null && disk.StartsWith('/') ? disk : address;
     }
 
     private static Uri WebAddress(Uri address)
     {
         if (s_windows || address == null || !address.IsAbsoluteUri || !address.IsFile) return address!;
-        string local = address.LocalPath;
+        string local = Uri.UnescapeDataString(address.AbsolutePath);
         if (File.Exists(local) || Directory.Exists(local)) return address;
-        string? native = Native(local.TrimStart('/').Length > 1 && local.TrimStart('/')[1] == ':' ? local.TrimStart('/') : local);
-        return native != null && native.StartsWith('/') ? new Uri(native) : address;
+        // file:///C:/ProgramData/x: a drive's path
+        string windows = local.TrimStart('/');
+        string? disk = Disk(windows.Length > 1 && windows[1] == ':' ? windows : local);
+        return disk != null && disk.StartsWith('/') ? new Uri(disk) : address;
     }
 
-    public static Stream WebClient_OpenRead(System.Net.WebClient client, string address) => client.OpenRead(WebAddress(address));
-    public static Stream WebClient_OpenRead(System.Net.WebClient client, Uri address) => client.OpenRead(WebAddress(address));
+    // WF_TRACE_WEBCLIENT=1: each address an application hands WebClient, and what is read for it.
+    private static bool s_traceWebClient => Environment.GetEnvironmentVariable("WF_TRACE_WEBCLIENT") == "1";
+
+    private static T Traced<T>(string member, object address, object mapped, Func<T> read)
+    {
+        if (!s_traceWebClient) return read();
+        try
+        {
+            T result = read();
+            Console.Error.WriteLine($"[webclient] {member}('{address}') -> '{mapped}': read");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[webclient] {member}('{address}') -> '{mapped}': {ex.GetType().Name}: {ex.Message}");
+            throw;
+        }
+    }
+
+    public static Stream WebClient_OpenRead(System.Net.WebClient client, string address)
+    {
+        string mapped = WebAddress(address);
+        return Traced("OpenRead", address, mapped, () => client.OpenRead(mapped));
+    }
+
+    public static Stream WebClient_OpenRead(System.Net.WebClient client, Uri address)
+    {
+        Uri mapped = WebAddress(address);
+        return Traced("OpenRead", address, mapped, () => client.OpenRead(mapped));
+    }
     public static byte[] WebClient_DownloadData(System.Net.WebClient client, string address) => client.DownloadData(WebAddress(address));
     public static byte[] WebClient_DownloadData(System.Net.WebClient client, Uri address) => client.DownloadData(WebAddress(address));
     public static string WebClient_DownloadString(System.Net.WebClient client, string address) => client.DownloadString(WebAddress(address));
