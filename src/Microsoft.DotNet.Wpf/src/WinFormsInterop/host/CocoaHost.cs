@@ -16,7 +16,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
-internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
+internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 {
     private readonly Form _form;
     private readonly XplatUIWebGpu _driver;
@@ -663,6 +663,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
                 SendVoidPtr(nw, Sel("setContentView:"), nv);
                 _imageView = nv;
                 _window = nw;
+                EnableDragDrop();
                 WinFormsWebGpu.Accessibility.AutomationSource.Register(this);
                 SendVoidPtr(nw, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
                 // As the main thread's forms do: a process the user just started takes the foreground
@@ -715,6 +716,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         SendVoidPtr(win, Sel("setContentView:"), view);
 
         _window = win; _imageView = view;
+        EnableDragDrop();
         if (_form.FormScreenCaptureMode != ScreenCaptureMode.Allow) ApplySharingType(win, _form.FormScreenCaptureMode);
         WinFormsWebGpu.Accessibility.AutomationSource.Register(this);
         // the title bar's close button asks the form, as Windows' does (WindowShouldClose)
@@ -1471,6 +1473,8 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         {
             cls = objc_allocateClassPair(Cls("NSView"), "WfAccessibleFormView", UIntPtr.Zero);
             WindowsBase::MS.Internal.Interop.CocoaAccessibility.AddViewAccessibility(cls);
+            // a form is a drop target of the system's drag and drop (CocoaHost.DragDrop.cs)
+            WindowsBase::MS.Internal.Interop.ForeignDragDrop.AddDestinationMethods(cls);
             objc_registerClassPair(cls);
         }
         return s_accessibleViewClass = cls;
@@ -1716,6 +1720,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
             OnMain(() =>
             {
                 IntPtr w = _window;
+                DisableDragDrop(_imageView);
                 _window = IntPtr.Zero;
                 _imageView = IntPtr.Zero;
                 if (w != IntPtr.Zero) Send(w, Sel("close"));
@@ -2024,6 +2029,8 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
             IntPtr w = Send(evt, Sel("window"));
             KeyTrace.Log($"cocoa key event type {(nint)Send(evt, Sel("type"))} code {(nint)Send(evt, Sel("keyCode"))} window 0x{w:x} host {(HostFor(w) != null)} key 0x{Send(App(), Sel("keyWindow")):x} wpfDispatch {(s_wpfDispatch != null)} blocked {BlockedByModal(evt)}");
         }
+        // A system drag a form started: AppKit tracks it from the events, wherever the pointer is.
+        if (s_systemDragActive) { Send(App(), Sel("sendEvent:"), evt); return; }
         if (BlockedByModal(evt)) return;
         CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt) ?? HostForWindowlessKey(evt);
         if (host != null) host.HandleEvent(evt);

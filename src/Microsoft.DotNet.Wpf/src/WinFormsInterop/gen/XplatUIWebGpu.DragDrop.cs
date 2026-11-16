@@ -30,6 +30,9 @@ namespace System.Windows.Forms
         /// <summary>The control the drag is currently inside, for enter/leave bookkeeping.</summary>
         private Control _dragOverControl;
 
+        /// <summary>The effect the last DragOver (or DragEnter) chose, which the drop starts from.</summary>
+        private DragDropEffects _lastDragEffect;
+
         /// <summary>
         /// Raised by <see cref="StartDrag"/>. WindowsFormsHost installs this and answers it by
         /// calling WPF's DragDrop.DoDragDrop, which is what the platform actually understands. Null
@@ -181,10 +184,12 @@ namespace System.Windows.Forms
             {
                 _dragOverControl?.DndLeave(EventArgs.Empty);
                 _dragOverControl = target;
+                _lastDragEffect = DragDropEffects.None;
                 if (target != null)
                 {
                     var entering = new DragEventArgs(data, keyState, screenX, screenY, allowed, DragDropEffects.None);
                     target.DndEnter(entering);
+                    _lastDragEffect = entering.Effect;
                 }
             }
 
@@ -193,15 +198,20 @@ namespace System.Windows.Forms
                 return DragDropEffects.None;
             }
 
-            var e = new DragEventArgs(data, keyState, screenX, screenY, allowed, DragDropEffects.None);
+            // Each event starts from what the last one chose, as .NET's DropTarget does on Windows: a
+            // DragDrop handler that does not set Effect again (the usual one) leaves it, and DoDragDrop
+            // returns it. Started from None, a drop the target took reported nothing done.
+            var e = new DragEventArgs(data, keyState, screenX, screenY, allowed, _lastDragEffect);
             if (phase == DragPhase.Drop)
             {
                 target.DndDrop(e);
                 _dragOverControl = null;
+                _lastDragEffect = DragDropEffects.None;
             }
             else
             {
                 target.DndOver(e);
+                _lastDragEffect = e.Effect;
             }
             return e.Effect;
         }

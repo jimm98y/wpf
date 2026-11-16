@@ -81,6 +81,14 @@ namespace MS.Internal.Interop.Wayland
             if (offer == IntPtr.Zero) return;
             Log($"enter surface=0x{surface:x} at {s_x:0},{s_y:0} types=[{string.Join(",", types)}]");
 
+            if (ForeignTarget(surface) is { } foreign)
+            {
+                ToScreen(out int fx, out int fy);
+                s_lastEffect = Guard(() => foreign.DragEnter(fx, fy, s_offerTypes, ReadType, AllowedEffects()));
+                Accept(s_lastEffect);
+                return;
+            }
+
             IPlatformDropTarget? target = PlatformDragDrop.Target;
             if (target is null) { Accept(EffectNone); return; }
 
@@ -95,6 +103,14 @@ namespace MS.Internal.Interop.Wayland
             s_x = x / 256.0;
             s_y = y / 256.0;
 
+            if (ForeignTarget(s_surface) is { } foreign)
+            {
+                ToScreen(out int fx, out int fy);
+                s_lastEffect = Guard(() => foreign.DragOver(fx, fy, AllowedEffects()));
+                Accept(s_lastEffect);
+                return;
+            }
+
             IPlatformDropTarget? target = PlatformDragDrop.Target;
             if (target is null) return;
 
@@ -107,8 +123,8 @@ namespace MS.Internal.Interop.Wayland
         {
             if (s_offer == IntPtr.Zero) return;
             Log("leave");
-            IPlatformDropTarget? target = PlatformDragDrop.Target;
-            if (target is not null) Guard(() => { target.DragLeave(s_surface); return 0; });
+            if (ForeignTarget(s_surface) is { } foreign) Guard(() => { foreign.DragLeave(); return 0; });
+            else if (PlatformDragDrop.Target is { } target) Guard(() => { target.DragLeave(s_surface); return 0; });
             DestroyOffer();
         }
 
@@ -119,7 +135,12 @@ namespace MS.Internal.Interop.Wayland
 
             IPlatformDropTarget? target = PlatformDragDrop.Target;
             int effect = EffectNone;
-            if (target is not null)
+            if (ForeignTarget(s_surface) is { } foreign)
+            {
+                ToScreen(out int fx, out int fy);
+                effect = Guard(() => foreign.Drop(fx, fy, AllowedEffects()));
+            }
+            else if (target is not null)
             {
                 ToScreen(out int sx, out int sy);
                 effect = Guard(() => target.Drop(WaylandWindow.HandleOf(s_surface), sx, sy, AllowedEffects()));
@@ -235,6 +256,31 @@ namespace MS.Internal.Interop.Wayland
             catch (Exception e) { Log("target threw: " + e.Message); return EffectNone; }
         }
 
+        // ---- windows that are not WPF's (a WinForms form's toplevel) ------------------------
+        //
+        // A drag over a window with a target of its own goes to that target, in the window layer's screen
+        // pixels (ToScreen): a form shown with no WPF around it is a drop target of its own.
+
+        private static readonly Dictionary<IntPtr, ForeignDropTarget> s_foreignTargets = new();
+
+        internal static void RegisterForeign(IntPtr windowHandle, ForeignDropTarget target)
+        {
+            if (windowHandle == IntPtr.Zero) return;
+            lock (s_foreignTargets) s_foreignTargets[windowHandle] = target;
+        }
+
+        internal static void UnregisterForeign(IntPtr windowHandle)
+        {
+            lock (s_foreignTargets) s_foreignTargets.Remove(windowHandle);
+        }
+
+        private static ForeignDropTarget? ForeignTarget(IntPtr surface)
+        {
+            if (surface == IntPtr.Zero) return null;
+            IntPtr handle = WaylandWindow.HandleOf(surface);
+            lock (s_foreignTargets) return s_foreignTargets.TryGetValue(handle, out ForeignDropTarget? t) ? t : null;
+        }
+
         // ------------------------------------------------------------------ source ----
 
         /// <summary>
@@ -257,7 +303,8 @@ namespace MS.Internal.Interop.Wayland
                                       Func<string, byte[]?> writer, int allowedEffects,
                                       out bool started,
                                       Func<bool>? queryContinue = null,
-                                      Action<int>? giveFeedback = null)
+                                      Action<int>? giveFeedback = null,
+                                      Action<Func<bool>>? waitUntil = null)
         {
             started = false;
             originSurface = WaylandWindow.SurfaceOf(originSurface);   // a window handle names its wl_surface
@@ -307,7 +354,19 @@ namespace MS.Internal.Interop.Wayland
             // Past the point of no return: whatever happens now is a real drag's outcome.
             started = true;
 
-            PumpUntilDragFinished(queryContinue, giveFeedback);
+            if (waitUntil is null) PumpUntilDragFinished(queryContinue, giveFeedback);
+            else
+            {
+                // A host with a loop of its own (a WinForms form with no WPF) waits in it, to the same
+                // ends: the drag finished, five seconds after the button came up, two minutes at most.
+                DateTime hardDeadline = DateTime.UtcNow.AddMinutes(2);
+                DateTime? afterRelease = null;
+                waitUntil(() =>
+                {
+                    if (WaylandInput.LastPointerButtonSerial == 0) afterRelease ??= DateTime.UtcNow.AddSeconds(5);
+                    return s_dragFinished || DateTime.UtcNow > hardDeadline || (afterRelease is DateTime due && DateTime.UtcNow > due);
+                });
+            }
 
             int performed = FromWaylandAction(s_dragAction);
             Log($"drag finished action={s_dragAction} effect={performed}");

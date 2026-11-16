@@ -38,7 +38,7 @@ using Microsoft.Wpf.Interop.WebGpu.Composition.Platform;
 namespace System.Windows.Forms
 {
 	[SupportedOSPlatform ("linux")]
-	internal sealed class WaylandFormHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
+	internal sealed partial class WaylandFormHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA11yHostSite
 	{
 		private readonly Form _form;
 		private readonly XplatUIWebGpu _driver = XplatUIWebGpu.GetInstance ();
@@ -322,6 +322,7 @@ namespace System.Windows.Forms
 			}
 			if (_chromeless && !_popup)
 				_window.SetChromeless (true);
+			EnableDragDrop ();
 			_sizedTo = client;
 			_window.SetContentSize (Math.Max (1, (int)Math.Round (client.Width / _k)), Math.Max (1, (int)Math.Round (client.Height / _k)));
 			// the state the form was given before it had a window (an app that starts maximized): set before
@@ -1102,6 +1103,7 @@ namespace System.Windows.Forms
 			if (_closed)
 				return;
 			_closed = true;
+			DisableDragDrop ();
 			WinFormsWebGpu.Accessibility.AutomationSource.Unregister (_a11yHandle);
 			lock (s_hosts) s_hosts.Remove (this);
 			_form.VisibleChanged -= OnVisibleChanged;

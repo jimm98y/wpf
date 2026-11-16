@@ -593,6 +593,22 @@ namespace MS.Internal.Interop
         public static void SetMany(System.Collections.Generic.IReadOnlyList<(string Type, byte[] Data)> items, string[] filePaths) { }
         public static void SetString(string value) { }
     }
+    public abstract partial class ForeignDropTarget
+    {
+        protected ForeignDropTarget() { }
+        public abstract int DragEnter(double screenX, double screenY, string[] mimeTypes, System.Func<string, byte[]> read, int allowedEffects);
+        public abstract void DragLeave();
+        public abstract int DragOver(double screenX, double screenY, int allowedEffects);
+        public abstract int Drop(double screenX, double screenY, int allowedEffects);
+    }
+    public static partial class ForeignDragDrop
+    {
+        public static void AddDestinationMethods(System.IntPtr viewClass) { }
+        public static void Register(System.IntPtr window, MS.Internal.Interop.ForeignDropTarget target) { }
+        public static int StartDrag(System.IntPtr window, string[] mimeTypes, System.Func<string, byte[]> writer, int allowedEffects, System.Action<System.Func<bool>> waitUntil, out bool started) { throw null; }
+        public static void Trace(string what) { }
+        public static void Unregister(System.IntPtr window) { }
+    }
     public enum ClipboardFormat
     {
         Text = 0,

@@ -52,6 +52,11 @@ namespace MS.Internal.Interop
             ("public.html",            "text/html"),
             ("public.png",             "image/png"),
             ("public.tiff",            "image/tiff"),
+            // The in-process marker. Its MIME spelling is not a type identifier, and AppKit refused it
+            // ("'application/x-wpf-dragdrop' is not a valid UTI string"): a drag of a plain CLR object
+            // between two of the application's own controls carried nothing at all. Under a reverse-DNS
+            // identifier of its own it travels; dynamic identifiers need no declaration.
+            ("org.dotnet.wpf.inprocess-drag", PlatformDragDrop.InProcessMime),
         };
 
         private static string MimeForUti(string uti)
@@ -93,6 +98,20 @@ namespace MS.Internal.Interop
             if ((operations & NSDragOperationMove) != 0) effects |= EffectMove;
             if ((operations & NSDragOperationLink) != 0) effects |= EffectLink;
             return effects;
+        }
+
+        /// <summary>
+        ///  The one effect a drag's outcome is, as Windows' DoDragDrop returns it: AppKit can end a session
+        ///  with several (TextEdit took a dropped text as copy and move together, 17), and a source told
+        ///  Copy|Move treats it as a move -- an application that removes what was moved would have removed
+        ///  what was only copied. Copy wins, as the safe reading; then move, then link.
+        /// </summary>
+        private static int Performed(int effects)
+        {
+            if ((effects & EffectCopy) != 0) return EffectCopy;
+            if ((effects & EffectMove) != 0) return EffectMove;
+            if ((effects & EffectLink) != 0) return EffectLink;
+            return EffectNone;
         }
 
         private static ulong ToOperation(int effects)
@@ -170,11 +189,9 @@ namespace MS.Internal.Interop
                     SendVoidPtr(array, Sel("addObject:"), NSStr(uti));
                 }
 
-                // And the in-process marker, which is not in the table because it has no UTI to map
-                // to -- it travels verbatim. Without it AppKit would never deliver a drag carrying
-                // ONLY that type, which is precisely what dragging a plain CLR object between two of
-                // the application's own controls produces: the commonest drag there is.
-                SendVoidPtr(array, Sel("addObject:"), NSStr(PlatformDragDrop.InProcessMime));
+                // (The in-process marker is in the table: without it AppKit would never deliver a drag
+                // carrying ONLY that type, which is precisely what dragging a plain CLR object between
+                // two of the application's own controls produces -- the commonest drag there is.)
 
                 SendVoidPtr(view, Sel("registerForDraggedTypes:"), array);
             }
@@ -229,27 +246,61 @@ namespace MS.Internal.Interop
         /// </summary>
         private static void LocationOf(IntPtr view, IntPtr sender, out int screenX, out int screenY)
         {
-            NSPoint inWindow = SendPoint(sender, Sel("draggingLocation"));
-
-            IntPtr window = Send(view, Sel("window"));
-            NSPoint onScreen = inWindow;
-            if (window != IntPtr.Zero)
-            {
-                // convertRectToScreen: rather than convertPointToScreen:, which arrived later; the
-                // origin of a zero-sized rect is the converted point.
-                var rect = new NSRect { origin = inWindow, size = default };
-                onScreen = SendRectRect(window, Sel("convertRectToScreen:"), rect).origin;
-            }
-
+            NSPoint onScreen = ScreenPointsOf(view, sender);
             CocoaWindow.ConvertCocoaPointsToScreenPixels(onScreen.x, onScreen.y, out double px, out double py);
             screenX = (int)Math.Round(px);
             screenY = (int)Math.Round(py);
+        }
+
+        /// <summary>The drag location on the screen, in AppKit's points (bottom-left origin).</summary>
+        private static NSPoint ScreenPointsOf(IntPtr view, IntPtr sender)
+        {
+            NSPoint inWindow = SendPoint(sender, Sel("draggingLocation"));
+            IntPtr window = Send(view, Sel("window"));
+            if (window == IntPtr.Zero) return inWindow;
+            // convertRectToScreen: rather than convertPointToScreen:, which arrived later; the
+            // origin of a zero-sized rect is the converted point.
+            var rect = new NSRect { origin = inWindow, size = default };
+            return SendRectRect(window, Sel("convertRectToScreen:"), rect).origin;
+        }
+
+        // ---- views that are not WPF's (a WinForms form's) -----------------------------------
+        //
+        // A view whose class has the destination methods but is not a WPF window answers with a target
+        // of its own, given the drag where AppKit gives it: on the screen in points. The WinForms host
+        // is one: a form shown with no WPF around it is a drop target and a drag source of its own.
+
+        private static readonly Dictionary<IntPtr, ForeignDropTarget> s_foreignTargets = new();
+
+        internal static void RegisterForeign(IntPtr view, ForeignDropTarget target)
+        {
+            if (view == IntPtr.Zero) return;
+            lock (s_foreignTargets) s_foreignTargets[view] = target;
+            RegisterDraggedTypes(view);
+        }
+
+        internal static void UnregisterForeign(IntPtr view)
+        {
+            lock (s_foreignTargets) s_foreignTargets.Remove(view);
+        }
+
+        private static ForeignDropTarget? ForeignTarget(IntPtr view)
+        {
+            lock (s_foreignTargets) return s_foreignTargets.TryGetValue(view, out ForeignDropTarget? t) ? t : null;
         }
 
         private static ulong EnteredImp(IntPtr self, IntPtr sel, IntPtr sender)
         {
             try
             {
+                if (ForeignTarget(self) is { } foreign)
+                {
+                    IntPtr fpb = Send(sender, Sel("draggingPasteboard"));
+                    NSPoint fp = ScreenPointsOf(self, sender);
+                    return ToOperation(foreign.DragEnter(fp.x, fp.y, TypesOf(fpb), mime => Read(fpb, mime),
+                        ToEffects(SendNUInt(sender, Sel("draggingSourceOperationMask")))));
+                }
+
                 IPlatformDropTarget? target = PlatformDragDrop.Target;
                 if (target is null) return NSDragOperationNone;
 
@@ -273,6 +324,12 @@ namespace MS.Internal.Interop
         {
             try
             {
+                if (ForeignTarget(self) is { } foreign)
+                {
+                    NSPoint fp = ScreenPointsOf(self, sender);
+                    return ToOperation(foreign.DragOver(fp.x, fp.y, ToEffects(SendNUInt(sender, Sel("draggingSourceOperationMask")))));
+                }
+
                 IPlatformDropTarget? target = PlatformDragDrop.Target;
                 if (target is null) return NSDragOperationNone;
 
@@ -289,7 +346,11 @@ namespace MS.Internal.Interop
 
         private static void ExitedImp(IntPtr self, IntPtr sel, IntPtr sender)
         {
-            try { PlatformDragDrop.Target?.DragLeave(CocoaWindow.HandleOf(self)); }
+            try
+            {
+                if (ForeignTarget(self) is { } foreign) foreign.DragLeave();
+                else PlatformDragDrop.Target?.DragLeave(CocoaWindow.HandleOf(self));
+            }
             catch (Exception e) { Log("dragging exited", e); }
         }
 
@@ -299,6 +360,12 @@ namespace MS.Internal.Interop
         {
             try
             {
+                if (ForeignTarget(self) is { } foreign)
+                {
+                    NSPoint fp = ScreenPointsOf(self, sender);
+                    return foreign.Drop(fp.x, fp.y, ToEffects(SendNUInt(sender, Sel("draggingSourceOperationMask")))) != EffectNone;
+                }
+
                 IPlatformDropTarget? target = PlatformDragDrop.Target;
                 if (target is null) return false;
 
@@ -373,12 +440,22 @@ namespace MS.Internal.Interop
 
         private static void SourceEndedImp(IntPtr self, IntPtr sel, IntPtr session, NSPoint point, ulong operation)
         {
+            TraceDrag($"session 0x{session:x} ended at {point.x},{point.y} operation {operation} (moves seen: {s_moves})");
             s_dragOperation = operation;
             s_dragEnded = true;
         }
 
+        private static int s_moves;
+        private static readonly bool s_traceDrag = Environment.GetEnvironmentVariable("WPF_TRACE_DRAG") == "1";
+
+        internal static void TraceDrag(string what)
+        {
+            if (s_traceDrag) Console.Error.WriteLine($"[drag {DateTime.Now:HH:mm:ss.fff}] {what}");
+        }
+
         private static void SourceMovedImp(IntPtr self, IntPtr sel, IntPtr session, NSPoint point)
         {
+            if (s_moves++ % 20 == 0) TraceDrag($"session 0x{session:x} moved to {point.x},{point.y}");
             // Deliberately empty. AppKit never tells the SOURCE what the destination under the
             // pointer would do -- that answer exists only inside the destination, and reaches the
             // source once, at the end. So there is nothing to report per move that would not be a
@@ -415,7 +492,7 @@ namespace MS.Internal.Interop
         /// <param name="giveFeedback">Told the current effect whenever it changes.</param>
         internal static int StartDrag(IntPtr view, string[] mimeTypes, Func<string, byte[]?> writer,
                                       int allowedEffects, out bool started,
-                                      Action<int>? giveFeedback = null)
+                                      Action<int>? giveFeedback = null, Action<Func<bool>>? waitUntil = null)
         {
             started = false;
             view = CocoaWindow.ViewOf(view);   // the drag source's HWND: AppKit wants its view
@@ -438,10 +515,21 @@ namespace MS.Internal.Interop
                 if (item == IntPtr.Zero) return EffectNone;
 
                 bool anyData = false;
+                string[]? fileUrls = null;
                 foreach (string mime in mimeTypes)
                 {
                     byte[]? bytes = writer(mime);
                     if (bytes is null) continue;
+
+                    // A file list is one file URL per pasteboard item, as Finder puts several files there:
+                    // the first file on this item, the others on items of their own below. A uri-list's
+                    // lines under public.file-url were no URL at all, and nothing could take them.
+                    if (mime == "text/uri-list")
+                    {
+                        fileUrls = FileUrls(bytes);
+                        if (fileUrls.Length == 0) continue;
+                        bytes = System.Text.Encoding.UTF8.GetBytes(fileUrls[0]);
+                    }
 
                     // Only what the pasteboard took: setData:forType: refuses a type it cannot hold (an
                     // app's private format whose name makes no valid type identifier), and an item with
@@ -454,18 +542,29 @@ namespace MS.Internal.Interop
                 // Nothing the system could carry: the drag stays inside the application (started=false).
                 if (!anyData) return EffectNone;
 
-                IntPtr dragItem = SendPtrPtr(
-                    Send(objc_getClass("NSDraggingItem"), Sel("alloc")),
-                    Sel("initWithPasteboardWriter:"), item);
-                if (dragItem == IntPtr.Zero) return EffectNone;
-
                 // A frame at the pointer with no image: AppKit needs somewhere to anchor the drag,
                 // and WPF has no drag visual to give it. The pointer still shows the drag cursor.
                 NSPoint at = SendPoint(theEvent, Sel("locationInWindow"));
                 var frame = new NSRect { origin = at, size = new NSSize { width = 1, height = 1 } };
-                SendVoidRectPtr(dragItem, Sel("setDraggingFrame:contents:"), frame, IntPtr.Zero);
 
-                IntPtr items = SendPtrPtr(objc_getClass("NSArray"), Sel("arrayWithObject:"), dragItem);
+                IntPtr items = Send(objc_getClass("NSMutableArray"), Sel("array"));
+                IntPtr dragItem = SendPtrPtr(
+                    Send(objc_getClass("NSDraggingItem"), Sel("alloc")),
+                    Sel("initWithPasteboardWriter:"), item);
+                if (dragItem == IntPtr.Zero || items == IntPtr.Zero) return EffectNone;
+                SendVoidRectPtr(dragItem, Sel("setDraggingFrame:contents:"), frame, IntPtr.Zero);
+                SendVoidPtr(items, Sel("addObject:"), dragItem);
+                for (int f = 1; fileUrls != null && f < fileUrls.Length; f++)
+                {
+                    IntPtr fileItem = Send(Send(objc_getClass("NSPasteboardItem"), Sel("alloc")), Sel("init"));
+                    if (fileItem == IntPtr.Zero
+                        || !SendBoolPtrPtr(fileItem, Sel("setData:forType:"), NSData(System.Text.Encoding.UTF8.GetBytes(fileUrls[f])), NSStr("public.file-url")))
+                        continue;
+                    IntPtr extra = SendPtrPtr(Send(objc_getClass("NSDraggingItem"), Sel("alloc")), Sel("initWithPasteboardWriter:"), fileItem);
+                    if (extra == IntPtr.Zero) continue;
+                    SendVoidRectPtr(extra, Sel("setDraggingFrame:contents:"), frame, IntPtr.Zero);
+                    SendVoidPtr(items, Sel("addObject:"), extra);
+                }
 
                 s_allowedOperations = 0;
                 if ((allowedEffects & EffectCopy) != 0) s_allowedOperations |= NSDragOperationCopy;
@@ -482,10 +581,15 @@ namespace MS.Internal.Interop
 
                 // Past the point of no return: whatever happens now is a real drag's outcome.
                 started = true;
+                s_moves = 0;
+                TraceDrag($"session 0x{session:x} begun from event type {(nint)Send(theEvent, Sel("type"))} in view 0x{view:x}, {mimeTypes.Length} types");
 
                 RaiseInitialFeedback(allowedEffects);
-                PumpUntilDragEnded();
-                return ToEffects(s_dragOperation);
+                // A host with a loop of its own (a WinForms form with no WPF) waits in it; WPF's in a
+                // dispatcher frame.
+                if (waitUntil != null) waitUntil(() => s_dragEnded);
+                else PumpUntilDragEnded();
+                return Performed(ToEffects(s_dragOperation));
             }
             catch (Exception e)
             {
@@ -496,6 +600,18 @@ namespace MS.Internal.Interop
             {
                 s_giveFeedback = null;
             }
+        }
+
+        /// <summary>The file URLs of a text/uri-list (comments and blank lines skipped).</summary>
+        private static string[] FileUrls(byte[] uriList)
+        {
+            var urls = new List<string>();
+            foreach (string raw in System.Text.Encoding.UTF8.GetString(uriList).Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.Length > 0 && line[0] != '#') urls.Add(line);
+            }
+            return urls.ToArray();
         }
 
         /// <summary>
@@ -594,5 +710,56 @@ namespace MS.Internal.Interop
 
         [DllImport(ObjC, EntryPoint = "objc_msgSend")]
         private static extern IntPtr SendDataWithBytes(IntPtr receiver, IntPtr selector, byte[] bytes, nuint length);
+    }
+
+    /// <summary>A drop target that is not a WPF window (a WinForms form's). Points are on the screen as the
+    /// head has it: on macOS AppKit's points with the origin at the bottom left; on Wayland the window
+    /// layer's screen in device pixels. Effects are DragDropEffects values.</summary>
+    public abstract class ForeignDropTarget
+    {
+        public abstract int DragEnter(double screenX, double screenY, string[] mimeTypes, Func<string, byte[]?> read, int allowedEffects);
+        public abstract int DragOver(double screenX, double screenY, int allowedEffects);
+        public abstract void DragLeave();
+        public abstract int Drop(double screenX, double screenY, int allowedEffects);
+    }
+
+    /// <summary>The system's drag and drop for windows that are not WPF's: the WinForms hosts' forms.</summary>
+    public static class ForeignDragDrop
+    {
+        /// <summary>macOS: adds the NSDraggingDestination methods to a view class being built (before
+        /// objc_registerClassPair).</summary>
+        public static void AddDestinationMethods(IntPtr viewClass) => CocoaDragDrop.AddViewDragging(viewClass);
+
+        /// <summary>Makes a window a drop target answered by <paramref name="target"/>: on macOS its view (of a
+        /// class given the methods above), on Wayland its WaylandWindow handle.</summary>
+        public static void Register(IntPtr window, ForeignDropTarget target)
+        {
+            if (OperatingSystem.IsMacOS()) CocoaDragDrop.RegisterForeign(window, target);
+            else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) Wayland.WaylandDragDrop.RegisterForeign(window, target);
+        }
+
+        public static void Unregister(IntPtr window)
+        {
+            if (OperatingSystem.IsMacOS()) CocoaDragDrop.UnregisterForeign(window);
+            else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) Wayland.WaylandDragDrop.UnregisterForeign(window);
+        }
+
+        /// <summary>Starts a system drag from <paramref name="window"/> (with the pointer press it is part of),
+        /// offering <paramref name="mimeTypes"/> as <paramref name="writer"/> writes them, and waits for its
+        /// outcome in <paramref name="waitUntil"/> -- the host's own loop, run until the function it is given
+        /// says the drag is over. <paramref name="started"/> is false when no drag could begin.</summary>
+        public static int StartDrag(IntPtr window, string[] mimeTypes, Func<string, byte[]?> writer, int allowedEffects,
+                                    Action<Func<bool>> waitUntil, out bool started)
+        {
+            if (OperatingSystem.IsMacOS())
+                return CocoaDragDrop.StartDrag(window, mimeTypes, writer, allowedEffects, out started, null, waitUntil);
+            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
+                return Wayland.WaylandDragDrop.StartDrag(window, mimeTypes, writer, allowedEffects, out started, null, null, waitUntil);
+            started = false;
+            return 0;
+        }
+
+        /// <summary>Writes a line to the drag trace (WPF_TRACE_DRAG=1).</summary>
+        public static void Trace(string what) => CocoaDragDrop.TraceDrag(what);
     }
 }
