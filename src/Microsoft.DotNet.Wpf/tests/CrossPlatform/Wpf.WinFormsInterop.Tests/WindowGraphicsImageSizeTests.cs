@@ -45,6 +45,80 @@ namespace Wpf.WinFormsInterop.Tests
         }
 
         [Fact]
+        public void AtTwiceTheDpiAPointSizedStringIsLaidOutAsOnABitmap()
+        {
+            float was = DisplayDpi.X;
+            DisplayDpi.Set(192);
+            try
+            {
+                using var font = new Font("Microsoft Sans Serif", 8.25f, FontStyle.Regular, GraphicsUnit.Point);
+                using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                var box = new SizeF(63, 19);
+                using var bmp = new Bitmap(10, 10);
+                using var onBitmap = Graphics.FromImage(bmp);
+                onBitmap.MeasureString("&Cancel", font, box, format, out int bChars, out int bLines);
+                Graphics rec = GpuRaster.NewRecording();
+                rec.MeasureString("&Cancel", font, box, format, out int rChars, out int rLines);
+                GpuRaster.EndScene(rec);
+                Assert.Equal((bChars, bLines), (rChars, rLines));
+                Assert.Equal(1, rLines);
+            }
+            finally
+            {
+                DisplayDpi.Set(was);
+            }
+        }
+
+        [Fact]
+        public void APngThatStatesNoResolutionHasTheDesktopsAsInGdiPlus()
+        {
+            // a PNG written with a resolution, and the same pixels with its pHYs chunk taken out
+            byte[] withPhys;
+            using (var src = new Bitmap(16, 16))
+            {
+                src.SetResolution(72, 72);
+                using var ms = new System.IO.MemoryStream();
+                src.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                withPhys = ms.ToArray();
+            }
+            byte[] noPhys = StripChunk(withPhys, "pHYs");
+            Assert.True(noPhys.Length < withPhys.Length, "the chunk was there to take out");
+
+            float was = DisplayDpi.X;
+            DisplayDpi.Set(192);
+            try
+            {
+                using (var stated = new Bitmap(new System.IO.MemoryStream(withPhys)))
+                    Assert.Equal(72f, stated.HorizontalResolution, 0);
+                using (var unstated = new Bitmap(new System.IO.MemoryStream(noPhys)))
+                {
+                    Assert.Equal(192f, unstated.HorizontalResolution);
+                    // ...so drawn at its own size on a 192-dpi window it goes down pixel for pixel
+                    Assert.Equal("0,0,16,16", ImageRect(g => g.DrawImageUnscaled(unstated, 0, 0)));
+                }
+            }
+            finally
+            {
+                DisplayDpi.Set(was);
+            }
+        }
+
+        private static byte[] StripChunk(byte[] png, string type)
+        {
+            var o = new System.IO.MemoryStream();
+            o.Write(png, 0, 8);
+            int i = 8;
+            while (i + 8 <= png.Length)
+            {
+                int len = (png[i] << 24) | (png[i + 1] << 16) | (png[i + 2] << 8) | png[i + 3];
+                string t = System.Text.Encoding.ASCII.GetString(png, i + 4, 4);
+                if (t != type) o.Write(png, i, 12 + len);
+                i += 12 + len;
+            }
+            return o.ToArray();
+        }
+
+        [Fact]
         public void IntoABitmapTheBitmapsResolutionDecides()
         {
             using var target = new Bitmap(100, 100);

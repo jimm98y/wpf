@@ -58,6 +58,16 @@ namespace System.Drawing
         static PropertyItem Short (int id, int v) => Property (id, 3, 2, new [] { (byte) v, (byte) (v >> 8) });
         static PropertyItem Long (int id, uint v) => Property (id, 4, 4, BitConverter.GetBytes (v));
 
+        /// <summary>An image whose file states no resolution has the desktop's, as GDI+ gives it one
+        /// (Globals::DesktopDpiX): 96 on a 96-dpi screen, 192 to a system-aware application at 200%. At
+        /// 96 always, a control's 16-pixel PNG icons drawn at their own size (DrawImageUnscaled) came
+        /// out twice that size on a Retina display, where Windows draws them pixel for pixel.</summary>
+        static void DesktopDpi (GdipFrame frame)
+        {
+            frame.DpiX = System.Drawing.WebGpuBackend.DisplayDpi.X;
+            frame.DpiY = System.Drawing.WebGpuBackend.DisplayDpi.Y;
+        }
+
         /// <summary>A resolution in pixels per metre as GDI+ reports it: the product truncated to a
         /// float (3779 ppm reads 95.9866, not 95.98660).</summary>
         internal static float DpiFromPpm (double ppm) => TruncToFloat (ppm * 0.0254);
@@ -199,6 +209,7 @@ namespace System.Drawing
             }
             bool realDpi = info.HasPhys && info.PhysUnit == 1;
             if (realDpi) { frame.DpiX = DpiFromPpm (info.PpmX); frame.DpiY = DpiFromPpm (info.PpmY); }
+            else DesktopDpi (frame);
             var img = new GdipImageData (frame) { RawFormat = ImageFormat.Png.Guid };
             // WIC's frame format for grey without tRNS is Gray2/4/8/16 (BlackWhite at one bit); with
             // tRNS it is already BGRA.
@@ -261,6 +272,7 @@ namespace System.Drawing
             }
             bool realDpi = info.PpmX > 0 && info.PpmY > 0;
             if (realDpi) { frame.DpiX = DpiFromPpm (info.PpmX); frame.DpiY = DpiFromPpm (info.PpmY); }
+            else DesktopDpi (frame);
             var img = new GdipImageData (frame) { RawFormat = ImageFormat.Bmp.Guid };
             img.Flags = FlagReadOnly | FlagRealPixelSize | (realDpi ? FlagRealDpi : 0) | FlagRgb
                       | (frame.Format == PixelFormat.Format32bppArgb ? FlagAlpha : 0);
