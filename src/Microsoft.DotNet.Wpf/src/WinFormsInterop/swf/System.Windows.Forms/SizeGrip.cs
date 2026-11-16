@@ -38,6 +38,10 @@ namespace System.Windows.Forms {
 		private bool	is_virtual; // If virtual the size grip is painted directly on the captured controls' surface.
 		private bool	enabled;
 		private bool	fill_background;
+		// WF_TRACE_FRAMES=1: the grip's drags.
+		private static readonly bool s_traceGrip = Environment.GetEnvironmentVariable ("WF_TRACE_FRAMES") == "1";
+		private bool	grip_cursor_shown;
+		private Cursor	cursor_before_grip;
 		private Rectangle	last_painted_area; // The last area that was painted (to know which area to invalidate when resizing).
 		#endregion	// Local Variables
 
@@ -126,8 +130,14 @@ namespace System.Windows.Forms {
 				cursor = Cursors.Default;
 			}
 			if (is_virtual) {
-				if (CapturedControl != null)
-					CapturedControl.Cursor = cursor;
+				// The grip is a corner of the control it serves, and only that corner shows the
+				// diagonal cursor (HandleMouseMove sets it by where the pointer is). Set on the whole
+				// control here, every form a modal dialog had disabled showed it everywhere once the
+				// dialog closed and gave the form back its Enabled.
+				if (CapturedControl != null && !enabled && grip_cursor_shown) {
+					grip_cursor_shown = false;
+					CapturedControl.Cursor = cursor_before_grip ?? Cursors.Default;
+				}
 			} else {
 				this.Cursor = cursor;
 			}
@@ -190,6 +200,8 @@ namespace System.Windows.Forms {
 				ctrl.Capture = true;
 				captured = true;
 				capture_point = Control.MousePosition;
+				if (s_traceGrip)
+					Console.Error.WriteLine ($"[sizegrip] {ctrl.GetType ().Name} '{ctrl.Name}' grip pressed at {capture_point}, size {CapturedControl.Size}");
 
 				window_w = CapturedControl.Width;
 				window_h = CapturedControl.Height;
@@ -201,12 +213,31 @@ namespace System.Windows.Forms {
 			Control ctrl = (Control) sender;
 			Rectangle rect = GetDefaultRectangle (ctrl);
 			
+			// Over the grip the diagonal cursor, and off it again the control's own cursor -- the one it
+			// had before, not Default over whatever the application set.
 			if (rect.Contains (e.X, e.Y)) {
+				if (!grip_cursor_shown) {
+					cursor_before_grip = ctrl.Cursor;
+					grip_cursor_shown = true;
+				}
 				ctrl.Cursor = Cursors.SizeNWSE;
-			} else {
-				ctrl.Cursor = Cursors.Default;
+			} else if (grip_cursor_shown) {
+				grip_cursor_shown = false;
+				ctrl.Cursor = cursor_before_grip ?? Cursors.Default;
 			}
 			
+			// A drag of the grip ends when the button is released, also when the release went elsewhere
+			// (the window server's own resizing of the window took it): kept on, every later move of the
+			// pointer resized the form after it -- it jumped about, and at a height of 0 it went white.
+			if (captured) {
+				bool? real = OperatingSystem.IsMacOS () ? CocoaHost.RealLeftButtonDown () : null;
+				if (real == false || (real == null && (Control.MouseButtons & MouseButtons.Left) == 0)) {
+					if (s_traceGrip)
+						Console.Error.WriteLine ($"[sizegrip] {ctrl.GetType ().Name} '{ctrl.Name}' drag ended: the button is up");
+					HandleMouseUp (sender, e);
+					return;
+				}
+			}
 			if (captured) {
 				int	delta_x;
 				int	delta_y;
@@ -234,6 +265,8 @@ namespace System.Windows.Forms {
 					new_size.Height = min_size.Height;
 
 				if (new_size != parent.Size) {
+					if (s_traceGrip)
+						Console.Error.WriteLine ($"[sizegrip] {parent.GetType ().Name} '{parent.Name}' resized by the grip {parent.Size} -> {new_size} (pointer {current_point}, from {capture_point})");
 					parent.Size = new_size;
 				}
 			}
