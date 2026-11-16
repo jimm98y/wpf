@@ -342,13 +342,16 @@ namespace MS.Internal.Interop.Wayland
             s_dragWriter = writer;
             s_dragTypes = mimeTypes;
             s_dragFinished = false;
+            s_dropPerformed = false;
             s_dragAction = 0;
 
             Log($"start_drag types=[{string.Join(",", mimeTypes)}] serial={serial}");
+            IntPtr icon = DragIcon.Create();
             Wl.Request(device, WL_DATA_DEVICE_START_DRAG,
                        WlArgument.Ptr(source), WlArgument.Ptr(originSurface),
-                       WlArgument.Ptr(IntPtr.Zero),      // no drag icon: the compositor draws a default
+                       WlArgument.Ptr(icon),             // Windows' drag cursor: a box at the pointer, '+' copying
                        WlArgument.UInt(serial));
+            DragIcon.Show(copying: false);
             WaylandDisplay.Flush();
 
             // Past the point of no return: whatever happens now is a real drag's outcome.
@@ -448,8 +451,11 @@ namespace MS.Internal.Interop.Wayland
             return actions;
         }
 
+        private static bool s_dropPerformed;
+
         private static void EndDrag()
         {
+            DragIcon.Destroy();
             if (s_dragSource != IntPtr.Zero)
             {
                 try { Wl.Destroy(s_dragSource, WL_DATA_SOURCE_DESTROY); } catch { }
@@ -473,27 +479,120 @@ namespace MS.Internal.Interop.Wayland
         internal static void SourceCancelled(IntPtr source)
         {
             if (source != s_dragSource) return;
-            Log("source cancelled");
-            s_dragAction = 0;
+            Log($"source cancelled{(s_dropPerformed ? $" after the drop (action {s_dragAction} kept)" : "")}");
+            // Cancelled after the drop was performed is a target that took the data and never said it was
+            // finished (GNOME's Text Editor: drop performed with copy, then cancelled): the drop happened,
+            // as the action it chose. Cancelled before it is a drag that did nothing.
+            if (!s_dropPerformed) s_dragAction = 0;
             s_dragFinished = true;
         }
 
         internal static void SourceDropPerformed(IntPtr source)
         {
             if (source != s_dragSource) return;
-            Log("drop performed");
+            Log($"drop performed (action {s_dragAction})");
+            s_dropPerformed = true;
         }
 
         internal static void SourceFinished(IntPtr source)
         {
             if (source != s_dragSource) return;
+            Log($"finished (action {s_dragAction})");
             s_dragFinished = true;
         }
 
         internal static void SourceAction(IntPtr source, uint action)
         {
             if (source != s_dragSource) return;
+            Log($"source action {action}");
             s_dragAction = action;
+            DragIcon.Show(copying: (action & WL_DND_ACTION_COPY) != 0);
+            WaylandDisplay.Flush();
+        }
+    }
+
+    /// <summary>
+    /// The picture that follows the pointer while a drag this process started is over: Windows' drag
+    /// cursor, which plain OLE drag and drop shows -- a small page below and right of the pointer, with a
+    /// '+' while the target would copy. Without an icon surface mutter showed nothing but the pointer.
+    /// The surface's top left is at the pointer's hot spot, so the page is drawn inset in it.
+    /// </summary>
+    internal static unsafe class DragIcon
+    {
+        private const int Size = 32;
+        private static IntPtr s_surface, s_plain, s_copy;
+        private static bool? s_shown;
+
+        internal static IntPtr Create()
+        {
+            Destroy();
+            if (WaylandDisplay.Compositor == IntPtr.Zero || WaylandDisplay.Shm == IntPtr.Zero) return IntPtr.Zero;
+            s_surface = Wl.Construct(WaylandDisplay.Compositor, WL_COMPOSITOR_CREATE_SURFACE,
+                "wl_surface", Wl.wl_proxy_get_version(WaylandDisplay.Compositor), WlArgument.NewId());
+            if (s_surface == IntPtr.Zero) return IntPtr.Zero;
+            s_plain = WaylandCursor.MakeBuffer(Draw(copying: false), Size, Size);
+            s_copy = WaylandCursor.MakeBuffer(Draw(copying: true), Size, Size);
+            return s_surface;
+        }
+
+        internal static void Show(bool copying)
+        {
+            if (s_surface == IntPtr.Zero || s_shown == copying) return;
+            IntPtr buffer = copying ? s_copy : s_plain;
+            if (buffer == IntPtr.Zero) return;
+            s_shown = copying;
+            Wl.Request(s_surface, WL_SURFACE_ATTACH, WlArgument.Ptr(buffer), WlArgument.Int(0), WlArgument.Int(0));
+            Wl.Request(s_surface, WL_SURFACE_DAMAGE, WlArgument.Int(0), WlArgument.Int(0), WlArgument.Int(Size), WlArgument.Int(Size));
+            Wl.Request(s_surface, WL_SURFACE_COMMIT);
+        }
+
+        internal static void Destroy()
+        {
+            try
+            {
+                if (s_surface != IntPtr.Zero) Wl.Destroy(s_surface, WL_SURFACE_DESTROY);
+                if (s_plain != IntPtr.Zero) Wl.Destroy(s_plain, 0 /* wl_buffer.destroy */);
+                if (s_copy != IntPtr.Zero) Wl.Destroy(s_copy, 0 /* wl_buffer.destroy */);
+            }
+            catch { }
+            s_surface = s_plain = s_copy = IntPtr.Zero;
+            s_shown = null;
+        }
+
+        /// <summary>The page (white, a dark edge, a folded corner) and, copying, the '+' badge; straight BGRA.</summary>
+        private static byte[] Draw(bool copying)
+        {
+            var px = new byte[Size * Size * 4];
+            void Set(int x, int y, byte r, byte g, byte b, byte a = 255)
+            {
+                if (x < 0 || y < 0 || x >= Size || y >= Size) return;
+                int i = (y * Size + x) * 4;
+                px[i] = b; px[i + 1] = g; px[i + 2] = r; px[i + 3] = a;
+            }
+            // the page: 11 x 13 below and right of the pointer's tip, as Windows' drag cursor has it
+            const int L = 9, T = 15, W = 11, H = 13;
+            for (int y = T; y < T + H; y++)
+                for (int x = L; x < L + W; x++)
+                {
+                    bool edge = x == L || y == T || x == L + W - 1 || y == T + H - 1;
+                    bool fold = x - L + (T + 3 - y) > W - 1;           // the cut top-right corner
+                    if (fold && !(x - L + (T + 3 - y) == W)) continue;
+                    if (edge || fold) Set(x, y, 40, 40, 40);
+                    else Set(x, y, 255, 255, 255, 235);
+                }
+            if (copying)
+            {
+                // a dark square with a white '+', at the page's bottom right
+                const int BL = 17, BT = 22, BS = 9;
+                for (int y = BT; y < BT + BS; y++)
+                    for (int x = BL; x < BL + BS; x++)
+                    {
+                        bool plus = (x == BL + BS / 2 && y > BT + 1 && y < BT + BS - 2) || (y == BT + BS / 2 && x > BL + 1 && x < BL + BS - 2);
+                        if (plus) Set(x, y, 255, 255, 255);
+                        else Set(x, y, 30, 30, 30);
+                    }
+            }
+            return px;
         }
     }
 }

@@ -144,7 +144,7 @@ namespace MS.Internal.Interop.Wayland
         [DllImport("libc")] private static extern int close(int fd);
 
         // wl_shm's ARGB8888 (little-endian: B, G, R, A, premultiplied) from straight BGRA, in a pool of its own
-        private static IntPtr MakeBuffer(byte[] bgra, int width, int height)
+        internal static IntPtr MakeBuffer(byte[] bgra, int width, int height)
         {
             if (WaylandDisplay.Shm == IntPtr.Zero || width <= 0 || height <= 0 || bgra.Length < width * height * 4) return IntPtr.Zero;
             int size = width * height * 4;
