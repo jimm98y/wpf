@@ -361,10 +361,15 @@ namespace System.Windows.Forms.Integration
                 hostScale = 1f;
                 _parked = true;
             }
-            else if (_parked && _source != null)
+            else if (_source != null && (_parked || hostWindow != _sourceParent))
             {
+                // Out of the parking window into the form's -- or into the form's NEW window: a modal
+                // dialog's handles go when it closes and come back with the next ShowDialog, and the
+                // hosted window stayed in the window that went. A dialog an application shows again
+                // (its data browser) came up empty the second time.
                 _parked = false;
                 if (!ReparentHostedWindow(hostWindow)) { _failed = true; return; }
+                _sourceParent = hostWindow;
                 // Shown again in its real parent: WPF tracks visibility from the window's
                 // WM_SHOWWINDOW, and in the hidden parking window the tree came up not visible --
                 // content that appears only once it is (app's licence notice) never did.
@@ -448,6 +453,7 @@ namespace System.Windows.Forms.Integration
                     Height = ph,
                 };
                 _source = new HwndSource(p);
+                _sourceParent = hostWindow;
                 // the hosted window is this control's child window, as on Windows (Control.FromChildHandle)
                 Control.RegisterForeignChild(_source.Handle, this);
                 // Claim BEFORE the first render: an unclaimed frame would build a swap chain for this
@@ -481,6 +487,7 @@ namespace System.Windows.Forms.Integration
         // internal to PresentationCore, hence the reflection; a head that somehow lacks it just leaves
         // the window put rather than failing the app.
         private bool _parked;
+        private IntPtr _sourceParent;   // the window the hosted window is a child of
         private bool _nudgeMove;
         [ThreadStatic] private static HwndSource t_parking;
 
@@ -526,6 +533,13 @@ namespace System.Windows.Forms.Integration
                 return true;
             }
             if (OperatingSystem.IsLinux()) return true;
+            // macOS: the hosted window is a child NSWindow of the form's (WPF's SetParent is the user32
+            // import, which is not there), moved to the new parent as HwndWrapper attaches it at creation.
+            if (OperatingSystem.IsMacOS())
+            {
+                if (_source != null) MS.Internal.Interop.CocoaWindow.FromHandle(_source.Handle)?.AttachToParentWindow(parent);
+                return true;
+            }
             if (s_setParent == null)
                 foreach (Assembly a in new[] { typeof(HwndSource).Assembly, typeof(Dispatcher).Assembly })
                 {
@@ -534,7 +548,7 @@ namespace System.Windows.Forms.Integration
                 }
             if (s_setParent == null) return false;
             try { s_setParent.Invoke(null, new object[] { new HandleRef(this, _source.Handle), new HandleRef(null, parent) }); return true; }
-            catch (Exception ex) { Console.Error.WriteLine("ElementHost: reparent failed: " + ex.Message); return false; }
+            catch (Exception ex) { Console.Error.WriteLine("ElementHost: reparent failed: " + (ex.InnerException ?? ex)); return false; }
         }
 
         /// <summary>Whether this control, and every container up to its form, is meant to be shown --
@@ -562,7 +576,9 @@ namespace System.Windows.Forms.Integration
             base.OnHandleCreated(e);
             // Only on the thread the WPF tree belongs to (a control can be created on one thread and
             // get its handle on another).
-            if (CompositeIntoHostFrame && _source == null && !_failed && OnTreeThread)
+            // ...and when the handle is made again with the source still there (a dialog shown a second
+            // time), the source goes into the form's new window.
+            if ((CompositeIntoHostFrame || _source != null) && !_failed && OnTreeThread)
             {
                 try { EnsureSource(); }
                 catch (Exception ex) { _failed = true; Console.Error.WriteLine("ElementHost: hosting failed: " + ex); }

@@ -666,7 +666,9 @@ namespace MS.Internal.Interop
             if (_window == IntPtr.Zero || parentView == IntPtr.Zero) return;
             // A WPF parent comes as its HWND (an ElementHost's parking window); a WinForms host as its view.
             IntPtr parent = Send(ViewOf(parentView), Sel("window"));
-            if (parent == IntPtr.Zero || parent == _window) return;
+            if (parent == IntPtr.Zero || parent == _window || parent == _parentWindow) return;
+            // Moved to another parent (SetParent): it leaves the one it was in first.
+            RemoveFromParent();
             _parentWindow = parent;
             if (SendBool(_window, Sel("isVisible"))) AddToParent();
         }
@@ -2029,6 +2031,19 @@ namespace MS.Internal.Interop
             IntPtr app = Send(objc_getClass("NSApplication"), Sel("sharedApplication"));
             if (app != IntPtr.Zero && Send(app, Sel("keyWindow")) != IntPtr.Zero) return;   // still fine
 
+            // An owned window going away activates its owner on Windows, whichever framework made it.
+            // A WPF dialog owned by a WinForms form (WindowInteropHelper.Owner = form.Handle) left the
+            // app with no key window when it closed: only WPF windows were candidates, and the form's
+            // window is not one. Every key after it went to AppKit, which beeped, and the form was not
+            // the active form, so the next dialog shown from it had no owner to centre on.
+            IntPtr ownerWindow = OwnerNSWindow(leaving);
+            if (ownerWindow != IntPtr.Zero && SendBool(ownerWindow, Sel("isVisible")) && SendBool(ownerWindow, Sel("canBecomeKeyWindow")))
+            {
+                leaving.TraceWindow("PROMOTE owner to key");
+                SendVoidPtr(ownerWindow, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                return;
+            }
+
             CocoaWindow next = null;
             lock (s_lock)
             {
@@ -2042,9 +2057,44 @@ namespace MS.Internal.Interop
                 }
             }
 
-            if (next == null) return;
-            next.TraceWindow("PROMOTE to key");
-            SendVoidPtr(next._window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+            if (next != null)
+            {
+                next.TraceWindow("PROMOTE to key");
+                SendVoidPtr(next._window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                return;
+            }
+
+            // No window of ours is left: the application's other windows (WinForms forms) are as much
+            // its windows as ours are. The main window first, then the frontmost one that can be key.
+            if (app == IntPtr.Zero) return;
+            IntPtr main = Send(app, Sel("mainWindow"));
+            if (main != IntPtr.Zero && SendBool(main, Sel("isVisible")) && SendBool(main, Sel("canBecomeKeyWindow")))
+            {
+                SendVoidPtr(main, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                return;
+            }
+            IntPtr windows = Send(app, Sel("orderedWindows"));
+            nint count = windows != IntPtr.Zero ? (nint)Send(windows, Sel("count")) : 0;
+            for (nint i = 0; i < count; i++)
+            {
+                IntPtr w = SendPtrNUInt(windows, Sel("objectAtIndex:"), (nuint)i);
+                if (w == IntPtr.Zero || (leaving != null && w == leaving._window)) continue;
+                if (!SendBool(w, Sel("isVisible")) || !SendBool(w, Sel("canBecomeKeyWindow"))) continue;
+                SendVoidPtr(w, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                return;
+            }
+        }
+
+        /// <summary>The native window of <paramref name="leaving"/>'s owner: a WPF window's own, or the
+        /// window a WinForms form is presented in (published by WinForms; see ForeignOwnerWindow).</summary>
+        private static IntPtr OwnerNSWindow(CocoaWindow leaving)
+        {
+            if (leaving == null || leaving._ownerHandle == IntPtr.Zero) return IntPtr.Zero;
+            CocoaWindow owner = FromHandle(leaving._ownerHandle);
+            if (owner != null) return ReferenceEquals(owner, leaving) ? IntPtr.Zero : owner._window;
+            if (AppContext.GetData("WinFormsWebGpu.HostWindowOf") is not Func<IntPtr, IntPtr> hostWindowOf) return IntPtr.Zero;
+            try { return hostWindowOf(leaving._ownerHandle); }
+            catch { return IntPtr.Zero; }
         }
 
         /// <summary>The window whose display a not-yet-placed window should take its scale from: the
