@@ -1280,18 +1280,10 @@ namespace System.Windows.Forms {
 			if (node.Nodes.Count == 0 || (node.parent == root_node && !show_root_lines))
 				return false;
 
-			int l = node.Bounds.Left + 5;
-
-			if (show_root_lines || node.Parent != null)
-				l -= indent;
-			if (ImageList != null)
-				l -= ImageList.ImageSize.Width + 3;
-			if (checkboxes)
-				l -= 19;
-			// StateImage is basically a custom checkbox
-			else if (node.StateImage != null)
-				l -= StateImageSize.Width + 3;
-			return (x > l && x < l + 8);
+			// The whole indent the button stands in, as TVHT_ONITEMBUTTON is on Windows: 0..18 for a
+			// root with an indent of 19, not just the nine pixels of the box.
+			int lines = node.GetLinesX ();
+			return x >= lines - indent && x < lines;
 		}
 
 		private bool IsCheckboxArea (TreeNode node, int x)
@@ -1309,19 +1301,22 @@ namespace System.Windows.Forms {
 			return l;
 		}
 
+		/// <summary>The space between a node's image and its label: comctl32's three pixels, at the
+		/// tree's DPI.</summary>
+		internal int ImageGap => DeviceDpi > 96 ? LogicalToDeviceUnits (3) + 1 : 3;
+
+		/// <summary>How far into its cell the image stands: at the cell's left at 96 dpi, five pixels in
+		/// at 200% (measured on Windows: the image at 24 after an indent of 19, the label at 42).</summary>
+		internal int ImageInset => LogicalToDeviceUnits (5) - 5;
+
 		private bool IsImage (TreeNode node, int x)
 		{
 			if (ImageList == null)
 				return false;
 				
-			int l = node.Bounds.Left;
-
-			l -= ImageList.ImageSize.Width + 5;
-			
-			if (x >= l && x <= (l + ImageList.ImageSize.Width + 5))
-				return true;
-				
-			return false;
+			// The image's cell, the image and the three pixels before the label (Windows: 19..37).
+			int l = node.GetImageX ();
+			return x >= l && x < l + ImageList.ImageSize.Width + ImageGap;
 		}
 		
 		private int CheckBoxLeft (TreeNode node)
@@ -1587,7 +1582,8 @@ namespace System.Windows.Forms {
 				// which reads exactly like a parity bug and is not one.
 				int hx0 = x - indent + ladjust - 1;
 				int hy = middle + 1;
-				int hx1 = x + radjust + 2;
+				// up to the image, which stands further into its cell at a high DPI (DrawNodeImage)
+				int hx1 = x + radjust + 2 + (ImageList != null ? ImageInset : 0);
 				using (var solid = new SolidBrush (dash.Color))
 					for (int hx = hx0; hx <= hx1; hx += 2)
 						dc.FillRectangle (solid, hx, hy, 1, 1);
@@ -1616,6 +1612,13 @@ namespace System.Windows.Forms {
 
 		private void DrawNodeImage (TreeNode node, Graphics dc, Rectangle clip, int x, int y)
 		{
+			// comctl32 centres the image in the row: at 200% a 16-pixel image list in a 32-pixel row
+			// sat at the row's top, the icons up and to the left of their labels.
+			y += Math.Max (0, (ActualItemHeight - ImageList.ImageSize.Height) / 2);
+			// ...and across its cell, which grows with the DPI: at 96 the image stands at the cell's left
+			// (Windows: 19 in a cell of 19..37), at 200% further in (about 23, the label at 42), with the
+			// dotted line from the button showing before it.
+			x += ImageInset;
 			if (!RectsIntersect (clip, x, y, ImageList.ImageSize.Width, ImageList.ImageSize.Height))
 				return;
 
@@ -1799,9 +1802,12 @@ namespace System.Windows.Forms {
 					ThemeEngine.Current.ColorHighlightText : node.ForeColor);
 			if (text_color.IsEmpty)
 				text_color = ForeColor;
-			dc.DrawStringMono (node.Text, font,
-					ThemeEngine.Current.ResPool.GetSolidBrush (text_color),
-					node.Bounds, string_format);
+			// GDI's DrawText, as comctl32 draws a label: one line, no prefix, centred in the label's
+			// rectangle and not trimmed. GDI+ lays the run out wider than GDI does, and with its
+			// character trimming "Grid Viewer" lost its last letter to a rectangle Windows fits it in.
+			TextRenderer.DrawText (dc, node.Text, font, node.Bounds, text_color,
+					TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine
+					| TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding);
 		}
 
 		private void DrawTreeNode (TreeNode node, Graphics dc, Rectangle clip)

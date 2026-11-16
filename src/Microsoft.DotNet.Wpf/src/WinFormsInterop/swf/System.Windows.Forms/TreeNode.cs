@@ -260,10 +260,15 @@ namespace System.Windows.Forms
 			int cb = (TreeView.CheckBoxes ? TreeView.CheckBoxCellWidth : 0);
 			if (!TreeView.CheckBoxes && StateImage != null)
 				cb = TreeView.StateImageSize.Width + 3;
-			int imgs = (TreeView.ImageList != null ?  TreeView.ImageList.ImageSize.Width + 3 : 0);
-			// The three pixels are Windows': a stock node's rectangle starts that far past the
-			// indent, and a check box stands in them and after them.
-			return ((indent_level + roots) * TreeView.Indent) + cb + imgs + 3 - TreeView.hbar_offset;
+			// The label starts three pixels past what comes before it -- the indent, a check box -- as
+			// Windows' does; an image's cell is the image and those three pixels at the tree's DPI
+			// (Windows: 'Grid Viewer' at 38, after an indent of 19 and a 16-pixel image's cell of 19;
+			// at 200% the indent stays 19 and the cell is 22). Added again after the
+			// image, the label sat three pixels further from its icon than Windows has it.
+			// (A check box or state image before it keeps the three pixels after the image as well:
+			// that geometry is the one the check-box trees were measured against.)
+			int imgs = (TreeView.ImageList != null ?  TreeView.ImageList.ImageSize.Width + TreeView.ImageGap + (cb > 0 ? 3 : 0) : 3);
+			return ((indent_level + roots) * TreeView.Indent) + cb + imgs - TreeView.hbar_offset;
 		}
 
 		/// <summary>The check box cell of a check-box tree: the theme's 13x13 check box.</summary>
