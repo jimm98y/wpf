@@ -187,7 +187,10 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
             object scene = _driver.GetWindowScene((IntPtr)wins[i]);
             if (scene == null) continue;
             var item = (scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy);
-            if (popups != null && IsPopup((IntPtr)wins[i])) popups.Add(item);
+            if (popups != null && IsPopup((IntPtr)wins[i]))
+            {
+                if (PopupBelongsHere((IntPtr)wins[i])) popups.Add(item);
+            }
             else list.Add(item);
         }
         // Embedded non-WinForms content LAST, so it draws over the control whose area it occupies.
@@ -282,6 +285,38 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         while (h?.parent != null) h = h.parent;
         if (h == null || (_form.IsHandleCreated && h.Handle == _form.Handle)) return false;
         return (h.initial_style & WindowStyles.WS_POPUP) != 0 && h.width > 1 && h.height > 1;
+    }
+
+    /// <summary>
+    /// Whether the popup <paramref name="handle"/> is in belongs to this form: its owner -- the combo box
+    /// a list dropped from, the control a menu opened over, followed through a submenu's parent menu --
+    /// is in this form. Every form's layer presented every popup, and the popup layer, which takes the
+    /// pointer while it shows one, lies over the whole display: a combo box opened in a modal dialog
+    /// put the disabled main window's layer up too, every click fell on it and was dropped as input
+    /// for a disabled window, and nothing could be clicked until the application was deactivated. A
+    /// popup whose owner is not known is presented by every form that is enabled, as before.
+    /// </summary>
+    private bool PopupBelongsHere(IntPtr handle)
+    {
+        IntPtr form = _form.IsHandleCreated ? _form.Handle : IntPtr.Zero;
+        IntPtr top = _driver.TopLevelOf(handle);
+        for (int depth = 0; depth < 16 && top != IntPtr.Zero; depth++)
+        {
+            if (!_driver.TryGetOwner(top, out IntPtr owner)) break;
+            top = _driver.TopLevelOf(owner);
+            if (top == form) return true;
+            if (IsHostedForm(top)) return false;   // another form's
+        }
+        return _form.Enabled;
+    }
+
+    private static bool IsHostedForm(IntPtr handle)
+    {
+        CocoaHost[] live;
+        lock (s_live) live = s_live.ToArray();
+        foreach (CocoaHost h in live)
+            if (h._form.IsHandleCreated && h._form.Handle == handle) return true;
+        return false;
     }
 
     private NSRect ContentScreenRect()
@@ -478,6 +513,81 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         }
     }
 
+    // ---- the form's region ----------------------------------------------------------------
+    //
+    // Control.Region on a form is Windows' SetWindowRgn: the window is that shape, nothing of it shows
+    // outside, and the desktop shows through. The driver had nowhere to put it, so a shaped form came up
+    // as its whole rectangle: a docking guide (a diamond of arrows over the window being docked into) was
+    // an opaque grey box. The window is made see-through and its content masked to the region's
+    // rectangles, as WPF's window masks an embedded window (CocoaWindow.SetVisibleRegion).
+
+    private string _regionKey;
+
+    private void ApplyFormRegion()
+    {
+        if (_window == IntPtr.Zero || _imageView == IntPtr.Zero) return;
+        Region region = _form.Region;
+        RectangleF[] scans = null;
+        if (region != null)
+        {
+            try { using var identity = new System.Drawing.Drawing2D.Matrix(); scans = region.GetRegionScans(identity); }
+            catch { scans = null; }
+        }
+        // the region is the window's, frame and all; the content view is the client area
+        Padding frame = Frame;
+        var key = new System.Text.StringBuilder(scans == null ? "none" : "");
+        if (scans != null)
+            foreach (RectangleF r in scans) key.Append(r.X).Append(',').Append(r.Y).Append(',').Append(r.Width).Append(',').Append(r.Height).Append(';');
+        // ...and against the content's size now: masked before the view had its size, every piece lay
+        // outside it and the window was masked away entirely -- a docking guide never showed.
+        NSRect viewBounds = SendRectRet(_imageView, Sel("bounds"));
+        if (scans != null && (viewBounds.w < 1 || viewBounds.h < 1)) return;
+        key.Append('|').Append(_k).Append('|').Append(frame).Append('|').Append(viewBounds.w).Append('x').Append(viewBounds.h);
+        string k = key.ToString();
+        if (k == _regionKey) return;
+        _regionKey = k;
+
+        IntPtr layer = Send(_imageView, Sel("layer"));
+        if (layer == IntPtr.Zero) { _regionKey = null; return; }
+        if (scans == null)
+        {
+            SendVoidPtr(layer, Sel("setMask:"), IntPtr.Zero);
+            return;
+        }
+        MakeTransparent(_window);
+        NSRect bounds = viewBounds;
+        IntPtr mask = Send(Cls("CALayer"), Sel("layer"));
+        SendVoidRect(mask, Sel("setFrame:"), bounds);
+        IntPtr opaque = Send(Send(Cls("NSColor"), Sel("blackColor")), Sel("CGColor"));
+        foreach (RectangleF r in scans)
+        {
+            double x = (r.X - frame.Left) / _k, y = (r.Y - frame.Top) / _k, w = r.Width / _k, h = r.Height / _k;
+            IntPtr piece = Send(Cls("CALayer"), Sel("layer"));
+            // the content view is not flipped: its layer's origin is the bottom-left
+            SendVoidRect(piece, Sel("setFrame:"), new NSRect { x = x, y = bounds.h - y - h, w = w, h = h });
+            SendVoidPtr(piece, Sel("setBackgroundColor:"), opaque);
+            SendVoidPtr(mask, Sel("addSublayer:"), piece);
+        }
+        SendVoidPtr(layer, Sel("setMask:"), mask);
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' region of {scans.Length} rectangle(s) applied: frame {frame}, content {bounds.w}x{bounds.h}pt, k={_k}, region bounds {RectangleF.Union(scans[0], scans[^1])}, form {_form.Bounds} client {_form.ClientSize} border={_form.FormBorderStyle}");
+    }
+
+    // Form.Opacity: Windows' layered window alpha (SetLayeredWindowAttributes, LWA_ALPHA) -- the whole
+    // window, frame and content, that much see-through. The driver kept nothing of it, and a docking
+    // preview (the half-transparent blue where a dragged panel would go) covered what it marks.
+    private double _appliedOpacity = 1.0;
+
+    private void ApplyFormOpacity()
+    {
+        if (_window == IntPtr.Zero) return;
+        double opacity = Math.Clamp(_form.Opacity, 0.0, 1.0);
+        if (opacity == _appliedOpacity) return;
+        _appliedOpacity = opacity;
+        SendVoidDouble(_window, Sel("setAlphaValue:"), opacity);
+        if (opacity < 1.0) SendVoidBool(_window, Sel("setOpaque:"), false);
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' opacity {opacity}");
+    }
+
     private bool IsLayered()
     {
         Hwnd hwnd = _form.IsHandleCreated ? Hwnd.ObjectFromHandle(_form.Handle) : null;
@@ -635,6 +745,12 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
 
     public void Present()
     {
+        // A form disposed while an event for it was being handled -- a floating panel docked back by
+        // the drag that is still in progress -- has nothing to present, and asking it for its handle
+        // threw ObjectDisposedException out of the message loop and took the application down.
+        if (_form.IsDisposed || _form.Disposing)
+            return;
+        if (!_offMain) { ApplyFormRegion(); ApplyFormOpacity(); }
         if (_wgpu != null && _gpuRaster)
         {
             // Runtime DPI detection: re-read the window's backing scale each present; if it changed
@@ -1352,6 +1468,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         ? SendRectRectStret(r, s, a) : SendRectRectArm64(r, s, a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern NSRect SendRectRectArm64(IntPtr r, IntPtr s, NSRect a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern NSRect SendRectRectStret(IntPtr r, IntPtr s, NSRect a);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr r, IntPtr s, NSRect a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRectBool(IntPtr r, IntPtr s, NSRect a, [MarshalAs(UnmanagedType.I1)] bool b);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr r, IntPtr s, nuint a);
 
@@ -1988,6 +2105,14 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
 
     /// <summary>Where the pointer is, in Win32's screen coordinates (top-left of the primary
     /// screen), wherever it is: over the form, an embedded window, or none of the app's.</summary>
+    /// <summary>Whether the left mouse button is down now, as the window server has it (and not as the
+    /// last event this process saw says): null when it cannot be asked.</summary>
+    internal static bool? RealLeftButtonDown()
+    {
+        try { return ((nuint)Send(Cls("NSEvent"), Sel("pressedMouseButtons")) & 1) != 0; }
+        catch { return null; }
+    }
+
     internal static bool TryRealCursor(out int x, out int y)
     {
         x = y = 0;
@@ -2149,6 +2274,8 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
 
     private void HandleEventCore(IntPtr evt)
     {
+        if (_form.IsDisposed || _form.Disposing)
+            return;
         nint type = (nint)Send(evt, Sel("type"));
         // NSEventType: LeftMouseDown=1, LeftMouseUp=2, RightMouseDown=3, RightMouseUp=4,
         // MouseMoved=5, LeftMouseDragged=6.
@@ -2401,13 +2528,23 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
 
     private void ApplyCursor()
     {
+        if (_form.IsDisposed || _form.Disposing || !_form.IsHandleCreated)
+            return;
         // over a WPF window embedded in the form (an ElementHost's child window) the cursor is WPF's: on Windows the
         // child window under the pointer answers WM_SETCURSOR. Set here as well, the form's -- the ElementHost's
         // default arrow -- replaced WPF's on every move, and a display's resize handles never showed theirs.
-        if (PointerOverEmbeddedWindow()) return;
+        // A popup of the form's over that window (a context menu over a display) is what is under the
+        // pointer, and takes WM_SETCURSOR there: WPF's cursor stayed over the menu, a move cursor
+        // of the control the menu was opened on.
+        if (PointerOverEmbeddedWindow() && !_driver.PointerOverOtherTopLevel(_form.Handle))
+        {
+            if (s_traceCursor && s_cursorShown != -2) Console.WriteLine($"[cocoa cursor] '{_form.Text}': over a hosted WPF window, left to it");
+            s_cursorShown = -2;
+            return;
+        }
         int id = _driver.GetActiveCursor();
         // set on every move, not only when it changes: an embedded WPF window sets its own over itself
-        if (s_traceCursor && id != s_cursorShown) Console.WriteLine($"[cocoa cursor] StdCursor {id}");
+        if (s_traceCursor && id != s_cursorShown) Console.WriteLine($"[cocoa cursor] '{_form.Text}': StdCursor {id} from {_driver.DescribeActiveCursor()}");
         s_cursorShown = id;
         IntPtr cursor = id switch
         {

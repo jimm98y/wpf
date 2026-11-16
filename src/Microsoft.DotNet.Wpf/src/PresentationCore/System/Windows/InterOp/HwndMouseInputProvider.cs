@@ -150,6 +150,9 @@ namespace System.Windows.Interop
             // it via AppKit. Report success so WPF considers the cursor handled.
             if (!OperatingSystem.IsWindows())
             {
+                // WF_TRACE_CURSOR=1: the cursor WPF sets, and for which window.
+                if (Environment.GetEnvironmentVariable("WF_TRACE_CURSOR") == "1")
+                    Console.WriteLine($"[wpf cursor] {cursor?.CursorType} custom={cursor?.CustomImage() != null} source=0x{(_source?.Handle ?? IntPtr.Zero):x} root={_source?.RootVisual?.GetType().Name} over={Mouse.DirectlyOver?.GetType().Name}");
                 // a cursor of the app's own (a .cur or .ani): its picture, as Windows shows the cursor it loaded it into
                 if (cursor?.CustomImage() is { } custom)
                 {

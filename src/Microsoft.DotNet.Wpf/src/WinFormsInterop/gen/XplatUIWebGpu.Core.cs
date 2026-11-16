@@ -2936,7 +2936,33 @@ namespace System.Windows.Forms
 			if (changed) _paintVersion++;
 			return true;
 		}
-		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner) => true;
+		// Each window's owner (GWL_HWNDPARENT): a combo's list is owned by the combo box, a drop-down
+		// by the control it dropped from, an owned form by its owner. A host presents the popups owned
+		// by its own form (PopupOwnerRoot), as Windows shows a popup over the window it belongs to.
+		private readonly Dictionary<IntPtr, IntPtr> _owners = new Dictionary<IntPtr, IntPtr>();
+
+		internal override bool SetOwner(IntPtr hWnd, IntPtr hWndOwner)
+		{
+			lock (_owners) {
+				if (hWndOwner == IntPtr.Zero) _owners.Remove(hWnd);
+				else _owners[hWnd] = hWndOwner;
+			}
+			return true;
+		}
+
+		/// <summary>The top-level window <paramref name="handle"/> is in: itself for a top-level one.</summary>
+		internal IntPtr TopLevelOf(IntPtr handle)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(handle);
+			while (h?.parent != null) h = h.parent;
+			return h?.Handle ?? IntPtr.Zero;
+		}
+
+		/// <summary>The owner a top-level window was given, if any.</summary>
+		internal bool TryGetOwner(IntPtr topLevel, out IntPtr owner)
+		{
+			lock (_owners) return _owners.TryGetValue(topLevel, out owner) && owner != IntPtr.Zero;
+		}
 		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd)
 		{
 			if (InputTrace.On) InputTrace.Log($"capture #{InputTrace.Seq} -> {InputTrace.Describe(hwnd)} (was {InputTrace.Describe(_grabHandle)})");
@@ -3013,6 +3039,31 @@ namespace System.Windows.Forms
 		/// <para>Asks the control under the pointer what it wants rather than waiting to be told,
 		/// which is the more direct route in any case: the window the pointer is over is already
 		/// tracked here, so there is nothing to work out from a position.</para></summary>
+		/// <summary>Whether the window under the pointer belongs to a top-level window other than
+		/// <paramref name="topLevel"/>: a popup -- a menu, a drop-down -- shown over that form.</summary>
+		internal bool PointerOverOtherTopLevel(IntPtr topLevel)
+		{
+			Hwnd h = Hwnd.ObjectFromHandle(_hotWindow);
+			if (h == null) return false;
+			while (h.parent != null) h = h.parent;
+			return h.Handle != topLevel;
+		}
+
+		/// <summary>WF_TRACE_CURSOR: where GetActiveCursor's answer comes from.</summary>
+		internal string DescribeActiveCursor()
+		{
+			if (_cursorOverride >= 0) return $"Cursor.Current override {_cursorOverride}";
+			var sb = new System.Text.StringBuilder();
+			for (Hwnd h = Hwnd.ObjectFromHandle(_hotWindow); h != null; h = h.parent)
+			{
+				Control c = Control.FromHandle(h.Handle);
+				string own = _cursors.TryGetValue(h.Handle, out int id) ? $" SetCursor={id}" : "";
+				sb.Append($"{c?.GetType().Name ?? "?"} '{c?.Name}' cursor={(c?.Cursor == null ? "null" : ShapeOf(c.Cursor).ToString())}{own} <- ");
+				if (own.Length > 0) break;
+			}
+			return sb.ToString();
+		}
+
 		internal int GetActiveCursor()
 		{
 			if (_cursorOverride >= 0) return _cursorOverride;
