@@ -241,7 +241,7 @@ public static unsafe partial class Exports
             Forms.Button? cancel = null;
             foreach ((int id, string text) in all)
             {
-                var b = new Forms.Button { Text = text, AutoSize = true, MinimumSize = new Drawing.Size(75, 23), Margin = new Forms.Padding(6, 0, 0, 0) };
+                var b = new Forms.Button { Text = text, AutoSize = true, AutoSizeMode = Forms.AutoSizeMode.GrowAndShrink, MinimumSize = new Drawing.Size(75, 23), Margin = new Forms.Padding(6, 0, 0, 0) };
                 b.Click += (_, _) => PressButton(id);
                 right.Controls.Add(b);
                 if (id == defaultButton || (defaultButton == 0 && accept == null)) accept ??= b;
@@ -276,9 +276,27 @@ public static unsafe partial class Exports
                 root.Controls.Add(footer, 0, 2);
             }
             Controls.Add(root);
-            Drawing.Size preferred = root.GetPreferredSize(Drawing.Size.Empty);
-            ClientSize = preferred;
-            root.Dock = Forms.DockStyle.Fill;
+            _root = root;
+            FitToContent();
+        }
+
+        private readonly Forms.TableLayoutPanel _root;
+
+        // The dialog as big as what it holds. Measured again once it has its window: text is measured
+        // at the window's DPI, and at 192 dpi the verification box measured wider then than it had in
+        // the constructor -- the dialog kept the narrower size, the button column was squeezed, and
+        // "Close" wrapped inside a button too narrow for it.
+        private void FitToContent()
+        {
+            _root.Dock = Forms.DockStyle.None;
+            ClientSize = _root.GetPreferredSize(Drawing.Size.Empty);
+            _root.Dock = Forms.DockStyle.Fill;
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            FitToContent();
+            base.OnLoad(e);
         }
 
         private static Forms.Label Label(string text, Drawing.Font font, Drawing.Color color, int width, Forms.Padding margin)
