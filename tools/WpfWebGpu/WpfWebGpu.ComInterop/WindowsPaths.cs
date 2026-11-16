@@ -736,6 +736,48 @@ public static class WindowsPaths
         return native.StartsWith('/') ? native : s;
     }
 
+    // ---- a local file read through WebClient ----
+    //
+    // WebClient reads a file: address as a file, and an application hands it a Windows path as readily as a
+    // URL -- a display editor read each template's thumbnail with OpenRead(@"C:\ProgramData\...\x.gdfx").
+    // The URI is made inside WebClient, where Uri's own stand-ins do not reach, so the file was not found,
+    // the failure was swallowed, and every template showed as a broken image. A local address -- a Windows
+    // path, or a file: URI of one -- is this system's file; a web address is left as it is.
+
+    private static string WebAddress(string address)
+    {
+        if (s_windows || string.IsNullOrEmpty(address) || address.Contains("://", StringComparison.Ordinal) && !address.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            return address;
+        if (address.StartsWith("file:", StringComparison.OrdinalIgnoreCase) && Uri.TryCreate(address, UriKind.Absolute, out Uri? u))
+            return WebAddress(u).ToString();
+        string? native = Native(address);
+        return native != null && native.StartsWith('/') ? native : address;
+    }
+
+    private static Uri WebAddress(Uri address)
+    {
+        if (s_windows || address == null || !address.IsAbsoluteUri || !address.IsFile) return address!;
+        string local = address.LocalPath;
+        if (File.Exists(local) || Directory.Exists(local)) return address;
+        string? native = Native(local.TrimStart('/').Length > 1 && local.TrimStart('/')[1] == ':' ? local.TrimStart('/') : local);
+        return native != null && native.StartsWith('/') ? new Uri(native) : address;
+    }
+
+    public static Stream WebClient_OpenRead(System.Net.WebClient client, string address) => client.OpenRead(WebAddress(address));
+    public static Stream WebClient_OpenRead(System.Net.WebClient client, Uri address) => client.OpenRead(WebAddress(address));
+    public static byte[] WebClient_DownloadData(System.Net.WebClient client, string address) => client.DownloadData(WebAddress(address));
+    public static byte[] WebClient_DownloadData(System.Net.WebClient client, Uri address) => client.DownloadData(WebAddress(address));
+    public static string WebClient_DownloadString(System.Net.WebClient client, string address) => client.DownloadString(WebAddress(address));
+    public static string WebClient_DownloadString(System.Net.WebClient client, Uri address) => client.DownloadString(WebAddress(address));
+    public static void WebClient_DownloadFile(System.Net.WebClient client, string address, string fileName) => client.DownloadFile(WebAddress(address), Disk(fileName)!);
+    public static void WebClient_DownloadFile(System.Net.WebClient client, Uri address, string fileName) => client.DownloadFile(WebAddress(address), Disk(fileName)!);
+    public static System.Threading.Tasks.Task<Stream> WebClient_OpenReadTaskAsync(System.Net.WebClient client, string address) => client.OpenReadTaskAsync(WebAddress(address));
+    public static System.Threading.Tasks.Task<Stream> WebClient_OpenReadTaskAsync(System.Net.WebClient client, Uri address) => client.OpenReadTaskAsync(WebAddress(address));
+    public static System.Threading.Tasks.Task<string> WebClient_DownloadStringTaskAsync(System.Net.WebClient client, string address) => client.DownloadStringTaskAsync(WebAddress(address));
+    public static System.Threading.Tasks.Task<string> WebClient_DownloadStringTaskAsync(System.Net.WebClient client, Uri address) => client.DownloadStringTaskAsync(WebAddress(address));
+    public static System.Threading.Tasks.Task<byte[]> WebClient_DownloadDataTaskAsync(System.Net.WebClient client, string address) => client.DownloadDataTaskAsync(WebAddress(address));
+    public static System.Threading.Tasks.Task<byte[]> WebClient_DownloadDataTaskAsync(System.Net.WebClient client, Uri address) => client.DownloadDataTaskAsync(WebAddress(address));
+
     // ---- assemblies from a file ----
 
     public static Assembly Assembly_LoadFrom(string assemblyFile) => Assembly.LoadFrom(Disk(assemblyFile)!);

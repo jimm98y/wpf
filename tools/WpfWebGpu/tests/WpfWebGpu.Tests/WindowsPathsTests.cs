@@ -73,6 +73,44 @@ public sealed class WindowsPathsTests
         Assert.Equal($"http://{name}x/", WindowsPaths.LocalName($"http://{name}x/"));                            // another machine
         Assert.Equal($"C:\\{name}\\file.txt", WindowsPaths.LocalName($"C:\\{name}\\file.txt"));           // not a URL
     }
+
+    /// <summary>A file read through WebClient by a Windows path: a display editor read each template's
+    /// thumbnail with OpenRead(@"C:\ProgramData\...\x.gdfx"), whose URI WebClient makes itself, out of
+    /// Uri's stand-ins' reach -- every template showed as a broken image.</summary>
+    [Fact]
+    public void A_file_is_read_through_WebClient_by_its_Windows_path()
+    {
+        string dir = TestEnvironment.NewDirectory("webclient");
+        string file = Path.Combine(dir, "Template (Light).gdfx");
+        File.WriteAllText(file, "<Grid/>");
+        string windows = OperatingSystem.IsWindows() ? file : file.Replace('/', '\\');
+#pragma warning disable SYSLIB0014 // WebClient: what the application calls
+        using var client = new System.Net.WebClient();
+#pragma warning restore SYSLIB0014
+        // (by reflection: this test process runs the browser's WebClient, of another assembly identity)
+        object Call(string name, object address) => typeof(WindowsPaths).GetMethods()
+            .Single(m => m.Name == name && m.GetParameters().Length == 2 && m.GetParameters()[1].ParameterType == address.GetType())
+            .Invoke(null, new[] { client, address })!;
+        using (var r = new StreamReader((Stream)Call("WebClient_OpenRead", windows)))
+            Assert.Equal("<Grid/>", r.ReadToEnd());
+        Assert.Equal("<Grid/>", (string)Call("WebClient_DownloadString", new Uri(file)));
+
+        // and the application's call is rewritten onto it
+        var subs = WpfWebGpu.ComRewrite.PathSubstitutions.For(new[] { AppContext.BaseDirectory })!;
+        var module = Mono.Cecil.ModuleDefinition.CreateModule("Thumbnails", Mono.Cecil.ModuleKind.Dll);
+        var type = new Mono.Cecil.TypeDefinition("Fixture", "ImageUtil", Mono.Cecil.TypeAttributes.Public | Mono.Cecil.TypeAttributes.Abstract | Mono.Cecil.TypeAttributes.Sealed, module.TypeSystem.Object);
+        module.Types.Add(type);
+        var method = new Mono.Cecil.MethodDefinition("Read", Mono.Cecil.MethodAttributes.Public | Mono.Cecil.MethodAttributes.Static, module.TypeSystem.Object);
+        type.Methods.Add(method);
+        var il = method.Body.GetILProcessor();
+        il.Emit(Mono.Cecil.Cil.OpCodes.Newobj, module.ImportReference(typeof(System.Net.WebClient).GetConstructor(Type.EmptyTypes)));
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ldstr, @"C:\ProgramData\Vendor\Templates\a.gdfx");
+        il.Emit(Mono.Cecil.Cil.OpCodes.Callvirt, module.ImportReference(typeof(System.Net.WebClient).GetMethod("OpenRead", new[] { typeof(string) })));
+        il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
+        subs.Apply(module);
+        var call = (Mono.Cecil.MethodReference)method.Body.Instructions[2].Operand;
+        Assert.Equal(("WindowsPaths", "WebClient_OpenRead"), (call.DeclaringType.Name, call.Name));
+    }
 }
 
 // The OS questions an assembly asks, rewritten onto WindowsPaths (and so answered as Windows under

@@ -24,6 +24,8 @@ public sealed class PathSubstitutions
         "System.Xml.Linq.XDocument", "System.Xml.Linq.XElement", "System.Reflection.Assembly", "System.Uri",
         "System.Diagnostics.Process", "System.Environment", "System.IO.MemoryMappedFiles.MemoryMappedFile",
         "System.Threading.Thread", "Microsoft.Extensions.FileProviders.PhysicalFileProvider",
+        // a local file read through WebClient (WindowsPaths: WebAddress)
+        "System.Net.WebClient",
         // the machine's certificate stores (WindowsPaths: MachineCertificateStore)
         "System.Security.Cryptography.X509Certificates.X509Store",
         // COM classes by ProgID or CLSID (WindowsPaths: the registry's, and the servers run here)
