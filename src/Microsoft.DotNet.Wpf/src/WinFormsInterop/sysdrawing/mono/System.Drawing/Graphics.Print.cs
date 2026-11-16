@@ -626,7 +626,13 @@ namespace System.Drawing
 			try { hr = image.HorizontalResolution; vr = image.VerticalResolution; } catch (Exception) { }
 			if (!(hr > 0)) hr = 96f;
 			if (!(vr > 0)) vr = 96f;
-			return new SizeF (image.Width / hr * BasePerInch / PageFactor, image.Height / vr * BasePerInch / PageFactor);
+			// On a window's Graphics (a recording with no image behind it) a pixel is the display's, as
+			// DpiX says: at 192 dpi a 192-dpi bitmap goes down pixel for pixel. Taken at 96 there, a
+			// control double-buffering its paint into a new Bitmap (the display's resolution) and drawing
+			// it back at (0, 0) was shown at half its size.
+			bool window = !print_mode && mf_rec == null && image_target == null;
+			float bx = window ? DpiX : BasePerInch, by = window ? DpiY : BasePerInch;
+			return new SizeF (image.Width / hr * bx / PageFactor, image.Height / vr * by / PageFactor);
 		}
 
 		bool PrintClip (GraphicsPath path, CombineMode mode)
