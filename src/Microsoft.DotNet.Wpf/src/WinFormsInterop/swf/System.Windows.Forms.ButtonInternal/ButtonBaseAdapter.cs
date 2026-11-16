@@ -1105,13 +1105,54 @@ internal abstract class ButtonBaseAdapter
 		hdc.DrawRectangle(r, scope2);
 	}
 
+	// WF_TRACE_BUTTON_TEXT=1: each button's text as it is drawn -- the path, the rectangle, the format.
+	private static readonly bool s_traceButtonText = Environment.GetEnvironmentVariable("WF_TRACE_BUTTON_TEXT") == "1";
+
 	private void DrawText(PaintEventArgs e, LayoutData layout, Color color, ColorData colors)
 	{
 		Rectangle textBounds = layout.TextBounds;
 		bool shadowedText = layout.Options.ShadowedText;
+		if (s_traceButtonText)
+		{
+			Graphics tg = e.GraphicsInternal;
+			string how;
+			if (Control.UseCompatibleTextRendering)
+			{
+				using StringFormat f = CreateStringFormat();
+				tg.MeasureString(Control.Text, Control.Font, textBounds.Size, f, out int chars, out int lines);
+				how = $"gdi+ flags={f.FormatFlags} trim={f.Trimming} align={f.Alignment}/{f.LineAlignment} measured chars={chars} lines={lines}";
+			}
+			else
+			{
+				how = $"gdi flags={CreateTextFormatFlags()}";
+			}
+			Console.Error.WriteLine($"[button text] {Control.GetType().Name} '{Control.Text}' client={Control.ClientRectangle} text={textBounds} field={layout.Field} {how} font={Control.Font.Name} {Control.Font.SizeInPoints}pt h={Control.Font.Height} dpiX={tg.DpiX} g={tg.GetType().Name} flat={Control.FlatStyle} vs={Application.RenderWithVisualStyles} port={tg.port_measure} gdiMetrics={tg.gdi_text_metrics} gdiAscent={tg.gdi_ascent} memSurface={tg.memory_surface_text} ctlMem={Control.GdiTextOnMemorySurface}");
+		}
 		if (Control.UseCompatibleTextRendering)
 		{
 			Graphics graphicsInternal = e.GraphicsInternal;
+			// Compatible text is GDI+'s, and laid out the way GDI+ lays it out. The button's paint Graphics
+			// is marked as GDI text on a memory surface (ButtonBase.GdiTextOnMemorySurface), which is the
+			// port's controls' GDI stand-in and takes DrawString off GDI+'s layout: "Cancel" in a button
+			// too small for it wrapped onto two centred lines, where GDI+ shows one, trimmed.
+			bool memorySurface = graphicsInternal.memory_surface_text;
+			graphicsInternal.memory_surface_text = false;
+			try
+			{
+				DrawCompatibleText(graphicsInternal, textBounds, shadowedText, color, colors);
+			}
+			finally
+			{
+				graphicsInternal.memory_surface_text = memorySurface;
+			}
+			return;
+		}
+		DrawGdiText(e, textBounds, shadowedText, color, colors);
+	}
+
+	private void DrawCompatibleText(Graphics graphicsInternal, Rectangle textBounds, bool shadowedText, Color color, ColorData colors)
+	{
+		{
 			using StringFormat format = CreateStringFormat();
 			if ((Control.TextAlign & (ContentAlignment)0x222) == 0)
 			{
@@ -1153,6 +1194,10 @@ internal abstract class ButtonBaseAdapter
 				scope3.Dispose();
 			}
 		}
+	}
+
+	private void DrawGdiText(PaintEventArgs e, Rectangle textBounds, bool shadowedText, Color color, ColorData colors)
+	{
 		TextFormatFlags flags = CreateTextFormatFlags();
 		if (shadowedText && !Control.Enabled && !colors.Options.HighContrast)
 		{
