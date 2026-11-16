@@ -182,6 +182,7 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         ox = wins.Length >= 3 ? (int)wins[1] : 0;
         oy = wins.Length >= 3 ? (int)wins[2] : 0;
         var list = new System.Collections.Generic.List<(object, int, int)>(wins.Length / 3);
+        if (popups != null) _popupRects.Clear();
         for (int i = 0; i + 2 < wins.Length; i += 3)
         {
             object scene = _driver.GetWindowScene((IntPtr)wins[i]);
@@ -189,7 +190,12 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
             var item = (scene, (int)wins[i + 1] - ox, (int)wins[i + 2] - oy);
             if (popups != null && IsPopup((IntPtr)wins[i]))
             {
-                if (PopupBelongsHere((IntPtr)wins[i])) popups.Add(item);
+                if (PopupBelongsHere((IntPtr)wins[i]))
+                {
+                    popups.Add(item);
+                    Hwnd ph = Hwnd.ObjectFromHandle((IntPtr)wins[i]);
+                    if (ph != null) _popupRects.Add(new Rectangle(item.Item2, item.Item3, ph.width, ph.height));
+                }
             }
             else list.Add(item);
         }
@@ -357,8 +363,8 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         }
         try
         {
-            ShowPopupLayer();
-            // The popups are placed against the form; the layer is the display, in Win32 coordinates
+            ShowPopupLayer(PopupsFrame(ox, oy));
+            // The popups are placed against the form; the layer is where they are, in Win32 coordinates
             // its origin is (layer.x, primary height - top).
             double ss = ScreenScale;
             int lx = (int)Math.Round(_popupFrame.x * ss), ly = (int)Math.Round((PrimaryScreenHeight() - _popupFrame.y - _popupFrame.h) * ss);
@@ -373,9 +379,37 @@ internal sealed class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessibility.IA
         }
     }
 
-    private void ShowPopupLayer()
+    // The popups' rectangles in form space, as GetScenes last found them.
+    private readonly System.Collections.Generic.List<Rectangle> _popupRects = new();
+
+    /// <summary>
+    /// The layer's frame: just the popups (and their shadows), within the display. The layer takes the
+    /// pointer wherever it is; the size of the display, it took every click on the screen while a combo
+    /// box's list was open -- another application's window could not be clicked until the list was
+    /// closed, where on Windows the click activates that window and the list closes. Over the rest, the
+    /// pointer is the form's or the other window's, and a press there closes the popup as Windows' does.
+    /// </summary>
+    private NSRect PopupsFrame(int ox, int oy)
     {
-        NSRect content = PopupLayerFrame();
+        NSRect display = PopupLayerFrame();
+        if (_popupRects.Count == 0) return display;
+        Rectangle u = _popupRects[0];
+        foreach (Rectangle r in _popupRects) u = Rectangle.Union(u, r);
+        double ss = ScreenScale;
+        // form space -> the driver's screen pixels -> Cocoa points (bottom-left origin)
+        double x = (u.X + ox) / ss, w = u.Width / ss, h = u.Height / ss;
+        double yTop = (u.Y + oy) / ss;
+        var frame = new NSRect { x = x, y = PrimaryScreenHeight() - yTop - h, w = w, h = h };
+        // whole points, enclosing the popups
+        double x0 = Math.Floor(frame.x), y0 = Math.Floor(frame.y);
+        frame = new NSRect { x = x0, y = y0, w = Math.Ceiling(frame.x + frame.w) - x0, h = Math.Ceiling(frame.y + frame.h) - y0 };
+        return frame.w >= 1 && frame.h >= 1 ? frame : display;
+    }
+
+    private void ShowPopupLayer() => ShowPopupLayer(PopupLayerFrame());
+
+    private void ShowPopupLayer(NSRect content)
+    {
         if (_popupWindow == IntPtr.Zero)
         {
             _popupWindow = SendInitWindow(Send(Cls("NSWindow"), Sel("alloc")), Sel("initWithContentRect:styleMask:backing:defer:"),
