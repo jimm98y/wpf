@@ -5,9 +5,9 @@
 //
 //   Windows      a real message-only window on its own pump thread, raising these events from the
 //                OS broadcasts (see WindowsSystemEvents.cs)
-//   elsewhere    handlers are accepted and simply never raised: there is no OS setting-change
-//                broadcast to observe, and a no-op beats the real assembly's
-//                PlatformNotSupportedException from every member
+//   elsewhere    an events thread of the same kind, raising them from what the system says
+//                (see UnixSystemEvents.cs): the clock and time zone, sleep and the power source, the
+//                session's lock, shutdown and logoff, the displays, the installed fonts
 //
 // It used to be the second half only, because the choice was made at BUILD time: the Windows head
 // referenced the real runtime package and never loaded this assembly. A portable publish
@@ -30,77 +30,112 @@ namespace Microsoft.Win32
 
         // Subscribing is what starts the message pump on Windows, exactly as the real implementation
         // creates its window lazily: a process that never asks for a system event never grows a
-        // thread for one. Off Windows Ensure() is never called and these stay inert.
-        private static void Started() { if (s_onWindows) WindowsSystemEvents.Ensure(); }
+        // thread for one. Off Windows the system's own notices (UnixSystemEvents: the clock, power,
+        // the session's lock, displays, fonts) raise the same events, from an events thread of the
+        // same kind, started the same way.
+        private static void Started()
+        {
+            if (s_onWindows) WindowsSystemEvents.Ensure();
+            else UnixSystemEvents.Ensure();
+        }
 
-        private static System.EventHandler? s_displaySettingsChanged;
-        private static System.EventHandler? s_displaySettingsChanging;
-        private static System.EventHandler? s_installedFontsChanged;
-        private static System.EventHandler? s_paletteChanged;
-        private static System.EventHandler? s_timeChanged;
-        private static PowerModeChangedEventHandler? s_powerModeChanged;
-        private static SessionEndedEventHandler? s_sessionEnded;
-        private static SessionEndingEventHandler? s_sessionEnding;
-        private static SessionSwitchEventHandler? s_sessionSwitch;
-        private static TimerElapsedEventHandler? s_timerElapsed;
-        private static UserPreferenceChangedEventHandler? s_userPreferenceChanged;
-        private static UserPreferenceChangingEventHandler? s_userPreferenceChanging;
+        // Each handler with the synchronization context it was added from, as .NET keeps it
+        // (AsyncOperationManager's: the thread's own, a plain one where it has none): a WinForms or WPF handler runs on
+        // its UI thread, Sent there from the events thread, rather than touching its controls from a thread of ours.
+        private sealed class Handlers
+        {
+            private readonly System.Collections.Generic.List<(System.Delegate Handler, System.Threading.SynchronizationContext? Context)> _list = new();
 
-        public static event System.EventHandler? DisplaySettingsChanged { add { Started(); s_displaySettingsChanged += value; } remove { s_displaySettingsChanged -= value; } }
-        public static event System.EventHandler? DisplaySettingsChanging { add { Started(); s_displaySettingsChanging += value; } remove { s_displaySettingsChanging -= value; } }
+            public void Add(System.Delegate? handler)
+            {
+                if (handler is null) return;
+                Started();
+                var context = System.Threading.SynchronizationContext.Current;
+                lock (_list) _list.Add((handler, context));
+            }
+
+            public void Remove(System.Delegate? handler)
+            {
+                if (handler is null) return;
+                lock (_list)
+                {
+                    int i = _list.FindIndex(e => e.Handler.Equals(handler));
+                    if (i >= 0) _list.RemoveAt(i);
+                }
+            }
+
+            // One subscriber that throws must not take down the events thread, nor stop the others from being told.
+            public void Raise(params object[] args)
+            {
+                (System.Delegate Handler, System.Threading.SynchronizationContext? Context)[] snapshot;
+                lock (_list) snapshot = _list.ToArray();
+                foreach (var (handler, context) in snapshot)
+                {
+                    void Call(object? _) { try { handler.DynamicInvoke(args); } catch { } }
+                    if (context is null) { Call(null); continue; }
+                    // a context whose thread has gone: called here, as .NET calls it
+                    try { context.Send(Call, null); }
+                    catch (System.ComponentModel.InvalidAsynchronousStateException) { Call(null); }
+                    catch { }
+                }
+            }
+        }
+
+        private static readonly Handlers s_displaySettingsChanged = new(), s_displaySettingsChanging = new(), s_installedFontsChanged = new(),
+            s_paletteChanged = new(), s_timeChanged = new(), s_powerModeChanged = new(), s_sessionEnded = new(), s_sessionEnding = new(),
+            s_sessionSwitch = new(), s_timerElapsed = new(), s_userPreferenceChanged = new(), s_userPreferenceChanging = new();
+
+        public static event System.EventHandler? DisplaySettingsChanged { add => s_displaySettingsChanged.Add(value); remove => s_displaySettingsChanged.Remove(value); }
+        public static event System.EventHandler? DisplaySettingsChanging { add => s_displaySettingsChanging.Add(value); remove => s_displaySettingsChanging.Remove(value); }
 
         // Never raised on any platform: the real one fires it from a process-exit path that does not
         // run reliably either, which is why it is obsolete upstream.
         [System.Obsolete("SystemEvents.EventsThreadShutdown callbacks are not run before the process exits. Use AppDomain.ProcessExit instead.", DiagnosticId = "SYSLIB0059", UrlFormat = "https://aka.ms/dotnet-warnings/{0}")]
         public static event System.EventHandler? EventsThreadShutdown { add { } remove { } }
 
-        public static event System.EventHandler? InstalledFontsChanged { add { Started(); s_installedFontsChanged += value; } remove { s_installedFontsChanged -= value; } }
+        public static event System.EventHandler? InstalledFontsChanged { add => s_installedFontsChanged.Add(value); remove => s_installedFontsChanged.Remove(value); }
 
         [System.ComponentModel.Browsable(false)]
         [System.ComponentModel.EditorBrowsable(System.ComponentModel.EditorBrowsableState.Never)]
         [System.Obsolete("The LowMemory event has been deprecated and is not supported.")]
         public static event System.EventHandler? LowMemory { add { } remove { } }
 
-        public static event System.EventHandler? PaletteChanged { add { Started(); s_paletteChanged += value; } remove { s_paletteChanged -= value; } }
-        public static event PowerModeChangedEventHandler? PowerModeChanged { add { Started(); s_powerModeChanged += value; } remove { s_powerModeChanged -= value; } }
-        public static event SessionEndedEventHandler? SessionEnded { add { Started(); s_sessionEnded += value; } remove { s_sessionEnded -= value; } }
-        public static event SessionEndingEventHandler? SessionEnding { add { Started(); s_sessionEnding += value; } remove { s_sessionEnding -= value; } }
-        public static event SessionSwitchEventHandler? SessionSwitch { add { Started(); s_sessionSwitch += value; } remove { s_sessionSwitch -= value; } }
-        public static event System.EventHandler? TimeChanged { add { Started(); s_timeChanged += value; } remove { s_timeChanged -= value; } }
-        public static event TimerElapsedEventHandler? TimerElapsed { add { Started(); s_timerElapsed += value; } remove { s_timerElapsed -= value; } }
-        public static event UserPreferenceChangedEventHandler? UserPreferenceChanged { add { Started(); s_userPreferenceChanged += value; } remove { s_userPreferenceChanged -= value; } }
-        public static event UserPreferenceChangingEventHandler? UserPreferenceChanging { add { Started(); s_userPreferenceChanging += value; } remove { s_userPreferenceChanging -= value; } }
+        public static event System.EventHandler? PaletteChanged { add => s_paletteChanged.Add(value); remove => s_paletteChanged.Remove(value); }
+        public static event PowerModeChangedEventHandler? PowerModeChanged { add => s_powerModeChanged.Add(value); remove => s_powerModeChanged.Remove(value); }
+        public static event SessionEndedEventHandler? SessionEnded { add => s_sessionEnded.Add(value); remove => s_sessionEnded.Remove(value); }
+        public static event SessionEndingEventHandler? SessionEnding { add => s_sessionEnding.Add(value); remove => s_sessionEnding.Remove(value); }
+        public static event SessionSwitchEventHandler? SessionSwitch { add => s_sessionSwitch.Add(value); remove => s_sessionSwitch.Remove(value); }
+        public static event System.EventHandler? TimeChanged { add => s_timeChanged.Add(value); remove => s_timeChanged.Remove(value); }
+        public static event TimerElapsedEventHandler? TimerElapsed { add => s_timerElapsed.Add(value); remove => s_timerElapsed.Remove(value); }
+        public static event UserPreferenceChangedEventHandler? UserPreferenceChanged { add => s_userPreferenceChanged.Add(value); remove => s_userPreferenceChanged.Remove(value); }
+        public static event UserPreferenceChangingEventHandler? UserPreferenceChanging { add => s_userPreferenceChanging.Add(value); remove => s_userPreferenceChanging.Remove(value); }
 
-        // ---- raised from the pump thread (Windows only) --------------------------------------
-        //
-        // One subscriber that throws must not take down the pump, nor stop the others from being
-        // told: the real implementation is equally defensive, for the same reason.
-        private static void Safe(System.Action a) { try { a(); } catch { } }
+        // ---- raised from the events thread ----------------------------------------------------
 
         internal static void RaiseDisplaySettingsChanged()
         {
-            Safe(() => s_displaySettingsChanging?.Invoke(null, System.EventArgs.Empty));
-            Safe(() => s_displaySettingsChanged?.Invoke(null, System.EventArgs.Empty));
+            s_displaySettingsChanging.Raise(null!, System.EventArgs.Empty);
+            s_displaySettingsChanged.Raise(null!, System.EventArgs.Empty);
         }
-        internal static void RaiseInstalledFontsChanged() => Safe(() => s_installedFontsChanged?.Invoke(null, System.EventArgs.Empty));
-        internal static void RaisePaletteChanged() => Safe(() => s_paletteChanged?.Invoke(null, System.EventArgs.Empty));
-        internal static void RaiseTimeChanged() => Safe(() => s_timeChanged?.Invoke(null, System.EventArgs.Empty));
-        internal static void RaisePowerMode(PowerModes mode) => Safe(() => s_powerModeChanged?.Invoke(null, new PowerModeChangedEventArgs(mode)));
-        internal static void RaiseSessionEnded(SessionEndReasons r) => Safe(() => s_sessionEnded?.Invoke(null, new SessionEndedEventArgs(r)));
-        internal static void RaiseSessionSwitch(SessionSwitchReason r) => Safe(() => s_sessionSwitch?.Invoke(null, new SessionSwitchEventArgs(r)));
-        internal static void RaiseTimerElapsed(System.IntPtr id) => Safe(() => s_timerElapsed?.Invoke(null, new TimerElapsedEventArgs(id)));
+        internal static void RaiseInstalledFontsChanged() => s_installedFontsChanged.Raise(null!, System.EventArgs.Empty);
+        internal static void RaisePaletteChanged() => s_paletteChanged.Raise(null!, System.EventArgs.Empty);
+        internal static void RaiseTimeChanged() => s_timeChanged.Raise(null!, System.EventArgs.Empty);
+        internal static void RaisePowerMode(PowerModes mode) => s_powerModeChanged.Raise(null!, new PowerModeChangedEventArgs(mode));
+        internal static void RaiseSessionEnded(SessionEndReasons r) => s_sessionEnded.Raise(null!, new SessionEndedEventArgs(r));
+        internal static void RaiseSessionSwitch(SessionSwitchReason r) => s_sessionSwitch.Raise(null!, new SessionSwitchEventArgs(r));
+        internal static void RaiseTimerElapsed(System.IntPtr id) => s_timerElapsed.Raise(null!, new TimerElapsedEventArgs(id));
 
         internal static void RaiseUserPreference(UserPreferenceCategory category)
         {
-            Safe(() => s_userPreferenceChanging?.Invoke(null, new UserPreferenceChangingEventArgs(category)));
-            Safe(() => s_userPreferenceChanged?.Invoke(null, new UserPreferenceChangedEventArgs(category)));
+            s_userPreferenceChanging.Raise(null!, new UserPreferenceChangingEventArgs(category));
+            s_userPreferenceChanged.Raise(null!, new UserPreferenceChangedEventArgs(category));
         }
 
         /// <summary>Returns true if a subscriber vetoed the shutdown.</summary>
         internal static bool RaiseSessionEnding(SessionEndReasons reason)
         {
             var e = new SessionEndingEventArgs(reason);
-            Safe(() => s_sessionEnding?.Invoke(null, e));
+            s_sessionEnding.Raise(null!, e);
             return e.Cancel;
         }
 
@@ -119,28 +154,42 @@ namespace Microsoft.Win32
         internal static void NotifySystemAppearanceChanged()
         {
             if (s_onWindows) return;      // the message pump already reports this, and would duplicate it
-            RaiseUserPreference(UserPreferenceCategory.Color);
+            UnixSystemEvents.Post(() => RaiseUserPreference(UserPreferenceCategory.Color));
         }
 
         // ---- the events thread ---------------------------------------------------------------
         //
         // On Windows these are the real thing: a WM_TIMER on the message window, and a post to that
-        // window's queue. Off Windows there is no such thread, so CreateTimer returns a null handle,
-        // KillTimer does nothing, and InvokeOnEventsThread runs the delegate inline, which is the
-        // best available approximation of "on some other thread, soon".
-        public static System.IntPtr CreateTimer(int interval) =>
-            s_onWindows ? WindowsSystemEvents.CreateTimer(interval) : System.IntPtr.Zero;
+        // window's queue. Elsewhere the events thread is UnixSystemEvents', its timers and its queue.
+        // the exceptions .NET's own throws
+#pragma warning disable CA2201
+        public static System.IntPtr CreateTimer(int interval)
+        {
+            if (interval <= 0)
+                throw new System.ArgumentException($"Invalid value '{interval}' for parameter 'interval'. 'interval' must be greater than 0.");
+            System.IntPtr id = s_onWindows ? WindowsSystemEvents.CreateTimer(interval) : UnixSystemEvents.CreateTimer(interval);
+            if (id == System.IntPtr.Zero) throw new System.Runtime.InteropServices.ExternalException("Cannot create timer.");
+            return id;
+        }
 
         public static void KillTimer(System.IntPtr timerId)
         {
             if (s_onWindows) WindowsSystemEvents.KillTimerCore(timerId);
+            else if (!UnixSystemEvents.KillTimer(timerId)) throw new System.Runtime.InteropServices.ExternalException("Cannot end timer.");
         }
+#pragma warning restore CA2201
 
+        // asynchronously, on the events thread, as a post to the events window runs it
         public static void InvokeOnEventsThread(System.Delegate method)
         {
             if (method is null) return;
-            if (s_onWindows && WindowsSystemEvents.TryInvokeOnEventsThread(method)) return;
-            method.DynamicInvoke();
+            if (s_onWindows)
+            {
+                if (!WindowsSystemEvents.TryInvokeOnEventsThread(method)) method.DynamicInvoke();
+                return;
+            }
+            UnixSystemEvents.Ensure();
+            UnixSystemEvents.Post(() => { try { method.DynamicInvoke(); } catch { } });
         }
     }
 
