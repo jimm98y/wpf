@@ -184,7 +184,8 @@ namespace System.Windows.Forms
 				Color bc = _form.BackColor;
 				_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
 			}
-			Activate ();
+			if (_form.ActivateOnShow)   // ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+				Activate ();
 			Present ();
 		}
 
@@ -371,7 +372,8 @@ namespace System.Windows.Forms
 			OnMain (() => _window?.SetVisible (visible));
 			_lastVer = -1;
 			if (_form.Visible)
-				Activate ();
+				if (_form.ActivateOnShow)   // ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+					Activate ();
 			else
 				Deactivate ();
 		}

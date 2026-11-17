@@ -237,7 +237,8 @@ namespace System.Windows.Forms
 			AndroidWindow.MouseInput += OnTouch;
 			AndroidWindow.KeyInput += OnKey;
 			SyncFromWindow ();
-			Activate ();
+			if (_form.ActivateOnShow)   // ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+				Activate ();
 			Present ();
 		}
 
@@ -368,7 +369,8 @@ namespace System.Windows.Forms
 			_window.SetVisible (visible);
 			_lastVer = -1;
 			if (_form.Visible)
-				Activate ();
+				if (_form.ActivateOnShow)   // ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+					Activate ();
 			else
 				Deactivate ();
 		}

@@ -2542,8 +2542,9 @@ namespace System.Windows.Forms {
 			
 			// Focus comes with ACTIVATION on Windows (WmActivate), and a window that is shown without
 			// becoming the active one has no focused control. A host that reports activation
-			// (PresentationHost.TracksActivation) gets that; one that does not gets focus on show.
-			if (value && !IsMdiChild && (!(XplatUI.RunningWebGpuDriver && PresentationHost.TracksActivation (this)) || XplatUI.GetActive () == Handle)) {
+			// (PresentationHost.TracksActivation) gets that; one that does not gets focus on show -- unless
+			// it is shown without activation (ShowWithoutActivation), which takes no focus anywhere.
+			if (value && !IsMdiChild && ActivateOnShow && (!(XplatUI.RunningWebGpuDriver && PresentationHost.TracksActivation (this)) || XplatUI.GetActive () == Handle)) {
 				if (ActiveControl == null)
 					SelectNextControl (null, true, true, true, false);
 				if (ActiveControl != null)

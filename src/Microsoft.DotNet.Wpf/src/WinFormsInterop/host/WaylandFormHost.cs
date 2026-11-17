@@ -585,6 +585,8 @@ namespace System.Windows.Forms
 			}
 			if (_chromeless && !_popup)
 				_window.SetChromeless (true);
+			// ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+			_window.ShowsActivated (_form.ActivateOnShow);
 			EnableDragDrop ();
 			_sizedTo = client;
 			_askedSize = new Size (Math.Max (1, (int)Math.Round (client.Width / _k)), Math.Max (1, (int)Math.Round (client.Height / _k)));
@@ -813,7 +815,8 @@ namespace System.Windows.Forms
 			if (_closed || _window == null || !_ready)
 				return;
 			bool visible = _form.Visible;
-			OnPump (() => { if (!_closed) _window.SetVisible (visible); });
+			bool activate = _form.ActivateOnShow;
+			OnPump (() => { if (!_closed) _window.SetVisible (visible, activate); });
 			_lastVer = -1;
 			if (_form.Visible)
 				Present ();

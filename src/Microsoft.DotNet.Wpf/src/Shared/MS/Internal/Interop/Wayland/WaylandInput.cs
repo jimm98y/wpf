@@ -158,6 +158,15 @@ namespace MS.Internal.Interop.Wayland
         internal static double PointerSurfaceY { get; private set; }
         internal static IntPtr KeyboardFocusSurface { get; private set; }
 
+        /// <summary>The keys of <see cref="KeyRedirectFrom"/> go to <see cref="KeyRedirectTo"/>: a window shown
+        /// without activation has the compositor's keyboard, the window still active has Windows'
+        /// (WaylandWindow.ReconcileActivation).</summary>
+        internal static IntPtr KeyRedirectFrom, KeyRedirectTo;
+
+        // the surface a key goes to
+        private static IntPtr KeySurface =>
+            KeyRedirectTo != IntPtr.Zero && KeyboardFocusSurface == KeyRedirectFrom ? KeyRedirectTo : KeyboardFocusSurface;
+
         // ---- Per-frame accumulator (see note 2 in the file header) --------------------------
         private static IntPtr s_frameSurface;
         private static bool s_haveMotion;
@@ -535,6 +544,8 @@ namespace MS.Internal.Interop.Wayland
                 s_frameTime = time;
                 IntPtr surface = FocusSurface;
                 if (surface == IntPtr.Zero) return;
+                // a click activates a window shown without activation, as on Windows
+                if (state != 0) WaylandWindow.NotePress(surface);
 
                 // Buttons are reported immediately rather than deferred to `frame`: press and
                 // release must keep their order relative to each other, and a frame carries at most
@@ -895,7 +906,7 @@ namespace MS.Internal.Interop.Wayland
                 if (down && scancode == 58) s_locksFlipping |= WaylandModifiers.CapsLock;    // KEY_CAPSLOCK
                 if (down && scancode == 69) s_locksFlipping |= WaylandModifiers.NumLock;     // KEY_NUMLOCK
 
-                RaiseKey(new WaylandKeyMessage(KeyboardFocusSurface, down, keysym, scancode, text, false, s_modifiers, (int)time));
+                RaiseKey(new WaylandKeyMessage(KeySurface, down, keysym, scancode, text, false, s_modifiers, (int)time));
 
                 if (down && s_xkbKeymap != IntPtr.Zero && WlXkb.xkb_keymap_key_repeats(s_xkbKeymap, xkbCode) && s_repeatRate > 0)
                 {
@@ -1011,7 +1022,7 @@ namespace MS.Internal.Interop.Wayland
             // realign, rather than a burst of forty.
             s_repeatNextTicks = now + intervalMs;
 
-            KeyInput?.Invoke(new WaylandKeyMessage(KeyboardFocusSurface, true, s_repeatKeysym, s_repeatScancode,
+            KeyInput?.Invoke(new WaylandKeyMessage(KeySurface, true, s_repeatKeysym, s_repeatScancode,
                                                    s_repeatText, true, s_modifiers, (int)now));
         }
 

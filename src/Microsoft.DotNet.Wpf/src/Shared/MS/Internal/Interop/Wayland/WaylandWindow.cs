@@ -1647,6 +1647,7 @@ namespace MS.Internal.Interop.Wayland
                 if (w._destroyed) continue;
                 try { w.Reconcile(); } catch { }
             }
+            try { ReconcileActivation(windows); } catch { }
         }
 
         private void Reconcile()
@@ -1669,19 +1670,7 @@ namespace MS.Internal.Interop.Wayland
                 Resized?.Invoke(_contentW, _contentH);
             }
 
-            // The compositor's activation (xdg_toplevel's ACTIVATED state, through libdecor): the window
-            // with the keyboard, as Windows' active window -- WM_ACTIVATE, Form.Activated, the active
-            // caption. Popups have no such state; they never take activation, as on Windows.
-            if (_frame != IntPtr.Zero)
-            {
-                bool active = (_windowState & LibdecorWindowState.Active) != 0;
-                if (active != _lastReportedActive)
-                {
-                    _lastReportedActive = active;
-                    AtSpiBridge.WindowActivated(_handle, active);
-                    ActiveChanged?.Invoke(active);
-                }
-            }
+            // (activation: ReconcileActivation, once every window has its state)
 
             if (_closeRequested)
             {
@@ -1695,8 +1684,109 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>The window became the active one (true), or stopped being it.</summary>
         public event Action<bool>? ActiveChanged;
 
-        /// <summary>Whether the compositor has this window active.</summary>
-        public bool IsActive => _frame != IntPtr.Zero && (_windowState & LibdecorWindowState.Active) != 0;
+        /// <summary>Whether this is the active window: the compositor's, unless it was shown without
+        /// activation and has not been clicked since.</summary>
+        public bool IsActive => _frame != IntPtr.Zero && (_windowState & LibdecorWindowState.Active) != 0 && !_noActivate;
+
+        // ---- Activation ------------------------------------------------------------------------
+        //
+        // The compositor's activation (xdg_toplevel's ACTIVATED state, through libdecor) is Windows' active
+        // window -- WM_ACTIVATE, Form.Activated, the active caption -- with one difference Wayland gives no way
+        // to ask for: a window shown WITHOUT activation (SW_SHOWNA / SWP_NOACTIVATE: WPF's ShowActivated=false,
+        // a form's ShowWithoutActivation -- a notification, a tool palette). The protocol cannot map a toplevel
+        // without handing it the keyboard, and GNOME activates every new window of the focused application, so
+        // a notice popping up took Form.Activated, the active caption and the typing from the window the user
+        // was in. Such a window is therefore not reported active while it has the compositor's activation: the
+        // window that was active stays so, and the keys go to it (WaylandInput.KeyRedirectFrom/To), until the
+        // user clicks the new window -- which activates it, as on Windows -- or activation moves elsewhere.
+        // Popups have no activation state; they never take activation, as on Windows.
+
+        private bool _noActivate;          // shown without activation, and neither clicked nor activated since
+        private bool _hadFocus;            // ...and the compositor has given it the keyboard since
+        private long _noActivateSince;     // when it was shown (Stopwatch ticks)
+        private static WaylandWindow? s_active;   // the window reported active
+
+        /// <summary>Show or hide; a show with <paramref name="activate"/> false leaves the active window
+        /// active (SW_SHOWNA), see Activation.</summary>
+        public void SetVisible(bool visible, bool activate)
+        {
+            if (visible && (_hidden || !_lastReportedActive)) ShowsActivated(activate);
+            SetVisible(visible);
+        }
+
+        /// <summary>Whether the window's next showing activates it, for a window shown as it is made (the
+        /// first frame maps it): false is SW_SHOWNA, see Activation.</summary>
+        public void ShowsActivated(bool activate)
+        {
+            if (_frame == IntPtr.Zero) return;
+            _noActivate = !activate;
+            _hadFocus = false;
+            _noActivateSince = System.Diagnostics.Stopwatch.GetTimestamp();
+        }
+
+        /// <summary>Window.Activate / Form.Activate: a window shown without activation becomes the active one
+        /// when the compositor has it (Wayland gives no way to take activation from another window).</summary>
+        public void Activate() => _noActivate = false;
+
+        /// <summary>A button went down over <paramref name="surface"/>: a click activates a window shown
+        /// without activation, as on Windows.</summary>
+        internal static void NotePress(IntPtr surface)
+        {
+            if (FromHandle(surface) is { _noActivate: true } w) w._noActivate = false;
+        }
+
+        /// <summary>The active window, from the compositor's and the windows shown without activation.</summary>
+        private static void ReconcileActivation(WaylandWindow[] windows)
+        {
+            WaylandWindow? focused = null;
+            bool pending = false;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            foreach (WaylandWindow w in windows)
+            {
+                if (w._destroyed || w._frame == IntPtr.Zero) continue;
+                if ((w._windowState & LibdecorWindowState.Active) != 0 && !w._hidden)
+                {
+                    focused ??= w;
+                    w._hadFocus = true;
+                }
+                // The activation the compositor gives a window as it maps it is the one held back; once that
+                // is over (the window lost it again, or never had it within a second), a later activation is
+                // the user's -- Alt+Tab to it -- and counts.
+                else if (w._noActivate && (w._hadFocus || now - w._noActivateSince >= System.Diagnostics.Stopwatch.Frequency))
+                    w._noActivate = false;
+                // GNOME takes activation from the active window before it hands it to the new one, and not
+                // always in the same batch: a window just shown without activation that has not had it yet
+                // means the active window keeps it for now
+                else if (w._noActivate && !w._hidden)
+                    pending = true;
+            }
+            WaylandWindow? held = s_active is { _destroyed: false, _hidden: false } a ? a : null;
+            WaylandWindow? active = focused is null ? (pending ? held : null)
+                                  : focused._noActivate ? (ReferenceEquals(held, focused) ? null : held)
+                                  : focused;
+
+            if (focused is { _noActivate: true } && active is not null)
+            {
+                WaylandInput.KeyRedirectFrom = focused._surface;
+                WaylandInput.KeyRedirectTo = active._surface;
+            }
+            else
+                WaylandInput.KeyRedirectFrom = WaylandInput.KeyRedirectTo = IntPtr.Zero;
+
+            if (ReferenceEquals(active, s_active)) return;
+            WaylandWindow? was = s_active;
+            s_active = active;
+            if (was is { _destroyed: false }) was.ReportActive(false);
+            active?.ReportActive(true);
+        }
+
+        private void ReportActive(bool active)
+        {
+            if (active == _lastReportedActive) return;
+            _lastReportedActive = active;
+            AtSpiBridge.WindowActivated(_handle, active);
+            ActiveChanged?.Invoke(active);
+        }
 
         /// <summary>Milliseconds until the pump must wake regardless of compositor traffic (key
         /// repeat), or -1 when nothing is pending.</summary>

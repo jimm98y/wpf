@@ -204,7 +204,8 @@ namespace System.Windows.Forms
 				Color bc = _form.BackColor;
 				_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
 			}
-			Activate ();
+			if (_form.ActivateOnShow)   // ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+				Activate ();
 			Present ();
 		}
 		/// <summary>A press on the form while a modal dialog has disabled it (EnableWindow -- WPF's dialog's, or this
@@ -316,7 +317,8 @@ namespace System.Windows.Forms
 			_window.SetVisible (_form.Visible);
 			_lastVer = -1;
 			if (_form.Visible)
-				Activate ();
+				if (_form.ActivateOnShow)   // ShowWithoutActivation: the active form stays active (SW_SHOWNOACTIVATE)
+					Activate ();
 			else
 				Deactivate ();
 		}

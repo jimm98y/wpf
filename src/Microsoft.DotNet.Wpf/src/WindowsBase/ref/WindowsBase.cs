@@ -805,6 +805,9 @@ namespace MS.Internal.Interop.Wayland
         public void Create(string title, int x, int y, int width, int height, bool borderless, System.IntPtr owner) { }
         public bool ReadyToPresent() { throw null; }
         public void SetVisible(bool visible) { }
+        public void SetVisible(bool visible, bool activate) { }
+        public void ShowsActivated(bool activate) { }
+        public void Activate() { }
         public void BeginMoveDrag() { }
         public void Destroy() { }
         public static void EnsureApplication() { }
