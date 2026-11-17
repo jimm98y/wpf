@@ -288,6 +288,8 @@ namespace MS.Internal.Interop.Wayland
                 // Opened at the first paste, it had missed both, knew of no offer, and Ctrl+V pasted nothing.
                 try { WaylandClipboard.EnsureDevice(); } catch { }
 
+                // the web view's overlays, input and GLib pump (WaylandWebViewSupport), for LinuxWebViewBackend
+                WaylandWebViewSupport.Register();
                 LogSink?.Invoke($"connected: compositor={Compositor != IntPtr.Zero} xdg_wm_base={XdgWmBase != IntPtr.Zero} " +
                                 $"seat=v{SeatVersion} viewporter={Viewporter != IntPtr.Zero} " +
                                 $"fractional={FractionalScaleManager != IntPtr.Zero} cursorShape={CursorShapeManager != IntPtr.Zero} dialog={WmDialog != IntPtr.Zero} gtkShell={GtkShell != IntPtr.Zero} " +
@@ -713,6 +715,8 @@ namespace MS.Internal.Interop.Wayland
             // waiting here, the UI thread services the connection (anything arriving wakes it): no stand-in is
             // needed, and none may take the lock it holds -- it is let go for the wait
             if (ui) s_uiPolling = true;
+            // a web view's engine runs on GLib's main loop, iterated below: woken at least every 10 ms while one is up
+            if (WaylandWebViewSupport.HasPumps && (timeoutMs < 0 || timeoutMs > 10)) timeoutMs = 10;
             if (timeoutMs != 0) System.Threading.Monitor.Exit(s_serviceLock);
             try
             {
@@ -748,6 +752,7 @@ namespace MS.Internal.Interop.Wayland
 
             Wl.wl_display_dispatch_pending(Display);
             if (Decor != IntPtr.Zero) WlDecor.libdecor_dispatch(Decor, 0);
+            if (!t_standIn) WaylandWebViewSupport.Pump();
             PumpDBus();
             return read;
         }

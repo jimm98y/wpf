@@ -168,6 +168,10 @@ namespace Microsoft.Web.WebView2.WinForms
             return _initialized.Task;
         }
 
+        /// <summary>The later overload of the real package: a controller's options, which no head here varies by.</summary>
+        public Task EnsureCoreWebView2Async(CoreWebView2Environment environment, CoreWebView2ControllerOptions controllerOptions) =>
+            EnsureCoreWebView2Async(environment);
+
         private readonly TaskCompletionSource<object> _initialized =
             new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 

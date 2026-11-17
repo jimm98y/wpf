@@ -670,6 +670,8 @@ namespace MS.Internal.Interop.Wayland
 
         private static void Raise(in WaylandMouseMessage m)
         {
+            // on a web view's overlay: the engine's input, not the window's (WaylandWebViewSupport)
+            if (!WaylandDisplay.IsStandIn && WaylandWebViewSupport.TryMouse(m)) return;
             WaylandMouseMessage copy = m;
             if (WaylandDisplay.DeferInput(() => MouseInput?.Invoke(copy))) return;
             MouseInput?.Invoke(m);
@@ -678,6 +680,7 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>A key, delivered on the UI thread (set aside while another thread stands in for it).</summary>
         private static void RaiseKey(WaylandKeyMessage k)
         {
+            if (!WaylandDisplay.IsStandIn && WaylandWebViewSupport.TryKey(k)) return;
             if (WaylandDisplay.DeferInput(() => KeyInput?.Invoke(k))) return;
             KeyInput?.Invoke(k);
         }

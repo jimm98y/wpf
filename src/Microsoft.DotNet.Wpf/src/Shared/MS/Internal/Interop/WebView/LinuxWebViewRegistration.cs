@@ -54,6 +54,25 @@ namespace MS.Internal.Interop.WebView
         /// <summary>(id) -> null.</summary>
         internal const string DestroySubsurface = "destroySubsurface";
 
+        /// <summary>
+        /// (id, IntPtr pixels, int width, int height, int stride) -> bool. A frame's premultiplied BGRA rows,
+        /// copied into a buffer of the overlay's and committed (false: every buffer is still the compositor's).
+        /// </summary>
+        internal const string AttachPixels = "attachPixels";
+
+        /// <summary>
+        /// (id, Action&lt;int kind, int button, int x, int y, int wheel, int wheelH&gt; mouse,
+        /// Action&lt;uint keysym, uint scancode, bool down, uint modifiers, string text&gt; key) -> null.
+        /// The overlay's pointer events, and the keys while a press on it has given it the keyboard.
+        /// </summary>
+        internal const string SetInput = "setInput";
+
+        /// <summary>(Action) -> null. Run on each pass of the Wayland loop (WebKit's GLib main loop).</summary>
+        internal const string AddPump = "addPump";
+
+        /// <summary>(Action) -> null.</summary>
+        internal const string RemovePump = "removePump";
+
         /// <summary>() -> IntPtr. The process's wl_display*, which WPE's FDO backend needs.</summary>
         internal const string GetDisplay = "getDisplay";
 

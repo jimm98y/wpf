@@ -159,9 +159,9 @@ namespace Microsoft.Web.WebView2.Wpf
             _ready = _backend.AttachAsync(WebViewHostWindow.AttachTarget(_hostWindow));
             _coreWebView2 = new CoreWebView2(_backend);
 
-            if (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS())
+            if (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS() || WebViewHostWindow.IsWaylandHead)
             {
-                // HwndHost hides its window to follow IsVisible; the iframe (the WKWebView) is not that window.
+                // HwndHost hides its window to follow IsVisible; the iframe (the WKWebView, the subsurface) is not that window.
                 _backend.SetVisible(IsVisible);
                 IsVisibleChanged += (s, e) => _backend?.SetVisible((bool)e.NewValue);
             }
@@ -219,7 +219,7 @@ namespace Microsoft.Web.WebView2.Wpf
             // window (as WebBrowser's ActiveXHost does).
             base.OnWindowPositionChanged(rcBoundingBox);
 
-            bool placedInWindow = OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS();
+            bool placedInWindow = OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS() || WebViewHostWindow.IsWaylandHead;
             _backend?.SetBounds(
                 placedInWindow ? (int)Math.Round(rcBoundingBox.X) : 0,
                 placedInWindow ? (int)Math.Round(rcBoundingBox.Y) : 0,
@@ -255,6 +255,10 @@ namespace Microsoft.Web.WebView2.Wpf
         /// stopped Workbench's main window half way through its construction.)
         /// </remarks>
         public Task EnsureCoreWebView2Async(CoreWebView2Environment environment = null) => _initialized.Task;
+
+        /// <summary>The later overload of the real package: a controller's options, which no head here varies by.</summary>
+        public Task EnsureCoreWebView2Async(CoreWebView2Environment environment, CoreWebView2ControllerOptions controllerOptions) =>
+            EnsureCoreWebView2Async(environment);
 
         private void WhenReady(Action action)
         {

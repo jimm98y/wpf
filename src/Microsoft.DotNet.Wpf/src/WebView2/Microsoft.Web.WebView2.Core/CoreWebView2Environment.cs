@@ -161,10 +161,32 @@ namespace Microsoft.Web.WebView2.Core
             }
         }
 
+        /// <summary>Options for one control's view: its profile, private mode, script locale.</summary>
+        public CoreWebView2ControllerOptions CreateCoreWebView2ControllerOptions() => new CoreWebView2ControllerOptions();
+
         [System.Runtime.InteropServices.DllImport(
             "WebView2Loader.dll",
             CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
         private static extern int GetAvailableCoreWebView2BrowserVersionString(
             string browserExecutableFolder, out IntPtr versionInfo);
+    }
+
+    /// <summary>
+    /// The options of one control's view (CoreWebView2Environment.CreateCoreWebView2ControllerOptions). Carried for
+    /// the Windows head's controller; the other heads' engines have no profiles to choose between.
+    /// </summary>
+    public class CoreWebView2ControllerOptions
+    {
+        internal CoreWebView2ControllerOptions() { }
+
+        public string ProfileName { get; set; }
+
+        public bool IsInPrivateModeEnabled { get; set; }
+
+        public string ScriptLocale { get; set; }
+
+        public bool AllowHostInputProcessing { get; set; }
+
+        public System.Drawing.Color DefaultBackgroundColor { get; set; } = System.Drawing.Color.White;
     }
 }

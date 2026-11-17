@@ -48,7 +48,8 @@ namespace MS.Internal.Interop.WebView
             // not a child window of its own, so there is nothing to create either -- and handing HwndHost
             // the owner's own view would have it move and size the whole window as its "child". Without a
             // handle Workbench's Knowledge Base found no engine and took the app down with it.
-            if (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS() && parentIsContentView)
+            // Linux likewise: its engine is a wl_subsurface of the owner window's surface (LinuxWebViewBackend).
+            if (OperatingSystem.IsBrowser() || (OperatingSystem.IsMacOS() || IsWaylandHead) && parentIsContentView)
             {
                 // No window to make: the browser head's overlay is an <iframe> the backend creates
                 // in the DOM, keyed by this handle. All that is needed here is a value that is
@@ -90,7 +91,10 @@ namespace MS.Internal.Interop.WebView
         /// <summary>What a backend attaches to for the host window <paramref name="window"/>: the owner's
         /// content view on macOS, where the engine is an overlay inside it; the window itself elsewhere.</summary>
         internal static IntPtr AttachTarget(IntPtr window)
-            => OperatingSystem.IsMacOS() ? BrowserParentOf(window) : window;
+            => OperatingSystem.IsMacOS() || IsWaylandHead ? BrowserParentOf(window) : window;
+
+        /// <summary>Linux's own head (Android is Linux to OperatingSystem too).</summary>
+        internal static bool IsWaylandHead => OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();
 
         /// <summary>The WPF window a browser (or macOS) overlay key was created in, or zero.</summary>
         internal static IntPtr BrowserParentOf(IntPtr window)
