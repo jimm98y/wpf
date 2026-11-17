@@ -549,7 +549,7 @@ namespace System.Windows
         ///  True on the heads whose run loop cannot be re-entered, so no modal call can block there.
         /// </summary>
         private static bool CannotBlockForModal =>
-            OperatingSystem.IsBrowser();
+            OperatingSystem.IsBrowser() && !MS.Internal.Interop.BrowserBlocking.CanBlock;
 
         /// <summary>
         ///     This method tries to activate the Window.

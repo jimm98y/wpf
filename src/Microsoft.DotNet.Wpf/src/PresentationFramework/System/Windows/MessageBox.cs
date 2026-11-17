@@ -571,7 +571,7 @@ namespace System.Windows
         /// call site.
         /// </remarks>
         internal static bool CannotBlock =>
-            OperatingSystem.IsBrowser();
+            OperatingSystem.IsBrowser() && !MS.Internal.Interop.BrowserBlocking.CanBlock;
 
         internal static System.Threading.Tasks.Task<MessageBoxResult> ShowCoreAsync(
             IntPtr owner,

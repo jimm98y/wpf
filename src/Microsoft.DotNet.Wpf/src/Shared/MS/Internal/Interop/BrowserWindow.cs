@@ -104,7 +104,127 @@ namespace MS.Internal.Interop
         {
             if (Handle == IntPtr.Zero) return;
             Js.SetWindowVisible((int)Handle, visible);
+            if (!visible) PassActivation();
         }
+
+        public void SetVisible(bool visible, bool activate)
+        {
+            SetVisible(visible);
+            if (visible && activate) Activate();
+        }
+
+        // ---- activation and window state ---------------------------------------------------------
+        //
+        // The page is the desktop here, and its windows have Windows' active window among them: the top-level
+        // one last activated or pressed -- WM_ACTIVATE, Window.IsActive and Activated, the window a dialog with no
+        // owner belongs to. A popup leaves it as it is. Window.Activate raises a window and gives it the keys;
+        // minimized, a window is off the page until restored; maximized, a window over the page's own fills it.
+
+        /// <summary>The window became the active one (true) or stopped being it (false): WM_ACTIVATE.</summary>
+        public event Action<bool> ActiveChanged;
+
+        private static BrowserWindow s_active;
+
+        private bool CanBeActive => Handle != IntPtr.Zero && !IsBorderless;
+
+        private static void SetActive(BrowserWindow window)
+        {
+            if (window != null && !window.CanBeActive) return;
+            if (ReferenceEquals(s_active, window)) return;
+            BrowserWindow old = s_active;
+            s_active = window;
+            old?.ActiveChanged?.Invoke(false);
+            window?.ActiveChanged?.Invoke(true);
+        }
+
+        /// <summary>The active window goes (hidden, minimized, destroyed): the page's own window is active again.</summary>
+        private void PassActivation()
+        {
+            if (!ReferenceEquals(s_active, this)) return;
+            BrowserWindow next = null;
+            foreach (BrowserWindow w in s_byHandle.Values)
+                if (!ReferenceEquals(w, this) && w.CanBeActive && !w._minimized && !w.IsSecondary) { next = w; break; }
+            SetActive(next);
+        }
+
+        /// <summary>SetForegroundWindow: to the front of the page's windows, with the keys, and active.</summary>
+        public void Activate()
+        {
+            if (!CanBeActive) return;
+            if (_minimized) SetWindowState(9);
+            Js.RaiseWindow((int)Handle);
+            TakeKeyboard();
+            SetActive(this);
+        }
+
+        /// <summary>A press on the window: it becomes the active one, as a click activates a window on Windows.</summary>
+        internal void ActivateOnPress()
+        {
+            if (CanBeActive) SetActive(this);
+        }
+
+        /// <summary>The window's maximized rectangle, asked of the window as Windows asks it (WM_GETMINMAXINFO):
+        /// given the monitor's and work area's rectangles, it answers the position and size, or null to keep them.</summary>
+        public Func<int[], int[]> QueryMaximizedRect { get; set; }
+
+        private bool _minimized, _maximized;
+        private int _restoreX, _restoreY, _restoreW, _restoreH;
+
+        public void SetWindowState(int state)
+        {
+            if (Handle == IntPtr.Zero) return;
+            switch (state)
+            {
+                case 2: case 6: case 7: case 11:   // SW_SHOWMINIMIZED, SW_MINIMIZE, SW_SHOWMINNOACTIVE, SW_FORCEMINIMIZE
+                    if (_minimized) return;
+                    _minimized = true;
+                    Js.SetWindowVisible((int)Handle, false);
+                    PassActivation();
+                    Resized?.Invoke(0, 0);
+                    break;
+
+                case 3:   // SW_SHOWMAXIMIZED
+                    Restore();
+                    if (_maximized || !IsSecondary) return;   // the page's own window fills the page already
+                    GetWindowScreenOriginPixels(out _restoreX, out _restoreY);
+                    _restoreX -= _frameEdge; _restoreY -= _frameTop;   // SetFrameOrigin's: the outer origin
+                    GetPixelSize(out _restoreW, out _restoreH);
+                    int w = Js.GetViewportWidthPixels(), h = Js.GetViewportHeightPixels();
+                    int x = 0, y = 0;
+                    int[] r = QueryMaximizedRect?.Invoke(new[] { 0, 0, w, h, 0, 0, w, h });
+                    if (r != null && r.Length >= 4 && r[2] > 0 && r[3] > 0) { x = r[0]; y = r[1]; w = r[2]; h = r[3]; }
+                    _maximized = true;
+                    SetFrameOrigin(x, y);
+                    SetContentSizePixels(w, h);
+                    break;
+
+                case 1: case 9:   // SW_SHOWNORMAL, SW_RESTORE
+                    bool wasMinimized = _minimized;
+                    Restore();
+                    if (_maximized)
+                    {
+                        _maximized = false;
+                        SetFrameOrigin(_restoreX, _restoreY);
+                        SetContentSizePixels(_restoreW + 2 * _frameEdge, _restoreH + _frameTop + _frameEdge);
+                    }
+                    else if (wasMinimized)
+                    {
+                        GetPixelSize(out int pw, out int ph);
+                        Resized?.Invoke(pw, ph);
+                    }
+                    break;
+            }
+        }
+
+        private void Restore()
+        {
+            if (!_minimized) return;
+            _minimized = false;
+            Js.SetWindowVisible((int)Handle, true);
+        }
+
+        /// <summary>SW_SHOWMAXIMIZED as the window is now, SW_SHOWMINIMIZED, or SW_SHOWNORMAL.</summary>
+        public int GetWindowState() => _minimized ? 2 : _maximized ? 3 : 1;
 
         /// <summary>No-op: a browser page cannot move its own window from script.</summary>
         /// <summary>SC_MOVE's move loop: the window follows the pointer from the press being handled
@@ -127,6 +247,7 @@ namespace MS.Internal.Interop
         {
             if (Handle == IntPtr.Zero)
                 return;
+            PassActivation();
             s_byHandle.Remove(Handle);
             Js.DestroyWindow((int)Handle);
             Handle = IntPtr.Zero;
@@ -656,6 +777,9 @@ namespace MS.Internal.Interop
                         // sets the focus on WM_LBUTTONDOWN alone).
                         if (kind == 1 && e.GetProperty("b").GetInt32() == 0 && FromHandle((IntPtr)handle) is { TakesKeyboardOnPress: true })
                             PlatformFocus.FocusMovedByPlatform((IntPtr)handle);
+                        // a press activates the window it lands on
+                        if (kind == 1)
+                            FromHandle((IntPtr)handle)?.ActivateOnPress();
                         int mx = e.GetProperty("x").GetInt32(), my = e.GetProperty("y").GetInt32();
                         // A window holding the mouse capture (SetCapture: WPF's Mouse.Capture, a WinForms
                         // control's grab on a press) gets the mouse wherever the pointer is, as Windows
@@ -833,6 +957,9 @@ namespace MS.Internal.Interop
 
             [JSImport("setKeyboardWindow", Module)]
             internal static partial void SetKeyboardWindow(int handle);
+
+            [JSImport("raiseWindow", Module)]
+            internal static partial void RaiseWindow(int handle);
 
             [JSImport("setParentWindow", Module)]
             internal static partial void SetParentWindow(int handle, int parent);

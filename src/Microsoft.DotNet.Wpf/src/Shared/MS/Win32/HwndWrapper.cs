@@ -205,6 +205,10 @@ namespace MS.Win32
                         if ((style & WS_CHILD) != 0) browser.SetParentWindow(parent);
                         // Route content-size changes to a synthetic WM_SIZE exactly like Cocoa below.
                         browser.Resized += OnCocoaResized;
+                        // ...and a maximize asks the window its rectangle, WM_GETMINMAXINFO.
+                        browser.QueryMaximizedRect = QueryMaximizedRect;
+                        // ...and activation is WM_ACTIVATE, as AppKit's key window is.
+                        browser.ActiveChanged += OnCocoaActiveChanged;
                         _platformWindow = browser;
                         _handle = browser.Handle;
                     }

@@ -267,7 +267,13 @@ namespace MS.Internal.Interop
             public void GetResult() { }
             public void OnCompleted(System.Action continuation) { }
             public void UnsafeOnCompleted(System.Action continuation) { }
-        }
+            public System.Func<int[], int[]> QueryMaximizedRect { get { throw null; } set { } }
+        public event System.Action<bool> ActiveChanged { add { } remove { } }
+        public void Activate() { }
+        public void SetVisible(bool visible, bool activate) { }
+        public void SetWindowState(int state) { }
+        public int GetWindowState() { throw null; }
+    }
         public static void PumpEvents() { }
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }

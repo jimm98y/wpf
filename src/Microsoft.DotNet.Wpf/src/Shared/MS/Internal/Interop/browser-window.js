@@ -345,6 +345,13 @@ export function setWindowVisible(handle, visible) {
     updatePageTitle();
 }
 
+// SetForegroundWindow: a top-level window to the front of the page's (its child windows with it)
+export function raiseWindow(handle) {
+    const w = windows.get(handle);
+    if (!w || w.parent) return;
+    raise(handle);
+}
+
 // z-order as Windows keeps it for child windows: a child's canvas lies just above its parent's, and goes
 // up with it. A hosted WPF view (an ElementHost's window, a child of its form's) was a canvas of its own,
 // ordered by when it was made -- over every popup made before it, which it then hid from the pointer.
