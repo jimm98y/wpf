@@ -1586,6 +1586,12 @@ namespace System.Windows.Forms
 
 			if ((param & (long)MsgButtons.MK_RBUTTON) != 0)
 				buttons |= MouseButtons.Right;
+
+			if ((param & 0x20) != 0)   // MK_XBUTTON1
+				buttons |= MouseButtons.XButton1;
+
+			if ((param & 0x40) != 0)   // MK_XBUTTON2
+				buttons |= MouseButtons.XButton2;
 				
 			return buttons;
 		}
@@ -3684,9 +3690,10 @@ namespace System.Windows.Forms
 				case Keys.CapsLock:
 				case Keys.NumLock:
 				case Keys.Scroll:
+				case Keys.Insert:   // .NET's too: the insert/overtype toggle
 					return XplatUI.IsKeyLocked ((VirtualKeys)keyVal);
 				default:
-					throw new NotSupportedException ("keyVal must be CapsLock, NumLock, or ScrollLock");
+					throw new NotSupportedException ("keyVal must be CapsLock, NumLock, ScrollLock or Insert");
 			}
 		}
 
@@ -5529,6 +5536,26 @@ namespace System.Windows.Forms
 					return;
 				}
 
+				// The extra buttons (back and forward on most mice), as .NET has them: MouseDown, MouseUp and a
+				// click with XButton1 or XButton2, the button in the high word of wParam. Nothing handled them.
+				case Msg.WM_XBUTTONDOWN: {
+					WmXButtonDown (ref m, false);
+					m.Result = (IntPtr)1;
+					return;
+				}
+
+				case Msg.WM_XBUTTONDBLCLK: {
+					WmXButtonDown (ref m, true);
+					m.Result = (IntPtr)1;
+					return;
+				}
+
+				case Msg.WM_XBUTTONUP: {
+					WmXButtonUp (ref m);
+					m.Result = (IntPtr)1;
+					return;
+				}
+
 				case Msg.WM_MOUSEWHEEL: {
 					WmMouseWheel (ref m);
 					return;
@@ -5842,6 +5869,38 @@ namespace System.Windows.Forms
 			OnMouseDown (new MouseEventArgs (FromParamToMouseButtons ((int) m.WParam.ToInt32()), 
 				mouse_clicks, LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 
 				0));
+		}
+
+		private static MouseButtons XButtonOf (ref Message m)
+			=> (((long)m.WParam >> 16) & 0xFFFF) == 2 ? MouseButtons.XButton2 : MouseButtons.XButton1;
+
+		private void WmXButtonDown (ref Message m, bool doubleClick)
+		{
+			if (XplatUI.IsEnabled (Handle) && active_tracker != null) {
+				ProcessActiveTracker (ref m);
+				return;
+			}
+			InternalCapture = true;
+			if (doubleClick)
+				mouse_clicks++;
+			OnMouseDown (new MouseEventArgs (XButtonOf (ref m), mouse_clicks,
+				LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 0));
+		}
+
+		private void WmXButtonUp (ref Message m)
+		{
+			if (XplatUI.IsEnabled (Handle) && active_tracker != null) {
+				ProcessActiveTracker (ref m);
+				return;
+			}
+			MouseEventArgs me = new MouseEventArgs (XButtonOf (ref m), mouse_clicks,
+				LowOrder ((int) m.LParam.ToInt32 ()), HighOrder ((int) m.LParam.ToInt32 ()), 0);
+			try {
+				HandleClick (mouse_clicks, me);
+				OnMouseUp (me);
+			} finally {
+				EndMouseUp ();
+			}
 		}
 
 		private void WmRButtonUp (ref Message m)

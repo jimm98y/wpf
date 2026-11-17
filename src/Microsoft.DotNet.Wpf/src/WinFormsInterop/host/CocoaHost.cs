@@ -241,7 +241,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             if (window == IntPtr.Zero || _closed) return;
             if (visible)
             {
-                SendVoidPtr(window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+                ShowWindow(window, activateApp: false);
             }
             else
             {
@@ -523,6 +523,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     private const int HTCAPTION = 2, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14,
                       HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
 
+    /// <summary>The form's own answer to WM_NCHITTEST, whatever is over the point: whether it has taken
+    /// the frame over (DrawsOwnCaption). Where a press goes is the driver's FrameHitTest.</summary>
     private int HitTest(int x, int y)
     {
         try
@@ -533,6 +535,21 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         {
             return 0;
         }
+    }
+
+    /// <summary>The window shown, as ShowWindow shows a form: active (SW_SHOW), or, for a form that says
+    /// ShowWithoutActivation (a notification, a tool tip of its own), in front without taking the keyboard
+    /// or the foreground (SW_SHOWNOACTIVATE). Every form was made key, and a notice popping up took the
+    /// typing away from whatever the user was in.</summary>
+    private void ShowWindow(IntPtr window, bool activateApp)
+    {
+        if (!_form.ActivateOnShow)
+        {
+            SendVoidPtr(window, Sel("orderFrontRegardless"), IntPtr.Zero);
+            return;
+        }
+        SendVoidPtr(window, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
+        if (activateApp) Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
     }
 
     private void HideTitleBar(IntPtr window)
@@ -665,11 +682,10 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
                 _window = nw;
                 EnableDragDrop();
                 WinFormsWebGpu.Accessibility.AutomationSource.Register(this);
-                SendVoidPtr(nw, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
                 // As the main thread's forms do: a process the user just started takes the foreground
                 // with its first window. A splash screen shown from its own thread came up before any
                 // main-thread form, behind the app it was launched from, and was never seen.
-                Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
+                ShowWindow(nw, activateApp: true);
                 if (UseWebGpu)
                 {
                     try
@@ -737,12 +753,15 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         // a hosted WPF frame is something to present: it ends the loop's wait
         Microsoft.Wpf.Interop.WebGpu.Composition.HostedWpfContent.Published = WakeLoop;
         _form.VisibleChanged += OnFormVisibleChanged;
-        SendVoidPtr(win, Sel("makeKeyAndOrderFront:"), IntPtr.Zero);
-        Send(App(), Sel("activateIgnoringOtherApps:"), (IntPtr)1);
+        ShowWindow(win, activateApp: true);
         // the state the form was given before it had a window (an app that restores its placement in Load):
         // only the form's own then (Form.window_state), which Windows makes the window's at creation
         // (WS_MAXIMIZE, WS_MINIMIZE); the driver hears of a state set after (ApplyWindowState)
-        if (_form.window_state == FormWindowState.Maximized) SendVoidPtr(win, Sel("zoom:"), IntPtr.Zero);
+        if (_form.window_state == FormWindowState.Maximized)
+        {
+            _restoreFrame = SendRectRet(win, Sel("frame"));
+            SendVoidPtr(win, Sel("zoom:"), IntPtr.Zero);
+        }
         else if (_form.window_state == FormWindowState.Minimized) SendVoidPtr(win, Sel("miniaturize:"), IntPtr.Zero);
 
         // WebGPU present path (on unless WF_WEBGPU=0): create a wgpu context, then a CAMetalLayer surface over
@@ -825,7 +844,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             var popups = _offMain ? null : new System.Collections.Generic.List<(object, int, int)>();
             var scenes = GetScenes(out int ox, out int oy, popups);
             Rectangle? caret = GetCaretRect(ox, oy);
-            _lastPresentOk = _wgpu.PresentScenes(scenes, caret, ClientScreen.Width, ClientScreen.Height);
+            // the rubber bands a drag draws (ControlPaint's reversible frames), over the finished frame
+            _lastPresentOk = _wgpu.PresentScenes(scenes, caret, _driver.RubberBandsIn(ox, oy), ClientScreen.Width, ClientScreen.Height);
             if (!_lastPresentOk && _offMain) _lastPresentOk = PresentAsLayerContents(scenes, caret);
             else if (_lastPresentOk && _surfaceLayerHidden)
             {
@@ -1077,6 +1097,74 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         // A nil queue delivers on the posting thread, synchronously: inside the tracking loop.
         _resizeObserver = SendObserver(center, Sel("addObserverForName:object:queue:usingBlock:"),
                                        NSStr("NSWindowDidResizeNotification"), _window, IntPtr.Zero, _resizeBlock);
+        // the modal size and move loop's ends, WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE (Form.ResizeBegin, ResizeEnd)
+        foreach ((string name, IntPtr fn) in new[]
+        {
+            ("NSWindowWillStartLiveResizeNotification", (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnLiveResizeStart),
+            ("NSWindowDidEndLiveResizeNotification", (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnLiveResizeEnd),
+            ("NSWindowWillMoveNotification", (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnWillMove),
+        })
+        {
+            IntPtr block = MS.Internal.Interop.ObjCBlock.Create(fn, GCHandle.ToIntPtr(_self));
+            if (block == IntPtr.Zero) continue;
+            IntPtr observer = SendObserver(center, Sel("addObserverForName:object:queue:usingBlock:"), NSStr(name), _window, IntPtr.Zero, block);
+            if (observer != IntPtr.Zero) _sizeMoveObservers.Add(observer);
+        }
+    }
+
+    // ---- the modal size and move loop -----------------------------------------------------
+    //
+    // Windows tells a window that the user has begun to move or size it (WM_ENTERSIZEMOVE) and that it is
+    // over (WM_EXITSIZEMOVE): Form.ResizeBegin and ResizeEnd, which an application uses to hold off a costly
+    // layout until the drag is done. Nothing sent either, and neither event ever came. Here the loop is
+    // AppKit's live resize, a drag of the window by its caption (AppKit moves it, and the move is over when
+    // the button comes up), or this host's own sizing from a border the form draws.
+
+    private readonly System.Collections.Generic.List<IntPtr> _sizeMoveObservers = new();
+    private bool _sizeMoveEntered, _liveResizing, _windowMoving;
+
+    private void SizeMove(bool enter)
+    {
+        if (enter == _sizeMoveEntered || !_form.IsHandleCreated || _form.IsDisposed) return;
+        _sizeMoveEntered = enter;
+        _driver.HostSizeMove(_form.Handle, enter);
+    }
+
+    /// <summary>From the pump: the move or size is over once nothing of it is going on any more.</summary>
+    private void EndSizeMoveIfOver()
+    {
+        if (!_sizeMoveEntered || _liveResizing || _sizingHit != 0) return;
+        if (_windowMoving && RealLeftButtonDown() != false) return;
+        _windowMoving = false;
+        SizeMove(false);
+    }
+
+    private static CocoaHost HostOfBlock(IntPtr block)
+    {
+        IntPtr context = MS.Internal.Interop.ObjCBlock.ContextOf(block);
+        return context == IntPtr.Zero ? null : GCHandle.FromIntPtr(context).Target as CocoaHost;
+    }
+
+    [UnmanagedCallersOnly]
+    private static void OnLiveResizeStart(IntPtr block, IntPtr notification)
+    {
+        try { if (HostOfBlock(block) is { } h) { h._liveResizing = true; h.SizeMove(true); } }
+        catch (Exception e) { TraceResize("live resize start threw: " + e); }
+    }
+
+    [UnmanagedCallersOnly]
+    private static void OnLiveResizeEnd(IntPtr block, IntPtr notification)
+    {
+        try { if (HostOfBlock(block) is { } h) { h._liveResizing = false; h.EndSizeMoveIfOver(); } }
+        catch (Exception e) { TraceResize("live resize end threw: " + e); }
+    }
+
+    [UnmanagedCallersOnly]
+    private static void OnWillMove(IntPtr block, IntPtr notification)
+    {
+        // the user's drag only: a frame set from code moves the window without a loop
+        try { if (HostOfBlock(block) is { } h && RealLeftButtonDown() == true) { h._windowMoving = true; h.SizeMove(true); } }
+        catch (Exception e) { TraceResize("will move threw: " + e); }
     }
 
     [UnmanagedCallersOnly]
@@ -1138,6 +1226,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         {
             IntPtr center = Send(Cls("NSNotificationCenter"), Sel("defaultCenter"));
             if (center != IntPtr.Zero) SendVoidPtr(center, Sel("removeObserver:"), _resizeObserver);
+            if (center != IntPtr.Zero) foreach (IntPtr o in _sizeMoveObservers) SendVoidPtr(center, Sel("removeObserver:"), o);
+            _sizeMoveObservers.Clear();
             _resizeObserver = IntPtr.Zero;
         }
         if (_self.IsAllocated) _self.Free();
@@ -1159,6 +1249,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     private void ReportActivation()
     {
         if (_window == IntPtr.Zero || !_form.IsHandleCreated) return;
+        // the application's own activation first (WM_ACTIVATEAPP), as Windows sends it before WM_ACTIVATE
+        _driver.HostApplicationActive(((nint)Send(App(), Sel("isActive")) & 0xFF) != 0);
         IntPtr key = Send(App(), Sel("keyWindow"));
         bool active = key != IntPtr.Zero && (key == _window || Send(key, Sel("parentWindow")) == _window);
         if (active && !_form.Enabled && ModalHost() is { } modal && modal != this)
@@ -1191,7 +1283,19 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
 
     /// <summary>Called by the driver when it starts: the screens are known before any form places
     /// itself (a splash screen, on a thread of its own, before any window exists).</summary>
-    internal static void InstallScreens() => XplatUIWebGpu.ScreensProvider ??= MacScreens;
+    internal static void InstallScreens()
+    {
+        XplatUIWebGpu.ScreensProvider ??= MacScreens;
+        XplatUIWebGpu.SystemBeep ??= NSBeep;
+        XplatUIWebGpu.IconChanged ??= ShowFormIcon;
+        XplatUIWebGpu.SystrayAdded ??= (h, tip, icon) => { OnMain(() => TrayAdd(h, tip, icon)); return true; };
+        XplatUIWebGpu.SystrayChanged ??= (h, tip, icon) => OnMain(() => TrayChange(h, tip, icon));
+        XplatUIWebGpu.SystrayRemoved ??= h => OnMain(() => TrayRemove(h));
+        // Caps Lock is the one lock key a Mac has (NSEventModifierFlagCapsLock); its keypad has no Num Lock
+        XplatUIWebGpu.KeyLockedProvider ??= vk => vk == 0x14 /* VK_CAPITAL */
+            ? (((nuint)(nint)Send(Cls("NSEvent"), Sel("modifierFlags"))) & (1u << 16)) != 0
+            : null;
+    }
 
     private static Screen[] MacScreens()
     {
@@ -1351,24 +1455,58 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             foreach (CocoaHost h in s_live)
                 if (!h._form.IsDisposed && h._form.IsHandleCreated && h._form.Handle == formHandle) { host = h; break; }
         if (host == null) return;
+        Interlocked.Increment(ref host._stateRequests);
         OnMain(() =>
+        {
+            try { Apply(); } finally { Interlocked.Decrement(ref host._stateRequests); }
+        });
+
+        void Apply()
         {
             IntPtr window = host._window;
             if (window == IntPtr.Zero || host._closed) return;
-            bool iconic = (nint)Send(window, Sel("isMiniaturized")) != 0, zoomed = (nint)Send(window, Sel("isZoomed")) != 0;
-            if (s_traceFrames) Console.WriteLine($"frame: '{host._form.Text}' state {state} requested; iconic={iconic} zoomed={zoomed}");
-            if (state == FormWindowState.Minimized && !iconic) SendVoidPtr(window, Sel("miniaturize:"), IntPtr.Zero);
-            else if (state == FormWindowState.Maximized)
+            if (s_traceFrames) Console.WriteLine($"frame: '{host._form.Text}' state {state} requested; iconic={(nint)Send(window, Sel("isMiniaturized")) != 0} zoomed={(nint)Send(window, Sel("isZoomed")) != 0}");
+            host.ChangeState(state);
+        }
+    }
+
+    // State changes asked of the window and not yet carried out (ApplyWindowState, queued to the main
+    // thread): until they are, the driver holds the state asked for, not the window's.
+    private int _stateRequests;
+
+    // Where the window was before it was maximized: what Restore puts it back to when AppKit does not call
+    // the window zoomed (a form that lies past the screen by its frame, CoversVisibleFrame).
+    private NSRect _restoreFrame;
+
+    /// <summary>Minimize, maximize or restore the window (main thread), then report what it is.</summary>
+    private void ChangeState(FormWindowState state)
+    {
+        IntPtr window = _window;
+        bool iconic = (nint)Send(window, Sel("isMiniaturized")) != 0, zoomed = (nint)Send(window, Sel("isZoomed")) != 0;
+        bool maximized = zoomed || _reportedState == FormWindowState.Maximized && CoversVisibleFrame();
+        Interlocked.Increment(ref _stateRequests);
+        try
+        {
+            if (state == FormWindowState.Minimized) { if (!iconic) SendVoidPtr(window, Sel("miniaturize:"), IntPtr.Zero); }
+            else
             {
                 if (iconic) SendVoidPtr(window, Sel("deminiaturize:"), IntPtr.Zero);
-                if (!zoomed) SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);
+                if (state == FormWindowState.Maximized && !maximized)
+                {
+                    _restoreFrame = SendRectRet(window, Sel("frame"));
+                    SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);
+                }
+                else if (state == FormWindowState.Normal && maximized)
+                {
+                    if (zoomed) SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);
+                    else if (_restoreFrame.w > 0 && _restoreFrame.h > 0)
+                        SendVoidRectBoolBool(window, Sel("setFrame:display:animate:"), _restoreFrame, true, true);
+                    else SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);      // AppKit's own idea of the window's size
+                }
             }
-            else if (state == FormWindowState.Normal)
-            {
-                if (iconic) SendVoidPtr(window, Sel("deminiaturize:"), IntPtr.Zero);
-                else if (zoomed) SendVoidPtr(window, Sel("zoom:"), IntPtr.Zero);
-            }
-        });
+        }
+        finally { Interlocked.Decrement(ref _stateRequests); }
+        SyncFrame();
     }
 
     // The window's state, as the driver knows it: Win32Host reports it from each WM_SIZE. Never reported
@@ -1384,7 +1522,10 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         FormWindowState state = (nint)Send(_window, Sel("isMiniaturized")) != 0 ? FormWindowState.Minimized
             : (nint)Send(_window, Sel("isZoomed")) != 0 || _reportedState == FormWindowState.Maximized && CoversVisibleFrame()
                 ? FormWindowState.Maximized : FormWindowState.Normal;
-        if (state == _reportedState) return;
+        // The driver's state is checked too, unless a change asked of the window is still on its way: a state
+        // the window did not take (a maximize while the screens were changing) stayed the form's for good,
+        // and its caption said Restore over a window that was not maximized, which Restore did nothing to.
+        if (state == _reportedState && (Volatile.Read(ref _stateRequests) != 0 || _driver.GetWindowState(_form.Handle) == state)) return;
         _reportedState = state;
         _driver.HostWindowState(_form.Handle, state);
     }
@@ -1403,9 +1544,28 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         return f.x <= v.x + 0.5 && f.y <= v.y + 0.5 && f.x + f.w >= v.x + v.w - 0.5 && f.y + f.h >= v.y + v.h - 0.5;
     }
 
+    /// <summary>
+    /// A maximized window the system moved or resized -- the screens changed under it: another primary
+    /// display, another resolution, a display gone -- is maximized again on the screen it is on, as Windows
+    /// keeps a maximized window maximized and fits it to its monitor's work area. AppKit put it back in the
+    /// middle of the new screen at a size of its own, and the form, still maximized, could not be restored.
+    /// Not a move the user makes (a drag of the window, a live resize) nor a change asked of it.
+    /// </summary>
+    private void RefitMaximized()
+    {
+        if (_reportedState != FormWindowState.Maximized || Volatile.Read(ref _stateRequests) != 0 || _liveResizing || _windowMoving) return;
+        if ((nint)Send(_window, Sel("isMiniaturized")) != 0 || (nint)Send(_window, Sel("isZoomed")) != 0 || CoversVisibleFrame()) return;
+        if (NativeBounds() == _knownBounds) return;
+        if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' maximized, moved by the system to {NativeBounds()}: maximized again");
+        Interlocked.Increment(ref _stateRequests);
+        try { SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero); }
+        finally { Interlocked.Decrement(ref _stateRequests); }
+    }
+
     private void SyncFrame()
     {
         if (_window == IntPtr.Zero || _form.IsDisposed) return;
+        RefitMaximized();
         ReportWindowState();
         // A minimized window keeps its frame; the form's restore bounds are not this.
         if ((nint)Send(_window, Sel("isMiniaturized")) != 0) return;
@@ -1528,6 +1688,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     [DllImport(ObjC, EntryPoint = "objc_msgSend_stret")] private static extern NSRect SendRectRectStret(IntPtr r, IntPtr s, NSRect a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRect(IntPtr r, IntPtr s, NSRect a);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRectBool(IntPtr r, IntPtr s, NSRect a, [MarshalAs(UnmanagedType.I1)] bool b);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidRectBoolBool(IntPtr r, IntPtr s, NSRect a, [MarshalAs(UnmanagedType.I1)] bool b, [MarshalAs(UnmanagedType.I1)] bool c);
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNUInt(IntPtr r, IntPtr s, nuint a);
 
     /// <summary>
@@ -1788,6 +1949,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         if (Environment.TickCount64 - s_screensAt > 1000) RefreshScreens(rescan: true);
         RaiseScreenChanges();
         SyncFrame();
+        EndSizeMoveIfOver();
         KeepModalAbove();
         ReportActivation();
 
@@ -2279,17 +2441,31 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     // by that (the property grid scrolls delta / 120 rows), so the fine-grained deltas of a trackpad
     // or of an accelerated mouse are added up and handed on a notch at a time.
     private const double PointsPerNotch = 30;   // a trackpad's travel for one wheel notch
-    private double _wheelUnits;
+    private double _wheelUnits, _hwheelUnits;
 
     private void HandleScrollWheel(IntPtr evt)
     {
         double dy = SendDouble(evt, Sel("scrollingDeltaY"));
         bool precise = Send(evt, Sel("hasPreciseScrollingDeltas")) != IntPtr.Zero;
+        // Sideways too: WM_MOUSEHWHEEL, positive to the right -- AppKit's delta is positive the other way.
+        double dx = -SendDouble(evt, Sel("scrollingDeltaX"));
+        _hwheelUnits += precise ? dx * 120 / PointsPerNotch : dx * 120;
+        int across = (int)(_hwheelUnits / 120);
+        if (across != 0)
+        {
+            _hwheelUnits -= across * 120;
+            System.Drawing.Point hp = ContentToDriver(LocationInContent(evt, out _));
+            _driver.InjectHWheel(hp.X, hp.Y, across * 120);
+        }
         // Both are what the user's scroll direction setting makes of the gesture, as Windows'
         // delta is: positive scrolls the content up into view, as the wheel turned away does.
         _wheelUnits += precise ? dy * 120 / PointsPerNotch : dy * 120;
         int notches = (int)(_wheelUnits / 120);
-        if (notches == 0) return;
+        if (notches == 0)
+        {
+            if (across != 0) { Application.DoEvents(); Present(); }
+            return;
+        }
         _wheelUnits -= notches * 120;
 
         NSPoint loc = LocationInContent(evt, out _);
@@ -2319,6 +2495,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     private void BeginSizing(int hit, NSPoint loc)
     {
         _sizingHit = hit;
+        SizeMove(true);
         _sizingFrame = SendRectRet(_window, Sel("frame"));
         _sizingStart = SendPointRet(Cls("NSEvent"), Sel("mouseLocation"));
     }
@@ -2352,6 +2529,13 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         h = Math.Max(h, (min.Height > 0 ? min.Height : 39) / _k);
         if (max.Width > 0) w = Math.Min(w, max.Width / _k);
         if (max.Height > 0) h = Math.Min(h, max.Height / _k);
+        // the window has its say, as Windows asks it at each step (WM_SIZING): a size it keeps in proportion, or in steps
+        Rectangle form = _form.Bounds;
+        int fw = (int)Math.Round(w * _k), fh = (int)Math.Round(h * _k);
+        var proposed = new Rectangle(left ? form.Right - fw : form.Left, top ? form.Bottom - fh : form.Top, fw, fh);
+        int edge = (left ? 1 : right ? 2 : 0) + (top ? 3 : bottom ? 6 : 0);   // WMSZ_LEFT .. WMSZ_BOTTOMRIGHT
+        Rectangle asked = _driver.HostSizing(_form.Handle, edge, proposed);
+        if (asked.Width > 0 && asked.Height > 0) { w = asked.Width / _k; h = asked.Height / _k; }
         NSRect next = new NSRect { x = left ? f.x + f.w - w : f.x, y = bottom ? f.y + f.h - h : f.y, w = w, h = h };
         SendVoidRectBool(_window, Sel("setFrame:display:"), next, true);
         return true;
@@ -2370,9 +2554,26 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         SendVoidPtr(host._window, Sel("performWindowDragWithEvent:"), t_event);
     }
 
+    /// <summary>SC_SIZE, or WM_NCLBUTTONDOWN on a sizing edge, from inside the press (a StatusStrip's size
+    /// grip, a form that draws its own frame): this host's sizing loop, from that edge. Nothing on macOS
+    /// took it, so the grip did nothing. As Windows' size loop does, it takes the mouse: the control that
+    /// had it loses it, and the release is the loop's.</summary>
+    private static void SizeWindowWithPointer(IntPtr handle, int edge)
+    {
+        CocoaHost host = t_eventHost;
+        if (host == null || t_event == IntPtr.Zero || host._window == IntPtr.Zero) return;
+        if (!host._form.IsHandleCreated || host._form.Handle != handle || !host.IsResizable()) return;
+        if (edge < 1 || edge > 8) return;
+        host._formHasMouse = false;
+        s_formLeftDown = false;
+        if (host._driver.GrabHandle != IntPtr.Zero) host._driver.UngrabWindow(host._driver.GrabHandle);
+        host.BeginSizing(edge + 9, default);   // WMSZ_LEFT .. WMSZ_BOTTOMRIGHT is HTLEFT .. HTBOTTOMRIGHT less 9
+    }
+
     private void HandleEvent(IntPtr evt)
     {
         XplatUIWebGpu.BeginWindowMove ??= MoveWindowWithPointer;
+        XplatUIWebGpu.BeginWindowSize ??= SizeWindowWithPointer;
         IntPtr outerEvent = t_event;
         CocoaHost outerHost = t_eventHost;
         IntPtr outerRoot = XplatUIWebGpu.InputRoot;
@@ -2389,8 +2590,9 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             return;
         nint type = (nint)Send(evt, Sel("type"));
         // NSEventType: LeftMouseDown=1, LeftMouseUp=2, RightMouseDown=3, RightMouseUp=4,
-        // MouseMoved=5, LeftMouseDragged=6.
-        if (type >= 1 && type <= 6)
+        // MouseMoved=5, LeftMouseDragged=6, RightMouseDragged=7, OtherMouseDown=25, OtherMouseUp=26,
+        // OtherMouseDragged=27 (the middle button and the extra ones, by buttonNumber).
+        if ((type >= 1 && type <= 7) || (type >= 25 && type <= 27))
         {
             NSPoint loc = LocationInContent(evt, out bool viaLayer);
             if (_sizingHit != 0 && ContinueSizing(type, loc)) return;
@@ -2402,7 +2604,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             if (type == 1 && _ownCaption && !_formHasMouse && !viaLayer && IsResizable())
             {
                 System.Drawing.Point sp = ContentToDriver(loc);
-                int sizing = HitTest(sp.X, sp.Y);
+                int sizing = _driver.FrameHitTest(_form, sp.X, sp.Y);
                 if (sizing >= HTLEFT && sizing <= HTBOTTOMRIGHT)
                 {
                     BeginSizing(sizing, loc);
@@ -2430,10 +2632,17 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             if (type == 1 && _ownCaption && !_formHasMouse)
             {
                 System.Drawing.Point hp = ContentToDriver(loc);
-                int hit = HitTest(hp.X, hp.Y);
+                // The deepest window there answers first, as Windows asks it (XplatUIWebGpu.FrameHitTest).
+                // Asked of the form alone, a maximized ribbon form called its caption buttons caption: a
+                // press on Minimize or Restore dragged the window and did nothing else.
+                int hit = _driver.FrameHitTest(_form, hp.X, hp.Y);
                 if (hit == HTCAPTION)
                 {
-                    if ((nint)Send(evt, Sel("clickCount")) >= 2) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
+                    // a double click is the form's WM_NCLBUTTONDBLCLK, which maximizes or restores it as its state
+                    // says (DefWndProc); zoom: here toggled AppKit's idea, which a form lying past the screen by
+                    // its frame is not, and maximized it again instead of restoring it
+                    if ((nint)Send(evt, Sel("clickCount")) >= 2)
+                        XplatUI.SendMessage(_form.Handle, (Msg)0x00A3 /* WM_NCLBUTTONDBLCLK */, (IntPtr)HTCAPTION, (IntPtr)((hp.Y << 16) | (hp.X & 0xffff)));
                     else SendVoidPtr(_window, Sel("performWindowDragWithEvent:"), evt);
                     return;
                 }
@@ -2448,8 +2657,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             // the clicked control takes the focus. Not through the popup layer: a menu takes no focus.
             if ((type == 1 || type == 3) && !viaLayer && Send(App(), Sel("keyWindow")) != _window)
                 SendVoidPtr(_window, Sel("makeKeyWindow"), IntPtr.Zero);
-            if (type == 1 || type == 3) _formHasMouse = true;
-            else if (type == 2 || type == 4) _formHasMouse = false;
+            if (type == 1 || type == 3 || type == 25) _formHasMouse = true;
+            else if (type == 2 || type == 4 || type == 26) _formHasMouse = false;
             // Window point (Cocoa: bottom-left origin) to the driver's screen space, where it
             // hit-tests: the form's client area is drawn at the form's location there. Window
             // coordinates alone were right only while every form sat at (0,0) -- which stopped
@@ -2479,11 +2688,26 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
                 case 4: _driver.InjectRightUp(cx, cy); break;
                 case 5: _driver.InjectMouseMove(cx, cy, false); break;
                 case 6: _driver.InjectMouseMove(cx, cy, true); break;
+                // a drag with another button: the move carries whatever is down (the driver knows)
+                case 7: case 27: _driver.InjectMouseMove(cx, cy, false); break;
+                case 25: case 26:
+                {
+                    // buttonNumber 2 is the middle button, 3 and 4 the extra ones (back, forward): XBUTTON1, XBUTTON2
+                    nint button = (nint)Send(evt, Sel("buttonNumber"));
+                    bool down = type == 25;
+                    if (button == 2) { if (down) _driver.InjectMiddleDown(cx, cy); else _driver.InjectMiddleUp(cx, cy); }
+                    else if (button == 3 || button == 4)
+                    {
+                        if (down) _driver.InjectXButtonDown(cx, cy, (int)button - 2);
+                        else _driver.InjectXButtonUp(cx, cy, (int)button - 2);
+                    }
+                    break;
+                }
             }
             Application.DoEvents();   // let the control repaint (pressed/hover) into its backbuffer
             Present();                // show it immediately
             if (type == 5) Send(App(), Sel("sendEvent:"), evt);
-            if (type == 5 || type == 6) ApplyCursor();
+            if (type is 5 or 6 or 7 or 27) ApplyCursor();
             return;
         }
         else if (type == 22) // NSEventTypeScrollWheel -> WM_MOUSEWHEEL at the pointer
@@ -2518,10 +2742,36 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             cls = objc_allocateClassPair(Cls("NSObject"), "WfFormWindowDelegate", UIntPtr.Zero);
             class_addMethod(cls, Sel("windowShouldClose:"),
                 (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, byte>)&WindowShouldClose, "c@:@");
+            class_addMethod(cls, Sel("windowWillResize:toSize:"),
+                (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, NSSize, NSSize>)&WindowWillResize, "{CGSize=dd}@:@{CGSize=dd}");
             objc_registerClassPair(cls);
         }
         s_closeDelegate = Send(Send(cls, Sel("alloc")), Sel("init"));
         return s_closeDelegate;
+    }
+
+    /// <summary>A step of AppKit's live resize: WM_SIZING, as Windows sends it at each step of the user's resize,
+    /// and the size the window leaves in it. AppKit does not say which edge is dragged; the bottom-right is assumed.</summary>
+    [UnmanagedCallersOnly]
+    private static NSSize WindowWillResize(IntPtr self, IntPtr cmd, IntPtr window, NSSize size)
+    {
+        try
+        {
+            CocoaHost host = null;
+            foreach (CocoaHost h in s_live) if (h._window == window) { host = h; break; }
+            if (host == null || host._form.IsDisposed || !host._form.IsHandleCreated) return size;
+            NSRect frame = SendRectRet(window, Sel("frame"));
+            Rectangle form = host._form.Bounds;
+            int fw = form.Width + (int)Math.Round((size.w - frame.w) * host._k), fh = form.Height + (int)Math.Round((size.h - frame.h) * host._k);
+            Rectangle asked = host._driver.HostSizing(host._form.Handle, 8 /* WMSZ_BOTTOMRIGHT */, new Rectangle(form.X, form.Y, fw, fh));
+            if (asked.Width <= 0 || asked.Height <= 0) return size;
+            return new NSSize { w = size.w + (asked.Width - fw) / host._k, h = size.h + (asked.Height - fh) / host._k };
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("[CocoaHost] resize step: " + e.Message);
+            return size;
+        }
     }
 
     [UnmanagedCallersOnly]
@@ -2689,11 +2939,173 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             24 or 26 => Public("resizeLeftRightCursor"),                        // SizeWE, VSplit
             _ => IntPtr.Zero,                                                   // Default, Arrow, Help, Wait, UpArrow
         };
+        if (id >= XplatUIWebGpu.FirstCustomCursor) cursor = CustomCursor(id);
         if (cursor == IntPtr.Zero) cursor = Public("arrowCursor");
         if (cursor != IntPtr.Zero) Send(cursor, Sel("set"));
     }
 
+    private static readonly System.Collections.Generic.Dictionary<int, IntPtr> s_customCursors = new();
+
+    /// <summary>An application's own cursor (from a .cur file or resource) as an NSCursor: its picture, a
+    /// point a pixel as Windows shows it at 100 %, and its hotspot.</summary>
+    private static IntPtr CustomCursor(int id)
+    {
+        if (s_customCursors.TryGetValue(id, out IntPtr made)) return made;
+        IntPtr cursor = IntPtr.Zero;
+        try
+        {
+            if (XplatUIWebGpu.TryGetCustomCursor(id, out System.Drawing.Bitmap image, out System.Drawing.Point hot))
+            {
+                using var png = new System.IO.MemoryStream();
+                image.Save(png, System.Drawing.Imaging.ImageFormat.Png);
+                byte[] bytes = png.ToArray();
+                IntPtr data = SendDataBytes(Cls("NSData"), Sel("dataWithBytes:length:"), bytes, (nuint)bytes.Length);
+                IntPtr nsImage = data == IntPtr.Zero ? IntPtr.Zero : SendPtr(Send(Cls("NSImage"), Sel("alloc")), Sel("initWithData:"), data);
+                if (nsImage != IntPtr.Zero)
+                {
+                    SendVoidSize(nsImage, Sel("setSize:"), new NSSize { w = image.Width, h = image.Height });
+                    cursor = SendCursorInit(Send(Cls("NSCursor"), Sel("alloc")), Sel("initWithImage:hotSpot:"), nsImage, new NSPoint { x = hot.X, y = hot.Y });
+                }
+            }
+        }
+        catch (Exception e) { if (s_traceCursor) Console.WriteLine($"[cocoa cursor] custom {id}: {e.Message}"); }
+        s_customCursors[id] = cursor;
+        return cursor;
+    }
+
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendDataBytes(IntPtr r, IntPtr s, byte[] bytes, nuint length);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidSize(IntPtr r, IntPtr s, NSSize size);
+    [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendCursorInit(IntPtr r, IntPtr s, IntPtr image, NSPoint hotSpot);
+
     private static IntPtr Public(string name) => Send(Cls("NSCursor"), Sel(name));
+
+    // ---- tray icons (NotifyIcon) ----------------------------------------------------------
+    //
+    // A NotifyIcon is a status item in the menu bar, its icon there and its text the tool tip. A click is told to
+    // the icon's window as the Windows shell tells it, WM_USER with the mouse message in lParam: a press and a
+    // release, a double click, a right click (whose release puts up the icon's context menu).
+
+    private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_trayItems = new();    // window -> NSStatusItem
+    private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_trayButtons = new();  // button -> window
+    private static IntPtr s_trayTarget;
+
+    private static unsafe IntPtr TrayTarget()
+    {
+        if (s_trayTarget != IntPtr.Zero) return s_trayTarget;
+        IntPtr cls = objc_getClass("WfTrayTarget");
+        if (cls == IntPtr.Zero)
+        {
+            cls = objc_allocateClassPair(Cls("NSObject"), "WfTrayTarget", UIntPtr.Zero);
+            class_addMethod(cls, Sel("clicked:"), (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)&TrayClicked, "v@:@");
+            objc_registerClassPair(cls);
+        }
+        s_trayTarget = Send(Send(cls, Sel("alloc")), Sel("init"));
+        return s_trayTarget;
+    }
+
+    private static void TrayAdd(IntPtr window, string tip, System.Drawing.Icon icon)
+    {
+        if (s_trayItems.ContainsKey(window)) { TrayChange(window, tip, icon); return; }
+        IntPtr bar = Send(Cls("NSStatusBar"), Sel("systemStatusBar"));
+        IntPtr item = SendPtrDouble(bar, Sel("statusItemWithLength:"), -1.0);   // NSVariableStatusItemLength
+        if (item == IntPtr.Zero) return;
+        Send(item, Sel("retain"));
+        IntPtr button = Send(item, Sel("button"));
+        s_trayItems[window] = item;
+        if (button != IntPtr.Zero)
+        {
+            s_trayButtons[button] = window;
+            SendVoidPtr(button, Sel("setTarget:"), TrayTarget());
+            SendVoidPtr(button, Sel("setAction:"), Sel("clicked:"));
+            // the release of either button acts, as the shell reports both
+            Send(button, Sel("sendActionOn:"), (IntPtr)((1 << 2) | (1 << 4)));   // NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp
+        }
+        TrayChange(window, tip, icon);
+    }
+
+    private static void TrayChange(IntPtr window, string tip, System.Drawing.Icon icon)
+    {
+        if (!s_trayItems.TryGetValue(window, out IntPtr item)) return;
+        IntPtr button = Send(item, Sel("button"));
+        if (button == IntPtr.Zero) return;
+        SendVoidPtr(button, Sel("setToolTip:"), string.IsNullOrEmpty(tip) ? IntPtr.Zero : NSStr(tip));
+        if (icon == null) return;
+        try
+        {
+            using var small = new System.Drawing.Icon(icon, 32, 32);
+            using System.Drawing.Bitmap bmp = small.ToBitmap();
+            using var ms = new System.IO.MemoryStream();
+            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            byte[] png = ms.ToArray();
+            IntPtr data = SendDataBytes(Cls("NSData"), Sel("dataWithBytes:length:"), png, (nuint)png.Length);
+            IntPtr image = data == IntPtr.Zero ? IntPtr.Zero : SendPtr(Send(Cls("NSImage"), Sel("alloc")), Sel("initWithData:"), data);
+            if (image == IntPtr.Zero) return;
+            SendVoidSize(image, Sel("setSize:"), new NSSize { w = 18, h = 18 });   // the menu bar's icon size
+            SendVoidPtr(button, Sel("setImage:"), image);
+        }
+        catch (Exception e) { if (s_traceFrames) Console.WriteLine("tray icon: " + e.Message); }
+    }
+
+    private static void TrayRemove(IntPtr window)
+    {
+        if (!s_trayItems.Remove(window, out IntPtr item)) return;
+        IntPtr button = Send(item, Sel("button"));
+        if (button != IntPtr.Zero) s_trayButtons.Remove(button);
+        SendVoidPtr(Send(Cls("NSStatusBar"), Sel("systemStatusBar")), Sel("removeStatusItem:"), item);
+        Send(item, Sel("release"));
+    }
+
+    [UnmanagedCallersOnly]
+    private static void TrayClicked(IntPtr self, IntPtr cmd, IntPtr sender)
+    {
+        try
+        {
+            if (!s_trayButtons.TryGetValue(sender, out IntPtr window)) return;
+            IntPtr evt = Send(App(), Sel("currentEvent"));
+            nint type = evt == IntPtr.Zero ? 2 : (nint)Send(evt, Sel("type"));
+            nint clicks = evt == IntPtr.Zero ? 1 : (nint)Send(evt, Sel("clickCount"));
+            const int WM_USER = 0x0400, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_LBUTTONDBLCLK = 0x203, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205;
+            bool right = type == 4 || (type == 2 && (((nuint)(nint)Send(evt, Sel("modifierFlags"))) & (1u << 18)) != 0);   // or Control-click
+            int[] sequence = right ? new[] { WM_RBUTTONDOWN, WM_RBUTTONUP }
+                : clicks >= 2 ? new[] { WM_LBUTTONDBLCLK, WM_LBUTTONUP } : new[] { WM_LBUTTONDOWN, WM_LBUTTONUP };
+            foreach (int m in sequence) XplatUI.PostMessage(window, (Msg)WM_USER, IntPtr.Zero, (IntPtr)m);
+        }
+        catch (Exception e) { Console.Error.WriteLine("[CocoaHost] tray click: " + e.Message); }
+    }
+
+    // ---- the form's icon ------------------------------------------------------------------
+    //
+    // Windows shows the main window's icon in the taskbar; a Mac shows the application's in the Dock. An
+    // application run without a bundle icon of its own (through the launcher) showed a generic one there, its
+    // forms' icons nowhere. The icon of the application's first form in the taskbar (ShowInTaskbar, no owner) is
+    // the Dock's, unless the bundle has one.
+
+    private static IntPtr s_dockIconForm;
+
+    private static void ShowFormIcon(IntPtr handle, System.Drawing.Icon icon)
+    {
+        if (icon == null || Control.FromHandle(handle) is not Form form || !form.ShowInTaskbar || form.Owner != null || form.TopLevel == false) return;
+        if (s_dockIconForm != IntPtr.Zero && s_dockIconForm != handle && Control.FromHandle(s_dockIconForm) is Form { IsDisposed: false }) return;
+        s_dockIconForm = handle;
+        byte[] png;
+        try
+        {
+            using var big = new System.Drawing.Icon(icon, 256, 256);
+            using System.Drawing.Bitmap bmp = big.ToBitmap();
+            using var ms = new System.IO.MemoryStream();
+            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            png = ms.ToArray();
+        }
+        catch (Exception) { return; }
+        OnMain(() =>
+        {
+            IntPtr bundle = Send(Cls("NSBundle"), Sel("mainBundle"));
+            if (bundle != IntPtr.Zero && SendPtr(bundle, Sel("objectForInfoDictionaryKey:"), NSStr("CFBundleIconFile")) != IntPtr.Zero) return;
+            IntPtr data = SendDataBytes(Cls("NSData"), Sel("dataWithBytes:length:"), png, (nuint)png.Length);
+            IntPtr image = data == IntPtr.Zero ? IntPtr.Zero : SendPtr(Send(Cls("NSImage"), Sel("alloc")), Sel("initWithData:"), data);
+            if (image != IntPtr.Zero) SendVoidPtr(App(), Sel("setApplicationIconImage:"), image);
+        });
+    }
 
     private bool PointerOverEmbeddedWindow()
     {
@@ -2742,6 +3154,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
 
     [StructLayout(LayoutKind.Sequential)] private struct NSPoint { public double x, y; }
     [StructLayout(LayoutKind.Sequential)] private struct NSRect { public double x, y, w, h; }
+    [StructLayout(LayoutKind.Sequential)] private struct NSSize { public double w, h; }
 
     private const string ObjC = "/usr/lib/libobjc.A.dylib";
     [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr r, IntPtr s);

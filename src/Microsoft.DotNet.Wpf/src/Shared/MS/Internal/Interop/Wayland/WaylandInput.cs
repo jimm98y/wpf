@@ -178,6 +178,9 @@ namespace MS.Internal.Interop.Wayland
         private static IntPtr s_composeTable, s_composeState;
         private static WaylandModifiers s_modifiers;
 
+        /// <summary>The keyboard's modifiers as the compositor last reported them, the lock keys among them.</summary>
+        internal static WaylandModifiers Modifiers => s_modifiers;
+
         // ---- key repeat ---------------------------------------------------------------------
         private static int s_repeatRate = 25;      // keys per second
         private static int s_repeatDelayMs = 600;

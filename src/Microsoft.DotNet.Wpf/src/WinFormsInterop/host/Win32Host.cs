@@ -534,6 +534,8 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         System.Windows.Forms.XplatUIWebGpu.WindowStateRequested ??= ApplyWindowState;
         System.Windows.Forms.XplatUIWebGpu.FrameAttributesRequested ??= ApplyFrameAttributes;
         System.Windows.Forms.XplatUIWebGpu.BeginWindowSize ??= (h, edge) => BeginSystemCommand(h, 0xF000 | edge);   // SC_SIZE | WMSZ_*
+        System.Windows.Forms.XplatUIWebGpu.KeyLockedProvider ??= vk => (GetKeyState(vk) & 1) != 0;
+        System.Windows.Forms.XplatUIWebGpu.SystemBeep ??= () => MessageBeep(0);
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
         {
@@ -2008,6 +2010,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
     [DllImport("user32")] private static extern uint GetDpiForWindow(IntPtr h);
     [DllImport("user32")] private static extern IntPtr SetProcessDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32")] private static extern short GetKeyState(int vk);
+    [DllImport("user32")] private static extern bool MessageBeep(uint type);
     [DllImport("user32")] private static extern IntPtr SetCapture(IntPtr hwnd);
     [DllImport("user32")] private static extern bool ReleaseCapture();
     [DllImport("user32")] private static extern bool ScreenToClient(IntPtr hwnd, ref POINT pt);

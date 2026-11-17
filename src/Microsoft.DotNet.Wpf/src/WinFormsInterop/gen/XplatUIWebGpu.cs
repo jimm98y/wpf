@@ -36,7 +36,7 @@ namespace System.Windows.Forms {
 		// DataGridView's cells draw with -- fell back to the classic bevels. The theme on every
 		// head is the managed Windows 11 one, and it is always on.
 		internal override bool ThemesEnabled { get { return true; } }
-		internal override void AudibleAlert(AlertType alert) {  }
+		// AudibleAlert is implemented in XplatUIWebGpu.System.cs (the host's beep)
 		internal override void BeginMoveResize(IntPtr handle) {  }
 		internal override void EnableThemes() {  }
 		internal override void GetDisplaySize(out Size size) { size = default(Size); }
@@ -51,8 +51,7 @@ namespace System.Windows.Forms {
 		internal override void SetMenu(IntPtr handle, Menu menu) {  }
 		internal override void Activate(IntPtr handle) {  }
 		internal override void HandleException(Exception e) {  }
-		internal override Region GetClipRegion(IntPtr hwnd) { return default(Region); }
-		internal override void SetClipRegion(IntPtr hwnd, Region region) {  }
+		// SetClipRegion and GetClipRegion (a window's region) are in XplatUIWebGpu.Core.cs
 		internal override void OverrideCursor(IntPtr cursor) { SetCursorOverride(cursor); }
 		internal override IntPtr DefineCursor(Bitmap bitmap, Bitmap mask, Color cursor_pixel, Color mask_pixel, int xHotSpot, int yHotSpot) { return IntPtr.Zero; }
 		// Plus one so the handle is never zero, which is how callers spell "no cursor".
@@ -87,15 +86,42 @@ namespace System.Windows.Forms {
 			descent = font.FontFamily.GetCellDescent(font.Style);
 			return ascent > 0;
 		}
-		internal override bool SystrayAdd(IntPtr hwnd, string tip, Icon icon, out ToolTip tt) { tt = default(ToolTip); return false; }
-		internal override bool SystrayChange(IntPtr hwnd, string tip, Icon icon, ref ToolTip tt) { return false; }
-		internal override void SystrayRemove(IntPtr hwnd, ref ToolTip tt) {  }
+		// NotifyIcon: the host's tray (an NSStatusItem in the macOS menu bar), which reports a click to the icon's
+		// window as the shell does -- WM_USER with the mouse message in lParam. None of it existed anywhere.
+		internal static Func<IntPtr, string, Icon, bool> SystrayAdded;
+		internal static Action<IntPtr, string, Icon> SystrayChanged;
+		internal static Action<IntPtr> SystrayRemoved;
+		internal override bool SystrayAdd(IntPtr hwnd, string tip, Icon icon, out ToolTip tt)
+		{
+			tt = null;
+			try { return SystrayAdded?.Invoke(hwnd, tip, icon) ?? false; }
+			catch (Exception) { return false; }
+		}
+		internal override bool SystrayChange(IntPtr hwnd, string tip, Icon icon, ref ToolTip tt)
+		{
+			try { SystrayChanged?.Invoke(hwnd, tip, icon); return SystrayChanged != null; }
+			catch (Exception) { return false; }
+		}
+		internal override void SystrayRemove(IntPtr hwnd, ref ToolTip tt)
+		{
+			try { SystrayRemoved?.Invoke(hwnd); }
+			catch (Exception) { }
+		}
 		internal override void SystrayBalloon(IntPtr hwnd, int timeout, string title, string text, ToolTipIcon icon) {  }
 		internal override Point GetMenuOrigin(IntPtr hwnd) { return default(Point); }
 		internal override void MenuToScreen(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void ScreenToMenu(IntPtr hwnd, ref int x, ref int y) {  }
-		internal override void SetIcon(IntPtr handle, Icon icon) {  }
-		internal override void DrawReversibleLine(Point start, Point end, Color backColor) {  }
+		/// <summary>Form.Icon: the host shows it where its system shows a window's icon (the Dock on macOS stands
+		/// in for the taskbar).</summary>
+		internal static Action<IntPtr, Icon> IconChanged;
+		internal override void SetIcon(IntPtr handle, Icon icon) { try { IconChanged?.Invoke(handle, icon); } catch (Exception) { } }
+		/// <summary>ControlPaint.DrawReversibleLine, on the screen: the horizontal and vertical lines a splitter or a
+		/// column divider draws while it is dragged, as a band a pixel thick (drawn twice, it is gone again).</summary>
+		internal override void DrawReversibleLine(Point start, Point end, Color backColor)
+		{
+			var r = Rectangle.FromLTRB(Math.Min(start.X, end.X), Math.Min(start.Y, end.Y), Math.Max(start.X, end.X) + 1, Math.Max(start.Y, end.Y) + 1);
+			ToggleReversible(IntPtr.Zero, r, 1);
+		}
 		/// <summary>The rubber band a drag draws: a splitter's position, a designer's selection.
 		/// <para>Win32 draws it straight onto the screen with an XOR pen, so drawing the same
 		/// rectangle twice rubs it out again -- which is exactly how callers use it, erasing the
@@ -107,8 +133,18 @@ namespace System.Windows.Forms {
 		{
 			ToggleReversible(handle, rect, line_width);
 		}
-		internal override void FillReversibleRectangle(Rectangle rectangle, Color backColor) {  }
-		internal override void DrawReversibleFrame(Rectangle rectangle, Color backColor, FrameStyle style) {  }
+		/// <summary>ControlPaint.FillReversibleRectangle, on the screen: a band as wide as it can be, which fills it.</summary>
+		internal override void FillReversibleRectangle(Rectangle rectangle, Color backColor)
+		{
+			if (rectangle.Width <= 0 || rectangle.Height <= 0) return;
+			ToggleReversible(IntPtr.Zero, rectangle, (Math.Min(rectangle.Width, rectangle.Height) + 1) / 2);
+		}
+		/// <summary>ControlPaint.DrawReversibleFrame, on the screen: a dashed frame a pixel wide, a thick one three.</summary>
+		internal override void DrawReversibleFrame(Rectangle rectangle, Color backColor, FrameStyle style)
+		{
+			if (rectangle.Width <= 0 || rectangle.Height <= 0) return;
+			ToggleReversible(IntPtr.Zero, rectangle, style == FrameStyle.Thick ? 3 : 1);
+		}
 		// Form.GetAutoScaleSize, as .NET has it: the font's average character width, measured on the screen the way
 		// GDI+ measures a magic string, and its height. Generated as default(SizeF), so a form scaled the legacy
 		// way (AutoScaleBaseSize in its resources, e.g. app's Find dialog) was scaled to 0/base + 0.08:
@@ -136,7 +172,7 @@ namespace System.Windows.Forms {
 			s_autoScaleWidth[key] = width;
 			return new SizeF(width, height);
 		}
-		internal override int SendInput(IntPtr hwnd, System.Collections.Queue keys) { return 0; }
+		// SendInput (SendKeys) is implemented in XplatUIWebGpu.System.cs
 		/// <summary>Another WM_MOUSEHOVER for the window the pointer rests on, after the hover time again.</summary>
 		internal override void ResetMouseHover(IntPtr hwnd)
 		{

@@ -1382,6 +1382,12 @@ namespace MS.Internal.Interop.Wayland
         /// has claimed it yet): the thread a window's requests that wait for the compositor must come from.</summary>
         public static bool IsUiThread => WaylandDisplay.Display == IntPtr.Zero || WaylandDisplay.IsPumpThread;
 
+        /// <summary>Whether Caps Lock is on, as the compositor last reported the keyboard (GetKeyState(VK_CAPITAL) &amp; 1).</summary>
+        public static bool CapsLockOn => (WaylandInput.Modifiers & WaylandModifiers.CapsLock) != 0;
+
+        /// <summary>Whether Num Lock is on, as the compositor last reported the keyboard (GetKeyState(VK_NUMLOCK) &amp; 1).</summary>
+        public static bool NumLockOn => (WaylandInput.Modifiers & WaylandModifiers.NumLock) != 0;
+
         /// <summary>Makes the calling thread the one that reads the compositor connection, before any window
         /// exists: a stack that starts its UI thread there (the WinForms driver on the app's main thread)
         /// claims it before a thread of the app's (a splash screen's) makes the first window. False when

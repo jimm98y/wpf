@@ -70,6 +70,8 @@ namespace System.Windows.Forms
 		internal static void InstallScreens ()
 		{
 			XplatUIWebGpu.ScreensProvider ??= OutputScreens;
+			// the lock keys as the compositor reports the keyboard
+			XplatUIWebGpu.KeyLockedProvider ??= vk => vk == 0x14 ? WaylandWindow.CapsLockOn : vk == 0x90 ? WaylandWindow.NumLockOn : null;
 		}
 
 		private static Screen[] OutputScreens ()
@@ -122,7 +124,30 @@ namespace System.Windows.Forms
 			return null;
 		}
 
-		private void BeginCompositorMove () => OnPump (() => { if (!_closed) _window.BeginMoveDrag (); });
+		private void BeginCompositorMove ()
+		{
+			EnterSizeMove ();
+			OnPump (() => { if (!_closed) _window.BeginMoveDrag (); });
+		}
+
+		// WM_ENTERSIZEMOVE when the compositor's move or resize begins, WM_EXITSIZEMOVE with the first pointer
+		// event after it: the compositor holds the pointer while it drags, and says nothing when it is done.
+		// Form.ResizeBegin and ResizeEnd come from them.
+		private bool _sizeMoveEntered;
+
+		private void EnterSizeMove ()
+		{
+			if (_sizeMoveEntered || !_form.IsHandleCreated) return;
+			_sizeMoveEntered = true;
+			_driver.HostSizeMove (_form.Handle, true);
+		}
+
+		private void ExitSizeMove ()
+		{
+			if (!_sizeMoveEntered) return;
+			_sizeMoveEntered = false;
+			if (_form.IsHandleCreated) _driver.HostSizeMove (_form.Handle, false);
+		}
 
 		/// <param name="edge">WMSZ_LEFT (1) .. WMSZ_BOTTOMRIGHT (8): the hit-test code less 9.</param>
 		private void BeginCompositorSize (int edge)
@@ -130,6 +155,7 @@ namespace System.Windows.Forms
 			Size min = _form.MinimumSize, max = _form.MaximumSize;
 			int minW = (int)Math.Round (min.Width * _scale), minH = (int)Math.Round (min.Height * _scale);
 			int maxW = (int)Math.Round (max.Width * _scale), maxH = (int)Math.Round (max.Height * _scale);
+			EnterSizeMove ();
 			OnPump (() => { if (!_closed) _window.BeginResizeDrag (edge + 9, minW, minH, maxW, maxH); });
 		}
 
@@ -625,7 +651,8 @@ namespace System.Windows.Forms
 			_surfaceH = client.Height;
 			// a headset's window -- an XR host's, a WebXR session's -- shown to the two eyes apart (WgpuPresenter.Stereo)
 			_wgpu.Stereo = NativePlatform.IsStereoWindow (_window.Handle);
-			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, _surfaceW, _surfaceH);
+			// the rubber bands a drag draws (ControlPaint's reversible frames), over the finished frame
+			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, _driver.RubberBandsIn (client.X, client.Y), _surfaceW, _surfaceH);
 			if (s_trace && scenes.Count > 0 && ver != _lastVer)
 				Console.WriteLine ($"[wayland form] '{_form.Text}' form={_form.Bounds} client={client} scale={_scale} ok={_lastPresentOk} scenes={scenes.Count}");
 			if (popups != null)
@@ -870,6 +897,7 @@ namespace System.Windows.Forms
 				_form.BeginInvoke ((Action)(() => OnMouse (m)));
 				return;
 			}
+			ExitSizeMove ();
 			int vx, vy;
 			if (_layer != null && m.Window == _layer.Handle) {
 				// over the popup layer: the point of the screen it shows (where it was put, whatever the
@@ -935,12 +963,19 @@ namespace System.Windows.Forms
 				case 1:
 					if (m.Button == 1) { s_leftDown = true; _driver.InjectMouseDown (x, y); }
 					else if (m.Button == 2) _driver.InjectRightDown (x, y);
+					else if (m.Button == 3) _driver.InjectMiddleDown (x, y);
+					else if (m.Button == 4 || m.Button == 5) _driver.InjectXButtonDown (x, y, m.Button - 3);   // BTN_SIDE, BTN_EXTRA: XBUTTON1, XBUTTON2
 					break;
 				case 2:
 					if (m.Button == 1) { s_leftDown = false; _driver.InjectMouseUp (x, y); }
 					else if (m.Button == 2) _driver.InjectRightUp (x, y);
+					else if (m.Button == 3) _driver.InjectMiddleUp (x, y);
+					else if (m.Button == 4 || m.Button == 5) _driver.InjectXButtonUp (x, y, m.Button - 3);
 					break;
-				case 3: _driver.InjectWheel (x, y, m.Wheel); break;
+				case 3:
+					if (m.Wheel != 0) _driver.InjectWheel (x, y, m.Wheel);
+					if (m.WheelHorizontal != 0) _driver.InjectHWheel (x, y, m.WheelHorizontal);
+					break;
 				}
 			} finally {
 				XplatUIWebGpu.InputRoot = outerRoot;
@@ -968,18 +1003,8 @@ namespace System.Windows.Forms
 			if (_driver.GrabHandle != IntPtr.Zero || (m.Button != 0 && m.Button != 1) || m.Kind > 2)
 				return false;
 			IntPtr lp = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
-			// the deepest window there answers first (a ribbon's caption buttons are its client, though the
-			// form calls the strip around them caption), as Windows asks it; only a caption or an edge is
-			// the frame's
-			// The sizing border is the form's, whatever lies under it: on Windows the frame is outside the
-			// children (a ribbon form keeps a 5-pixel border there), and asked deepest-first the children
-			// reaching the edge left a band of a pixel or two to take hold of. The rest the deepest window
-			// answers first (a ribbon's caption buttons are its client, though the form calls the strip
-			// around them caption); only a caption or an edge is the frame's.
-			int hit = _form.WindowState == FormWindowState.Normal && _form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow
-				? (int)(long)XplatUI.SendMessage (_form.Handle, Msg.WM_NCHITTEST, IntPtr.Zero, lp) : 0;
-			if (hit < 10 || hit > 17)
-				hit = _driver.HostHitTest (x, y);
+			// the sizing border the form's, the rest the deepest window's (XplatUIWebGpu.FrameHitTest)
+			int hit = _driver.FrameHitTest (_form, x, y);
 			if (hit == 0) hit = HTCLIENT;
 			const int WM_NCMOUSEMOVE = 0xA0, WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2, WM_NCLBUTTONDBLCLK = 0xA3, WM_NCMOUSELEAVE = 0x2A2;
 			if (hit == HTCLIENT || hit <= 0) {

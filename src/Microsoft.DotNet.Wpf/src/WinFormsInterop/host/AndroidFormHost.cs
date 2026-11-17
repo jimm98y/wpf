@@ -540,14 +540,8 @@ namespace System.Windows.Forms
 			if (_driver.GrabHandle != IntPtr.Zero || m.Kind > 2)
 				return false;
 			IntPtr lp = (IntPtr)(((y & 0xFFFF) << 16) | (x & 0xFFFF));
-			// The sizing border is the form's, whatever lies under it: on Windows the frame is outside the
-			// children (a ribbon form keeps a 5-pixel border there). The rest the deepest window answers first
-			// (a ribbon's caption buttons are its client, though the form calls the strip around them
-			// caption); only a caption or an edge is the frame's.
-			int hit = _form.WindowState == FormWindowState.Normal && _form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow
-				? (int)(long)XplatUI.SendMessage (_form.Handle, Msg.WM_NCHITTEST, IntPtr.Zero, lp) : 0;
-			if (hit < 10 || hit > 17)
-				hit = _driver.HostHitTest (x, y);
+			// the sizing border the form's, the rest the deepest window's (XplatUIWebGpu.FrameHitTest)
+			int hit = _driver.FrameHitTest (_form, x, y);
 			if (hit == 0) hit = HTCLIENT;
 			const int WM_NCMOUSEMOVE = 0xA0, WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2, WM_NCLBUTTONDBLCLK = 0xA3, WM_NCMOUSELEAVE = 0x2A2;
 			if (hit == HTCLIENT || hit <= 0) {

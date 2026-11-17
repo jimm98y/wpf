@@ -586,10 +586,61 @@ namespace System.Windows.Forms
 			// ToolStrip in a scrolling panel) took the clicks on its dock's tab strip below it, so the
 			// Explorer tab could only be clicked once the Toolbox was scrolled to its end.
 			if (!InsideParents(h, screenX, screenY)) return false;
+			if (!InsideRegions(h, screenX, screenY)) return false;
 			Point p = ScreenLocation(h);
 			if (screenX >= p.X && screenY >= p.Y && screenX < p.X + h.width && screenY < p.Y + h.height)
 				return !PassesMouseThrough(h, screenX - p.X, screenY - p.Y) && !AnswersTransparent(handle, h, screenX, screenY);
 			return InChildFrame(handle, h, screenX - p.X, screenY - p.Y);
+		}
+
+		// ---- window regions (SetWindowRgn) -------------------------------------------------------
+		//
+		// A window's region is its shape: outside it the window is neither drawn nor there for the mouse, and
+		// what is behind shows and takes the click -- a round button. Nothing kept a child's region, so a
+		// control with one was a rectangle that took every click in its corners.
+
+		private readonly Dictionary<IntPtr, Region> _windowRegions = new Dictionary<IntPtr, Region>();
+
+		internal override void SetClipRegion(IntPtr hwnd, Region region)
+		{
+			lock (_windowRegions)
+			{
+				if (_windowRegions.Remove(hwnd, out Region old)) old.Dispose();
+				if (region != null) _windowRegions[hwnd] = region.Clone();
+			}
+			// the window paints again inside its new shape, and what it no longer covers is painted by what is behind
+			Hwnd h = Hwnd.ObjectFromHandle(hwnd);
+			if (h == null) return;
+			Invalidate(hwnd, new Rectangle(0, 0, h.width, h.height), false);
+			if (h.parent != null) Invalidate(h.parent.Handle, new Rectangle(h.x, h.y, h.width, h.height), false);
+			else RepaintUnder(h);
+		}
+
+		internal override Region GetClipRegion(IntPtr hwnd)
+		{
+			lock (_windowRegions) return _windowRegions.TryGetValue(hwnd, out Region r) ? r.Clone() : null;
+		}
+
+		/// <summary>The window's region, in its own coordinates, or null when it is a plain rectangle.</summary>
+		private Region RegionOf(IntPtr handle)
+		{
+			lock (_windowRegions) return _windowRegions.TryGetValue(handle, out Region r) ? r : null;
+		}
+
+		/// <summary>Whether a screen point is inside the region of <paramref name="h"/> and of every window it is in.</summary>
+		private bool InsideRegions(Hwnd h, int screenX, int screenY)
+		{
+			lock (_windowRegions)
+			{
+				if (_windowRegions.Count == 0) return true;
+				for (Hwnd a = h; a != null; a = a.parent)
+				{
+					if (!_windowRegions.TryGetValue(a.Handle, out Region r)) continue;
+					Point o = ScreenLocation(a);
+					if (!r.IsVisible(screenX - o.X, screenY - o.Y)) return false;
+				}
+			}
+			return true;
 		}
 
 		/// <summary>Whether a screen point is inside the client area of every parent of <paramref name="h"/>.</summary>
@@ -717,7 +768,8 @@ namespace System.Windows.Forms
 		internal IntPtr GrabHandle => _grabHandle;
 		private const int MK_LBUTTON = 0x0001;
 		private const int MK_RBUTTON = 0x0002;
-		private const int MK_SHIFT = 0x0004, MK_CONTROL = 0x0008, MK_MBUTTON = 0x0010;
+		private const int MK_SHIFT = 0x0004, MK_CONTROL = 0x0008, MK_MBUTTON = 0x0010, MK_XBUTTON1 = 0x0020, MK_XBUTTON2 = 0x0040;
+		private const int MK_BUTTONS = MK_LBUTTON | MK_RBUTTON | MK_MBUTTON | MK_XBUTTON1 | MK_XBUTTON2;
 
 		/// <summary>The mouse buttons down as the messages delivered so far have them (MK_LBUTTON, MK_RBUTTON,
 		/// MK_MBUTTON): GetKeyState's view of the buttons, which follows the input the thread has read.</summary>
@@ -733,6 +785,8 @@ namespace System.Windows.Forms
 				case Msg.WM_RBUTTONUP: _mouseKeys &= ~MK_RBUTTON; break;
 				case Msg.WM_MBUTTONDOWN: case Msg.WM_MBUTTONDBLCLK: _mouseKeys |= MK_MBUTTON; break;
 				case Msg.WM_MBUTTONUP: _mouseKeys &= ~MK_MBUTTON; break;
+				case Msg.WM_XBUTTONDOWN: case Msg.WM_XBUTTONDBLCLK: _mouseKeys |= (wParam >> 16) == 2 ? MK_XBUTTON2 : MK_XBUTTON1; break;
+				case Msg.WM_XBUTTONUP: _mouseKeys &= ~((wParam >> 16) == 2 ? MK_XBUTTON2 : MK_XBUTTON1); break;
 				// a move says where the left button is (the host reads it off the system)
 				case Msg.WM_MOUSEMOVE: _mouseKeys = (_mouseKeys & ~MK_LBUTTON) | (wParam & MK_LBUTTON); break;
 			}
@@ -748,6 +802,8 @@ namespace System.Windows.Forms
 				if ((_mouseKeys & MK_LBUTTON) != 0) b |= MouseButtons.Left;
 				if ((_mouseKeys & MK_RBUTTON) != 0) b |= MouseButtons.Right;
 				if ((_mouseKeys & MK_MBUTTON) != 0) b |= MouseButtons.Middle;
+				if ((_mouseKeys & MK_XBUTTON1) != 0) b |= MouseButtons.XButton1;
+				if ((_mouseKeys & MK_XBUTTON2) != 0) b |= MouseButtons.XButton2;
 				return b;
 			}
 		}
@@ -854,6 +910,20 @@ namespace System.Windows.Forms
 		/// of any window's content, so nothing else would.</summary>
 		private void BumpPaintVersion() { _paintVersion++; }
 
+		/// <summary>The rubber bands in the client space of a window whose client is at (ox, oy) on the driver's
+		/// screen, for a host to present over its frame; null when there are none.</summary>
+		internal List<(Rectangle Rect, int Width)> RubberBandsIn(int ox, int oy)
+		{
+			lock (_reversible)
+			{
+				if (_reversible.Count == 0) return null;
+				var bands = new List<(Rectangle, int)>(_reversible.Count);
+				foreach (var (_, r, w) in _reversible)
+					bands.Add((new Rectangle(r.X - ox, r.Y - oy, r.Width, r.Height), w));
+				return bands;
+			}
+		}
+
 		internal long[] GetReversibleRects()
 		{
 			lock (_reversible)
@@ -902,6 +972,7 @@ namespace System.Windows.Forms
 				Msg.WM_LBUTTONDOWN => Msg.WM_LBUTTONDBLCLK,
 				Msg.WM_RBUTTONDOWN => Msg.WM_RBUTTONDBLCLK,
 				Msg.WM_MBUTTONDOWN => Msg.WM_MBUTTONDBLCLK,
+				Msg.WM_XBUTTONDOWN => Msg.WM_XBUTTONDBLCLK,
 				_ => 0,
 			};
 			if (dbl == 0) return message;
@@ -1032,8 +1103,10 @@ namespace System.Windows.Forms
 			}
 		}
 
+		/// <summary>A move, with every button that is down: the left as the host has it, the others as their
+		/// presses and releases left them. A right-button drag said no button was down.</summary>
 		internal void InjectMouseMove(int screenX, int screenY, bool leftDown)
-			=> InjectMouse(screenX, screenY, Msg.WM_MOUSEMOVE, leftDown ? MK_LBUTTON : 0);
+			=> InjectMouse(screenX, screenY, Msg.WM_MOUSEMOVE, (leftDown ? MK_LBUTTON : 0) | (MouseKeyState() & ~MK_LBUTTON));
 
 		/// <summary>How far round a finger's press a resize cursor is looked for, in the screen's points.</summary>
 		private const int TouchReach = 8;
@@ -1061,6 +1134,17 @@ namespace System.Windows.Forms
 			return (screenX, screenY);
 		}
 
+		/// <summary>The cursor DefWindowProc's WM_SETCURSOR shows on a sizing edge (IDC_SIZEWE, IDC_SIZENS,
+		/// IDC_SIZENWSE, IDC_SIZENESW), or null for any other hit.</summary>
+		private static int? SizingCursor(int hit) => hit switch
+		{
+			10 or 11 => (int)StdCursor.SizeWE,       // HTLEFT, HTRIGHT
+			12 or 15 => (int)StdCursor.SizeNS,       // HTTOP, HTBOTTOM
+			13 or 17 => (int)StdCursor.SizeNWSE,     // HTTOPLEFT, HTBOTTOMRIGHT
+			14 or 16 => (int)StdCursor.SizeNESW,     // HTTOPRIGHT, HTBOTTOMLEFT
+			_ => null,
+		};
+
 		private static bool IsResizeCursor(int id) => (StdCursor)id is StdCursor.SizeWE or StdCursor.SizeNS
 			or StdCursor.VSplit or StdCursor.HSplit or StdCursor.SizeNESW or StdCursor.SizeNWSE;
 		internal void InjectMouseDown(int screenX, int screenY)
@@ -1076,6 +1160,32 @@ namespace System.Windows.Forms
 			=> InjectMouse(screenX, screenY, Msg.WM_RBUTTONDOWN, MK_RBUTTON);
 		internal void InjectRightUp(int screenX, int screenY)
 			=> InjectMouse(screenX, screenY, Msg.WM_RBUTTONUP, 0);
+
+		/// <summary>The middle button and the extra ones (XBUTTON1, XBUTTON2: back and forward), as Windows
+		/// delivers them. No host carried them in, so no control ever saw one.</summary>
+		internal void InjectMiddleDown(int screenX, int screenY)
+			=> InjectMouse(screenX, screenY, Msg.WM_MBUTTONDOWN, MouseKeyState() | MK_MBUTTON);
+		internal void InjectMiddleUp(int screenX, int screenY)
+			=> InjectMouse(screenX, screenY, Msg.WM_MBUTTONUP, MouseKeyState() & ~MK_MBUTTON);
+		internal void InjectXButtonDown(int screenX, int screenY, int button)
+			=> InjectMouse(screenX, screenY, Msg.WM_XBUTTONDOWN, (button << 16) | MouseKeyState() | (button == 2 ? MK_XBUTTON2 : MK_XBUTTON1));
+		internal void InjectXButtonUp(int screenX, int screenY, int button)
+			=> InjectMouse(screenX, screenY, Msg.WM_XBUTTONUP, (button << 16) | (MouseKeyState() & ~(button == 2 ? MK_XBUTTON2 : MK_XBUTTON1)));
+
+		/// <summary>The horizontal wheel (a tilt, a trackpad's sideways swipe): WM_MOUSEHWHEEL, positive to the
+		/// right, the point on the screen -- as WM_MOUSEWHEEL, to the window under the pointer.</summary>
+		internal void InjectHWheel(int screenX, int screenY, int delta)
+		{
+			_cursorX = screenX;
+			_pointerLifted = false;
+			_cursorY = screenY;
+			IntPtr target = WindowAtPoint(screenX, screenY);
+			if (target == IntPtr.Zero) return;
+			IntPtr wParam = (IntPtr)(((delta << 16) & unchecked((int)0xFFFF0000)) | MouseKeyState());
+			IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+			var m = Message.Create(target, (int)Msg.WM_MOUSEHWHEEL, wParam, lp);
+			if (!FilteredOut(ref m)) SendMessage(m.HWnd, (Msg)m.Msg, m.WParam, m.LParam);
+		}
 
 		/// <summary>Route a mouse-wheel notch to the window under the cursor. WM_MOUSEWHEEL carries the
 		/// signed delta (multiples of WHEEL_DELTA=120, positive = scroll up) in the wParam high word and
@@ -1185,6 +1295,7 @@ namespace System.Windows.Forms
 
 			if (backing.TryGetValue(handle, out Bitmap b)) { b?.Dispose(); backing.TryRemove(handle, out _); }
 			lock (window_queue) window_queue.Remove(handle);
+			lock (_windowRegions) if (_windowRegions.Remove(handle, out Region shape)) shape.Dispose();
 			if (_hotWindow == handle) _hotWindow = IntPtr.Zero;
 			captions.Remove(handle);
 			_scenes.Remove(handle);
@@ -1368,6 +1479,21 @@ namespace System.Windows.Forms
 			else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 			Hwnd hwnd = Hwnd.ObjectFromHandle(handle);
 			if (hwnd == null) return;
+			// Windows asks the window first (WM_WINDOWPOSCHANGING) and takes what it leaves in the WINDOWPOS: a
+			// control that keeps itself square, a panel that may not shrink below its content, a docking window
+			// that snaps -- each changes the position or the size there, or forbids the change (SWP_NOMOVE,
+			// SWP_NOSIZE). Never asked, they were moved and sized however they were told.
+			{
+				GetWindowPos(handle, false, out int ox, out int oy, out int ow, out int oh, out _, out _);
+				uint flags = SWP_NOZORDER | SWP_NOACTIVATE;
+				if (x == ox && y == oy) flags |= SWP_NOMOVE;
+				if (width == ow && height == oh) flags |= SWP_NOSIZE;
+				WINDOWPOS asked = SendWindowPos(handle, Msg.WM_WINDOWPOSCHANGING, x, y, width, height, flags);
+				if ((asked.flags & SWP_NOMOVE) == 0) { x = asked.x; y = asked.y; } else { x = ox; y = oy; }
+				if ((asked.flags & SWP_NOSIZE) == 0) { width = asked.cx; height = asked.cy; } else { width = ow; height = oh; }
+				hwnd = Hwnd.ObjectFromHandle(handle);
+				if (hwnd == null) return;
+			}
 			// A top-level window is no larger than its maximum tracking size (WM_GETMINMAXINFO's ptMaxTrackSize,
 			// by default the screen and a sizing frame), as Windows clamps it here. An app restoring a placement
 			// saved on a larger screen (a form 3774x1168 on a 1760x919 desktop) kept it: the compositor maximized
@@ -1375,9 +1501,13 @@ namespace System.Windows.Forms
 			// white band under its content.
 			if (hwnd.parent == null)
 			{
+				// Not a maximized one: maximizing makes a window WM_GETMINMAXINFO's ptMaxSize, which the tracking
+				// size does not cut down. The host's maximized frame (AppKit's zoom) reached a pixel past the
+				// track size at 200 %; held to it, the form and the window set each other back and forth for good.
 				Size max = MaxWindowTrackSize;
-				if (max.Width > 0 && width > max.Width) width = max.Width;
-				if (max.Height > 0 && height > max.Height) height = max.Height;
+				bool maximized = GetWindowState(handle) == FormWindowState.Maximized;
+				if (!maximized && max.Width > 0 && width > max.Width) width = max.Width;
+				if (!maximized && max.Height > 0 && height > max.Height) height = max.Height;
 				// ...and no smaller than its minimum tracking size, when it has a caption or a sizing border:
 				// DefWindowProc's WM_WINDOWPOSCHANGING asks WM_GETMINMAXINFO and holds every SetWindowPos to
 				// ptMinTrackSize (136 x 39, or the form's MinimumSize). Held to nothing, a ribbon form a docking
@@ -1434,7 +1564,42 @@ namespace System.Windows.Forms
 			// WM_WINDOWPOSCHANGED to call UpdateBounds (which reads GetWindowPos). Without this,
 			// a later Size-only change resends a stale x=0,y=0 and clobbers the position — which
 			// is exactly what dropped the ComboBox popup to the origin.
-			SendMessage(handle, Msg.WM_WINDOWPOSCHANGED, IntPtr.Zero, IntPtr.Zero);
+			SendWindowPosChanged(handle, resized ? 0 : SWP_NOSIZE);
+		}
+
+		// ---- WINDOWPOS: what WM_WINDOWPOSCHANGING and WM_WINDOWPOSCHANGED carry ----
+
+		[StructLayout(LayoutKind.Sequential)]
+		private struct WINDOWPOS
+		{
+			public IntPtr hwnd, hwndInsertAfter;
+			public int x, y, cx, cy;
+			public uint flags;
+		}
+
+		private const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10;
+
+		/// <summary>Sends a WINDOWPOS message for the window's outer rectangle, in its parent's coordinates as
+		/// Windows has it, and returns the WINDOWPOS as the window left it.</summary>
+		private WINDOWPOS SendWindowPos(IntPtr handle, Msg msg, int x, int y, int width, int height, uint flags)
+		{
+			var pos = new WINDOWPOS { hwnd = handle, x = x, y = y, cx = width, cy = height, flags = flags };
+			IntPtr mem = Marshal.AllocHGlobal(Marshal.SizeOf<WINDOWPOS>());
+			try
+			{
+				Marshal.StructureToPtr(pos, mem, false);
+				SendMessage(handle, msg, IntPtr.Zero, mem);
+				return Marshal.PtrToStructure<WINDOWPOS>(mem);
+			}
+			finally { Marshal.FreeHGlobal(mem); }
+		}
+
+		/// <summary>WM_WINDOWPOSCHANGED with the WINDOWPOS of where the window now is. Sent with none, a
+		/// window procedure that reads it -- a docking library's, a grid's -- read through a null pointer.</summary>
+		private void SendWindowPosChanged(IntPtr handle, uint flags)
+		{
+			GetWindowPos(handle, false, out int x, out int y, out int w, out int h, out _, out _);
+			SendWindowPos(handle, Msg.WM_WINDOWPOSCHANGED, x, y, w, h, flags | SWP_NOZORDER | SWP_NOACTIVATE);
 		}
 
 		internal override void GetWindowPos(IntPtr handle, bool is_toplevel, out int x, out int y,
@@ -1518,6 +1683,9 @@ namespace System.Windows.Forms
 			if (invalid.Width <= 0 || invalid.Height <= 0 || s_gpuRaster)
 				invalid = new Rectangle(0, 0, hwnd.width, hwnd.height);
 			dc.SetClip(invalid);   // no-op for a recording-only Graphics
+			// nothing of the window shows outside its region (SetWindowRgn): what is behind shows there
+			if (RegionOf(handle) is Region shape)
+				lock (_windowRegions) dc.SetClip(shape, System.Drawing.Drawing2D.CombineMode.Intersect);
 			var pe = new PaintEventArgs(dc, invalid);
 			hwnd.expose_pending = false;
 			hwnd.ClearInvalidArea();
@@ -2278,6 +2446,26 @@ namespace System.Windows.Forms
 			return 0;
 		}
 
+		/// <summary>
+		/// What is under a screen point of <paramref name="form"/>'s window as its frame has it, for a host whose
+		/// form draws its own frame. The sizing border is the form's, whatever lies under it: on Windows the frame
+		/// is outside the children (a ribbon form keeps a 5-pixel border there), and asked deepest-first the
+		/// children reaching the edge left a band of a pixel or two to take hold of. The rest the deepest window
+		/// answers first (a ribbon's caption buttons are its client, though the form calls the strip round them
+		/// caption). Only a caption or an edge is returned; anything else is 0.
+		/// </summary>
+		internal int FrameHitTest(Form form, int screenX, int screenY)
+		{
+			if (form != null && form.IsHandleCreated && form.WindowState == FormWindowState.Normal
+				&& form.FormBorderStyle is FormBorderStyle.Sizable or FormBorderStyle.SizableToolWindow)
+			{
+				IntPtr lp = (IntPtr)((screenY << 16) | (screenX & 0xFFFF));
+				int edge = (int)SendMessage(form.Handle, Msg.WM_NCHITTEST, IntPtr.Zero, lp).ToInt64();
+				if (edge >= HTLEFT && edge <= HTBOTTOMRIGHT) return edge;
+			}
+			return HostHitTest(screenX, screenY);
+		}
+
 		private static readonly bool s_traceSysCommand = Environment.GetEnvironmentVariable("WF_TRACE_WAYLAND") == "1" || Environment.GetEnvironmentVariable("WF_TRACE_FRAMES") == "1";
 
 		internal override IntPtr DefWndProc(ref Message msg)
@@ -2328,14 +2516,32 @@ namespace System.Windows.Forms
 				if (msg.Msg == 0x00A1 && ht == HTCAPTION) { BeginWindowMove?.Invoke(msg.HWnd); return IntPtr.Zero; }
 				if (msg.Msg == 0x00A1 && ht >= HTLEFT && ht <= HTBOTTOMRIGHT) { BeginWindowSize?.Invoke(msg.HWnd, ht - 9); return IntPtr.Zero; }
 			}
-			// Win32 hands an unhandled wheel to the parent, and controls rely on it: Mono's ListView
-			// subscribes to MouseWheel on the LIST VIEW, while the window under the pointer is its
-			// item pane. Without this the wheel did nothing over any list or grid.
-			if (msg.Msg == (int)Msg.WM_MOUSEWHEEL)
+			// WM_CONTEXTMENU nobody took: a child window's goes on to its parent, as DefWindowProc sends it, so a
+			// right click on a label inside a panel shows the panel's menu. It went nowhere.
+			if (msg.Msg == (int)Msg.WM_CONTEXTMENU)
 			{
 				Hwnd h = Hwnd.ObjectFromHandle(msg.HWnd);
 				if (h?.parent != null)
-					return SendMessage(h.parent.Handle, Msg.WM_MOUSEWHEEL, msg.WParam, msg.LParam);
+					return SendMessage(h.parent.Handle, Msg.WM_CONTEXTMENU, msg.WParam, msg.LParam);
+				return IntPtr.Zero;
+			}
+			// The menu key, and Shift+F10, ask for the context menu from the keyboard: WM_CONTEXTMENU with no
+			// point (-1, -1), as DefWindowProc posts it.
+			if ((msg.Msg == (int)Msg.WM_KEYUP && (int)msg.WParam.ToInt64() == 0x5D /* VK_APPS */)
+				|| ((msg.Msg == (int)Msg.WM_KEYUP || msg.Msg == (int)Msg.WM_SYSKEYUP) && (int)msg.WParam.ToInt64() == 0x79 /* VK_F10 */
+					&& (_modifierKeys & Keys.Shift) != 0))
+			{
+				PostMessage(msg.HWnd, Msg.WM_CONTEXTMENU, msg.HWnd, (IntPtr)(-1));
+				return IntPtr.Zero;
+			}
+			// Win32 hands an unhandled wheel to the parent, and controls rely on it: Mono's ListView
+			// subscribes to MouseWheel on the LIST VIEW, while the window under the pointer is its
+			// item pane. Without this the wheel did nothing over any list or grid.
+			if (msg.Msg == (int)Msg.WM_MOUSEWHEEL || msg.Msg == (int)Msg.WM_MOUSEHWHEEL)
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(msg.HWnd);
+				if (h?.parent != null)
+					return SendMessage(h.parent.Handle, (Msg)msg.Msg, msg.WParam, msg.LParam);
 			}
 			return IntPtr.Zero;
 		}
@@ -2393,12 +2599,78 @@ namespace System.Windows.Forms
 				_activeForm = handle;
 			else if (_activeForm == handle)
 				_activeForm = IntPtr.Zero;
+			// The caption first, as Windows sends them: WM_NCACTIVATE, then WM_ACTIVATE. A form that draws its
+			// own caption (DotNetBar's) shows it active or inactive from WM_NCACTIVATE alone; never sent, an
+			// inactive window's caption looked as active as the one in front.
+			SendMessage(handle, Msg.WM_NCACTIVATE, (IntPtr)(active ? 1 : 0), IntPtr.Zero);
 			SendMessage(handle, Msg.WM_ACTIVATE, (IntPtr)(active ? 1 : 0), IntPtr.Zero);
 			if (!active && _focusHandle != IntPtr.Zero && IsDescendantOf(_focusHandle, handle)) {
 				// A window that is not the active one holds no keyboard focus.
 				SetFocus(IntPtr.Zero);
 			}
 			_paintVersion++;
+		}
+
+		/// <summary>The user began to move or size a top-level window, or finished (the host's loop, or the
+		/// system's): WM_ENTERSIZEMOVE / WM_EXITSIZEMOVE, which Form turns into ResizeBegin and ResizeEnd.</summary>
+		internal void HostSizeMove(IntPtr handle, bool enter)
+		{
+			if (Hwnd.ObjectFromHandle(handle) == null) return;
+			SendMessage(handle, enter ? Msg.WM_ENTERSIZEMOVE : Msg.WM_EXITSIZEMOVE, IntPtr.Zero, IntPtr.Zero);
+		}
+
+		[StructLayout(LayoutKind.Sequential)]
+		private struct SizingRect { public int left, top, right, bottom; }
+
+		/// <summary>A step of the user's resize: WM_SIZING with the window's proposed rectangle on the screen and the
+		/// edge it is sized from (WMSZ_LEFT .. WMSZ_BOTTOMRIGHT), and the rectangle as the window left it -- a window
+		/// that keeps its aspect ratio, or sizes in steps, changes it there. Nothing sent it.</summary>
+		internal Rectangle HostSizing(IntPtr handle, int edge, Rectangle proposed)
+		{
+			if (Hwnd.ObjectFromHandle(handle) == null) return proposed;
+			var r = new SizingRect { left = proposed.Left, top = proposed.Top, right = proposed.Right, bottom = proposed.Bottom };
+			IntPtr mem = Marshal.AllocHGlobal(Marshal.SizeOf<SizingRect>());
+			try
+			{
+				Marshal.StructureToPtr(r, mem, false);
+				SendMessage(handle, Msg.WM_SIZING, (IntPtr)edge, mem);
+				r = Marshal.PtrToStructure<SizingRect>(mem);
+			}
+			finally { Marshal.FreeHGlobal(mem); }
+			return Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
+		}
+
+		private bool? _appActive;
+
+		/// <summary>The application became the active one, or stopped being it (the host knows: AppKit's
+		/// NSApp.isActive): WM_ACTIVATEAPP to every top-level window, as Windows sends it. DotNetBar closes its
+		/// open popups and menus from it (OnApplicationDeactivate); never sent, a menu stayed open over
+		/// whatever application the user had switched to.</summary>
+		internal void HostApplicationActive(bool active)
+		{
+			if (_appActive == active) return;
+			_appActive = active;
+			var seen = new HashSet<Control>();
+			foreach (IntPtr handle in Hwnd.Handles())
+			{
+				Hwnd h = Hwnd.ObjectFromHandle(handle);
+				if (h == null || h.parent != null) continue;
+				Control c = Control.FromHandle(handle);
+				if (c == null || c.IsDisposed || !c.IsHandleCreated || !seen.Add(c)) continue;
+				// a window whose thread has ended is no window on Windows (it goes with its thread); waking
+				// that thread's loop to deliver it never returned
+				MsgQueue q;
+				lock (window_queue) window_queue.TryGetValue(c.Handle, out q);
+				if (q != null && !q.Owner.IsAlive) continue;
+				IntPtr target = c.Handle, wp = (IntPtr)(active ? 1 : 0);
+				try
+				{
+					// each window hears it on its own thread, as a sent message is delivered there
+					if (c.InvokeRequired) c.BeginInvoke(new Action(() => SendMessage(target, Msg.WM_ACTIVATEAPP, wp, IntPtr.Zero)));
+					else SendMessage(target, Msg.WM_ACTIVATEAPP, wp, IntPtr.Zero);
+				}
+				catch (Exception) { }
+			}
 		}
 
 		private static bool IsDescendantOf(IntPtr child, IntPtr ancestor)
@@ -2633,7 +2905,7 @@ namespace System.Windows.Forms
 			hwnd.x = ox + now.Left; hwnd.y = oy + now.Top;
 			hwnd.width = Math.Max(1, ow - now.Horizontal); hwnd.height = Math.Max(1, oh - now.Vertical);
 			_paintVersion++;
-			SendMessage(handle, Msg.WM_WINDOWPOSCHANGED, IntPtr.Zero, IntPtr.Zero);
+			SendWindowPosChanged(handle, 0);
 			Invalidate(handle, Rectangle.Empty, false);
 			FrameChanged?.Invoke(handle);
 		}
@@ -2659,7 +2931,7 @@ namespace System.Windows.Forms
 			hwnd.width = width; hwnd.height = height;
 			_paintVersion++;
 			if (s_gpuRaster) Invalidate(handle, Rectangle.Empty, false);
-			SendMessage(handle, Msg.WM_WINDOWPOSCHANGED, IntPtr.Zero, IntPtr.Zero);
+			SendWindowPosChanged(handle, SWP_NOMOVE);
 		}
 
 		/// <summary>SetWindowPos(SWP_FRAMECHANGED): the window is asked for its frame again.</summary>
@@ -3034,7 +3306,7 @@ namespace System.Windows.Forms
 			// DotNetBar's menu, opened under a still pointer, ignores moves that repeat its first one, and
 			// acts on a press only for an item a move made hot: this move, with its button, is the one that
 			// differs -- without it a click on the File button drawn over the open menu did nothing.
-			if (hwnd != was && (_mouseKeys & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) != 0)
+			if (hwnd != was && (_mouseKeys & MK_BUTTONS) != 0)
 				PostMoveAtCursor(hwnd);
 		}
 		internal override void UngrabWindow(IntPtr hwnd)
@@ -3085,14 +3357,53 @@ namespace System.Windows.Forms
 		{
 			int std = CursorIdFromHandle(cursor.handle);
 			if (std >= 0) return std;
-			if (string.IsNullOrEmpty(cursor.name)) return -1;
-			try
+			if (!string.IsNullOrEmpty(cursor.name))
 			{
-				return (int)(StdCursor)Enum.Parse(typeof(StdCursor), cursor.name, false);
+				try { return (int)(StdCursor)Enum.Parse(typeof(StdCursor), cursor.name, false); }
+				catch (Exception) { }
 			}
-			catch (Exception)
+			// one of the application's own (a .cur file, a resource): drawn from its picture
+			return cursor.HasImage ? CustomCursorId(cursor) : -1;
+		}
+
+		// ---- the application's own cursors ----------------------------------------------------
+		//
+		// A cursor read from a .cur file or resource (an eyedropper, a pen, a zoom) has its picture; the host
+		// draws it (an NSCursor made from it). It fell back to the arrow, and a tool that shows what it does
+		// by its cursor showed nothing. Each gets an id past the standard shapes the first time it is shown;
+		// its picture is made then, once.
+
+		internal const int FirstCustomCursor = 0x10000;
+		private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Cursor, object> s_customIds = new();
+		private static readonly Dictionary<int, WeakReference<Cursor>> s_customCursors = new();
+		private static readonly Dictionary<int, (Bitmap Image, Point HotSpot)> s_customImages = new();
+		private static int s_nextCustom = FirstCustomCursor;
+
+		private static int CustomCursorId(Cursor cursor)
+		{
+			lock (s_customCursors)
 			{
-				return -1;
+				if (s_customIds.TryGetValue(cursor, out object known)) return (int)known;
+				int id = s_nextCustom++;
+				s_customIds.Add(cursor, id);
+				s_customCursors[id] = new WeakReference<Cursor>(cursor);
+				return id;
+			}
+		}
+
+		/// <summary>The picture and hotspot of an application cursor's id (one past <see cref="FirstCustomCursor"/>),
+		/// for the host to show it.</summary>
+		internal static bool TryGetCustomCursor(int id, out Bitmap image, out Point hotSpot)
+		{
+			image = null; hotSpot = Point.Empty;
+			lock (s_customCursors)
+			{
+				if (s_customImages.TryGetValue(id, out var made)) { (image, hotSpot) = made; return image != null; }
+				if (!s_customCursors.TryGetValue(id, out var weak) || !weak.TryGetTarget(out Cursor cursor)) return false;
+				try { image = cursor.ToArgbImage(); hotSpot = cursor.HotSpot; }
+				catch (Exception) { image = null; }
+				s_customImages[id] = (image, hotSpot);
+				return image != null;
 			}
 		}
 
@@ -3135,6 +3446,13 @@ namespace System.Windows.Forms
 		internal int GetActiveCursor()
 		{
 			if (_cursorOverride >= 0) return _cursorOverride;
+			// WM_SETCURSOR carries the hit test, and on a sizing edge DefWindowProc shows the size cursor,
+			// whatever the control under the pointer would show in its client: the edges a form that draws
+			// its own frame answers HTLEFT..HTBOTTOMRIGHT for (a ribbon form's) showed the arrow. Not while a
+			// window holds the capture -- Windows sends no WM_SETCURSOR then.
+			if (_grabHandle == IntPtr.Zero && _hotWindow != IntPtr.Zero
+				&& SizingCursor(FrameHitTest(Control.FromHandle(TopLevelOf(_hotWindow)) as Form, _cursorX, _cursorY)) is int sizing)
+				return sizing;
 			for (Hwnd h = Hwnd.ObjectFromHandle(_hotWindow); h != null; h = h.parent)
 			{
 				if (_cursors.TryGetValue(h.Handle, out int id)) return id;

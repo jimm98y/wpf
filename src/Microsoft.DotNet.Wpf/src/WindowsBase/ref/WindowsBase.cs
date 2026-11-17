@@ -848,6 +848,8 @@ namespace MS.Internal.Interop.Wayland
         public static System.IntPtr HandleOf(System.IntPtr surfaceOrHandle) { throw null; }
         public static System.IntPtr SurfaceOf(System.IntPtr handle) { throw null; }
         public static bool IsUiThread { get { throw null; } }
+        public static bool CapsLockOn { get { throw null; } }
+        public static bool NumLockOn { get { throw null; } }
         public static bool ClaimUiThread() { throw null; }
         public static void DeliverMouse(System.IntPtr window, int kind, int button, int x, int y, int wheel) { }
         public static void DeliverKey(System.IntPtr window, MS.Internal.Interop.Wayland.WaylandWindow.KeyMessage key) { }

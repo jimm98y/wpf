@@ -3243,21 +3243,27 @@ namespace System.Windows.Forms {
 		}
 
 		internal override int SendInput (IntPtr hwnd, Queue keys) {
-			INPUT[] inputs = new INPUT[keys.Count];
-			const Int32 INPUT_KEYBOARD = 1;
+			const Int32 INPUT_KEYBOARD = 1, KEYEVENTF_UNICODE = 4;
+			var list = new System.Collections.Generic.List<INPUT> ();
 			uint returns = 0;
-			int i = 0;
 			while (keys.Count > 0) {
 				MSG msg = (MSG)keys.Dequeue();
-
-				
-				inputs[i].ki.wScan = 0;
-				inputs[i].ki.time = 0;
-				inputs[i].ki.dwFlags = (Int32)(msg.message == Msg.WM_KEYUP ? InputFlags.KEYEVENTF_KEYUP : 0);
-				inputs[i].ki.wVk = (short)msg.wParam.ToInt32();
-				inputs[i].type = INPUT_KEYBOARD;
-				i++;
+				INPUT input = default;
+				input.type = INPUT_KEYBOARD;
+				if (msg.message == Msg.WM_CHAR) {
+					// a character to type: a Unicode keystroke, pressed and released
+					input.ki.wScan = (short)msg.wParam.ToInt32 ();
+					input.ki.dwFlags = KEYEVENTF_UNICODE;
+					list.Add (input);
+					input.ki.dwFlags = KEYEVENTF_UNICODE | (Int32)InputFlags.KEYEVENTF_KEYUP;
+					list.Add (input);
+					continue;
+				}
+				input.ki.dwFlags = (Int32)(msg.message == Msg.WM_KEYUP ? InputFlags.KEYEVENTF_KEYUP : 0);
+				input.ki.wVk = (short)msg.wParam.ToInt32();
+				list.Add (input);
 			}
+			INPUT[] inputs = list.ToArray ();
 			returns = Win32SendInput((UInt32)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
 
 			return (int) returns;

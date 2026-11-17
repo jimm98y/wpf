@@ -272,6 +272,9 @@ namespace System.Windows.Forms {
 		[MonoTODO ("Implemented for Win32, X11 always returns 0,0")]
 		public Point HotSpot {
 			get {
+				// a cursor read from a .cur file has its hotspot there, as Windows reads it
+				if (HasImage && cursor_dir.idEntries != null && id < cursor_dir.idEntries.Length)
+					return new Point (cursor_dir.idEntries [id].xHotspot, cursor_dir.idEntries [id].yHotspot);
 				int cursor_w, cursor_h, hot_x, hot_y;
 				XplatUI.GetCursorInfo (Handle, out cursor_w, out cursor_h, out hot_x, out hot_y);
 
@@ -595,6 +598,50 @@ namespace System.Windows.Forms {
 
 			reader.Close();
 		}
+
+		/// <summary>The cursor's picture as a 32-bit ARGB bitmap, for a host that draws it (a custom cursor from a
+		/// .cur file or resource), or null when there is none. The AND mask makes it transparent: AND 1 over a
+		/// black XOR pixel is the screen; AND 1 over a coloured one inverts the screen on Windows, drawn black
+		/// here. A 32-bit cursor with an alpha channel keeps its alpha; one whose alpha is all zero (the older
+		/// kind, transparent by its mask alone) is opaque where the mask says so.</summary>
+		internal Bitmap ToArgbImage ()
+		{
+			if (cursor_data == null || cursor_data.Length == 0)
+				return null;
+			CursorImage ci = cursor_data[this.id];
+			CursorInfoHeader cih = ci.cursorHeader;
+			int w = cih.biWidth, h = cih.biHeight / 2;
+			if (w <= 0 || h <= 0 || ci.cursorAND == null)
+				return null;
+			Bitmap colour;
+			using (Bitmap xor = ToBitmap (true, false))
+				colour = new Bitmap (xor);   // 32-bit ARGB, whatever the cursor's own format
+			bool hasAlpha = false;
+			if (cih.biBitCount == 32)
+				for (int y = 0; y < h && !hasAlpha; y++)
+					for (int x = 0; x < w && !hasAlpha; x++)
+						hasAlpha = colour.GetPixel (x, y).A != 0;
+			int andStride = ((w + 31) / 32) * 4;
+			for (int y = 0; y < h; y++) {
+				for (int x = 0; x < w; x++) {
+					int row = (h - 1 - y) * andStride;   // bottom-up, as the XOR bitmap
+					bool and = row + x / 8 < ci.cursorAND.Length && ((ci.cursorAND [row + x / 8] >> (7 - (x & 7))) & 1) != 0;
+					Color c = colour.GetPixel (x, y);
+					if (hasAlpha)
+						continue;
+					if (!and)
+						colour.SetPixel (x, y, Color.FromArgb (255, c.R, c.G, c.B));
+					else if ((c.R | c.G | c.B) == 0)
+						colour.SetPixel (x, y, Color.Transparent);
+					else
+						colour.SetPixel (x, y, Color.FromArgb (255, 0, 0, 0));
+				}
+			}
+			return colour;
+		}
+
+		/// <summary>Whether the cursor has pictures of its own (it was read from a .cur stream).</summary>
+		internal bool HasImage => cursor_data != null && cursor_data.Length > 0;
 
 		private Bitmap ToBitmap(bool xor, bool transparent)
 		{

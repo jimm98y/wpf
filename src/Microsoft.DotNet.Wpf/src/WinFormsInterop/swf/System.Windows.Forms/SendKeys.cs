@@ -135,18 +135,12 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		// A character to type, not a key: the driver finds the key that types it (VkKeyScan, as .NET's SendKeys
+		// does). Queued as a key of its own code it was the wrong key: 'a' (0x61) is VK_NUMPAD1.
 		private static void AddKey(char key, int repeat_count) {
-			MSG	msg;
-
 			for (int i = 0; i < repeat_count; i++ ) {
-				msg = new MSG();
-				msg.message = Msg.WM_KEYDOWN;
-				msg.wParam = new IntPtr(key);
-				msg.lParam = IntPtr.Zero;
-				keys.Enqueue(msg);
-
-				msg = new MSG();
-				msg.message = Msg.WM_KEYUP;
+				MSG msg = new MSG();
+				msg.message = Msg.WM_CHAR;
 				msg.wParam = new IntPtr(key);
 				msg.lParam = IntPtr.Zero;
 				keys.Enqueue(msg);
@@ -215,7 +209,7 @@ namespace System.Windows.Forms {
 									AddVKey((int)keywords["+"], false);
 							}
 							else
-								AddKey(Char.Parse(group_string.ToString().ToUpper()), repeats.Length == 0 ? 1 : repeat);
+								AddKey(Char.Parse(group_string.ToString()), repeats.Length == 0 ? 1 : repeat);   // the character itself; Shift held makes it a capital
 						}
 
 						i = start;
@@ -276,7 +270,7 @@ namespace System.Windows.Forms {
 								AddVKey((int)keywords["+"], false);
 						}
 						else
-							AddKey(Char.Parse(key_string[i].ToString().ToUpper()), 1);
+							AddKey(key_string[i], 1);   // the character itself; Shift held makes it a capital
 						
 						if (!isBlock) {
 							if (isShift)
