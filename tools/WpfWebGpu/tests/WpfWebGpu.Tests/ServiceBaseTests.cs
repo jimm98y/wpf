@@ -3,6 +3,7 @@ using Xunit;
 
 namespace WpfWebGpu.Tests;
 
+[Collection(ServiceDatabaseEnvironment.Name)]     // the process's services are one dispatcher's, as on Windows
 public class ServiceBaseTests
 {
     private sealed class Probe : ServiceBase

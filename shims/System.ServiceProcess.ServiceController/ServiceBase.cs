@@ -7,7 +7,9 @@
 // A service whose OnStart throws is stopped and the process ends with its exit code, as the manager records a
 // service that failed to start. A stop is given the time the manager gives it (20 seconds, more on each
 // RequestAdditionalTime); a service still stopping then is abandoned and the process ended, as the manager ends a
-// service that does not stop, rather than left running with its stop half done.
+// service that does not stop, rather than left running with its stop half done. The manager's other controls -- pause,
+// continue, the program's own (OnCustomCommand), interrogate -- reach the running services over the channel each one
+// listens on (WpfWebGpu.Services.ServiceChannel), and the manager asks there for the state each one is in (paused).
 
 using System.ComponentModel;
 using System.Diagnostics;
@@ -28,6 +30,7 @@ namespace System.ServiceProcess
         private long _stopDeadline;
         private EventLog _eventLog;
         private bool _running;
+        private IDisposable _channel;
         private static readonly object s_gate = new object();
         private static ManualResetEventSlim s_stopped;
         private static ServiceBase[] s_services;
@@ -135,12 +138,17 @@ namespace System.ServiceProcess
                     try
                     {
                         service._running = true;
+                        service.SetState(SERVICE_START_PENDING, 0, 0);
+                        service._channel = WpfWebGpu.Services.ServiceChannel.Listen(WpfWebGpu.Services.ServiceDatabase.DefaultPath(), service.ServiceName,
+                            service.ChannelControl, () => new WpfWebGpu.Services.ServiceChannel.Reported((WpfWebGpu.Services.ServiceState)service._state, service.AcceptedControls(service._state)));
                         service.OnStart(Array.Empty<string>());
+                        service.SetState(SERVICE_RUNNING, 0, 0);
                         if (service.AutoLog) Log(service, "Service started successfully.");
                     }
                     catch (Exception e)
                     {
                         service._running = false;
+                        service.SetState(SERVICE_STOPPED, 0, 0);
                         Log(service, $"Service cannot be started. {e}");
                         if (service.ExitCode == 0) service.ExitCode = 1064;      // ERROR_EXCEPTION_IN_SERVICE
                         Environment.ExitCode = service.ExitCode;
@@ -163,7 +171,18 @@ namespace System.ServiceProcess
             finally
             {
                 foreach (var r in signals) r.Dispose();
+                foreach (ServiceBase service in services) { service._channel?.Dispose(); service._channel = null; }
             }
+        }
+
+        // a control the manager sends: refused as the SCM refuses it for the service's state and the controls it
+        // accepts, else taken as the manager's handler takes it on Windows
+        private int ChannelControl(uint control)
+        {
+            int refused = WpfWebGpu.Services.ServiceChannel.Admit(control, new((WpfWebGpu.Services.ServiceState)_state, AcceptedControls(_state)));
+            if (refused != 0) return refused;
+            if (control == SERVICE_CONTROL_STOP) Interlocked.Exchange(ref _stopDeadline, Environment.TickCount64 + StopTimeoutMs);
+            return ServiceCommandCallback((int)control, 0, IntPtr.Zero, IntPtr.Zero);
         }
 
         // A service process whose services have all stopped is done, to the manager: Windows' SCM ends one that lingers
@@ -206,6 +225,7 @@ namespace System.ServiceProcess
             {
                 if (!service._running) return;
                 service._running = false;
+                if (!OperatingSystem.IsWindows()) service.SetState(SERVICE_STOP_PENDING, 0, 0);
             }
             try
             {
@@ -217,6 +237,7 @@ namespace System.ServiceProcess
             {
                 Log(service, $"Failed to stop service. {e}");
             }
+            if (!OperatingSystem.IsWindows()) service.SetState(SERVICE_STOPPED, (uint)service.ExitCode, 0);
         }
 
         // where a service's journal is read off Windows: its standard error, which systemd and launchd keep

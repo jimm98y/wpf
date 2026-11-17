@@ -1,6 +1,6 @@
 // advapi32, the service control manager's client side: what an app's service tools call to see and manage the
 // machine's services -- OpenSCManager, OpenService, QueryServiceStatus(Ex), QueryServiceConfig, StartService,
-// ControlService (stop, interrogate), ChangeServiceConfig's start type, CreateService and DeleteService. Answered by
+// ControlService (stop, interrogate, pause, continue, a program's own controls), ChangeServiceConfig's start type, CreateService and DeleteService. Answered by
 // the stack's service manager
 // (WpfWebGpu.Services): the installed services, their state from launchd or systemd, and every request decided by
 // the service's security descriptor and the caller's account, as the SCM decides -- OpenService refuses the access
@@ -130,7 +130,7 @@ public static unsafe partial class Exports
     {
         status[0] = SERVICE_WIN32_OWN_PROCESS;
         status[1] = (uint)s.State;
-        status[2] = s.State == ServiceState.Running ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
+        status[2] = s.Accepted ?? (s.State == ServiceState.Running ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0);
         status[3] = s.ExitCode == 0 ? 0u : 1066u;                 // ERROR_SERVICE_SPECIFIC_ERROR where it exited with a code
         status[4] = (uint)s.ExitCode;
         status[5] = 0;
@@ -195,12 +195,20 @@ public static unsafe partial class Exports
             {
                 if (ServiceOf(handle, 0x80) is not { } h) return FALSE;      // SERVICE_INTERROGATE
                 if (StatusOf(h) is not { } s) return Fail(ERROR_SERVICE_DOES_NOT_EXIST);
-                if (s.State != ServiceState.Running) return Fail(ServiceManager.ERROR_SERVICE_NOT_ACTIVE);
+                if (s.State is ServiceState.Stopped) return Fail(ServiceManager.ERROR_SERVICE_NOT_ACTIVE);
                 if (status != null) WriteStatus(status, s);
                 return TRUE;
             }
             default:
-                return Fail(ERROR_INVALID_SERVICE_CONTROL);
+            {
+                // pause, continue, a program's own: the running service takes it, the manager having checked the handle
+                uint right = ServiceManager.RightFor(control);
+                if (right == 0) return Fail(ERROR_INVALID_SERVICE_CONTROL);
+                if (ServiceOf(handle, right) is not { } h) return FALSE;
+                if (ServiceRequest(() => ServiceManager.SendControl(h.Name, control)) == FALSE) return FALSE;
+                if (status != null && StatusOf(h) is { } s) WriteStatus(status, s);
+                return TRUE;
+            }
         }
     }
 

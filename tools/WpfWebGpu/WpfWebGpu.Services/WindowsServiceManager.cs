@@ -107,7 +107,7 @@ internal static partial class WindowsServiceManager
                         fixed (uint* p = status)
                             if (!QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, (IntPtr)p, 36, out _)) { result[s.Name] = new ServiceStatus(ServiceState.Stopped, 0, 0); continue; }
                     }
-                    result[s.Name] = new ServiceStatus((ServiceState)status[1], (int)status[7], (int)status[3]);
+                    result[s.Name] = new ServiceStatus((ServiceState)status[1], (int)status[7], (int)status[3], status[2]);
                 }
                 finally { CloseServiceHandle(service); }
             }
@@ -122,7 +122,8 @@ internal static partial class WindowsServiceManager
         if (scm == IntPtr.Zero) throw Error();
         try
         {
-            uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, "delete" => ServiceManager.DeleteRight, _ => 0 };
+            uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, "delete" => ServiceManager.DeleteRight,
+                "control" => ServiceManager.RightFor(uint.TryParse(arg, out uint c) ? c : 0), _ => 0 };
             if (right == 0) throw new ServiceException(ServiceManager.ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
             IntPtr service = OpenServiceW(scm, name, right | ServiceManager.QueryStatus);
             if (service == IntPtr.Zero) throw Error();
@@ -133,6 +134,7 @@ internal static partial class WindowsServiceManager
                     "start" => StartServiceW(service, 0, IntPtr.Zero),
                     "stop" => ControlService(service, SERVICE_CONTROL_STOP, new uint[7]),
                     "delete" => DeleteService(service),
+                    "control" => ControlService(service, uint.Parse(arg, System.Globalization.CultureInfo.InvariantCulture), new uint[7]),
                     _ => Enum.TryParse(arg, ignoreCase: true, out ServiceStart start)
                          && ChangeServiceConfigW(service, SERVICE_NO_CHANGE, start switch { ServiceStart.Auto => 2u, ServiceStart.Manual => 3u, _ => 4u },
                                                  SERVICE_NO_CHANGE, null, null, IntPtr.Zero, null, null, null, null),

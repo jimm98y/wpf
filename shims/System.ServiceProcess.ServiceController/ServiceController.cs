@@ -1,6 +1,6 @@
 // The service control manager's client, answered by the machine's service manager off Windows (WpfWebGpu.Services):
-// the services the installation registered, their state as launchd or systemd has it, and starting and stopping them
-// as each one's security descriptor allows the caller -- refused as Windows refuses (InvalidOperationException over
+// the services the installation registered, their state as launchd or systemd has it, starting, stopping, pausing and
+// controlling them as each one's security descriptor allows the caller -- refused as Windows refuses (InvalidOperationException over
 // the Win32Exception with Windows' error). A name that is not installed fails as Windows fails for it (1060).
 
 using System.Collections.Generic;
@@ -38,11 +38,12 @@ namespace System.ServiceProcess
             _machineName = machineName;
         }
 
-        public bool CanPauseAndContinue { get { Record(); return false; } }
+        // the controls the running service says it accepts (SERVICE_ACCEPT_*); a stopped one accepts none
+        public bool CanPauseAndContinue => (Accepted() & 0x2) != 0;
 
-        public bool CanShutdown { get { Record(); return false; } }
+        public bool CanShutdown => (Accepted() & 0x4) != 0;
 
-        public bool CanStop => Status == ServiceControllerStatus.Running;
+        public bool CanStop => (Accepted() & 0x1) != 0;
 
         public ServiceController[] DependentServices
         {
@@ -126,11 +127,11 @@ namespace System.ServiceProcess
 
         public void Close() { _status = null; }
 
-        public void Continue() => throw Refused("Cannot resume {0} service on computer '{1}'.", ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
+        public void Continue() => Send(3, "Cannot resume {0} service on computer '{1}'.");
 
         protected override void Dispose(bool disposing) => base.Dispose(disposing);
 
-        public void ExecuteCommand(int command) => throw Refused("Cannot control {0} service on computer '{1}'.", ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
+        public void ExecuteCommand(int command) => Send(unchecked((uint)command), "Cannot control {0} service on computer '{1}'.");
 
         public static ServiceController[] GetDevices() => GetDevices(".");
 
@@ -149,7 +150,25 @@ namespace System.ServiceProcess
             return ServiceManager.Database().Services.Select(s => new ServiceController(s.Name, machineName)).ToArray();
         }
 
-        public void Pause() => throw Refused("Cannot pause {0} service on computer '{1}'.", ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
+        public void Pause() => Send(2, "Cannot pause {0} service on computer '{1}'.");
+
+        // ControlService: the manager checks the caller's right to the control, the service takes it
+        private void Send(uint control, string refusal)
+        {
+            var record = Record();
+            if (ServiceManager.RightFor(control) == 0) throw Refused(refusal, ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
+            try { ServiceManager.SendControl(record.Name, control); }
+            catch (ServiceException e) { throw Refused(refusal, e.Error, e.Message); }
+            _status = null;
+        }
+
+        private uint Accepted()
+        {
+            var record = Record();
+            var status = ServiceManager.StatusOf(ServiceManager.Database(), record);
+            _status = (ServiceControllerStatus)(int)status.State;
+            return status.Accepted ?? (status.State == ServiceState.Running ? 0x1u : 0u);
+        }
 
         public void Refresh() { _status = null; }
 

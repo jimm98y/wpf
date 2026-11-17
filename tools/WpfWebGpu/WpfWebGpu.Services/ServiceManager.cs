@@ -17,7 +17,8 @@ namespace WpfWebGpu.Services;
 
 public enum ServiceState { Stopped = 1, StartPending = 2, StopPending = 3, Running = 4, ContinuePending = 5, PausePending = 6, Paused = 7 }
 
-public readonly record struct ServiceStatus(ServiceState State, int ProcessId, int ExitCode);
+/// <summary>A service's state, process and exit code, and the controls it accepts (SERVICE_ACCEPT_*) where it said.</summary>
+public readonly record struct ServiceStatus(ServiceState State, int ProcessId, int ExitCode, uint? Accepted = null);
 
 /// <summary>A request the service manager refused, with Win32's error (ERROR_ACCESS_DENIED, ...).</summary>
 public sealed class ServiceException(int error, string message) : Exception(message)
@@ -29,6 +30,7 @@ public static partial class ServiceManager
 {
     // SERVICE_* access rights
     public const uint QueryConfig = 0x1, ChangeConfig = 0x2, QueryStatus = 0x4, StartRight = 0x10, StopRight = 0x20, PauseContinue = 0x40,
+        Interrogate = 0x80, UserDefinedControl = 0x100,
         DeleteRight = 0x10000;
     // SC_MANAGER_* access rights
     public const uint ManagerConnect = 0x1, ManagerCreateService = 0x2, ManagerEnumerate = 0x4, ManagerLock = 0x8,
@@ -44,10 +46,19 @@ public static partial class ServiceManager
     public static ServiceDatabase Database() =>
         OperatingSystem.IsWindows() ? WindowsServiceManager.Database() : ServiceDatabase.Load(ServiceDatabase.DefaultPath());
 
+    /// <summary>The access right a control needs: SERVICE_STOP, SERVICE_PAUSE_CONTINUE, SERVICE_INTERROGATE,
+    /// SERVICE_USER_DEFINED_CONTROL; 0 for one that is not a control.</summary>
+    public static uint RightFor(uint control) => control switch
+    {
+        1 => StopRight, 2 or 3 => PauseContinue, 4 => Interrogate, >= 128 and <= 255 => UserDefinedControl, _ => 0,
+    };
+
     // ---- state ------------------------------------------------------------------------------------------------
 
     /// <summary>Every service's state, by name (one question to launchd or systemd for them all).</summary>
-    public static Dictionary<string, ServiceStatus> Statuses(ServiceDatabase db)
+    public static Dictionary<string, ServiceStatus> Statuses(ServiceDatabase db) => Statuses(db, ServiceDatabase.DefaultPath());
+
+    public static Dictionary<string, ServiceStatus> Statuses(ServiceDatabase db, string? databasePath)
     {
         if (OperatingSystem.IsWindows()) return WindowsServiceManager.Statuses(db);
         var result = new Dictionary<string, ServiceStatus>(StringComparer.OrdinalIgnoreCase);
@@ -91,6 +102,10 @@ public static partial class ServiceManager
                 result[name] = new ServiceStatus(state, pid, exit);
             }
         }
+        // what a running service reports of itself: paused, pausing, the controls it takes
+        foreach (var (name, status) in result.ToList())
+            if (status.State == ServiceState.Running && ServiceChannel.Query(databasePath, name, status.ProcessId) is { } reported)
+                result[name] = status with { State = reported.State == ServiceState.Stopped ? ServiceState.StopPending : reported.State, Accepted = reported.Accepted };
         return result;
     }
 
@@ -102,6 +117,8 @@ public static partial class ServiceManager
     public static void Start(string name) => Control("start", name, "");
     public static void Stop(string name) => Control("stop", name, "");
     public static void SetStart(string name, ServiceStart start) => Control("config", name, start.ToString());
+    /// <summary>A control for the running service (pause, continue, interrogate, a program's own 128-255).</summary>
+    public static void SendControl(string name, uint control) => Control("control", name, control.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>A handle to the service opened (<paramref name="open"/>) or closed: the service manager's daemon counts
     /// them, as the SCM does, for a deleted service goes only once the last is closed. Nothing where there is no
@@ -150,7 +167,8 @@ public static partial class ServiceControl
         if (op == "create") { Create(databasePath, arg, caller); return; }
         var db = ServiceDatabase.Load(databasePath);
         var service = db.Find(name) ?? throw new ServiceException(ServiceManager.ERROR_SERVICE_DOES_NOT_EXIST, "The specified service does not exist as an installed service.");
-        uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, "delete" => ServiceManager.DeleteRight, _ => 0 };
+        uint right = op switch { "start" => ServiceManager.StartRight, "stop" => ServiceManager.StopRight, "config" => ServiceManager.ChangeConfig, "delete" => ServiceManager.DeleteRight,
+            "control" => ServiceManager.RightFor(uint.TryParse(arg, NumberStyles.None, CultureInfo.InvariantCulture, out uint c) ? c : 0), _ => 0 };
         if (right == 0) throw new ServiceException(ServiceManager.ERROR_INVALID_SERVICE_CONTROL, "The requested control is not valid for this service.");
         if (!WindowsAccounts.AccessAllowed(ServiceDatabase.DescriptorOf(service), WindowsAccounts.TokenOf(caller), right))
             throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, $"Access is denied ({WindowsAccounts.Describe(caller)}, {service.Name}).");
@@ -164,6 +182,15 @@ public static partial class ServiceControl
             case "delete": Delete(databasePath, db, service); break;
             case "start": StartWithDependencies(db, service, new HashSet<string>(StringComparer.OrdinalIgnoreCase)); break;
             case "stop": StopService(db, service); break;
+            case "control":
+            {
+                // the service itself takes it (ServiceChannel), the manager having checked who asks
+                var status = ServiceManager.Statuses(db, databasePath).GetValueOrDefault(service.Name);
+                if (status.State == ServiceState.Stopped) throw new ServiceException(ServiceManager.ERROR_SERVICE_NOT_ACTIVE, "The service has not been started.");
+                var (error, _) = ServiceChannel.Send(databasePath, service.Name, status.ProcessId, uint.Parse(arg, CultureInfo.InvariantCulture));
+                if (error != 0) throw new ServiceException(error, new System.ComponentModel.Win32Exception(error).Message);
+                break;
+            }
             case "config":
                 if (!Enum.TryParse(arg, ignoreCase: true, out ServiceStart start)) throw new ServiceException(87, "The parameter is incorrect.");
                 Configure(service, start);
@@ -293,6 +320,7 @@ public static class ServiceBroker
         listener.Bind(new UnixDomainSocketEndPoint(socketPath));
         File.SetUnixFileMode(socketPath, (UnixFileMode)Convert.ToInt32("666", 8));   // anyone may ask; the descriptor decides
         listener.Listen(16);
+        ServiceChannel.EnsureFolder(databasePath);       // where the running services listen for it
         log($"service manager: {databasePath}, requests at {socketPath}");
         // a deleted service goes once it has stopped, however it stopped, and its last handle is closed (or the
         // process holding it has gone)
@@ -362,14 +390,14 @@ public static class ServiceBroker
             string reply;
             try
             {
-                uint uid = PeerUid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's account is unknown).");
+                uint uid = PeerCredentials.Uid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's account is unknown).");
                 string[] parts = (reader.ReadLine() ?? "").Split('\t');
                 if (parts.Length < 3) throw new ServiceException(87, "The parameter is incorrect.");
                 if (parts[0] is "open" or "close")
                 {
                     // a handle's opening or closing, by the process at the other end; the last one closed lets a
                     // deleted service go
-                    int pid = PeerPid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's process is unknown).");
+                    int pid = PeerCredentials.Pid(client) ?? throw new ServiceException(ServiceManager.ERROR_ACCESS_DENIED, "Access is denied (the caller's process is unknown).");
                     Hold(parts[1], pid, parts[0] == "open");
                     if (parts[0] == "close") ServiceControl.RemoveStoppedDeleted(databasePath);
                     reply = "0\t";
@@ -404,32 +432,5 @@ public static class ServiceBroker
             }
             try { stream.Write(Encoding.UTF8.GetBytes(reply + "\n")); } catch (IOException) { }
         }
-    }
-
-    // the process at the other end of the socket: LOCAL_PEERPID on macOS, SO_PEERCRED's pid (offset 0) on Linux
-    private static int? PeerPid(Socket socket)
-    {
-        Span<byte> cred = stackalloc byte[128];
-        try
-        {
-            int n = OperatingSystem.IsMacOS() ? socket.GetRawSocketOption(0, 2, cred)
-                  : OperatingSystem.IsLinux() ? socket.GetRawSocketOption(1, 17, cred) : 0;
-            return n >= 4 ? BitConverter.ToInt32(cred[..4]) : null;
-        }
-        catch (SocketException) { return null; }
-    }
-
-    // the account at the other end of the socket: LOCAL_PEERCRED's xucred (cr_version, cr_uid, ...) on macOS,
-    // SO_PEERCRED's ucred (pid, uid, gid) on Linux -- the uid at offset 4 in both
-    private static uint? PeerUid(Socket socket)
-    {
-        Span<byte> cred = stackalloc byte[128];
-        try
-        {
-            int n = OperatingSystem.IsMacOS() ? socket.GetRawSocketOption(0, 1, cred)
-                  : OperatingSystem.IsLinux() ? socket.GetRawSocketOption(1, 17, cred) : 0;
-            return n >= 8 ? BitConverter.ToUInt32(cred[4..8]) : null;
-        }
-        catch (SocketException) { return null; }
     }
 }

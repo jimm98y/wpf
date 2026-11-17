@@ -106,7 +106,7 @@ namespace System.ServiceProcess
                     SetState(_state, 0, 0);
                     return 0;
                 case SERVICE_CONTROL_STOP when CanStop:
-                    ThreadPool.QueueUserWorkItem(_ => WindowsStop());
+                    ThreadPool.QueueUserWorkItem(_ => { if (OperatingSystem.IsWindows()) WindowsStop(); else Stop(); });
                     return 0;
                 case SERVICE_CONTROL_SHUTDOWN when CanShutdown:
                     ThreadPool.QueueUserWorkItem(_ =>
@@ -157,15 +157,14 @@ namespace System.ServiceProcess
             SetState(SERVICE_STOPPED, (uint)ExitCode, 0);
         }
 
+        // the state as the manager is told it (on Windows) or asks it (the service's channel elsewhere)
         private void SetState(uint state, uint exitCode, int waitHint)
         {
-            if (_statusHandle == IntPtr.Zero) return;
             bool pending = state is SERVICE_START_PENDING or SERVICE_STOP_PENDING or SERVICE_PAUSE_PENDING or SERVICE_CONTINUE_PENDING;
             _checkPoint = pending ? _checkPoint + 1 : 0;
             _state = state;
-            uint accepted = state == SERVICE_START_PENDING || state == SERVICE_STOPPED ? 0
-                : (CanStop ? SERVICE_ACCEPT_STOP : 0) | (CanPauseAndContinue ? SERVICE_ACCEPT_PAUSE_CONTINUE : 0) | (CanShutdown ? SERVICE_ACCEPT_SHUTDOWN : 0)
-                  | (CanHandlePowerEvent ? SERVICE_ACCEPT_POWEREVENT : 0) | (CanHandleSessionChangeEvent ? SERVICE_ACCEPT_SESSIONCHANGE : 0);
+            if (_statusHandle == IntPtr.Zero) return;
+            uint accepted = AcceptedControls(state);
             var status = new uint[]
             {
                 _shared ? SERVICE_WIN32_SHARE_PROCESS : SERVICE_WIN32_OWN_PROCESS, state, accepted,
@@ -173,6 +172,10 @@ namespace System.ServiceProcess
             };
             SetServiceStatus(_statusHandle, status);
         }
+
+        private uint AcceptedControls(uint state) => state == SERVICE_START_PENDING || state == SERVICE_STOPPED ? 0
+            : (CanStop ? SERVICE_ACCEPT_STOP : 0) | (CanPauseAndContinue ? SERVICE_ACCEPT_PAUSE_CONTINUE : 0) | (CanShutdown ? SERVICE_ACCEPT_SHUTDOWN : 0)
+              | (CanHandlePowerEvent ? SERVICE_ACCEPT_POWEREVENT : 0) | (CanHandleSessionChangeEvent ? SERVICE_ACCEPT_SESSIONCHANGE : 0);
 
         // a start or stop that needs longer: the manager is told to wait (a new checkpoint, a longer hint)
         private void RequestWindowsTime(int milliseconds)

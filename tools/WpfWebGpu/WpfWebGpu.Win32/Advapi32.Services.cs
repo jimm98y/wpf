@@ -34,6 +34,8 @@ public static unsafe partial class Exports
         public nint Handler, Context;
         public bool Ex;
         public volatile uint State = 2;      // SERVICE_START_PENDING
+        public volatile uint Accepted;
+        public IDisposable? Channel;
         public uint WaitHint, ExitCode;
         public long Deadline;
     }
@@ -52,6 +54,10 @@ public static unsafe partial class Exports
             var service = new Service { Name = name };
             lock (s_services) s_services.Add(service);
             started.Add(service);
+            // the manager's other controls -- pause, continue, the program's own -- and its questions of the state
+            Service listening = service;
+            service.Channel = WpfWebGpu.Services.ServiceChannel.Listen(WpfWebGpu.Services.ServiceDatabase.DefaultPath(), name,
+                code => Controlled(listening, code), () => new WpfWebGpu.Services.ServiceChannel.Reported((WpfWebGpu.Services.ServiceState)listening.State, listening.Accepted));
             nint proc = e->lpServiceProc;
             var thread = new Thread(() =>
             {
@@ -101,20 +107,34 @@ public static unsafe partial class Exports
         finally
         {
             foreach (var r in signals) r.Dispose();
+            foreach (var s in started) s.Channel?.Dispose();
         }
         SetLastError(0);
         return TRUE;
     }
 
-    private static void Control(Service s, uint control)
+    // the handler's answer: NO_ERROR, or ERROR_CALL_NOT_IMPLEMENTED for a control it does not take (a Handler
+    // has no answer)
+    private static uint Control(Service s, uint control)
     {
-        if (s.Handler == 0) return;
+        if (s.Handler == 0) return 0;
         try
         {
-            if (s.Ex) ((delegate* unmanaged<uint, uint, nint, nint, uint>)s.Handler)(control, 0, 0, s.Context);
-            else ((delegate* unmanaged<uint, void>)s.Handler)(control);
+            if (s.Ex) return ((delegate* unmanaged<uint, uint, nint, nint, uint>)s.Handler)(control, 0, 0, s.Context);
+            ((delegate* unmanaged<uint, void>)s.Handler)(control);
+            return 0;
         }
-        catch (Exception e) { Console.Error.WriteLine($"{s.Name}: its control handler failed: {e}"); }
+        catch (Exception e) { Console.Error.WriteLine($"{s.Name}: its control handler failed: {e}"); return 0; }
+    }
+
+    // a control the manager sends over the service's channel: refused as the SCM refuses it for the service's
+    // state and the controls it accepts, else the handler's
+    private static int Controlled(Service s, uint control)
+    {
+        int refused = WpfWebGpu.Services.ServiceChannel.Admit(control, new((WpfWebGpu.Services.ServiceState)s.State, s.Accepted));
+        if (refused != 0) return refused;
+        if (control == 1) Interlocked.Exchange(ref s.Deadline, Environment.TickCount64 + StopTimeoutMs);
+        return (int)Control(s, control);
     }
 
     private static Service? ServiceNamed(string? name)
@@ -150,6 +170,7 @@ public static unsafe partial class Exports
         if (status == null || FromStatusHandle(handle) is not { } s) { SetLastError(6); return FALSE; }     // ERROR_INVALID_HANDLE
         uint was = s.State;
         s.State = status->dwCurrentState;
+        s.Accepted = status->dwControlsAccepted;
         s.ExitCode = status->dwWin32ExitCode == 1066 ? status->dwServiceSpecificExitCode : status->dwWin32ExitCode;
         // a pending stop asking for more time gets it, as the manager reads the wait hint
         if (status->dwWaitHint > 0) Interlocked.Exchange(ref s.Deadline, Math.Max(Interlocked.Read(ref s.Deadline), Environment.TickCount64 + status->dwWaitHint));
