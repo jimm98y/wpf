@@ -489,12 +489,17 @@ namespace System.Windows.Forms
 				case 1:
 					if (m.Button == 2) _driver.InjectRightDown (x, y);
 					else if (m.Button == 0) { _leftDown = true; _driver.InjectMouseDown (x, y); }
+					else if (m.Button == 1) _driver.InjectMiddleDown (x, y);
+					else if (m.Button is 3 or 4) _driver.InjectXButtonDown (x, y, m.Button - 2);   // back, forward: XBUTTON1, XBUTTON2
 					break;
 				case 2:
 					if (m.Button == 2) _driver.InjectRightUp (x, y);
 					else if (m.Button == 0) { _leftDown = false; _driver.InjectMouseUp (x, y); }
+					else if (m.Button == 1) _driver.InjectMiddleUp (x, y);
+					else if (m.Button is 3 or 4) _driver.InjectXButtonUp (x, y, m.Button - 2);
 					break;
 				case 3: _driver.InjectWheel (x, y, m.Wheel); break;
+				case 4: _driver.InjectHWheel (x, y, m.Wheel); break;
 				}
 			} finally {
 				XplatUIWebGpu.InputRoot = outerRoot;

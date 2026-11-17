@@ -377,15 +377,15 @@ namespace MS.Internal.Interop
 
         public readonly struct BrowserMouseMessage
         {
-            /// <summary>0=move 1=down 2=up 3=wheel.</summary>
+            /// <summary>0=move 1=down 2=up 3=wheel 4=horizontal wheel.</summary>
             public int Kind { get; }
             public IntPtr Window { get; }
-            /// <summary>DOM button: 0 left, 1 middle, 2 right.</summary>
+            /// <summary>DOM button: 0 left, 1 middle, 2 right, 3 back, 4 forward.</summary>
             public int Button { get; }
             /// <summary>Client coordinates in device pixels, relative to <see cref="Window"/>.</summary>
             public int X { get; }
             public int Y { get; }
-            /// <summary>Wheel delta in Win32 units (+120 per notch away from user).</summary>
+            /// <summary>Wheel delta in Win32 units (+120 per notch away from user; a horizontal one +120 to the right).</summary>
             public int Wheel { get; }
             public int TimestampMs { get; }
 
@@ -634,9 +634,9 @@ namespace MS.Internal.Interop
                             if (n.GetProperty("t").GetString() != "m" ||
                                 n.GetProperty("k").GetInt32() != kind ||
                                 n.GetProperty("h").GetInt32() != handle ||
-                                (kind != 0 && kind != 3))
+                                (kind != 0 && kind != 3 && kind != 4))
                                 break;
-                            if (kind == 3) wheel += n.GetProperty("w").GetInt32();
+                            if (kind is 3 or 4) wheel += n.GetProperty("w").GetInt32();
                             idx++;
                             e = n;
                         }
@@ -663,7 +663,7 @@ namespace MS.Internal.Interop
                         // dragged out of app's dock lost its moves and its release over the display
                         // canvas (a WPF window of its own) and was left mid-drag.
                         IntPtr captured = MouseCaptureHandle;
-                        if (kind != 3 && captured != IntPtr.Zero && captured != (IntPtr)handle
+                        if (kind is not (3 or 4) && captured != IntPtr.Zero && captured != (IntPtr)handle
                             && FromHandle(captured) is BrowserWindow holder && FromHandle((IntPtr)handle) is BrowserWindow from)
                         {
                             from.GetClientScreenOriginPixels(out int fx, out int fy);
@@ -678,7 +678,7 @@ namespace MS.Internal.Interop
                             e.GetProperty("b").GetInt32(),
                             mx,
                             my,
-                            kind == 3 ? wheel : e.GetProperty("w").GetInt32(),
+                            kind is 3 or 4 ? wheel : e.GetProperty("w").GetInt32(),
                             e.GetProperty("ts").GetInt32()));
                         break;
                     }

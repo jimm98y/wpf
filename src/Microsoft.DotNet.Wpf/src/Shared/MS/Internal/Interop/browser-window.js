@@ -1045,12 +1045,19 @@ function installListeners() {
     installClipboardListeners();
 
     window.addEventListener("mousemove", (e) => { if (!hold.swallow) pushMouse(0, e); });
-    window.addEventListener("mousedown", (e) => { if (!hold.swallow) pushMouse(1, e); });
-    window.addEventListener("mouseup", (e) => { if (!hold.swallow) pushMouse(2, e); });
+    // the back and forward buttons (XBUTTON1, XBUTTON2) are the application's: left to the browser, they
+    // navigated away from the page the application runs in
+    const ownButton = (e) => { if (e.button === 3 || e.button === 4) e.preventDefault(); };
+    window.addEventListener("mousedown", (e) => { ownButton(e); if (!hold.swallow) pushMouse(1, e); });
+    window.addEventListener("mouseup", (e) => { ownButton(e); if (!hold.swallow) pushMouse(2, e); });
+    window.addEventListener("auxclick", ownButton);
     window.addEventListener("wheel", (e) => {
         // deltaMode 0 = pixels; convert to Win32 notches (~100px per 120 units).
         const notches = Math.max(-960, Math.min(960, Math.round(-e.deltaY * 120 / 100)));
         if (notches !== 0) pushMouse(3, e, notches);
+        // sideways (a tilt wheel, a trackpad's swipe): WM_MOUSEHWHEEL, positive to the right as deltaX is
+        const across = Math.max(-960, Math.min(960, Math.round(e.deltaX * 120 / 100)));
+        if (across !== 0) pushMouse(4, e, across);
         e.preventDefault();
     }, { passive: false });
     window.addEventListener("contextmenu", (e) => e.preventDefault());

@@ -1443,20 +1443,29 @@ namespace System.Windows.Interop
                 case 0:
                     actions = RawMouseActions.AbsoluteMove;
                     break;
-                case 1: // DOM buttons: 0=left 1=middle 2=right
-                    actions = msg.Button == 2 ? RawMouseActions.Button2Press
-                            : msg.Button == 1 ? RawMouseActions.Button3Press
-                            : RawMouseActions.Button1Press;
+                case 1: // DOM buttons: 0=left 1=middle 2=right 3=back 4=forward
+                    actions = msg.Button switch
+                    {
+                        2 => RawMouseActions.Button2Press, 1 => RawMouseActions.Button3Press,
+                        3 => RawMouseActions.Button4Press, 4 => RawMouseActions.Button5Press,
+                        _ => RawMouseActions.Button1Press,
+                    };
                     break;
                 case 2:
-                    actions = msg.Button == 2 ? RawMouseActions.Button2Release
-                            : msg.Button == 1 ? RawMouseActions.Button3Release
-                            : RawMouseActions.Button1Release;
+                    actions = msg.Button switch
+                    {
+                        2 => RawMouseActions.Button2Release, 1 => RawMouseActions.Button3Release,
+                        3 => RawMouseActions.Button4Release, 4 => RawMouseActions.Button5Release,
+                        _ => RawMouseActions.Button1Release,
+                    };
                     break;
                 case 3:
                     actions = RawMouseActions.VerticalWheelRotate;
                     wheel = msg.Wheel;
                     break;
+                case 4:
+                    ReportHorizontalWheel(msg.Wheel, msg.X, msg.Y);
+                    return;
                 default:
                     return;
             }
@@ -1620,7 +1629,11 @@ namespace System.Windows.Interop
                 case NSLeftDragged:
                 case NSRightDragged:
                 case NSOtherDragged: actions = RawMouseActions.AbsoluteMove; break;
-                case NSScrollWheel:  actions = RawMouseActions.VerticalWheelRotate; wheel = msg.Wheel; break;
+                case NSScrollWheel:
+                    if (msg.WheelHorizontal != 0) ReportHorizontalWheel(msg.WheelHorizontal, msg.X, msg.Y);
+                    if (msg.Wheel == 0) return;
+                    actions = RawMouseActions.VerticalWheelRotate; wheel = msg.Wheel;
+                    break;
                 // macOS button numbers: 0=left, 1=right, 2=middle, 3/4=extra -> WPF buttons 3/4/5.
                 case NSOtherDown:
                     actions = msg.ButtonNumber == 2 ? RawMouseActions.Button3Press
@@ -1658,6 +1671,8 @@ namespace System.Windows.Interop
                     break;
 
                 case MS.Internal.Interop.Wayland.WaylandMouseKind.Wheel:
+                    if (msg.WheelHorizontal != 0) ReportHorizontalWheel(msg.WheelHorizontal, msg.X, msg.Y);
+                    if (msg.Wheel == 0) return;
                     actions = RawMouseActions.VerticalWheelRotate;
                     wheel = msg.Wheel;
                     break;
@@ -1695,6 +1710,40 @@ namespace System.Windows.Interop
             }
 
             ReportMacInput(actions, msg.X, msg.Y, wheel, msg.TimestampMs);
+        }
+
+        /// <summary>
+        /// The horizontal wheel, as Windows delivers it to a WPF window: WM_MOUSEHWHEEL to the window's hooks
+        /// (HwndSource.AddHook), where applications handle it -- WPF has no event of its own for it (MouseDevice
+        /// leaves HorizontalWheelRotate unhandled on Windows too). The delta in the high word, 120 a notch and
+        /// positive to the right, the buttons held in the low word, the point on the screen in lParam.
+        /// </summary>
+        private void ReportHorizontalWheel(int delta, int x, int y)
+        {
+            if (_source == null || _source.IsDisposed || delta == 0) return;
+            if (MS.Internal.Interop.PlatformWindow.IsWindowDisabled(_source.Handle)) return;
+            int sx = x, sy = y;
+            if (MS.Internal.Interop.PlatformWindow.FromHandle(_source.Handle) is MS.Internal.Interop.IPlatformWindow window)
+            {
+                window.GetClientScreenOriginPixels(out int ox, out int oy);
+                sx += ox;
+                sy += oy;
+            }
+            MouseDevice mouse = _site?.CriticalInputManager?.PrimaryMouseDevice;
+            int keys = 0;
+            if (mouse != null)
+            {
+                if (mouse.LeftButton == MouseButtonState.Pressed) keys |= 0x0001;      // MK_LBUTTON
+                if (mouse.RightButton == MouseButtonState.Pressed) keys |= 0x0002;     // MK_RBUTTON
+                if (mouse.MiddleButton == MouseButtonState.Pressed) keys |= 0x0010;    // MK_MBUTTON
+                if (mouse.XButton1 == MouseButtonState.Pressed) keys |= 0x0020;        // MK_XBUTTON1
+                if (mouse.XButton2 == MouseButtonState.Pressed) keys |= 0x0040;        // MK_XBUTTON2
+            }
+            if (Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift)) keys |= 0x0004;  // MK_SHIFT
+            if (Keyboard.IsKeyDown(Key.LeftCtrl) || Keyboard.IsKeyDown(Key.RightCtrl)) keys |= 0x0008;    // MK_CONTROL
+            IntPtr wParam = (IntPtr)(((delta & 0xFFFF) << 16) | keys);
+            IntPtr lParam = (IntPtr)(((sy & 0xFFFF) << 16) | (sx & 0xFFFF));
+            MS.Win32.UnsafeNativeMethods.SendMessage(_source.Handle, MS.Internal.Interop.WindowMessage.WM_MOUSEHWHEEL, wParam, lParam);
         }
 
         private void ReportMacInput(RawMouseActions actions, int x, int y, int wheel, int timestamp)

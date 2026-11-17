@@ -3129,12 +3129,17 @@ namespace MS.Internal.Interop
             public int X { get; }
             public int Y { get; }
             public int Wheel { get; }
+            /// <summary>The sideways scroll in WM_MOUSEHWHEEL's units: 120 a notch, positive to the right.</summary>
+            public int WheelHorizontal { get; }
             public int TimestampMs { get; }
 
             public CocoaMouseMessage(IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel, int timestampMs)
+                : this(view, nsType, buttonNumber, x, y, wheel, timestampMs, 0) { }
+
+            public CocoaMouseMessage(IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel, int timestampMs, int wheelHorizontal)
             {
                 View = view; NSType = nsType; ButtonNumber = buttonNumber;
-                X = x; Y = y; Wheel = wheel; TimestampMs = timestampMs;
+                X = x; Y = y; Wheel = wheel; TimestampMs = timestampMs; WheelHorizontal = wheelHorizontal;
             }
         }
 
@@ -3346,7 +3351,7 @@ namespace MS.Internal.Interop
             int x = bx - cox;
             int y = by - coy;
 
-            int wheel = 0;
+            int wheel = 0, wheelH = 0;
             if (type == NSScrollWheel)
             {
                 double dy = SendDouble(evt, Sel("scrollingDeltaY"));
@@ -3354,6 +3359,8 @@ namespace MS.Internal.Interop
                 // WPF uses 120 units per notch. Trackpad "precise" deltas are pixel-ish and large;
                 // line-based wheel deltas are small. Scale each into roughly one notch per gesture step.
                 wheel = (int)Math.Round(dy * (precise ? 4.0 : 40.0));
+                // sideways the same way: WM_MOUSEHWHEEL is positive to the right, AppKit's delta the other way
+                wheelH = (int)Math.Round(-SendDouble(evt, Sel("scrollingDeltaX")) * (precise ? 4.0 : 40.0));
             }
 
             int button = 0;
@@ -3380,7 +3387,7 @@ namespace MS.Internal.Interop
 
             // The message carries the HWND (Handle), which is what the providers compare with their
             // source's -- AppKit gave a view.
-            handler(new CocoaMouseMessage(HandleOf(view), (int)type, button, x, y, wheel, Environment.TickCount));
+            handler(new CocoaMouseMessage(HandleOf(view), (int)type, button, x, y, wheel, Environment.TickCount, wheelH));
         }
 
         private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") is "1" or "2";

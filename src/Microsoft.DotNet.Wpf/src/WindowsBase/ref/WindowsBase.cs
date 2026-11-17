@@ -408,11 +408,13 @@ namespace MS.Internal.Interop
         {
             private readonly int _dummyPrimitive;
             public CocoaMouseMessage(System.IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel, int timestampMs) { throw null; }
+            public CocoaMouseMessage(System.IntPtr view, int nsType, int buttonNumber, int x, int y, int wheel, int timestampMs, int wheelHorizontal) { throw null; }
             public int ButtonNumber { get { throw null; } }
             public int NSType { get { throw null; } }
             public int TimestampMs { get { throw null; } }
             public System.IntPtr View { get { throw null; } }
             public int Wheel { get { throw null; } }
+            public int WheelHorizontal { get { throw null; } }
             public int X { get { throw null; } }
             public int Y { get { throw null; } }
         }
