@@ -1456,6 +1456,13 @@ namespace System.Windows.Forms
 		/// frame): two pixels each side that scaling leaves alone.</summary>
 		internal override Size AdornmentsAt (int dpi) => new Size (4, 4);
 
+		protected override void OnRightToLeftChanged (EventArgs e)
+		{
+			base.OnRightToLeftChanged (e);
+			LayoutComboBox ();
+			Invalidate ();
+		}
+
 		void LayoutComboBox ()
 		{
 			int border = ThemeEngine.Current.Border3DSize.Width;
@@ -1490,6 +1497,11 @@ namespace System.Windows.Forms
 				}
 			}
 
+			// RightToLeft: the drop-down button on the LEFT, as the native box lays it out with WS_EX_LEFTSCROLLBAR
+			bool rtl = RightToLeft == RightToLeft.Yes;
+			if (rtl && button_area != Rectangle.Empty)
+				button_area.X = text_area.X + (text_area.Right - button_area.Right);
+
 			if (button_area != prev_button_area) {
 				prev_button_area.Y -= border;
 				prev_button_area.Width += border;
@@ -1511,6 +1523,8 @@ namespace System.Windows.Forms
 				textbox_ctrl.Location = new Point (text_area.X + Margin, text_area.Y + Margin);
 				textbox_ctrl.Width = Math.Max (0, text_area.Width - 2 * Margin - (dropdown_style == ComboBoxStyle.Simple ? 0 : SystemInformation.GetVerticalScrollBarWidthForDpi (DeviceDpi)));
 				textbox_ctrl.Height = Math.Max (0, text_area.Height - 2 * Margin);
+				if (rtl)
+					textbox_ctrl.Left = text_area.X + (text_area.Right - textbox_ctrl.Right);
 			} else if (textbox_ctrl != null) {
 				int text_border = border + 1;
 				// A row HIGHER than the side inset. Windows draws an editable combo box's text one row
@@ -1519,6 +1533,8 @@ namespace System.Windows.Forms
 				textbox_ctrl.Location = new Point (text_area.X + text_border, text_area.Y + text_border - 1);
 				textbox_ctrl.Width = text_area.Width - button_area.Width - text_border * 2;
 				textbox_ctrl.Height = text_area.Height - text_border * 2;
+				if (rtl)
+					textbox_ctrl.Left = text_area.X + (text_area.Right - textbox_ctrl.Right);
 			}
 
 			if (listbox_ctrl != null && dropdown_style == ComboBoxStyle.Simple) {
@@ -1555,6 +1571,8 @@ namespace System.Windows.Forms
 				item_rect.X += border;
 				item_rect.Y += border;
 				item_rect.Width -= (button_area.Width + 2 * border);
+				if (RightToLeft == RightToLeft.Yes)	// right of the button, which is on the left
+					item_rect.X += button_area.Width;
 				item_rect.Height -= 2 * border;
 				
 				if (Focused) {

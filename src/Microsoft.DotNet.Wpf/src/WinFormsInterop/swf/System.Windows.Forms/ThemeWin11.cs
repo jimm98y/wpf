@@ -481,7 +481,9 @@ namespace System.Windows.Forms
 			// pixel wider put the chevron a pixel left of stock's at 200%.
 			Rectangle client = comboBox.TextArea;
 			int bw = Math.Max (0, area.Width - 1);
-			var button = new Rectangle (client.Right - 1 - bw, client.Y + 1, bw, client.Height - 2);
+			// at the field's right edge -- or its left for a right-to-left box (ComboBox.LayoutComboBox)
+			int bx = comboBox.RightToLeft == RightToLeft.Yes ? client.X + 1 : client.Right - 1 - bw;
+			var button = new Rectangle (bx, client.Y + 1, bw, client.Height - 2);
 			Win11Frames.Draw (g, Win11Frames.DropDownButtonSide (6, st, comboBox.DeviceDpi), button);
 		}
 
@@ -2308,6 +2310,11 @@ namespace System.Windows.Forms
 				const int Cy = 18;
 				int left = Math.Max (bounds.X, bounds.X + pos - (ProgressBar.MarqueeChunk - 1));
 				int right = Math.Min (bounds.Right, bounds.X + pos + 1);
+				if (ctrl.RightToLeft == RightToLeft.Yes) {	// running right to left (see below)
+					int l = bounds.X + (bounds.Right - right);
+					right = bounds.X + (bounds.Right - left);
+					left = l;
+				}
 				if (right > left)
 					dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), left, bounds.Y + 1, right - left, bounds.Height - 2);
 				int span = bounds.Width + ProgressBar.MarqueeChunk;
@@ -2335,8 +2342,14 @@ namespace System.Windows.Forms
 			Rectangle fill = new Rectangle (bounds.X + 1, bounds.Y + 1, Math.Min (filled, bounds.Width) - 2, bounds.Height - 2);
 			if (fill.Width <= 0 || fill.Height <= 0)
 				return;
+			// RightToLeft: the bar fills from the right, as the native one does for a right-to-left control
+			Rectangle lit = new Rectangle (bounds.X, bounds.Y, Math.Min (filled, bounds.Width), bounds.Height);
+			if (ctrl.RightToLeft == RightToLeft.Yes) {
+				fill.X = bounds.X + (bounds.Right - fill.Right);
+				lit.X = bounds.X + (bounds.Right - lit.Right);
+			}
 			dc.FillRectangle (ResPool.GetSolidBrush (ProgressFill), fill);
-			DrawProgressHighlight (dc, ctrl, new Rectangle (bounds.X, bounds.Y, Math.Min (filled, bounds.Width), bounds.Height));
+			DrawProgressHighlight (dc, ctrl, lit);
 
 			// (Superseded -- the glow is comctl32's, see DrawProgressHighlight.) NO SWEEPING HIGHLIGHT. There used to be one here, with a comment saying a stock progress
 			// bar whose value never changes is still not a static image. That is not true, and it is

@@ -489,12 +489,23 @@ namespace System.Windows.Forms
 		/// outer edge. This driver models no non-client area, so that pixel has to be added back here;
 		/// without it everything inside a bordered Panel sat a pixel up and left of Windows'.
 		/// </remarks>
+		/// <summary>Where a window lies across its parent's client: its x, or in a parent whose layout is mirrored
+		/// (WS_EX_LAYOUTRTL: a RightToLeftLayout form) that far in from the RIGHT edge, as Windows lays out the
+		/// children of a mirrored window. Its own position (Control.Left) stays the mirrored one.</summary>
+		internal static int PhysicalX(Hwnd h)
+		{
+			Hwnd parent = h.parent;
+			if (parent == null || (parent.initial_ex_style & WindowExStyles.WS_EX_LAYOUTRTL) == 0)
+				return h.x;
+			return parent.width - h.x - h.width;
+		}
+
 		internal Point ScreenLocation(Hwnd hwnd)
 		{
 			int x = 0, y = 0;
 			for (Hwnd h = hwnd; h != null; h = h.parent)
 			{
-				x += h.x; y += h.y;
+				x += PhysicalX(h); y += h.y;
 				if (h.parent != null)
 				{
 					Size inset = ClientOrigin(h.parent, FrameOf(h.parent.Handle));
@@ -615,7 +626,7 @@ namespace System.Windows.Forms
 			Hwnd h = Hwnd.ObjectFromHandle(hwnd);
 			if (h == null) return;
 			Invalidate(hwnd, new Rectangle(0, 0, h.width, h.height), false);
-			if (h.parent != null) Invalidate(h.parent.Handle, new Rectangle(h.x, h.y, h.width, h.height), false);
+			if (h.parent != null) Invalidate(h.parent.Handle, new Rectangle(PhysicalX(h), h.y, h.width, h.height), false);
 			else RepaintUnder(h);
 		}
 
@@ -1966,7 +1977,7 @@ namespace System.Windows.Forms
 				Hwnd child = hwnd;
 				for (Hwnd parent = hwnd.parent; parent != null; child = parent, parent = parent.parent)
 				{
-					offX -= child.x;
+					offX -= PhysicalX(child);
 					offY -= child.y;
 					// A non-client child (a scroll bar) may stand in the parent's scroll-bar bands, which
 					// are its frame less its border.

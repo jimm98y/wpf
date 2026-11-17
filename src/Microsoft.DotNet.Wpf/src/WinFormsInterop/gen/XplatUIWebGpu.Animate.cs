@@ -89,7 +89,7 @@ namespace System.Windows.Forms {
 			for (Hwnd h = hwnd; h != null; h = h.parent)
 			{
 				if (_reveals.TryGetValue(h.Handle, out reveal)) { root = h; break; }
-				offX += h.x;
+				offX += PhysicalX(h);
 				offY += h.y;
 			}
 			if (reveal == null) return scene;

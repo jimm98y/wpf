@@ -1156,9 +1156,18 @@ namespace System.Windows.Forms {
 		
 		[Localizable (true)]
 		[DefaultValue (false)]
+		// With RightToLeft.Yes, the form's client space mirrored (WS_EX_LAYOUTRTL): a control's Left counts from the
+		// right edge. Not inherited by the controls (WS_EX_NOINHERITLAYOUT), as .NET creates it.
 		public virtual bool RightToLeftLayout {
 			get { return this.right_to_left_layout; }
-			set { this.right_to_left_layout = value; }
+			set {
+				if (this.right_to_left_layout == value)
+					return;
+				this.right_to_left_layout = value;
+				if (RightToLeft == RightToLeft.Yes && IsHandleCreated)
+					RecreateHandle ();
+				OnRightToLeftLayoutChanged (EventArgs.Empty);
+			}
 		}
 		
 		[DefaultValue (true)]
@@ -1356,6 +1365,8 @@ namespace System.Windows.Forms {
 				cp.Parent = IntPtr.Zero;
 				cp.menu = ActiveMenu;
 				cp.control = this;
+				if (RightToLeft == RightToLeft.Yes && RightToLeftLayout)
+					cp.ExStyle |= (int)(WindowExStyles.WS_EX_LAYOUTRTL | WindowExStyles.WS_EX_NOINHERITLAYOUT);
 
 				if (((Parent != null || !TopLevel) && !IsMdiChild)) {
 					// Parented forms and non-toplevel forms always gets the specified location, no matter what

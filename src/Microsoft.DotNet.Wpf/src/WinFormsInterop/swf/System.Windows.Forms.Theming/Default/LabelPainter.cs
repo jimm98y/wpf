@@ -87,13 +87,26 @@ namespace System.Windows.Forms.Theming.Default
 
 			rect.Height = Math.Max(rect.Height, label.Font.Height);
 
-			if (label.Enabled) {
-				dc.DrawStringMono (label.Text, label.Font,
-					ThemeEngine.Current.ResPool.GetSolidBrush (label.ForeColor),
-					rect, label.string_format);
-			} else {
-				ControlPaint.DrawStringDisabled (
-					dc, label.Text, label.Font, label.BackColor, rect, label.string_format);
+			// RightToLeft: the line reads right to left, and Near is its right edge (.NET's
+			// ControlPaint.CreateStringFormat adds DirectionRightToLeft)
+			StringFormat format = label.string_format;
+			bool rtl = label.RightToLeft == RightToLeft.Yes;
+			if (rtl) {
+				format = (StringFormat) format.Clone ();
+				format.FormatFlags |= StringFormatFlags.DirectionRightToLeft;
+			}
+			try {
+				if (label.Enabled) {
+					dc.DrawStringMono (label.Text, label.Font,
+						ThemeEngine.Current.ResPool.GetSolidBrush (label.ForeColor),
+						rect, format);
+				} else {
+					ControlPaint.DrawStringDisabled (
+						dc, label.Text, label.Font, label.BackColor, rect, format);
+				}
+			} finally {
+				if (rtl)
+					format.Dispose ();
 			}
 		}
 
