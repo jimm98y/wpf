@@ -116,6 +116,7 @@ namespace System.Windows.Forms.RTF {
 					new KeyStruct(Major.CharAttr, Minor.SuperScript, "up"),
 					new KeyStruct(Major.CharAttr, Minor.SuperScrShrink, "super"),
 					new KeyStruct(Major.CharAttr, Minor.Invisible, "v"),
+					new KeyStruct(Major.CharAttr, Minor.Protect, "protect"),
 					new KeyStruct(Major.CharAttr, Minor.ForeColor, "cf"),
 					new KeyStruct(Major.CharAttr, Minor.BackColor, "cb"),
 					new KeyStruct(Major.CharAttr, Minor.RTLChar, "rtlch"),

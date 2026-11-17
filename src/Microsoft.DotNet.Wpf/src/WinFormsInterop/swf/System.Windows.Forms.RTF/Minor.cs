@@ -509,6 +509,7 @@ namespace System.Windows.Forms.RTF {
 		SuperScript,
 		SuperScrShrink,
 		Invisible,
+		Protect,
 		ForeColor,
 		BackColor,
 		RTLChar,

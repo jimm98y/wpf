@@ -59,6 +59,7 @@ namespace System.Windows.Forms
 		internal float			line_spacing;
 		internal bool			line_spacing_multiple;
 		internal TabStopCollection		tab_stops;		// Custom tabstops for this paragraph.
+		internal bool			bullet;			// A bulleted paragraph (PFN_BULLET): the bullet at the first line's indent
 
 		// Stuff that's important for the tree
 		internal Line			parent;			// Our parent line
@@ -637,6 +638,10 @@ namespace System.Windows.Forms
 				widths [0] = indent;
 			else
 				widths [0] = indent + hanging_indent;
+			// A bulleted paragraph's first line, as RichEdit lays it: the bullet at the first line's indent and the
+			// text at the hanging offset (dxOffset) -- or just past the bullet, where that is less
+			if (first_in_para && bullet)
+				widths [0] = indent + Math.Max (hanging_indent, BulletAdvance (g, tags.FontToDisplay));
 
 			if (widths [0] < 0)
 				widths [0] = 0; // Don't allow a negative indent to take the line to a negative position.
@@ -729,7 +734,7 @@ namespace System.Windows.Forms
 						}
 					}
 
-					if (newWidth > (doc.viewport_width - this.right_indent)) {
+					if (newWidth > (doc.WrapWidth - this.right_indent)) {
 						LineTag split_tag = null;
 						if (wrap_pos > 0) {
 							// Make sure to set the last width of the line before wrapping
@@ -797,7 +802,7 @@ namespace System.Windows.Forms
 						line = doc.GetLine (this.line_no + 1);
 						do {
 							if ((line != null) && (ending == LineEnding.Wrap || ending == LineEnding.None) &&
-								(widths[pos] < (doc.viewport_width - this.right_indent) || line.text.Length == 0)) {
+								(widths[pos] < (doc.WrapWidth - this.right_indent) || line.text.Length == 0)) {
 								// Pull the two lines together
 								// Only do this if the line isn't already full, or the next line is empty.
 								var h = this.height; // Back up h, because Combine sets it to zero.
@@ -1064,6 +1069,15 @@ namespace System.Windows.Forms
 		#endregion	// Internal Methods
 
 		#region Administrative
+		/// <summary>The bullet character RichEdit draws (U+2022, the Symbol font's 0xB7).</summary>
+		internal const string BulletText = "\u2022";
+
+		/// <summary>How far a bulleted paragraph's text is from its bullet at least: the bullet and a space.</summary>
+		internal static float BulletAdvance (Graphics g, Font font)
+		{
+			return TextBoxTextRenderer.MeasureText (g, BulletText, font).Width + TextBoxTextRenderer.MeasureText (g, " ", font).Width;
+		}
+
 		public object Clone ()
 		{
 			Line	clone;

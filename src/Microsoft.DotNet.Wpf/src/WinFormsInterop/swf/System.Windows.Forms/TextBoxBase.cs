@@ -538,6 +538,8 @@ namespace System.Windows.Forms
 				if (value == null)
 					value = String.Empty;
 
+				if (EditDenied (0))
+					return;
 				document.ReplaceSelection(CaseAdjust(value), false);
 
 				ScrollToCaret();
@@ -560,6 +562,8 @@ namespace System.Windows.Forms
 					throw new ArgumentOutOfRangeException ("SelectionLength", msg);
 				}
 
+				BeginSelectionChange ();
+				try {
 				document.InvalidateSelectionArea ();
 				if (value != 0) {
 					int	start;
@@ -576,6 +580,9 @@ namespace System.Windows.Forms
 					selection_length = -1;
 					document.SetSelectionEnd (document.selection_start.line, document.selection_start.pos, true);
 					document.PositionCaret (document.selection_start.line, document.selection_start.pos);
+				}
+				} finally {
+					EndSelectionChange ();
 				}
 			}
 		}
@@ -597,14 +604,19 @@ namespace System.Windows.Forms
 				// If SelectionStart has been used, we don't highlight on focus
 				has_been_focused = true;
 				
-				document.InvalidateSelectionArea ();
-				document.SetSelectionStart (value, false);
-				if (selection_length > -1)
-					document.SetSelectionEnd (value + selection_length, true);
-				else
-					document.SetSelectionEnd (value, true);
-				document.PositionCaret (document.selection_start.line, document.selection_start.pos);
-				ScrollToCaret ();
+				BeginSelectionChange ();
+				try {
+					document.InvalidateSelectionArea ();
+					document.SetSelectionStart (value, false);
+					if (selection_length > -1)
+						document.SetSelectionEnd (value + selection_length, true);
+					else
+						document.SetSelectionEnd (value, true);
+					document.PositionCaret (document.selection_start.line, document.selection_start.pos);
+					ScrollToCaret ();
+				} finally {
+					EndSelectionChange ();
+				}
 			}
 		}
 
@@ -873,6 +885,9 @@ namespace System.Windows.Forms
 		{
 			DataObject	o;
 
+			if (EditDenied (0))
+				return;
+
 			o = new DataObject(DataFormats.Text, SelectedText);
 			if (this is RichTextBox)
 				o.SetData(DataFormats.Rtf, ((RichTextBox)this).SelectedRtf);
@@ -899,23 +914,56 @@ namespace System.Windows.Forms
 
 		public void Select(int start, int length)
 		{
-			SelectionStart = start;
-			SelectionLength = length;
+			BeginSelectionChange ();
+			try {
+				SelectionStart = start;
+				SelectionLength = length;
+			} finally {
+				EndSelectionChange ();
+			}
 		}
 
 		public void SelectAll ()
 		{
 			Line	last;
 
-			last = document.GetLine(document.Lines);
-			document.SetSelectionStart(document.GetLine(1), 0, false);
-			document.SetSelectionEnd(last, last.text.Length, true);
-			document.PositionCaret (document.selection_end.line, document.selection_end.pos);
-			selection_length = -1;
+			BeginSelectionChange ();
+			try {
+				last = document.GetLine(document.Lines);
+				document.SetSelectionStart(document.GetLine(1), 0, false);
+				document.SetSelectionEnd(last, last.text.Length, true);
+				document.PositionCaret (document.selection_end.line, document.selection_end.pos);
+				selection_length = -1;
 
-			CaretMoved (this, null);
+				CaretMoved (this, null);
 
-			document.DisplayCaret ();
+				document.DisplayCaret ();
+			} finally {
+				EndSelectionChange ();
+			}
+		}
+
+		/// <summary>Whether an edit is refused (RichTextBox: it would change protected text) -- of the selection, or
+		/// with none, of the character before the caret (<paramref name="direction"/> -1, Backspace), after it
+		/// (1, Delete), or at it (0, typing).</summary>
+		internal virtual bool EditDenied (int direction)
+		{
+			return false;
+		}
+
+		// One selection call is one change of selection (EM_EXSETSEL, one EN_SELCHANGE): the steps it takes --
+		// the start, the end, the caret -- are not told one by one, the selection it ends with is.
+		internal int selection_change_depth;
+
+		private void BeginSelectionChange ()
+		{
+			selection_change_depth++;
+		}
+
+		private void EndSelectionChange ()
+		{
+			if (--selection_change_depth == 0)
+				RaiseSelectionChanged ();
 		}
 
 		internal void SelectAllNoScroll ()
@@ -1236,6 +1284,9 @@ namespace System.Windows.Forms
 						Cut ();
 						return true;
 					}
+
+					if (EditDenied (1))
+						return true;
 
 					if (document.selection_visible) {
 						document.ReplaceSelection("", false);
@@ -1613,6 +1664,9 @@ namespace System.Windows.Forms
 
 				ch = m.WParam.ToInt32();
 
+				if ((ch == 127 || ch == 8) ? EditDenied (-1) : ch >= 32 && EditDenied (0))
+					return;
+
 				if (ch == 127) {
 					HandleBackspace(true);
 				} else if (ch >= 32) {
@@ -1955,6 +2009,23 @@ namespace System.Windows.Forms
 					return;
 				}
 
+				// a press on a rich edit's selected text may be the start of dragging it (EnableAutoDragDrop)
+				if (this is RichTextBox drag && !dbliclick && drag.BeginTextDrag (e))
+					return;
+
+				// a click in a rich edit's selection bar selects the line beside it
+				if (this is RichTextBox bar && bar.InSelectionBar (e.X)) {
+					document.PositionCaret (document.OffsetX + document.left_margin + document.ViewPortX, e.Y + document.ViewPortY);
+					document.SetSelectionToCaret (true);
+					document.ExpandSelection (CaretSelection.Line, false);
+					click_mode = CaretSelection.Line;
+					click_point_x = e.X;
+					click_point_y = e.Y;
+					click_last = DateTime.Now;
+					RaiseSelectionChanged ();
+					return;
+				}
+
 				//ensure nothing is selected anymore BEFORE we
 				//position the caret, so the caret is recreated
 				//(caret is only visible when nothing is selected)
@@ -2017,9 +2088,13 @@ namespace System.Windows.Forms
 
 		private void TextBoxBase_MouseUp (object sender, MouseEventArgs e)
 		{
+			if (this is RichTextBox drag && drag.EndTextDrag (e))
+				return;
 			if (e.Button == MouseButtons.Left) {
 				if (click_mode == CaretSelection.Position) {
 					document.SetSelectionToCaret(false);
+					if (this is RichTextBox words && words.auto_word_select)
+						words.SnapSelectionToWords ();
 					document.DisplayCaret();
 					
 					// Only raise if there is text.
@@ -2383,6 +2458,8 @@ namespace System.Windows.Forms
 
 		private void TextBoxBase_MouseMove (object sender, MouseEventArgs e)
 		{
+			if (this is RichTextBox drag && drag.ContinueTextDrag (e))
+				return;
 			// FIXME - handle auto-scrolling if mouse is to the right/left of the window
 			if (e.Button == MouseButtons.Left && Capture) {
 				if (!ClientRectangle.Contains (e.X, e.Y)) {
@@ -2403,6 +2480,8 @@ namespace System.Windows.Forms
 				document.PositionCaret(e.X + document.ViewPortX, e.Y + document.ViewPortY);
 				if (click_mode == CaretSelection.Position) {
 					document.SetSelectionToCaret(false);
+					if (this is RichTextBox words && words.auto_word_select)
+						words.SnapSelectionToWords ();
 					document.DisplayCaret();
 				}
 			}
@@ -2576,6 +2655,8 @@ namespace System.Windows.Forms
 			string		s;
 
 			if (clip == null)
+				return false;
+			if (EditDenied (0))
 				return false;
 
 			if (format == null) {

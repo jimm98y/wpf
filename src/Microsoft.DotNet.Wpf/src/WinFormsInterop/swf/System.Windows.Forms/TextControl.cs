@@ -77,7 +77,9 @@ namespace System.Windows.Forms {
 		CharOffset = 32,
 		Visibility = 64,
 
-		All = 126
+		All = 126,
+
+		Protected = 128,	// CFE_PROTECTED: not part of All, which the formatting calls that predate it pass
 	}
 
 	internal enum TextPositioning {
@@ -251,6 +253,15 @@ namespace System.Windows.Forms {
 		static internal int	caret_shift = 1;
 
 		internal int left_margin = 2;  // A left margin for all lines
+		internal int wrap_width;       // RichTextBox.RightMargin: the width lines wrap at, 0 for the viewport's
+		internal bool selection_bar;   // RichTextBox.ShowSelectionMargin: a selection bar left of the text
+
+		/// <summary>Where a line wraps: the viewport's right edge, or the rich edit's target width
+		/// (EM_SETTARGETDEVICE, RichTextBox.RightMargin) from the text's left edge.</summary>
+		internal int WrapWidth => wrap_width > 0 ? left_margin + wrap_width : viewport_width;
+
+		/// <summary>The selection bar's width (ECO_SELECTIONBAR), in pixels.</summary>
+		internal const int SelectionBarWidth = 8;
 		internal int top_margin = 2;
 		internal int right_margin = 2;
 
@@ -553,6 +564,8 @@ namespace System.Windows.Forms {
 					right_margin = 2;
 					break;
 			}
+			if (selection_bar)
+				left_margin += SelectionBarWidth;
 			font_left_margin = font_right_margin = 0;
 			UpdateFontMargins ();
 		}
@@ -730,6 +743,8 @@ namespace System.Windows.Forms {
 				XplatUI.CaretVisible (owner.Handle, !selection_visible);
 			if (UIASelectionChanged != null && (selection_visible || old_selection_visible))
 				UIASelectionChanged (this, EventArgs.Empty);
+			// every selection setter ends here, the selection complete
+			SelectionSet?.Invoke (this, EventArgs.Empty);
 		}
 
 		private void DecrementLines(int line_no) {
@@ -1875,6 +1890,17 @@ namespace System.Windows.Forms {
 			while (line_no <= end) {
 				line = GetLine (line_no);
 				float line_y = line.Y - viewport_y + offset_y + line.SpacingBefore;
+
+				// a bulleted paragraph's bullet, at its first line's indent (Line.RecalculateLine leaves the room)
+				if (line.bullet && line.tags != null) {
+					Line before = line_no > 1 ? GetLine (line_no - 1) : null;
+					if (before == null || before.ending != LineEnding.Wrap) {
+						LineTag first = line.tags;
+						TextBoxTextRenderer.DrawText (g, Line.BulletText, first.FontToDisplay, first.ColorToDisplay,
+							offset_x + line.X - viewport_x + left_margin + Math.Max (line.indent, 0),
+							line_y + first.Shift - first.CharOffset, false);
+					}
+				}
 				
 				tag = line.tags;
 				if (!calc_pass) {
@@ -2498,6 +2524,7 @@ namespace System.Windows.Forms {
 					 line.line_spacing, line.line_spacing_multiple, line.tab_stops, tag.Visible, line.ending);
 
 				new_line = GetLine (line.line_no + 1);
+				new_line.bullet = line.bullet;
 				
 				if (move_caret) {
 					caret.line = new_line;
@@ -2535,6 +2562,7 @@ namespace System.Windows.Forms {
 
 			// Now transfer our tags from this line to the next
 			new_line = GetLine(line.line_no + 1);
+			new_line.bullet = line.bullet;
 
 			line.recalc = true;
 			new_line.recalc = true;
@@ -2812,6 +2840,7 @@ namespace System.Windows.Forms {
 				line1.hanging_indent = line3.hanging_indent;
 				line1.height = line3.height;
 				line1.indent = line3.indent;
+				line1.bullet = line3.bullet;
 				line1.line_no = line3.line_no;
 				line1.recalc = line3.recalc;
 				line1.right_indent = line3.right_indent;
@@ -3771,7 +3800,8 @@ namespace System.Windows.Forms {
 
 		public void FormatText (Line start_line, int start_pos, Line end_line, int end_pos, LineTag copyFrom) {
 			FormatText(start_line, start_pos, end_line, end_pos, copyFrom.Font, copyFrom.Color,
-				copyFrom.BackColor, copyFrom.TextPosition, copyFrom.CharOffset, copyFrom.Visible, FormatSpecified.All);
+				copyFrom.BackColor, copyFrom.TextPosition, copyFrom.CharOffset, copyFrom.Visible,
+				FormatSpecified.All | FormatSpecified.Protected, copyFrom.Protected);
 		}
 
 		internal void FormatText (Line start_line, int start_pos, Line end_line, int end_pos, Font font,
@@ -3786,7 +3816,7 @@ namespace System.Windows.Forms {
 		/// <param name="end_pos">1-based end position on end_line </param>
 		internal void FormatText (Line start_line, int start_pos, Line end_line, int end_pos, Font font,
 		                          Color color, Color back_color, TextPositioning text_position, float char_offset,
-		                          bool visible, FormatSpecified specified)
+		                          bool visible, FormatSpecified specified, bool protect = false)
 		{
 			Line    l;
 
@@ -3794,20 +3824,20 @@ namespace System.Windows.Forms {
 			if (start_line != end_line) {
 				// First line
 				LineTag.FormatText(start_line, start_pos, start_line.text.Length - start_pos + 1, font, color,
-					back_color, text_position, char_offset, visible, specified);
+					back_color, text_position, char_offset, visible, specified, protect);
 
 				// Format last line
-				LineTag.FormatText(end_line, 1, end_pos - 1, font, color, back_color, text_position, char_offset, visible, specified);
+				LineTag.FormatText(end_line, 1, end_pos - 1, font, color, back_color, text_position, char_offset, visible, specified, protect);
 
 				// Now all the lines inbetween
 				for (int i = start_line.line_no + 1; i < end_line.line_no; i++) {
 					l = GetLine(i);
-					LineTag.FormatText(l, 1, l.text.Length, font, color, back_color, text_position, char_offset, visible, specified);
+					LineTag.FormatText(l, 1, l.text.Length, font, color, back_color, text_position, char_offset, visible, specified, protect);
 				}
 			} else {
 				// Special case, single line
 				LineTag.FormatText(start_line, start_pos, end_pos - start_pos, font, color, back_color,
-					text_position, char_offset, visible, specified);
+					text_position, char_offset, visible, specified, protect);
 				
 				if ((end_pos - start_pos) == 0 && CaretTag.Length != 0)
 					CaretTag = CaretTag.Next;
@@ -4278,6 +4308,9 @@ namespace System.Windows.Forms {
 		internal event EventHandler<SizeChangedEventArgs> SizeChanged;
 		internal event EventHandler LengthChanged;
 		internal event EventHandler UIASelectionChanged;
+
+		/// <summary>The selection was set (it may be what it was): RichTextBox's EN_SELCHANGE.</summary>
+		internal event EventHandler SelectionSet;
 		#endregion	// Events
 
 		#region Administrative

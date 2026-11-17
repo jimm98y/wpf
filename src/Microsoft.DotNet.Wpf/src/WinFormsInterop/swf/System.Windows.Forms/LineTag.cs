@@ -49,6 +49,7 @@ namespace System.Windows.Forms
 		private TextPositioning	text_position;	// Normal / superscript / subscript
 		private Font		small_font;			// Cached font for superscript / subscript
 		private float		char_offset;		// Shift the text baseline up or down
+		private bool		is_protected;		// CFE_PROTECTED: an edit touching it is refused (RichTextBox.Protected)
 
 		// Payload; text
 		private int		start;		// start, in chars; index into Line.text
@@ -334,8 +335,15 @@ namespace System.Windows.Forms
 			return true;
 		}
 
+		/// <summary>CFE_PROTECTED: an edit that would change the text is refused, and the Protected event raised.</summary>
+		public bool Protected {
+			get { return is_protected; }
+			set { is_protected = value; }
+		}
+
 		public void CopyFormattingFrom (LineTag other)
 		{
+			is_protected = other.is_protected;
 			Font = other.font;
 			color = other.color;
 			back_color = other.back_color;
@@ -447,6 +455,9 @@ namespace System.Windows.Forms
 			if (this.IsLink != other.IsLink)
 				return false;
 
+			if (this.is_protected != other.is_protected)
+				return false;
+
 			if (this.LinkText != other.LinkText)
 				return false;
 
@@ -498,7 +509,8 @@ namespace System.Windows.Forms
 		/// returns true if lineheight has changed</summary>
 		/// <param name="formatStart">1-based character position on line</param>
 		public static bool FormatText (Line line, int formatStart, int length, Font font, Color color, Color backColor,
-		                               TextPositioning text_position, float char_offset, bool visible, FormatSpecified specified)
+		                               TextPositioning text_position, float char_offset, bool visible, FormatSpecified specified,
+		                               bool protect = false)
 		{
 			LineTag tag;
 			LineTag start_tag;
@@ -521,7 +533,7 @@ namespace System.Windows.Forms
 
 			// Common special case
 			if ((formatStart == 1) && (length == tag.Length)) {
-				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				return retval;
 			}
 
@@ -529,7 +541,7 @@ namespace System.Windows.Forms
 			// we only need one new tag
 			if  (formatStart == 1 && length == 0) {
 				line.tags.Break (1);
-				SetFormat (line.tags, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (line.tags, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				return retval;
 			}
 
@@ -540,7 +552,7 @@ namespace System.Windows.Forms
 			// Find Tag will return tag 0 at position 3, but we should just
 			// use the empty tag after..
 			if (start_tag.End == formatStart && length == 0 && start_tag.Next != null && start_tag.Next.Length == 0) {
-				SetFormat (start_tag.Next, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (start_tag.Next, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				return retval;
 			}
 
@@ -549,7 +561,7 @@ namespace System.Windows.Forms
 				start_tag = start_tag.Next;
 
 			if (start_tag.Start == formatStart && start_tag.Length == length) {
-				SetFormat (start_tag, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (start_tag, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				return retval;
 			}
 
@@ -563,7 +575,7 @@ namespace System.Windows.Forms
 			// where the rest of the tag would be empty, since we moved to the
 			// begining of next non empty tag
 			if (tag.Length == 0) {
-				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				return retval;
 			}
 
@@ -571,13 +583,13 @@ namespace System.Windows.Forms
 			// after our new (now) empty one..
 			if (length == 0) {
 				tag.Break (formatStart);
-				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				return retval;
 			}
 
 			bool atEnd = false;
 			while (tag != null && tag.End <= end) {
-				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (tag, font, color, backColor, text_position, char_offset, visible, specified, protect);
 				atEnd |= tag.End == end;
 				tag = tag.next;
 			}
@@ -591,7 +603,7 @@ namespace System.Windows.Forms
 
 			if (end_tag != null) {
 				end_tag.Break (end);
-				SetFormat (end_tag, font, color, backColor, text_position, char_offset, visible, specified);
+				SetFormat (end_tag, font, color, backColor, text_position, char_offset, visible, specified, protect);
 			}
 
 			return retval;
@@ -671,8 +683,10 @@ namespace System.Windows.Forms
 		}
 
 		private static void SetFormat (LineTag tag, Font font, Color color, Color back_color, TextPositioning text_position,
-		                               float char_offset, bool visible, FormatSpecified specified)
+		                               float char_offset, bool visible, FormatSpecified specified, bool protect = false)
 		{
+			if ((FormatSpecified.Protected & specified) == FormatSpecified.Protected)
+				tag.is_protected = protect;
 			if ((FormatSpecified.Font & specified) == FormatSpecified.Font) {
 				tag.Font = font;
 			}

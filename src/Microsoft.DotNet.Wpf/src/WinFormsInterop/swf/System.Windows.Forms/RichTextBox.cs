@@ -97,6 +97,8 @@ namespace System.Windows.Forms {
 			scrollbars = RichTextBoxScrollBars.Both;
 			alignment = HorizontalAlignment.Left;
 			document.SizeChanged += new EventHandler<Document.SizeChangedEventArgs> (ContentSizeChanged);
+			document.SelectionSet += (s, e) => NoteSelection ();
+			document.CaretMoved += (s, e) => NoteSelection ();
 			LostFocus += new EventHandler(RichTextBox_LostFocus);
 			GotFocus += new EventHandler(RichTextBox_GotFocus);
 			BackColor = ThemeEngine.Current.ColorWindow;
@@ -132,6 +134,31 @@ namespace System.Windows.Forms {
 
 		internal override void RaiseSelectionChanged()
 		{
+			NoteSelection ();
+		}
+
+		// EN_SELCHANGE: RichEdit tells the control whenever the selection or the caret has moved -- a key, a
+		// click, typing, Select, SelectAll, SelectionStart -- and SelectionChanged is raised for it. It was
+		// raised for a mouse release and a scroll alone, so a toolbar showing the selection's font and style
+		// (bold, the font box) stood still while the caret was moved with the keys. Raised when the selection
+		// is not what it was last time, and only once there is a window, whose notification it is.
+		private int sel_noted_start, sel_noted_length;
+
+		private void NoteSelection ()
+		{
+			if (!IsHandleCreated || IsDisposed || selection_change_depth > 0)
+				return;
+			int start, length;
+			try {
+				start = SelectionStart;
+				length = SelectionLength;
+			} catch (Exception) {
+				return;
+			}
+			if (start == sel_noted_start && length == sel_noted_length)
+				return;
+			sel_noted_start = start;
+			sel_noted_length = length;
 			OnSelectionChanged (EventArgs.Empty);
 		}
 		
@@ -176,6 +203,9 @@ namespace System.Windows.Forms {
 
 			set {
 				base.AllowDrop = value;
+				// the rich edit's own drop target stays registered while it takes drops itself
+				if (enable_auto_drag_drop && IsHandleCreated)
+					XplatUI.SetAllowDrop (Handle, true);
 			}
 		}
 
@@ -194,7 +224,6 @@ namespace System.Windows.Forms {
 			}
 		}
 
-		[MonoTODO ("Value not respected, always true")]
 		[DefaultValue(false)]
 		public bool AutoWordSelection {
 			get { return auto_word_select; }
@@ -241,11 +270,159 @@ namespace System.Windows.Forms {
 			set { base.EnableLinks = value; }
 		}
 
-		[MonoTODO ("Stub, does nothing")]
+		// RichEdit's own OLE drag and drop: selected text is dragged out (moved, or copied with Ctrl), and text
+		// and RTF dropped on the box are inserted where they land -- AllowDrop or not.
 		[DefaultValue (false)]
 		public bool EnableAutoDragDrop {
 			get { return enable_auto_drag_drop; }
-			set { enable_auto_drag_drop = value; }
+			set {
+				enable_auto_drag_drop = value;
+				if (IsHandleCreated)
+					XplatUI.SetAllowDrop (Handle, value || AllowDrop);
+			}
+		}
+
+		// ---- EnableAutoDragDrop ----------------------------------------------------------------
+
+		private bool drag_pending;		// a press on the selection, not yet moved far enough to be a drag
+		private Point drag_from;
+		private bool dragging_out;		// this box's DoDragDrop is under way
+		private bool dropped_on_self;
+		private int drag_start, drag_length;	// what is being dragged
+
+		/// <summary>A press on the selected text: it is kept, in case the press becomes a drag.</summary>
+		internal bool BeginTextDrag (MouseEventArgs e)
+		{
+			if (!enable_auto_drag_drop || e.Button != MouseButtons.Left || SelectionLength == 0)
+				return false;
+			int at = GetCharIndexFromPosition (e.Location);
+			int start = SelectionStart, end = start + SelectionLength;
+			if (at < start || at >= end)
+				return false;
+			drag_pending = true;
+			drag_from = e.Location;
+			return true;
+		}
+
+		internal bool ContinueTextDrag (MouseEventArgs e)
+		{
+			if (!drag_pending)
+				return false;
+			if ((e.Button & MouseButtons.Left) == 0) {
+				drag_pending = false;
+				return false;
+			}
+			Size slop = SystemInformation.DragSize;
+			if (Math.Abs (e.X - drag_from.X) <= slop.Width / 2 && Math.Abs (e.Y - drag_from.Y) <= slop.Height / 2)
+				return true;
+			drag_pending = false;
+			DragSelectionOut ();
+			return true;
+		}
+
+		/// <summary>The press on the selection came up without a drag: an ordinary click there.</summary>
+		internal bool EndTextDrag (MouseEventArgs e)
+		{
+			if (!drag_pending)
+				return false;
+			drag_pending = false;
+			Select (GetCharIndexFromPosition (drag_from), 0);
+			return true;
+		}
+
+		private void DragSelectionOut ()
+		{
+			drag_start = SelectionStart;
+			drag_length = SelectionLength;
+			var data = new DataObject ();
+			data.SetData (DataFormats.Rtf, SelectedRtf);
+			data.SetData (DataFormats.UnicodeText, SelectedText);
+			data.SetData (DataFormats.Text, SelectedText);
+			dragging_out = true;
+			dropped_on_self = false;
+			DragDropEffects done;
+			try {
+				done = DoDragDrop (data, read_only ? DragDropEffects.Copy : DragDropEffects.Copy | DragDropEffects.Move);
+			} finally {
+				dragging_out = false;
+				Capture = false;
+			}
+			// moved somewhere else: it leaves here
+			if (done == DragDropEffects.Move && !dropped_on_self && !read_only) {
+				Select (drag_start, drag_length);
+				if (!EditDenied (0))
+					SelectedText = string.Empty;
+			}
+		}
+
+		static bool HasDroppableText (IDataObject data)
+		{
+			return data != null && (data.GetDataPresent (DataFormats.Rtf) || data.GetDataPresent (DataFormats.UnicodeText) || data.GetDataPresent (DataFormats.Text));
+		}
+
+		/// <summary>The effect RichEdit offers for a drag over the box: Ctrl copies, otherwise it moves where it may.</summary>
+		private DragDropEffects AutoDropEffect (DragEventArgs e)
+		{
+			if (read_only || !HasDroppableText (e.Data))
+				return DragDropEffects.None;
+			bool ctrl = (e.KeyState & 8) != 0;
+			if (!ctrl && (e.AllowedEffect & DragDropEffects.Move) != 0)
+				return DragDropEffects.Move;
+			return e.AllowedEffect & DragDropEffects.Copy;
+		}
+
+		protected override void OnDragEnter (DragEventArgs drgevent)
+		{
+			base.OnDragEnter (drgevent);
+			if (enable_auto_drag_drop && drgevent.Effect == DragDropEffects.None)
+				drgevent.Effect = AutoDropEffect (drgevent);
+		}
+
+		protected override void OnDragOver (DragEventArgs drgevent)
+		{
+			base.OnDragOver (drgevent);
+			if (enable_auto_drag_drop && drgevent.Effect == DragDropEffects.None)
+				drgevent.Effect = AutoDropEffect (drgevent);
+		}
+
+		protected override void OnDragDrop (DragEventArgs drgevent)
+		{
+			base.OnDragDrop (drgevent);
+			if (!enable_auto_drag_drop || read_only || !HasDroppableText (drgevent.Data))
+				return;
+			DragDropEffects effect = drgevent.Effect == DragDropEffects.None ? AutoDropEffect (drgevent) : drgevent.Effect;
+			if (effect == DragDropEffects.None)
+				return;
+			drgevent.Effect = effect;
+			int at = GetCharIndexFromPosition (PointToClient (new Point (drgevent.X, drgevent.Y)));
+			Point last = GetPositionFromCharIndex (Math.Max (0, TextLength - 1));
+			if (TextLength > 0 && PointToClient (new Point (drgevent.X, drgevent.Y)).Y >= last.Y && PointToClient (new Point (drgevent.X, drgevent.Y)).X > last.X)
+				at = TextLength;
+			if (dragging_out) {
+				dropped_on_self = true;
+				// onto what is being dragged: nothing to do
+				if (at >= drag_start && at <= drag_start + drag_length)
+					return;
+				if (effect == DragDropEffects.Move) {
+					Select (drag_start, drag_length);
+					if (EditDenied (0))
+						return;
+					SelectedText = string.Empty;
+					if (at > drag_start)
+						at -= drag_length;
+				}
+			}
+			Select (at, 0);
+			if (EditDenied (0))
+				return;
+			int before = TextLength;
+			string rtf = drgevent.Data.GetData (DataFormats.Rtf) as string;
+			if (rtf != null)
+				SelectedRtf = rtf;
+			else
+				SelectedText = (drgevent.Data.GetData (DataFormats.UnicodeText) ?? drgevent.Data.GetData (DataFormats.Text)) as string ?? string.Empty;
+			// the dropped text is selected, as RichEdit leaves it
+			Select (at, Math.Max (0, TextLength - before));
 		}
 
 		public override Font Font {
@@ -317,7 +494,6 @@ namespace System.Windows.Forms {
 			}
 		}
 
-		[MonoTODO ("Stub, does nothing")]
 		[Browsable (false)]
 		[DefaultValue (true)]
 		[EditorBrowsable (EditorBrowsableState.Never)]
@@ -328,15 +504,22 @@ namespace System.Windows.Forms {
 
 		[DefaultValue(0)]
 		[Localizable(true)]
-		[MonoTODO ("Stub, does nothing")]
-		[MonoInternalNote ("Teach TextControl.RecalculateLine to consider the right margin as well")]
+		// EM_SETTARGETDEVICE's line width: lines wrap this far from the text's left edge, whatever the window's
+		// width (0: at the window's edge).
 		public int RightMargin {
 			get {
 				return margin_right;
 			}
 
 			set {
+				if (value < 0)
+					throw new ArgumentOutOfRangeException (nameof (value), value, $"Value of '{value}' is not valid for 'RightMargin'. 'RightMargin' must be greater than or equal to 0.");
+				if (margin_right == value)
+					return;
 				margin_right = value;
+				document.wrap_width = value;
+				CalculateDocument ();
+				Invalidate ();
 			}
 		}
 
@@ -579,13 +762,32 @@ namespace System.Windows.Forms {
 		[Browsable(false)]
 		[DefaultValue(false)]
 		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		[MonoTODO ("Stub, does nothing")]
+		// PFN_BULLET on the selection's paragraphs: true when every one of them has it. Set, as WinForms sets it,
+		// with the paragraphs' dxOffset (the hanging indent) at BulletIndent; cleared, with it at nothing.
 		public bool SelectionBullet {
 			get {
-				return false;
+				Line line = document.ParagraphStart (document.selection_start.line);
+				Line end = document.ParagraphEnd (document.selection_end.line);
+				while (true) {
+					if (!line.bullet)
+						return false;
+					if (line == end)
+						return true;
+					line = document.GetLine (line.line_no + 1);
+				}
 			}
 
 			set {
+				Line line = document.ParagraphStart (document.selection_start.line);
+				Line end = document.ParagraphEnd (document.selection_end.line);
+				while (true) {
+					line.bullet = value;
+					line.HangingIndent = value ? bullet_indent : 0;
+					if (line == end)
+						break;
+					line = document.GetLine (line.line_no + 1);
+				}
+				this.CalculateDocument ();
 			}
 		}
 
@@ -879,14 +1081,80 @@ namespace System.Windows.Forms {
 		[Browsable(false)]
 		[DefaultValue(false)]
 		[DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-		[MonoTODO ("Stub, does nothing")]
+		// CFE_PROTECTED on the selection: true when all of it is protected (with nothing selected, the character
+		// the caret is after). An edit that would change protected text is refused and Protected raised.
 		public bool SelectionProtected {
 			get {
-				return false;
+				Line start_line = document.selection_start.line, end_line = document.selection_end.line;
+				int start_pos = document.selection_start.pos, end_pos = document.selection_end.pos;
+				if (start_line == end_line && start_pos == end_pos) {
+					LineTag at = start_line.FindTag (start_pos > 0 ? start_pos - 1 : 0);
+					return at != null && at.Protected;
+				}
+				for (int n = start_line.line_no; n <= end_line.line_no; n++) {
+					Line l = document.GetLine (n);
+					int a = n == start_line.line_no ? start_pos : 0;
+					int b = n == end_line.line_no ? end_pos : l.text.Length;
+					for (LineTag t = l.tags; t != null; t = t.Next) {
+						int ts = t.Start - 1, te = ts + t.Length;
+						if (te > a && ts < b && !t.Protected)
+							return false;
+					}
+				}
+				return true;
 			}
 
 			set {
+				int sel_start = document.LineTagToCharIndex (document.selection_start.line, document.selection_start.pos);
+				int sel_end = document.LineTagToCharIndex (document.selection_end.line, document.selection_end.pos);
+
+				document.FormatText (document.selection_start.line, document.selection_start.pos + 1,
+					document.selection_end.line, document.selection_end.pos + 1, null,
+					Color.Empty, Color.Empty, TextPositioning.Normal, 0, true, FormatSpecified.Protected, value);
+
+				document.CharIndexToLineTag (sel_start, out document.selection_start.line, out document.selection_start.tag, out document.selection_start.pos);
+				document.CharIndexToLineTag (sel_end, out document.selection_end.line, out document.selection_end.tag, out document.selection_end.pos);
 			}
+		}
+
+		/// <summary>Whether any character between two character indexes is protected.</summary>
+		private bool ProtectedBetween (int from, int to)
+		{
+			if (to <= from || from < 0)
+				return false;
+			document.CharIndexToLineTag (from, out Line sl, out _, out int sp);
+			document.CharIndexToLineTag (to, out Line el, out _, out int ep);
+			for (int n = sl.line_no; n <= el.line_no; n++) {
+				Line l = document.GetLine (n);
+				int a = n == sl.line_no ? sp : 0;
+				int b = n == el.line_no ? ep : l.text.Length;
+				for (LineTag t = l.tags; t != null; t = t.Next) {
+					int ts = t.Start - 1, te = ts + t.Length;
+					if (t.Protected && te > a && ts < b)
+						return true;
+				}
+			}
+			return false;
+		}
+
+		// EN_PROTECTED: RichEdit asks before an edit that would change protected text, and WinForms raises
+		// Protected and refuses it -- typing in it, deleting into it from either side, cutting or pasting over it.
+		internal override bool EditDenied (int direction)
+		{
+			int start = SelectionStart, length = SelectionLength;
+			bool touches;
+			if (length > 0)
+				touches = ProtectedBetween (start, start + length);
+			else if (direction < 0)
+				touches = ProtectedBetween (start - 1, start);
+			else if (direction > 0)
+				touches = ProtectedBetween (start, start + 1);
+			else
+				touches = ProtectedBetween (start - 1, start) && ProtectedBetween (start, start + 1);
+			if (!touches)
+				return false;
+			OnProtected (EventArgs.Empty);
+			return true;
 		}
 
 		[Browsable(false)]
@@ -1012,14 +1280,68 @@ namespace System.Windows.Forms {
 		}
 
 		[DefaultValue(false)]
-		[MonoTODO ("Stub, does nothing")]
+		// ECO_SELECTIONBAR: a strip left of the text where a click selects the line beside it.
 		public bool ShowSelectionMargin {
 			get {
-				return false;
+				return document.selection_bar;
 			}
 
 			set {
+				if (document.selection_bar == value)
+					return;
+				document.selection_bar = value;
+				document.UpdateMargins ();
+				CalculateDocument ();
+				Invalidate ();
 			}
+		}
+
+		/// <summary>Whether a point of the client is in the selection bar.</summary>
+		internal bool InSelectionBar (int x)
+		{
+			return document.selection_bar && x < document.OffsetX + document.left_margin;
+		}
+
+		/// <summary>AutoWordSelection: a drag that has left the word it started in selects whole words, from the
+		/// start of the first to the end of the last, as RichEdit's does.</summary>
+		internal void SnapSelectionToWords ()
+		{
+			Document.Marker anchor = document.selection_anchor;
+			string text = Text;
+			int a = document.LineTagToCharIndex (anchor.line, anchor.pos);
+			int c = document.LineTagToCharIndex (document.caret.line, document.caret.pos);
+			if (a < 0 || c < 0 || a > text.Length || c > text.Length)
+				return;
+			int aStart = WordStart (text, a), aEnd = WordEnd (text, a);
+			if (c >= aStart && c <= aEnd)
+				return;		// still in the word it started in: characters
+			int start, end;
+			if (c > a) {
+				start = aStart;
+				end = WordEnd (text, c);
+			} else {
+				start = WordStart (text, c);
+				end = aEnd;
+			}
+			document.SetSelectionStart (start, false);
+			document.SetSelectionEnd (end, true);
+			document.selection_anchor = anchor;
+		}
+
+		static bool IsWordChar (char ch) => char.IsLetterOrDigit (ch) || ch == '_' || ch == '\'';
+
+		static int WordStart (string text, int i)
+		{
+			while (i > 0 && IsWordChar (text [i - 1]))
+				i--;
+			return i;
+		}
+
+		static int WordEnd (string text, int i)
+		{
+			while (i < text.Length && IsWordChar (text [i]))
+				i++;
+			return i;
 		}
 
 		[Localizable(true)]
@@ -1442,6 +1764,8 @@ namespace System.Windows.Forms {
 		protected override void OnHandleCreated (EventArgs e)
 		{
 			base.OnHandleCreated (e);
+			if (enable_auto_drag_drop)
+				XplatUI.SetAllowDrop (Handle, true);
 		}
 
 		protected override void OnHandleDestroyed (EventArgs e)
@@ -1497,7 +1821,105 @@ namespace System.Windows.Forms {
 
 		protected override bool ProcessCmdKey (ref Message m, Keys keyData)
 		{
+			if (RichEditHotKey (keyData))
+				return true;
 			return base.ProcessCmdKey (ref m, keyData);
+		}
+
+		// The hot keys RichEdit handles itself (the RichEdit team's "RichEdit Hot Keys"): paragraph alignment,
+		// line spacing, subscript and superscript, the font a size bigger or smaller. Ctrl+B, I and U are not
+		// among them -- RichEdit takes those only from a client that asks (EM_SETFORMATACCELERATORS), and
+		// WinForms does not. RichTextShortcutsEnabled = false switches the alignment ones off, as it does in
+		// .NET (RichTextBox.ProcessCmdKey's shortcuts to disable). None of them edits a read-only box.
+		private bool RichEditHotKey (Keys keyData)
+		{
+			if (read_only)
+				return false;
+			switch (keyData) {
+			case Keys.Control | Keys.L:
+			case Keys.Control | Keys.J:	// justified: this port lays it out left aligned, as it reads RTF's \qj
+			case Keys.Control | Keys.E:
+			case Keys.Control | Keys.R:
+				if (!rich_text_shortcuts_enabled)
+					return true;	// swallowed, as .NET swallows them
+				Keys k = keyData & Keys.KeyCode;
+				SelectionAlignment = k == Keys.E ? HorizontalAlignment.Center : k == Keys.R ? HorizontalAlignment.Right : HorizontalAlignment.Left;
+				return true;
+			case Keys.Control | Keys.D1:
+				SetSelectionLineSpacing (0);		// single
+				return true;
+			case Keys.Control | Keys.D2:
+				SetSelectionLineSpacing (480);		// double: \sl480\slmult1
+				return true;
+			case Keys.Control | Keys.D5:
+				SetSelectionLineSpacing (360);		// one and a half
+				return true;
+			case Keys.Control | Keys.Oemplus:
+				ToggleSelectionPosition (TextPositioning.Subscript);
+				return true;
+			case Keys.Control | Keys.Shift | Keys.Oemplus:
+				ToggleSelectionPosition (TextPositioning.Superscript);
+				return true;
+			case Keys.Control | Keys.Shift | Keys.OemPeriod:
+				StepSelectionFontSize (1);
+				return true;
+			case Keys.Control | Keys.Shift | Keys.Oemcomma:
+				StepSelectionFontSize (-1);
+				return true;
+			}
+			return false;
+		}
+
+		/// <summary>The selection's paragraphs at a line spacing, in 240ths of a line (0: single), as PFM_SPACING sets it.</summary>
+		private void SetSelectionLineSpacing (int twentieths)
+		{
+			Line line = document.ParagraphStart (document.selection_start.line);
+			Line end = document.ParagraphEnd (document.selection_end.line);
+			while (true) {
+				line.line_spacing = twentieths == 0 ? 0 : twentieths / 1440f * document.Dpi;
+				line.line_spacing_multiple = twentieths != 0;
+				line.recalc = true;
+				if (line == end)
+					break;
+				line = document.GetLine (line.line_no + 1);
+			}
+			CalculateDocument ();
+			Invalidate ();
+		}
+
+		/// <summary>Subscript or superscript on the selection, or off where the selection begins in it already.</summary>
+		private void ToggleSelectionPosition (TextPositioning position)
+		{
+			LineTag first = document.selection_start.line.FindTag (document.selection_start.pos);
+			TextPositioning to = first != null && first.TextPosition == position ? TextPositioning.Normal : position;
+			int sel_start = SelectionStart, sel_length = SelectionLength;
+			document.FormatText (document.selection_start.line, document.selection_start.pos + 1,
+				document.selection_end.line, document.selection_end.pos + 1, null, Color.Empty, Color.Empty,
+				to, 0, true, FormatSpecified.TextPosition);
+			Select (sel_start, sel_length);
+			CalculateDocument ();
+			Invalidate ();
+		}
+
+		// the sizes the font steps through, as Word's and RichEdit's EM_SETFONTSIZE step
+		static readonly float [] s_fontSizeSteps = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72 };
+
+		/// <summary>The selection's font a step bigger (1) or smaller (-1) -- past 72 points by tens, as Word.</summary>
+		private void StepSelectionFontSize (int direction)
+		{
+			Font font = SelectionFont;
+			if (font == null)
+				return;
+			float size = font.SizeInPoints, next;
+			if (direction > 0) {
+				next = size >= 72 ? (float)Math.Floor (size / 10) * 10 + 10 : Array.Find (s_fontSizeSteps, v => v > size);
+				next = Math.Min (next, 1638);
+			} else {
+				next = size > 80 ? (float)Math.Ceiling (size / 10) * 10 - 10 : Array.FindLast (s_fontSizeSteps, v => v < size);
+				if (next <= 0)
+					return;
+			}
+			SelectionFont = new Font (font.FontFamily, next, font.Style, GraphicsUnit.Point);
 		}
 		#endregion	// Protected Instance Methods
 
@@ -1591,7 +2013,6 @@ namespace System.Windows.Forms {
 			remove { base.QueryContinueDrag -= value; }
 		}
 
-		[MonoTODO ("Event never raised")]
 		public event EventHandler SelectionChanged {
 			add { Events.AddHandler (SelectionChangedEvent, value); }
 			remove { Events.RemoveHandler (SelectionChangedEvent, value); }
@@ -1630,6 +2051,8 @@ namespace System.Windows.Forms {
 			internal float rtf_char_offset;
 			internal TabStop rtf_par_next_tab_stop = null;
 			internal TabStopCollection rtf_par_tab_stops = new TabStopCollection ();
+			internal bool rtf_par_bullet;
+			internal bool rtf_protect;
 
 			public object Clone ()
 			{
@@ -1653,6 +2076,8 @@ namespace System.Windows.Forms {
 				new_style.rtf_text_position = rtf_text_position;
 				new_style.rtf_char_offset = rtf_char_offset;
 				new_style.rtf_par_tab_stops = rtf_par_tab_stops.Clone ();
+				new_style.rtf_par_bullet = rtf_par_bullet;
+				new_style.rtf_protect = rtf_protect;
 
 				return new_style;
 			}
@@ -1660,6 +2085,27 @@ namespace System.Windows.Forms {
 
 		// To allow us to keep track of the sections and revert formatting
 		// as we go in and out of sections of the document.
+		/// <summary>A paragraph numbering group (\pn, RichEdit's {\*\pn\pnlvlblt...}): whether the paragraph is
+		/// bulleted. The group is read to its end; the paragraph keeps the state past it, as RichEdit's does.</summary>
+		private void ReadParNumbering (RTF.RTF rtf)
+		{
+			bool bullet = false;
+			int level = 1;
+			while (rtf.GetToken () != RTF.TokenClass.EOF) {
+				if (rtf.CheckCM (RTF.TokenClass.Group, RTF.Major.BeginGroup))
+					level++;
+				else if (rtf.CheckCM (RTF.TokenClass.Group, RTF.Major.EndGroup)) {
+					if (--level == 0)
+						break;
+				} else if (rtf.CheckCMM (RTF.TokenClass.Control, RTF.Major.ParAttr, RTF.Minor.ParBullet))
+					bullet = true;
+			}
+			rtf_style.rtf_par_bullet = bullet;
+			// the group's end restores what its start saved: the paragraph's state is outside it
+			if (rtf_section_stack != null && rtf_section_stack.Count > 0)
+				((RtfSectionStyle) rtf_section_stack.Peek ()).rtf_par_bullet = bullet;
+		}
+
 		private void HandleGroup (RTF.RTF rtf)
 		{
 			//start group - save the current formatting on to a stack
@@ -1773,6 +2219,13 @@ namespace System.Windows.Forms {
 						case RTF.Minor.Plain: {
 							FlushText(rtf, false);
 							rtf_style.rtf_rtfstyle = FontStyle.Regular;
+							rtf_style.rtf_protect = false;
+							break;
+						}
+
+						case RTF.Minor.Protect: {
+							FlushText (rtf, false);
+							rtf_style.rtf_protect = rtf.Param == RTF.RTF.NoParam || rtf.Param != 0;
 							break;
 						}
 
@@ -1876,6 +2329,7 @@ namespace System.Windows.Forms {
 					rtf_style.rtf_par_align = HorizontalAlignment.Left;
 					rtf_style.rtf_par_next_tab_stop = null;
 					rtf_style.rtf_par_tab_stops.Clear ();
+					rtf_style.rtf_par_bullet = false;
 					break;
 
 				case RTF.Minor.TabLeft:
@@ -2127,6 +2581,10 @@ namespace System.Windows.Forms {
 					rtf_style.rtf_par_line_spacing, rtf_style.rtf_par_line_spacing_multiple,
 					rtf_style.rtf_par_tab_stops.Clone() , rtf_style.rtf_visible,
 					newline ? LineEnding.Rich : LineEnding.None);
+				document.GetLine (rtf_cursor_y).bullet = rtf_style.rtf_par_bullet;
+				if (rtf_style.rtf_protect)
+					for (LineTag t = document.GetLine (rtf_cursor_y).tags; t != null; t = t.Next)
+						t.Protected = true;
 			} else {
 				Line line = document.GetLine (rtf_cursor_y);
 
@@ -2144,13 +2602,15 @@ namespace System.Windows.Forms {
 				line.line_spacing = rtf_style.rtf_par_line_spacing;
 				line.line_spacing_multiple = rtf_style.rtf_par_line_spacing_multiple;
 				line.alignment = rtf_style.rtf_par_align;
+				line.bullet = rtf_style.rtf_par_bullet;
 
 				if (rtf_line.Length > 0) {
 					document.InsertString (line, rtf_cursor_x, rtf_line.ToString ());
 					document.FormatText (line, rtf_cursor_x + 1, line, rtf_cursor_x + 1 + length,
 					    font, rtf_style.rtf_color, rtf_style.rtf_back_color, rtf_style.rtf_text_position, rtf_style.rtf_char_offset,
 					    rtf_style.rtf_visible, FormatSpecified.Font | FormatSpecified.Color | FormatSpecified.BackColor |
-					    FormatSpecified.TextPosition | FormatSpecified.CharOffset | FormatSpecified.Visibility);
+					    FormatSpecified.TextPosition | FormatSpecified.CharOffset | FormatSpecified.Visibility |
+					    FormatSpecified.Protected, rtf_style.rtf_protect);
 				}
 
 				if (newline && line.Text.EndsWith (Environment.NewLine) == false)
@@ -2185,6 +2645,7 @@ namespace System.Windows.Forms {
 			rtf.ClassCallback[RTF.TokenClass.Text] = new RTF.ClassDelegate(HandleText);
 			rtf.ClassCallback[RTF.TokenClass.Control] = new RTF.ClassDelegate(HandleControl);
 			rtf.ClassCallback[RTF.TokenClass.Group] = new RTF.ClassDelegate(HandleGroup);
+			rtf.DestinationCallback[RTF.Minor.ParNumbering] = new RTF.DestinationDelegate(ReadParNumbering);
 
 			rtf_skip_count = 0;
 			rtf_line = new StringBuilder();
@@ -2202,6 +2663,8 @@ namespace System.Windows.Forms {
 			rtf_style.rtf_par_first_line_indent = 0;
 			rtf_style.rtf_par_line_right_indent = 0;
 			rtf_style.rtf_par_tab_stops.Clear ();
+			rtf_style.rtf_par_bullet = false;
+			rtf_style.rtf_protect = false;
 			rtf_style.rtf_char_offset = 0;
 			rtf_style.rtf_rtffont = null;
 			rtf_style.rtf_visible = true;
@@ -2660,6 +3123,7 @@ namespace System.Windows.Forms {
 			text_position = TextPositioning.Normal;
 			char_offset = 0;
 			visible = true;
+			bool protect = false;
 			line = start_line;
 			line_no = start_line.line_no;
 			pos = start_pos;
@@ -2670,10 +3134,12 @@ namespace System.Windows.Forms {
 			EmitPard (sb, fonts, line, tag, tabs, ppt);
 			EmitRTFFontProperties (sb, -1, fonts.IndexOf (tag.Font.Name), null, tag.Font); // Font properties
 			sb.Append(" "); // Space separator
+			bool bullets = false;	// the paragraphs written so far are bulleted (\pn)
 
 			while (line_no <= end_line.line_no) {
 				line = document.GetLine(line_no);
 				tag = LineTag.FindTag(line, pos);
+				bool first_in_para = line_no == start_line.line_no || document.GetLine (line_no - 1).ending != LineEnding.Wrap;
 
 				if (line_no != end_line.line_no) {
 					line_len = line.text.Length;
@@ -2706,6 +3172,9 @@ namespace System.Windows.Forms {
 					j++;
 				}
 				tabs = line.TabStops;
+				// only \pard ends the bullets
+				if (first_in_para && bullets && !line.bullet)
+					emit_defaults = true;
 
 				if (!emit_defaults) {
 					length = sb.Length;
@@ -2782,6 +3251,16 @@ namespace System.Windows.Forms {
 					LoadParaSettings (line, out line_alignment, out spacing_after, out spacing_before, out line_spacing,
 						out line_spacing_multiple, out left_indent, out prev_left_indent, out first_line_indent,
 						out prev_first_line_indent, out right_indent, out tabs);
+					bullets = false;
+				}
+
+				// A bulleted paragraph as RichEdit writes one: the numbering where the bullets start, and before
+				// each paragraph's text the bullet it shows (\pntext, for a reader that does not number)
+				if (first_in_para && line.bullet) {
+					if (!bullets)
+						sb.Append ("{\\*\\pn\\pnlvlblt\\pnindent0{\\pntxtb\\u8226?}}");
+					sb.Append ("{\\pntext\\u8226?\\tab}");
+					bullets = true;
 				}
 
 				while (pos < line_len && tag != null) {
@@ -2843,6 +3322,11 @@ namespace System.Windows.Forms {
 							sb.Append("\\v0");
 						else
 							sb.Append("\\v");
+					}
+
+					if (tag.Protected != protect) {
+						protect = tag.Protected;
+						sb.Append (protect ? "\\protect" : "\\protect0");
 					}
 
 					if (length != sb.Length) {

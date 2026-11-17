@@ -77,7 +77,22 @@ namespace System.Windows.Forms.RTF {
 		#endregion	// Local Variables
 
 		#region Constructors
+		// The code pages RTF text is in (\ansicpg, a font's \fcharset): .NET has only the Unicode ones and
+		// Latin-1 until the code-page provider is registered, and every \'xx RichEdit writes for a character
+		// past ASCII -- in a font table, a bullet, an accented letter -- threw NotSupportedException, or not,
+		// depending on whether something else in the process had happened to register it first.
+		private static Encoding EncodingFor (int codePage)
+		{
+			try {
+				return Encoding.GetEncoding (codePage);
+			} catch (Exception e) when (e is NotSupportedException || e is ArgumentException) {
+				// a code page there is no encoding for (the Symbol charset's): the bytes as Windows-1252's
+				return Encoding.GetEncoding (DefaultEncodingCodePage);
+			}
+		}
+
 		static RTF() {
+			Encoding.RegisterProvider (CodePagesEncodingProvider.Instance);
 			key_table = new Hashtable(Keys.Length);
 			for (int i = 0; i < Keys.Length; i++) {
 				key_table[Keys[i].Symbol] = Keys[i];
@@ -364,7 +379,7 @@ SkipCRLF:
 
 			if (this.rtf_class == TokenClass.Text) {
 				if (encoding == null)
-					encoding = Encoding.GetEncoding (encoding_code_page);
+					encoding = EncodingFor (encoding_code_page);
 				encoded_text = new String (encoding.GetChars (new byte [] { (byte) this.major }));
 			} else if (CheckCMM (TokenClass.Control, Major.Unicode, Minor.UnicodeAnsiCodepage)) {
 				encoding_code_page = param;
@@ -626,6 +641,13 @@ SkipCRLF:
 				//
 				if (rtf.CheckCMM (TokenClass.Control, Major.Destination, Minor.Pict)) {
 					ReadPictGroup (rtf);
+					return;
+				}
+
+				// paragraph numbering, RichEdit's {\*\pn\pnlvlblt...}: to whoever reads it
+				if (rtf.CheckCMM (TokenClass.Control, Major.Destination, Minor.ParNumbering)
+				    && destination_callbacks [Minor.ParNumbering] is DestinationDelegate numbering) {
+					numbering (rtf);
 					return;
 				}
 
