@@ -155,6 +155,7 @@ public class ShimTests
         Assert.Equal("Application", EventLog.LogNameFromSourceName(source, "."));
         EventLogEntry last = new EventLog("Application").Entries.Cast<EventLogEntry>().Last(e => e.Source == source);
         Assert.Equal(("hello", EventLogEntryType.Warning, 7L), (last.Message, last.EntryType, last.InstanceId));
+        Assert.Null(last.UserName);          // EventLog.WriteEntry reports no account, on Windows too
         Assert.Throws<ArgumentException>(() => new EventLog("Application").WriteEntry("no source"));
     }
 }

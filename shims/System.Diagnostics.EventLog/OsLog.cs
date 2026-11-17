@@ -470,6 +470,14 @@ namespace System.Diagnostics
                 return 0;
             }
 
+            private static byte[] Sid(Security.Principal.SecurityIdentifier sid)
+            {
+                if (sid == null) return null;
+                var bytes = new byte[sid.BinaryLength];
+                sid.GetBinaryForm(bytes, 0);
+                return bytes;
+            }
+
             private static EventLogEntry Entry(Eventing.Reader.EventLogRecord r)
             {
                 long keywords = r.Keywords ?? 0;
@@ -480,7 +488,7 @@ namespace System.Diagnostics
                 byte[] data = values.OfType<byte[]>().FirstOrDefault() ?? Array.Empty<byte>();
                 string[] strings = values.Where(v => v is not byte[]).Select(v => Convert.ToString(v, Inv.InvariantCulture) ?? "").ToArray();
                 return new EventLogEntry((int)(r.RecordId ?? 0), r.ProviderName, r.MachineName, type, ((long)(r.Qualifiers ?? 0) << 16) | (uint)r.Id,
-                    (short)(r.Task ?? 0), data, strings, r.FormatDescription() ?? string.Join(Environment.NewLine, strings), r.TimeCreated ?? DateTime.Now);
+                    (short)(r.Task ?? 0), data, strings, r.FormatDescription() ?? string.Join(Environment.NewLine, strings), r.TimeCreated ?? DateTime.Now, Sid(r.UserId));
             }
 
             public void Dispose() => _timer.Dispose();

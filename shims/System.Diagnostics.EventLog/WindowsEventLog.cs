@@ -132,6 +132,8 @@ namespace System.Diagnostics
             int count = BitConverter.ToUInt16(b, at + 26);
             short category = BitConverter.ToInt16(b, at + 28);
             int stringOffset = BitConverter.ToInt32(b, at + 36);
+            int sidLength = BitConverter.ToInt32(b, at + 40), sidOffset = BitConverter.ToInt32(b, at + 44);
+            byte[] sid = sidLength > 0 ? b.AsSpan(at + sidOffset, sidLength).ToArray() : null;
             int dataLength = BitConverter.ToInt32(b, at + 48), dataOffset = BitConverter.ToInt32(b, at + 52);
             int p = at + 56;
             string source = Utf16(b, ref p);
@@ -142,7 +144,7 @@ namespace System.Diagnostics
             byte[] data = new byte[dataLength];
             Array.Copy(b, at + dataOffset, data, 0, dataLength);
             DateTime time = DateTime.UnixEpoch.AddSeconds(generated).ToLocalTime();
-            return new EventLogEntry(record, source, machine, type, eventId, category, data, strings, Message(log, source, eventId, strings), time);
+            return new EventLogEntry(record, source, machine, type, eventId, category, data, strings, Message(log, source, eventId, strings), time, sid);
         }
 
         private static string Utf16(byte[] b, ref int at)

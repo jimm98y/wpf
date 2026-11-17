@@ -347,9 +347,11 @@ namespace System.Diagnostics
         private readonly EventLogEntryType _type;
         private readonly DateTime _time;
         private readonly int _index;
+        private readonly byte[] _userSid;
 
-        internal EventLogEntry(int index, string source, string machine, EventLogEntryType type, long instanceId, short category, byte[] data, string[] strings, string message, DateTime? time = null)
+        internal EventLogEntry(int index, string source, string machine, EventLogEntryType type, long instanceId, short category, byte[] data, string[] strings, string message, DateTime? time = null, byte[] userSid = null)
         {
+            _userSid = userSid is { Length: > 0 } ? userSid : null;
             _index = index;
             _source = source;
             _machine = machine == "." ? Environment.MachineName : machine;
@@ -390,7 +392,11 @@ namespace System.Diagnostics
 
         public DateTime TimeWritten => _time;
 
-        public string UserName => null;
+        // the account the entry was reported for, as Windows names it (DOMAIN\user): none for one reported without
+        // (EventLog.WriteEntry's, here and on Windows, for .NET reports none); an account the system cannot name
+        // throws, as .NET's lookup does
+        public string UserName => _userSid == null ? null
+            : new Security.Principal.SecurityIdentifier(_userSid, 0).Translate(typeof(Security.Principal.NTAccount)).Value;
 
         public bool Equals(EventLogEntry otherEntry) =>
             otherEntry != null && otherEntry._index == _index && otherEntry._source == _source && otherEntry._time == _time && otherEntry._instanceId == _instanceId;
