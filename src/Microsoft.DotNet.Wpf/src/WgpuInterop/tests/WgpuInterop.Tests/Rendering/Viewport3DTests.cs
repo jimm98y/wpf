@@ -106,6 +106,18 @@ namespace WgpuInterop.Tests.Rendering
         /// The projection is built from the same aspect-corrected FOV WPF derives, so any difference
         /// is a convention mismatch (handedness, FOV axis, near plane) rather than a rounding one.
         /// </summary>
+        /// <summary>Camera.Transform moves the camera: a camera translated far to the side no longer sees the
+        /// quad it looks straight at without the transform, and one translated back toward it sees it again.</summary>
+        [Fact]
+        public void CameraTransform_MovesTheCamera()
+        {
+            int Centre(Camera3D cam) => new Image(Render(LightingScene(cam, towardQuad: true), W, H), W, H)[32, 24].R;
+            int plain = Centre(LookAtCamera());
+            int aside = Centre(LookAtCamera() with { CameraTransform = Matrix4x4.CreateTranslation(10, 0, 0) });
+            Assert.True(plain > 150, $"the quad should be in view, was {plain}");
+            Assert.True(aside > 245, $"a camera moved ten units aside should see only background, was {aside}");
+        }
+
         [Fact]
         public void MatrixCamera_MatchesTheEquivalentLookAtCamera()
         {

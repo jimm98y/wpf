@@ -19,6 +19,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
     internal sealed partial class MilcoreEngine
     {
         private readonly Dictionary<uint, Camera3D> _cameras = new();
+        private readonly Dictionary<uint, uint> _cameraTransforms = new();   // camera -> its Transform's handle
         private readonly Dictionary<uint, MeshGeometry3D> _meshes = new();
         private readonly Dictionary<uint, MaterialDef> _materials = new();
         private readonly Dictionary<uint, Matrix4x4> _xform3D = new();          // translate/scale/matrix (precomputed)
@@ -142,7 +143,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     uint h = r.U32();
                     double near = r.F64(), far = r.F64(), fov = r.F64();
                     Vector3 pos = Pt3(ref r);
-                    r.U32();                 // htransform
+                    _cameraTransforms[h] = r.U32();   // htransform
                     Vector3 look = Pt3(ref r);
                     r.U32();                 // hNearPlaneDistanceAnimations
                     Vector3 up = Pt3(ref r);
@@ -156,7 +157,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     uint h = r.U32();
                     double near = r.F64(), far = r.F64(), w = r.F64();
                     Vector3 pos = Pt3(ref r);
-                    r.U32();                 // htransform
+                    _cameraTransforms[h] = r.U32();   // htransform
                     Vector3 look = Pt3(ref r);
                     r.U32();                 // hNearPlaneDistanceAnimations
                     Vector3 up = Pt3(ref r);
@@ -170,7 +171,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // viewport-aspect correction for MatrixCamera).
                     uint h = r.U32();
                     Matrix4x4 view = Mat16(ref r), proj = Mat16(ref r);
-                    r.U32();                 // htransform (ignored, like the other cameras)
+                    _cameraTransforms[h] = r.U32();   // htransform
                     _cameras[h] = new Camera3D(view, proj);
                     break;
 
@@ -370,6 +371,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 v.Content.Clear();
                 Viewport3DState vp = kv.Value;
                 if (vp.ChildHandle == 0 || !_cameras.TryGetValue(vp.CameraHandle, out Camera3D cam)) continue;
+                // the camera's own Transform, as it is now (it may animate)
+                if (_cameraTransforms.TryGetValue(vp.CameraHandle, out uint camT) && camT != 0)
+                {
+                    Matrix4x4 t = ResolveTransform3D(camT);
+                    if (!t.IsIdentity) cam = cam with { CameraTransform = t };
+                }
 
                 var models = new List<Model3D>();
                 var lights = new LightAcc();

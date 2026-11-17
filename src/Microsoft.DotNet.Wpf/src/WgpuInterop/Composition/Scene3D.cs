@@ -51,6 +51,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public readonly Matrix4x4 ViewMatrix;
         public readonly Matrix4x4 ProjMatrix;
 
+        /// <summary>Camera.Transform: where the camera itself is moved to -- its position, look and up directions
+        /// carried by it, so the view is the inverse of it followed by the camera's own view. Null for none.</summary>
+        public Matrix4x4? CameraTransform { get; init; }
+
         public Camera3D(Vector3 position, Vector3 lookDirection, Vector3 upDirection, float fieldOfView,
             float nearPlane = 0.125f, float farPlane = 1000f, bool orthographic = false, float width = 0f)
         {

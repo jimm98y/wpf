@@ -248,6 +248,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
             float aspect = dw / dh;
             Camera3D cam = viewport.Camera;
             Matrix4x4 view, proj;
+            Vector3 camEye = cam.Position;
             if (cam.HasMatrix)
             {
                 // MatrixCamera: use the app-supplied matrices verbatim (WPF applies no
@@ -273,6 +274,13 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                     float fovY = 2f * MathF.Atan(MathF.Tan(fovH / 2f) / aspect);
                     proj = Matrix4x4.CreatePerspectiveFieldOfView(fovY, aspect, cam.NearPlane, cam.FarPlane);
                 }
+            }
+            // Camera.Transform moves the camera: the world is seen through its inverse first, and the camera's
+            // position (for the specular highlights) is where the transform puts it.
+            if (cam.CameraTransform is Matrix4x4 camT && Matrix4x4.Invert(camT, out Matrix4x4 camInv))
+            {
+                view = camInv * view;
+                camEye = Vector3.Transform(cam.Position, camT);
             }
             // This eye's place: the camera moved along its own right axis, which in view space is the x axis
             // (a point the camera sees moves the other way); the same for a MatrixCamera's matrices.
@@ -368,7 +376,7 @@ fn fs_main(in : VSOut) -> @location(0) vec4<f32> {
                     // that names that slot is built once and reused across frames (Resolve3DSlots).
                     slots.Add(new DrawSlot(texView, backFace, !isTransparent));
                     WriteModelUniform(baseSlot + slots.Count - 1,
-                        model.Transform * viewProj, model.Transform, cam.Position,
+                        model.Transform * viewProj, model.Transform, camEye,
                         viewport.Lights, viewport.AmbientColor, mat, backFace);
 
                     models.Add(new Draw3D(vbuf, ibuf, IntPtr.Zero, (uint)mesh.Indices.Length, backFace, isTransparent));
