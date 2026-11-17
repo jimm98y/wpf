@@ -1115,6 +1115,36 @@ namespace MS.Internal.Interop.Wayland
             WaylandDisplay.Flush();
         }
 
+        /// <summary>
+        /// Where the window takes the pointer (wl_surface.set_input_region), in logical pixels of its content; null for
+        /// all of it. A shaped window (a WinForms Form.Region, SetWindowRgn) is not there for the mouse outside its
+        /// shape: a click there goes to whatever is below, as on Windows.
+        /// </summary>
+        public void SetInputRegion(int[]? rects)
+        {
+            if (_surface == IntPtr.Zero) return;
+            IntPtr region = IntPtr.Zero;
+            if (rects != null)
+            {
+                region = Wl.Construct(WaylandDisplay.Compositor, WL_COMPOSITOR_CREATE_REGION, "wl_region",
+                                      Wl.wl_proxy_get_version(WaylandDisplay.Compositor), WlArgument.NewId());
+                if (region == IntPtr.Zero) return;
+                for (int i = 0; i + 3 < rects.Length; i += 4)
+                    Wl.Request(region, WL_REGION_ADD, WlArgument.Int(rects[i]), WlArgument.Int(rects[i + 1]), WlArgument.Int(rects[i + 2]), WlArgument.Int(rects[i + 3]));
+            }
+            if (rects != null)
+            {
+                int bx0 = int.MaxValue, by0 = int.MaxValue, bx1 = int.MinValue, by1 = int.MinValue;
+                for (int i = 0; i + 3 < rects.Length; i += 4)
+                { bx0 = Math.Min(bx0, rects[i]); by0 = Math.Min(by0, rects[i + 1]); bx1 = Math.Max(bx1, rects[i] + rects[i + 2]); by1 = Math.Max(by1, rects[i + 1] + rects[i + 3]); }
+                WaylandDisplay.LogSink?.Invoke($"window 0x{_surface:x}: input region of {rects.Length / 4} rectangle(s), bounds ({bx0},{by0})-({bx1},{by1}), region 0x{region:x}, first {string.Join(",", rects.AsSpan(0, Math.Min(12, rects.Length)).ToArray())}");
+            }
+            Wl.Request(_surface, WL_SURFACE_SET_INPUT_REGION, WlArgument.Ptr(region));
+            if (region != IntPtr.Zero) Wl.Destroy(region, WL_REGION_DESTROY);
+            Wl.Request(_surface, WL_SURFACE_COMMIT);
+            WaylandDisplay.Flush();
+        }
+
         public void SetChromeless(bool chromeless)
         {
             WaylandDisplay.LogSink?.Invoke($"window 0x{_surface:x}: chromeless {chromeless} (was {_chromeless}, frame {(_frame != IntPtr.Zero)})");
@@ -1368,6 +1398,16 @@ namespace MS.Internal.Interop.Wayland
             return IntPtr.Zero;
         }
 
+        /// <summary>The monitors as the compositor places them: (x, y, width, height, scale) each, logical pixels.</summary>
+        public static int[] GetScreensLogical() => WaylandDisplay.OutputsLogical();
+
+        /// <summary>A monitor was added, removed, moved or rescaled.</summary>
+        public static event Action ScreensChanged
+        {
+            add => WaylandDisplay.OutputsChanged += value;
+            remove => WaylandDisplay.OutputsChanged -= value;
+        }
+
         public static bool GetPrimaryScreenPixels(
             out int monLeft, out int monTop, out int monRight, out int monBottom,
             out int workLeft, out int workTop, out int workRight, out int workBottom)
@@ -1383,10 +1423,10 @@ namespace MS.Internal.Interop.Wayland
         public static bool IsUiThread => WaylandDisplay.Display == IntPtr.Zero || WaylandDisplay.IsPumpThread;
 
         /// <summary>Whether Caps Lock is on, as the compositor last reported the keyboard (GetKeyState(VK_CAPITAL) &amp; 1).</summary>
-        public static bool CapsLockOn => (WaylandInput.Modifiers & WaylandModifiers.CapsLock) != 0;
+        public static bool CapsLockOn => (WaylandInput.LockState & WaylandModifiers.CapsLock) != 0;
 
         /// <summary>Whether Num Lock is on, as the compositor last reported the keyboard (GetKeyState(VK_NUMLOCK) &amp; 1).</summary>
-        public static bool NumLockOn => (WaylandInput.Modifiers & WaylandModifiers.NumLock) != 0;
+        public static bool NumLockOn => (WaylandInput.LockState & WaylandModifiers.NumLock) != 0;
 
         /// <summary>Makes the calling thread the one that reads the compositor connection, before any window
         /// exists: a stack that starts its UI thread there (the WinForms driver on the app's main thread)

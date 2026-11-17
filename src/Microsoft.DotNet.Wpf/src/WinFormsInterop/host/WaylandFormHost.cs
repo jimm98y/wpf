@@ -70,18 +70,61 @@ namespace System.Windows.Forms
 		internal static void InstallScreens ()
 		{
 			XplatUIWebGpu.ScreensProvider ??= OutputScreens;
+
 			// the lock keys as the compositor reports the keyboard
 			XplatUIWebGpu.KeyLockedProvider ??= vk => vk == 0x14 ? WaylandWindow.CapsLockOn : vk == 0x90 ? WaylandWindow.NumLockOn : null;
 		}
 
+		private static string s_screensKey;
+		private static bool s_watchingScreens;
+
+		// a monitor plugged in, unplugged, moved or rescaled: the screens are read again, and the application told as
+		// Windows tells it (WM_DISPLAYCHANGE: SystemEvents.DisplaySettingsChanged). Watched from the first time the
+		// screens are asked for, once the compositor is there.
+		private static void WatchScreens ()
+		{
+			if (s_watchingScreens) return;
+			s_watchingScreens = true;
+			s_screensKey = string.Join (",", WaylandWindow.GetScreensLogical ());
+			WaylandWindow.ScreensChanged += () => {
+				string key = string.Join (",", WaylandWindow.GetScreensLogical ());
+				if (key == s_screensKey) return;
+				s_screensKey = key;
+				Screen.Rescan ();
+				Type events = Type.GetType ("Microsoft.Win32.SystemEvents, Microsoft.Win32.SystemEvents");
+				try { events?.GetMethod ("RaiseDisplaySettingsChanged", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)?.Invoke (null, null); }
+				catch (Exception) { }
+			};
+		}
+
 		private static Screen[] OutputScreens ()
 		{
+			try { WatchScreens (); } catch (Exception) { }
 			WaylandWindow.GetPrimaryScreenPixels (out int left, out int top, out int right, out int bottom, out _, out _, out _, out _);
 			double perDevice = PerMonitor || ScaleHelper.HostSourceDpi <= 0 ? 1 : 96.0 / ScaleHelper.HostSourceDpi * WaylandWindow.PrimaryScale ();
 			var bounds = new Rectangle ((int)Math.Round (left / perDevice), (int)Math.Round (top / perDevice),
 				Math.Max (1, (int)Math.Round ((right - left) / perDevice)), Math.Max (1, (int)Math.Round ((bottom - top) / perDevice)));
 			if (s_trace) Console.WriteLine ($"[wayland form] screen: output ({left},{top})-({right},{bottom}) perMonitor={PerMonitor} hostDpi={ScaleHelper.HostSourceDpi} scale={WaylandWindow.PrimaryScale ()} -> {bounds}");
-			return new[] { new Screen (true, "DISPLAY1", bounds, bounds) };
+			// Every monitor, not the first alone: Screen.AllScreens, SystemInformation.VirtualScreen and MonitorCount said
+			// one screen with two plugged in. Each is where the compositor puts it, in its logical space, taken to
+			// driver units as the primary is (its device pixels over perDevice). Wayland has no primary monitor; the
+			// one at the origin is it, as Windows' primary is the one at (0, 0).
+			int[] outs = WaylandWindow.GetScreensLogical ();
+			if (outs.Length < 10)
+				return new[] { new Screen (true, "DISPLAY1", bounds, bounds) };
+			double primaryScale = WaylandWindow.PrimaryScale () > 0 ? WaylandWindow.PrimaryScale () : 1;
+			double toDriver = primaryScale / perDevice;
+			int primary = 0;
+			for (int i = 0; i + 4 < outs.Length; i += 5)
+				if (outs [i] == 0 && outs [i + 1] == 0) { primary = i / 5; break; }
+			var screens = new List<Screen> ();
+			for (int i = 0, n = 0; i + 4 < outs.Length; i += 5, n++) {
+				var r = new Rectangle ((int)Math.Round (outs [i] * toDriver), (int)Math.Round (outs [i + 1] * toDriver),
+					Math.Max (1, (int)Math.Round (outs [i + 2] * toDriver)), Math.Max (1, (int)Math.Round (outs [i + 3] * toDriver)));
+				var sc = new Screen (n == primary, "DISPLAY" + (n + 1), r, r);
+				if (n == primary) screens.Insert (0, sc); else screens.Add (sc);
+			}
+			return screens.ToArray ();
 		}
 
 		/// <summary>The screen's DPI as Windows would give it: 96 per logical pixel.</summary>
@@ -144,9 +187,39 @@ namespace System.Windows.Forms
 
 		private void ExitSizeMove ()
 		{
+			_sizeMoveQuiet?.Stop ();
 			if (!_sizeMoveEntered) return;
 			_sizeMoveEntered = false;
 			if (_form.IsHandleCreated) _driver.HostSizeMove (_form.Handle, false);
+		}
+
+		// The content size this host last asked of the window (logical pixels), and whether the window was maximized
+		// at the compositor's last size: a size other than the one asked for, in the same state, is the user's.
+		private Size _askedSize;
+		private bool _lastSizeMaximized;
+		private System.Windows.Forms.Timer _sizeMoveQuiet;
+
+		/// <summary>
+		/// A size the compositor gave that this host did not ask for, the window neither maximized nor restored by it:
+		/// the user is resizing it by a frame libdecor draws (whose caption and borders hand the drag to the
+		/// compositor without this host hearing of it) -- WM_ENTERSIZEMOVE, as for a resize this host begins, and
+		/// WM_EXITSIZEMOVE with the first pointer event back over the window, or once the sizes stop coming.
+		/// Form.ResizeBegin and ResizeEnd never came for such a resize.
+		/// </summary>
+		private void NoteUserResize (int logicalW, int logicalH)
+		{
+			bool maximized = _window != null && _window.GetWindowState () == 3;
+			bool user = _ready && maximized == _lastSizeMaximized && !maximized && new Size (logicalW, logicalH) != _askedSize;
+			_lastSizeMaximized = maximized;
+			if (!user)
+				return;
+			EnterSizeMove ();
+			if (_sizeMoveQuiet == null) {
+				_sizeMoveQuiet = new System.Windows.Forms.Timer { Interval = 1000 };
+				_sizeMoveQuiet.Tick += (s, e) => { _sizeMoveQuiet.Stop (); ExitSizeMove (); };
+			}
+			_sizeMoveQuiet.Stop ();
+			_sizeMoveQuiet.Start ();
 		}
 
 		/// <param name="edge">WMSZ_LEFT (1) .. WMSZ_BOTTOMRIGHT (8): the hit-test code less 9.</param>
@@ -350,7 +423,8 @@ namespace System.Windows.Forms
 				_window.SetChromeless (true);
 			EnableDragDrop ();
 			_sizedTo = client;
-			_window.SetContentSize (Math.Max (1, (int)Math.Round (client.Width / _k)), Math.Max (1, (int)Math.Round (client.Height / _k)));
+			_askedSize = new Size (Math.Max (1, (int)Math.Round (client.Width / _k)), Math.Max (1, (int)Math.Round (client.Height / _k)));
+			_window.SetContentSize (_askedSize.Width, _askedSize.Height);
 			// the state the form was given before it had a window (an app that starts maximized): set before
 			// the form was shown -- in its Load, restoring a saved placement -- it is only the form's own
 			// (Form.window_state), which Windows makes the window's at creation (WS_MAXIMIZE); the driver
@@ -392,6 +466,7 @@ namespace System.Windows.Forms
 				return;
 			_sizedTo = client;
 			int w = Math.Max (1, (int)Math.Round (client.Width / _k)), h = Math.Max (1, (int)Math.Round (client.Height / _k));
+			_askedSize = new Size (w, h);
 			OnPump (() => { if (!_closed) _window.SetContentSize (w, h); });
 		}
 
@@ -456,6 +531,7 @@ namespace System.Windows.Forms
 			// jumps while the edge moved smoothly.
 			_pendingW = logicalW;
 			_pendingH = logicalH;
+			NoteUserResize (logicalW, logicalH);
 			if (_resizing)
 				return;
 			if (_wgpu != null && _ready) {
@@ -630,6 +706,7 @@ namespace System.Windows.Forms
 			ApplyCursor ();
 			if (!EnsurePresenter ())
 				return;
+			ApplyShape ();
 			int ver = _driver.GetPaintVersion () + EmbeddedScenes.CurrentVersion ();
 			bool caretOn = CaretOn ();
 			if (ver == _lastVer && caretOn == _lastCaretOn && _lastPresentOk)
@@ -659,6 +736,74 @@ namespace System.Windows.Forms
 				PresentPopups (popups, popupBounds);
 			_lastVer = ver;
 			_lastCaretOn = caretOn;
+		}
+
+		// ---- TopMost --------------------------------------------------------------------------------------
+		//
+		// Form.TopMost (WS_EX_TOPMOST) is not passed on: Wayland gives a client no way to keep its window above
+		// other applications' (stacking is the compositor's alone), so it is a no-op here. The driver still orders
+		// the windows it composites itself by it (XplatUIWebGpu.SetTopmost).
+
+		// ---- the window's shape and opacity ------------------------------------------------------------
+
+		// Form.Region (SetWindowRgn) and Form.Opacity (a layered window's alpha): Wayland has neither for a window, so
+		// the surface carries them -- see-through outside the shape and as see-through as the opacity says, the
+		// window's picture drawn so (WgpuPresenter.WindowShape, WindowOpacity) -- and the input region is the shape,
+		// a click outside it the window's below. Both were ignored: a round window was a square with corners, and a
+		// half-transparent docking preview hid what it marks.
+		private string _shapeKey;
+
+		private void ApplyShape ()
+		{
+			RectangleF[] scans = null;
+			Region region = _form.Region;
+			if (region != null) {
+				try { using var identity = new System.Drawing.Drawing2D.Matrix (); scans = region.GetRegionScans (identity); }
+				catch { scans = null; }
+			}
+			double opacity = Math.Clamp (_form.Opacity, 0.0, 1.0);
+			// the region is the window's, frame and all; the surface shows the client area
+			Rectangle client = ClientScreen, bounds = _form.Bounds;
+			int fx = client.X - bounds.X, fy = client.Y - bounds.Y;
+			var key = new System.Text.StringBuilder ().Append (opacity).Append ('|').Append (fx).Append (',').Append (fy).Append ('|').Append (_k).Append ('|');
+			if (scans != null)
+				foreach (RectangleF r in scans) key.Append (r.X).Append (',').Append (r.Y).Append (',').Append (r.Width).Append (',').Append (r.Height).Append (';');
+			else key.Append ("none");
+			string k = key.ToString ();
+			if (k == _shapeKey)
+				return;
+			_shapeKey = k;
+			bool shaped = scans != null || opacity < 1.0;
+			if (shaped) {
+				_wgpu.SetTransparent (true);
+			} else if (!IsLayered ()) {
+				_wgpu.SetTransparent (false);
+				Color bc = _form.BackColor;
+				_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+			}
+			_wgpu.WindowOpacity = (float)opacity;
+			RectangleF[] inClient = null;
+			if (scans != null) {
+				inClient = new RectangleF [scans.Length];
+				for (int i = 0; i < scans.Length; i++)
+					inClient [i] = new RectangleF (scans [i].X - fx, scans [i].Y - fy, scans [i].Width, scans [i].Height);
+			}
+			_wgpu.SetWindowShape (inClient);
+			int[] input = null;
+			if (inClient != null) {
+				input = new int [inClient.Length * 4];
+				for (int i = 0; i < inClient.Length; i++) {
+					int x0 = (int)Math.Floor (inClient [i].X / _k), y0 = (int)Math.Floor (inClient [i].Y / _k);
+					int x1 = (int)Math.Ceiling (inClient [i].Right / _k), y1 = (int)Math.Ceiling (inClient [i].Bottom / _k);
+					input [i * 4] = x0; input [i * 4 + 1] = y0; input [i * 4 + 2] = x1 - x0; input [i * 4 + 3] = y1 - y0;
+				}
+			}
+			// a toplevel's: a popup -- drawn into its owner's popup layer -- has its clicks routed by the driver's hit
+			// test, which already keeps to the region (XplatUIWebGpu.InsideRegions)
+			if (!_popup)
+				OnPump (() => { if (!_closed) _window.SetInputRegion (input); });
+			if (s_trace) Console.WriteLine ($"[wayland form] '{_form.Text}' shape: {(scans == null ? "none" : scans.Length + " rectangle(s)")}, opacity {opacity}");
+			_lastVer = -1;
 		}
 
 		// ---- the popup layer -------------------------------------------------------------------------

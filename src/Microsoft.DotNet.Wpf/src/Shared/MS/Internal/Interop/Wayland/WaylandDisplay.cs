@@ -392,6 +392,7 @@ namespace MS.Internal.Interop.Wayland
                     {
                         if (Outputs[i].Name != name) continue;
                         Outputs.RemoveAt(i);
+                        try { OutputsChanged?.Invoke(); } catch { }
                         break;
                     }
                 }
@@ -494,7 +495,28 @@ namespace MS.Internal.Interop.Wayland
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void OnOutputDone(IntPtr data, IntPtr output) { }
+        private static void OnOutputDone(IntPtr data, IntPtr output)
+        {
+            try { OutputsChanged?.Invoke(); } catch { }
+        }
+
+        /// <summary>An output was described in full (wl_output.done: added, moved, its mode or scale changed) or went
+        /// away (global_remove).</summary>
+        internal static event Action? OutputsChanged;
+
+        /// <summary>Every output with a mode, as (x, y, width, height, scale) in the compositor's logical space.</summary>
+        internal static int[] OutputsLogical()
+        {
+            var list = new List<int>();
+            lock (Outputs)
+                foreach (WaylandOutput o in Outputs)
+                {
+                    if (o.Width <= 0 || o.Height <= 0) continue;
+                    int s = Math.Max(1, o.Scale);
+                    list.AddRange(new[] { o.X, o.Y, o.Width / s, o.Height / s, s });
+                }
+            return list.ToArray();
+        }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnOutputName(IntPtr data, IntPtr output, IntPtr name) { }

@@ -181,6 +181,15 @@ namespace MS.Internal.Interop.Wayland
         /// <summary>The keyboard's modifiers as the compositor last reported them, the lock keys among them.</summary>
         internal static WaylandModifiers Modifiers => s_modifiers;
 
+        // A lock key pressed whose new state the compositor has not sent yet (wl_keyboard.modifiers follows the
+        // key): Windows flips a lock's toggle as the key goes down, so the key's own WM_KEYDOWN reads the new
+        // state (GetKeyState, Control.IsKeyLocked). Cleared by the modifiers that follow.
+        private static volatile WaylandModifiers s_locksFlipping;
+
+        /// <summary>The lock keys' state as Windows has it at this moment: the compositor's, flipped for a lock
+        /// key pressed whose new state has not come yet.</summary>
+        internal static WaylandModifiers LockState => (s_modifiers ^ s_locksFlipping) & (WaylandModifiers.CapsLock | WaylandModifiers.NumLock);
+
         // ---- key repeat ---------------------------------------------------------------------
         private static int s_repeatRate = 25;      // keys per second
         private static int s_repeatDelayMs = 600;
@@ -868,6 +877,8 @@ namespace MS.Internal.Interop.Wayland
                 uint xkbCode = scancode + WlXkb.EvdevOffset;
                 uint keysym = s_xkbState != IntPtr.Zero ? WlXkb.xkb_state_key_get_one_sym(s_xkbState, xkbCode) : 0;
                 string? text = down ? ComposeText(xkbCode, ref keysym) : null;
+                if (down && scancode == 58) s_locksFlipping |= WaylandModifiers.CapsLock;    // KEY_CAPSLOCK
+                if (down && scancode == 69) s_locksFlipping |= WaylandModifiers.NumLock;     // KEY_NUMLOCK
 
                 KeyInput?.Invoke(new WaylandKeyMessage(KeyboardFocusSurface, down, keysym, scancode, text, false, s_modifiers, (int)time));
 
@@ -945,6 +956,7 @@ namespace MS.Internal.Interop.Wayland
                 if (WlXkb.xkb_state_mod_name_is_active(s_xkbState, WlXkb.ModCapsLock, eff)) m |= WaylandModifiers.CapsLock;
                 if (WlXkb.xkb_state_mod_name_is_active(s_xkbState, WlXkb.ModNumLock, eff)) m |= WaylandModifiers.NumLock;
                 s_modifiers = m;
+                s_locksFlipping = WaylandModifiers.None;
             }
             catch { }
         }

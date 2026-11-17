@@ -439,6 +439,16 @@ internal sealed unsafe class WgpuPresenter : IDisposable
             }
         }
 
+        // the window's own opacity and shape (Form.Opacity, Form.Region), where the platform has no window of that
+        // kind and the surface carries them in its alpha (SetTransparent)
+        if (WindowOpacity < 1f || WindowShape != null)
+        {
+            var shaped = new SceneVisual { Opacity = Math.Clamp(WindowOpacity, 0f, 1f), ClipGeometry = WindowShape };
+            foreach (SceneVisual child in root.Children) shaped.Children.Add(child);
+            root.Children.Clear();
+            root.Children.Add(shaped);
+        }
+
         // Render the point-space scene at device resolution (Retina): scale the whole tree by the
         // backing scale so glyphs (GPU-rasterized in device space) and geometry are crisp, not upscaled.
         root.Transform = Matrix3x2.CreateScale(_scale);
@@ -515,6 +525,28 @@ internal sealed unsafe class WgpuPresenter : IDisposable
     // its own alpha (a splash screen with soft edges). Cleared to transparent rather than white, and
     // the surface composited with its alpha rather than as opaque.
     private bool _transparent;
+
+    /// <summary>The whole window's opacity (Form.Opacity, a layered window's alpha), drawn into the surface's alpha.</summary>
+    internal float WindowOpacity = 1f;
+
+    /// <summary>The window's shape (Form.Region), in client units: nothing is drawn outside it.</summary>
+    internal PathGeometry WindowShape;
+
+    /// <summary>The window's shape as rectangles in client units (a region's scans); null for none.</summary>
+    internal void SetWindowShape(IReadOnlyList<RectangleF> rects)
+    {
+        if (rects == null) { WindowShape = null; return; }
+        var figures = new List<PathFigure>();
+        foreach (RectangleF r in rects)
+        {
+            var f = new PathFigure(new Vector2(r.X, r.Y)) { Closed = true };
+            f.Segments.Add(new LineSegment(new Vector2(r.Right, r.Y)));
+            f.Segments.Add(new LineSegment(new Vector2(r.Right, r.Bottom)));
+            f.Segments.Add(new LineSegment(new Vector2(r.X, r.Bottom)));
+            figures.Add(f);
+        }
+        WindowShape = new PathGeometry(FillRule.NonZero, figures);
+    }
 
     internal void SetTransparent(bool transparent)
     {
