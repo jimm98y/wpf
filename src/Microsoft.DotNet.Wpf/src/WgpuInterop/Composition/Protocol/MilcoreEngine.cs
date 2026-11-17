@@ -1340,16 +1340,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // be READ, because it sits between EdgeMode and BitmapScalingMode.
                     r.U32();
                     uint bitmapScaling = r.U32();
+                    r.U32();                       // ClearTypeHint
+                    uint textRendering = r.U32();
                     // ClearTypeHint / TextRenderingMode / TextHintingMode are ClearType and
                     // hinting hints; this renderer does grayscale AA text, so they are read
                     // past rather than honoured.
                     if (_visuals.TryGetValue(vh, out SceneVisual? rv))
                     {
-                        const uint FlagBitmapScalingMode = 0x1, FlagEdgeMode = 0x2;
+                        const uint FlagBitmapScalingMode = 0x1, FlagEdgeMode = 0x2, FlagTextRenderingMode = 0x10;
+                        // TextOptions.TextRenderingMode: Auto 0 (as unset), Aliased 1, Grayscale 2, ClearType 3
+                        rv.TextRenderingMode = (flags & FlagTextRenderingMode) != 0 && textRendering <= 3 ? (byte)textRendering : (byte)0;
                         if ((flags & FlagEdgeMode) != 0)
                             rv.AliasedEdges = edgeMode == 1;              // EdgeMode.Aliased
                         if ((flags & FlagBitmapScalingMode) != 0)
+                        {
                             rv.NearestBitmapScaling = bitmapScaling == 3; // NearestNeighbor
+                            rv.HighQualityBitmapScaling = bitmapScaling == 2; // HighQuality (Fant)
+                        }
                     }
                     break;
                 }
@@ -1638,10 +1645,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             v.Clip = null;
             v.ClipGeometry = null;
+            v.ClipShape = null;
             if (hClip != 0 && _geometries.TryGetValue(hClip, out Geometry? clip))
             {
                 if (TryAxisRect(clip, out Rect rect)) v.Clip = rect;         // fast axis-aligned scissor
-                else v.ClipGeometry = ToPathGeometry(clip);                  // arbitrary mask
+                else
+                {
+                    v.ClipGeometry = ToPathGeometry(clip);                   // arbitrary mask
+                    // A combination no one path stands for (ToPathGeometry gave its bounds): the mask is made of the
+                    // combination itself. Clipped to the bounds, a shape cut out of a panel, or two shapes' overlap,
+                    // showed the whole box.
+                    if (clip is CombinedGeometry combined && RectSubtractPath(combined) is null) v.ClipShape = combined;
+                }
             }
         }
 

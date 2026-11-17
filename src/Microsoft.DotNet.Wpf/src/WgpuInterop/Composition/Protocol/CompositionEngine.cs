@@ -79,6 +79,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         v.ClipGeometry = ReadPath(r);
                         break;
                     }
+                    case MilCommand.VisualSetClipShape:
+                    {
+                        SceneVisual v = Get(r.U32());
+                        v.ClipShape = ReadGeometry(r) as CombinedGeometry;
+                        break;
+                    }
                     case MilCommand.VisualSetOpacityMask:
                     {
                         SceneVisual v = Get(r.U32());

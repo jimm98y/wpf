@@ -556,6 +556,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (deadI != null) foreach ((byte[], bool) k in deadI) _imgCache.Remove(k);
             }
 
+            if (_mipCache.Count > 0)
+            {
+                List<(byte[], bool)>? deadM = null;
+                foreach (KeyValuePair<(byte[] Rgba, bool Srgb), (IntPtr Tex, IntPtr View, long LastFrame)> kv in _mipCache)
+                {
+                    if (kv.Value.LastFrame >= _frameId - 60) continue;
+                    (deadM ??= new List<(byte[], bool)>()).Add(kv.Key);
+                    ReleaseImageBindGroups(kv.Value.View);
+                    wgpuTextureViewRelease(kv.Value.View);
+                    wgpuTextureRelease(kv.Value.Tex);
+                }
+                if (deadM != null) foreach ((byte[], bool) k in deadM) _mipCache.Remove(k);
+            }
+
             if (_extBindGroups.Count > 0)
             {
                 List<(long, WGPUTextureFormat, IntPtr, bool, FillKind)>? deadE = null;
@@ -1748,7 +1762,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // edges cover a pixel all or nothing), without an offscreen texture and, where the GPU
             // rasterizer is off (virgl), a mask rasterized on the CPU every frame -- most of a resize
             // frame once a DotNetBar back buffer was drawn as the scene it recorded.
-            if (ClipGeo(v) is { } rectClip && v.Effect == null && v.OpacityMask == null
+            if (ClipGeo(v) is { } rectClip && v.ClipShape == null && v.Effect == null && v.OpacityMask == null
                 && !(vOpacity < 0.999 && CountDrawables(v) > 1)
                 && !(v.CacheAsSurface && s_surfaces && !_directSurfaces.Contains(v.Serial))
                 && PixelRectClip(rectClip, world, out List<Scissor> rects))
@@ -2229,7 +2243,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 // Region-sized geometry-clip mask (rasterized once, cached with the layer) --
                 // not a full-window 6.8M-pixel raster. GPU-rasterized by default.
-                if (s_gpuRaster)
+                if (v.ClipShape is { } shape)
+                {
+                    // a combination of shapes: their coverages combined, pixel by pixel, on the device
+                    (cl.MaskTex, cl.MaskView) = CreateR8Texture(CombinedMaskInto(shape, world, rw, rh, rx, ry), rw, rh);
+                }
+                else if (s_gpuRaster)
                 {
                     (cl.MaskTex, cl.MaskView) = GpuRasterizeInto(TransformGeometry(clipGeom, world), rw, rh, rx, ry);
                     cl.MaskPooled = true;
@@ -2758,7 +2777,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             else if (!fullTarget) { HV(PhaseQ(world.M31 - region.X, nudgeX)); HV(PhaseQ(world.M32 - region.Y, nudgeY)); }
             float bx = world.M31, by = world.M32;
             // Clip-geometry / opacity-mask take precedence over effects (matches RenderLayerToCache).
-            if (ClipGeo(v) is { } cg) { HV(103); HashGeo(cg); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
+            if (ClipGeo(v) is { } cg) { HV(103); HashGeo(cg); if (v.ClipShape is { } cs) HashGeo(cs); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
             else if (v.OpacityMask is { } om) { HV(104); HashBrush(om); HF(world.M11); HF(world.M12); HF(world.M21); HF(world.M22); }
             else switch (v.Effect)
             {
@@ -2827,6 +2846,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (n.Clip is { } c) HR(c); else HV(7);
             if (n.OpacityMask is { } nm) HashBrush(nm);
             if (n.ClipGeometry is { } ncg) HashGeo(ncg);
+            if (n.ClipShape is { } ncs) HashGeo(ncs);
             foreach (DrawingPrimitive p0 in n.Content) foreach (DrawingPrimitive p in WpfTextRunDraw.Expand(p0)) HashPrimitive(p);
             foreach (SceneVisual ch in n.Children)
             {
@@ -3248,9 +3268,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private void EmitSubtree(SceneVisual v, Matrix3x2 world, double accOpacity, Scissor clip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat format)
         {
-            bool savedAliased = _aliasedEdges, savedNearest = _nearestScaling;
+            bool savedAliased = _aliasedEdges, savedNearest = _nearestScaling, savedHighQuality = _highQualityScaling;
+            byte savedTextMode = _textRenderingMode;
+            if (v.TextRenderingMode != 0) _textRenderingMode = v.TextRenderingMode;
             _aliasedEdges |= v.AliasedEdges;
             _nearestScaling |= v.NearestBitmapScaling;
+            _highQualityScaling |= v.HighQualityBitmapScaling;
 
             Guides guides = ResolveGuides(v, world);
             foreach (DrawingPrimitive rawPrimitive in v.Content)
@@ -3279,6 +3302,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             _aliasedEdges = savedAliased;
             _nearestScaling = savedNearest;
+            _highQualityScaling = savedHighQuality;
+            _textRenderingMode = savedTextMode;
         }
 
         private void EmitPrimitive(DrawingPrimitive primitive, Matrix3x2 world, double opacity, Scissor clip,
@@ -3408,6 +3433,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
             return new CoverageMask(bytes, width, height, x0, y0);
         }
+
+        /// <summary>A combined clip's mask over a device region: each operand taken to the device, their coverages
+        /// combined (RasterizeCombined), laid into the region.</summary>
+        private static byte[] CombinedMaskInto(CombinedGeometry shape, Matrix3x2 world, int width, int height, int originX, int originY)
+        {
+            var bytes = new byte[width * height];
+            CoverageMask m = RasterizeCombined((CombinedGeometry)OnDevice(shape, world));
+            if (m.IsEmpty) return bytes;
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    float c = SampleMask(m, originX + x, originY + y);
+                    if (c > 0f) bytes[y * width + x] = (byte)Math.Clamp((int)MathF.Round(c * 255f), 0, 255);
+                }
+            return bytes;
+        }
+
+        /// <summary>A shape through a transform, its combinations kept as combinations.</summary>
+        private static Geometry OnDevice(Geometry g, Matrix3x2 m) => g is CombinedGeometry c
+            ? new CombinedGeometry(c.Mode, OnDevice(c.Geometry1, m), OnDevice(c.Geometry2, m))
+            : TransformGeometry(GeometryToPath(g), m);
 
         private static int MaskMinX(CoverageMask m) => m.IsEmpty ? int.MaxValue : (int)m.OriginX;
         private static int MaskMinY(CoverageMask m) => m.IsEmpty ? int.MaxValue : (int)m.OriginY;
@@ -4042,11 +4088,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         u0 = _eye == 2 ? 0.5f : c;
                     }
                     // RenderOptions.BitmapScalingMode=NearestNeighbor -> no filtering.
-                    IntPtr sampler = _nearestScaling ? NearestSampler() : LinearSampler();
+                    // HighQuality (Fant): a plain image is sampled from its mipmaps, trilinearly (MipmappedImageView).
+                    bool mipmapped = _highQualityScaling && !_nearestScaling && img.SourceVisual is null && img.External is null
+                                     && img.PixelWidth > 1 && img.PixelHeight > 1;
+                    IntPtr sampler = _nearestScaling ? NearestSampler() : mipmapped ? TrilinearSampler() : LinearSampler();
                     // A WPF bitmap drawn into a RenderTargetBitmap is filtered as milcore's software
                     // rasterizer filters it (fs_textured_wpf); not in linear-light mode, whose sRGB
                     // textures load decoded. A window is not: stock draws it on the GPU (tier 2).
-                    kind = img.WpfFilter && MilcoreBitmapFilter && img.SourceVisual is null && !_nearestScaling && !_srgbOutput ? FillKind.TexturedWpf : FillKind.Textured;
+                    kind = img.WpfFilter && MilcoreBitmapFilter && img.SourceVisual is null && !_nearestScaling && !mipmapped && !_srgbOutput ? FillKind.TexturedWpf : FillKind.Textured;
                     if (kind == FillKind.TexturedWpf) MilcoreFilterDraws++;
                     if (img.SourceVisual is null)
                     {
@@ -4057,7 +4106,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                         else
                         {
-                            view = GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+                            view = mipmapped ? MipmappedImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight)
+                                             : GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
                             bindGroup = ImageBindGroup(format, view, sampler, _srcCopy, kind);   // owned by the image cache
                         }
                     }
@@ -4714,7 +4764,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // Subpixel text is a DIFFERENT MASK of the same shape -- three channels instead of
                 // one -- so it needs its own key, or a run drawn once with ClearType and once without
                 // (a rotated copy, a layered window) would be handed the other one's texture.
-                bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world) && !_biLevelForRun;
+                // (not under TextRenderingMode Grayscale or Aliased: the run is grey, or in-or-out)
+                bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world) && !_biLevelForRun
+                                && _textRenderingMode is 0 or 3;
                 bool biLevel = isGlyph && _biLevelForRun && IsAxisAligned(world);
                 // The ROW COUNT is part of the mask, not merely the fact of smoothing: two
                 // runs of the same shape either side of the gridfit boundary ask for
@@ -7099,6 +7151,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private bool _srcCopy;
         private bool _aliasedEdges;
         private bool _nearestScaling;
+        // RenderOptions.BitmapScalingMode=HighQuality on the visual being drawn or one above it: images from mipmaps
+        private bool _highQualityScaling;
+        // TextOptions.TextRenderingMode in force (SceneVisual.TextRenderingMode): 0 none set, 1 Aliased, 2 Grayscale, 3 ClearType
+        private byte _textRenderingMode;
 
         private readonly List<float> _bandScratch = new();
 
@@ -7933,7 +7989,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Texture uploads staged during scene collection (CreateTexture) and flushed as
         // CopyBufferToTexture into the frame's single command encoder (FlushPendingTexUploads),
         // so they add ZERO command buffers — see the note on CreateTexture.
-        private struct PendingTexUpload { public int StagingOffset; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; public int OriginX, OriginY; }
+        private struct PendingTexUpload { public int StagingOffset; public IntPtr Texture; public int Width; public int Height; public int BytesPerRow; public int OriginX, OriginY; public int MipLevel; }
         private readonly List<PendingTexUpload> _pendingTexUploads = new();
 
         // Frame-shared texture-upload staging: all this frame's texture pixels (gradient ramps, images,
@@ -7968,7 +8024,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     layout = new WGPUTexelCopyBufferLayout { offset = (ulong)u.StagingOffset, bytesPerRow = (uint)u.BytesPerRow, rowsPerImage = (uint)u.Height },
                     buffer = staging,
                 };
-                var dst = new WGPUTexelCopyTextureInfo { texture = u.Texture, aspect = WGPUTextureAspect.All, origin = new WGPUOrigin3D { x = (uint)u.OriginX, y = (uint)u.OriginY } };
+                var dst = new WGPUTexelCopyTextureInfo { texture = u.Texture, mipLevel = (uint)u.MipLevel, aspect = WGPUTextureAspect.All, origin = new WGPUOrigin3D { x = (uint)u.OriginX, y = (uint)u.OriginY } };
                 var size = new WGPUExtent3D { width = (uint)u.Width, height = (uint)u.Height, depthOrArrayLayers = 1 };
                 wgpuCommandEncoderCopyBufferToTexture(encoder, &src, &dst, &size);
             }
@@ -7999,12 +8055,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             return wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
         }
 
-        private void UploadTexture(IntPtr texture, byte[] pixels, int width, int height, int bytesPerPixel)
+        private void UploadTexture(IntPtr texture, byte[] pixels, int width, int height, int bytesPerPixel, int mipLevel = 0)
         {
 #if WGPU_BROWSER
             // The browser's JS WebGPU backend has no Metal command-buffer accounting problem;
             // queue.writeTexture is simplest and mapped ranges can't be marshaled to JS.
-            var dest = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All };
+            var dest = new WGPUTexelCopyTextureInfo { texture = texture, mipLevel = (uint)mipLevel, aspect = WGPUTextureAspect.All };
             var layout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)(width * bytesPerPixel), rowsPerImage = (uint)height };
             var writeSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
             fixed (byte* p = pixels)
@@ -8019,7 +8075,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             if (_ctx.IsOpenGL)
             {
                 _ctx.ResetGlUnpack();      // a device shared with the Direct3D shim (WgpuContext.GlUnpackSuspect)
-                var glDest = new WGPUTexelCopyTextureInfo { texture = texture, aspect = WGPUTextureAspect.All };
+                var glDest = new WGPUTexelCopyTextureInfo { texture = texture, mipLevel = (uint)mipLevel, aspect = WGPUTextureAspect.All };
                 var glLayout = new WGPUTexelCopyBufferLayout { offset = 0, bytesPerRow = (uint)(width * bytesPerPixel), rowsPerImage = (uint)height };
                 var glSize = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 };
                 fixed (byte* p = pixels)
@@ -8047,7 +8103,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     Buffer.BlockCopy(pixels, r * unpaddedBpr, staging, r * alignedBpr, unpaddedBpr);
             }
             int soff = AllocTexStaging(staging, alignedBpr * height);
-            _pendingTexUploads.Add(new PendingTexUpload { StagingOffset = soff, Texture = texture, Width = width, Height = height, BytesPerRow = alignedBpr });
+            _pendingTexUploads.Add(new PendingTexUpload { StagingOffset = soff, Texture = texture, Width = width, Height = height, BytesPerRow = alignedBpr, MipLevel = mipLevel });
 #endif
         }
 
@@ -8074,6 +8130,67 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var (tex, view) = CreateImageTexture(rgba, width, height);
             _imgCache[key] = (tex, view, _frameId);
             return view;
+        }
+
+        // An image with its mip chain (BitmapScalingMode HighQuality), cached like the plain one by its pixel array.
+        private readonly Dictionary<(byte[] Rgba, bool Srgb), (IntPtr Tex, IntPtr View, long LastFrame)> _mipCache = new(ImgKeyComparer.Instance);
+
+        /// <summary>The image as a texture with every mip level, each the 2 x 2 average of the one above, weighted
+        /// by alpha (a transparent pixel's colour does not bleed in). Caller must NOT release the returned view.</summary>
+        private IntPtr MipmappedImageView(byte[] rgba, int width, int height)
+        {
+            var key = (rgba, _srgbOutput);
+            if (_mipCache.TryGetValue(key, out (IntPtr Tex, IntPtr View, long LastFrame) e))
+            {
+                _mipCache[key] = (e.Tex, e.View, _frameId);
+                return e.View;
+            }
+            int levels = 1;
+            for (int s = Math.Max(width, height); s > 1; s >>= 1) levels++;
+            PerfTextures++;
+            var texDesc = new WGPUTextureDescriptor
+            {
+                usage = WGPUTextureUsage.TextureBinding | WGPUTextureUsage.CopyDst,
+                dimension = WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = (uint)width, height = (uint)height, depthOrArrayLayers = 1 },
+                format = _srgbOutput ? WGPUTextureFormat.RGBA8UnormSrgb : WGPUTextureFormat.RGBA8Unorm,
+                mipLevelCount = (uint)levels,
+                sampleCount = 1,
+            };
+            IntPtr tex = wgpuDeviceCreateTexture(_ctx.Device, &texDesc);
+            byte[] level = rgba;
+            int w = width, h = height;
+            for (int l = 0; l < levels; l++)
+            {
+                UploadTexture(tex, level, w, h, 4, l);
+                if (l + 1 < levels) (level, w, h) = HalveRgba(level, w, h);
+            }
+            IntPtr view = wgpuTextureCreateView(tex, IntPtr.Zero);
+            _mipCache[key] = (tex, view, _frameId);
+            return view;
+        }
+
+        /// <summary>The next mip level: each pixel the average of the (up to) 2 x 2 above it, colour weighted by alpha.</summary>
+        internal static (byte[] Rgba, int Width, int Height) HalveRgba(byte[] src, int w, int h)
+        {
+            int nw = Math.Max(1, w >> 1), nh = Math.Max(1, h >> 1);
+            var dst = new byte[nw * nh * 4];
+            for (int y = 0; y < nh; y++)
+                for (int x = 0; x < nw; x++)
+                {
+                    int r = 0, g = 0, b = 0, a = 0, n = 0;
+                    for (int dy = 0; dy < 2; dy++)
+                        for (int dx = 0; dx < 2; dx++)
+                        {
+                            int sx = Math.Min(2 * x + dx, w - 1), sy = Math.Min(2 * y + dy, h - 1);
+                            int o = (sy * w + sx) * 4, pa = src[o + 3];
+                            r += src[o] * pa; g += src[o + 1] * pa; b += src[o + 2] * pa; a += pa; n++;
+                        }
+                    int d = (y * nw + x) * 4;
+                    if (a > 0) { dst[d] = (byte)((r + a / 2) / a); dst[d + 1] = (byte)((g + a / 2) / a); dst[d + 2] = (byte)((b + a / 2) / a); }
+                    dst[d + 3] = (byte)((a + n / 2) / n);
+                }
+            return (dst, nw, nh);
         }
 
         // Cached brush-param uniform buffer, keyed by its bytes (small, 64B). Caller must NOT release it.
@@ -8711,9 +8828,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private IntPtr LinearSampler() => _linearSampler != IntPtr.Zero ? _linearSampler : (_linearSampler = CreateSampler(WGPUFilterMode.Linear));
+        private IntPtr TrilinearSampler() => _trilinearSampler != IntPtr.Zero ? _trilinearSampler : (_trilinearSampler = CreateSampler(WGPUFilterMode.Linear, WGPUMipmapFilterMode.Linear));
+        private IntPtr _trilinearSampler;
         private IntPtr NearestSampler() => _nearestSampler != IntPtr.Zero ? _nearestSampler : (_nearestSampler = CreateSampler(WGPUFilterMode.Nearest));
 
-        private IntPtr CreateSampler(WGPUFilterMode filter)
+        private IntPtr CreateSampler(WGPUFilterMode filter, WGPUMipmapFilterMode mipmapFilter = WGPUMipmapFilterMode.Nearest)
         {
             var desc = new WGPUSamplerDescriptor
             {
@@ -8722,7 +8841,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 addressModeW = WGPUAddressMode.ClampToEdge,
                 magFilter = filter,
                 minFilter = filter,
-                mipmapFilter = WGPUMipmapFilterMode.Nearest,
+                mipmapFilter = mipmapFilter,
                 lodMinClamp = 0f,
                 lodMaxClamp = 32f,
                 compare = WGPUCompareFunction.Undefined,

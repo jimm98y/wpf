@@ -133,6 +133,68 @@ namespace WgpuInterop.Tests.Protocol
             byte[] px = RenderClipped(MilCmd.EllipseGeometry(6, 8, 8, 16, 16), 6);
             new Image(px, W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
         }
+
+        /// <summary>A clip that is a combination of shapes no one path stands for (an ellipse cut out of a
+        /// rectangle, two ellipses' overlap) masks to that combination. It was clipped to the pair's bounds:
+        /// the hole was painted and the overlap was a box.</summary>
+        [Theory]
+        [InlineData(false, 20, 20, 255, 255, 255, "the cut-out ellipse is not painted")]
+        [InlineData(false, 4, 4, 255, 0, 0, "the rectangle round it is")]
+        [InlineData(true, 20, 20, 255, 255, 255, "through the hosted-scene mirror, the hole too")]
+        [InlineData(true, 4, 4, 255, 0, 0, "...and the rectangle round it")]
+        public void ARectangleWithAnEllipseExcluded_ClipsToTheRingAroundIt(bool mirrored, int x, int y, int r, int g, int b, string what)
+        {
+            var engine = new MilcoreEngine();
+            engine.CreateOrAddRef(2, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(3, 1, 0, 0, 1));
+            engine.SubmitCommand(MilCmd.RectangleGeometry(6, 0, 0, 40, 40));
+            engine.SubmitCommand(MilCmd.EllipseGeometry(7, 10, 10, 20, 20));
+            engine.SubmitCommand(MilCmd.CombinedGeometry(4, 3 /* Exclude */, 6, 7));
+            SceneVisual root = Realize(engine, MilCmd.DrawRectangleRecord(3, 0, 0, 0, 40, 40), hVisual: 2, hContent: 5);
+            engine.SubmitCommand(MilCmd.VisualSetClip(2, 4));
+            engine.Realize();
+            root = engine.VisualByHandle(2)!;
+            if (mirrored) root = new SceneMirror().Snapshot(root);
+            new Image(NewRenderer().RenderToRgba(root, W, H, White), W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
+        }
+
+        [Fact]
+        public void ACombinedClip_SurvivesTheProtocolRoundTrip()
+        {
+            var root = new SceneVisual();
+            var v = new SceneVisual();
+            v.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, 0, 40, 40)), RgbaColor.FromBytes(255, 0, 0, 255)));
+            var shape = new CombinedGeometry(GeometryCombineMode.Exclude, new RectangleGeometry(new Rect(0, 0, 40, 40)),
+                                             new EllipseGeometry(new System.Numerics.Vector2(20, 20), 10, 10));
+            var box = new PathFigure(new System.Numerics.Vector2(0, 0)) { Closed = true };
+            box.Segments.Add(new LineSegment(new System.Numerics.Vector2(40, 0)));
+            box.Segments.Add(new LineSegment(new System.Numerics.Vector2(40, 40)));
+            box.Segments.Add(new LineSegment(new System.Numerics.Vector2(0, 40)));
+            v.ClipGeometry = new PathGeometry(FillRule.NonZero, new System.Collections.Generic.List<PathFigure> { box });
+            v.ClipShape = shape;
+            root.Children.Add(v);
+            AssertProtocolRoundTripIsIdentical(root, W, H);
+        }
+
+        [Theory]
+        [InlineData(20, 20, 255, 0, 0, "the overlap of the two ellipses is painted")]
+        [InlineData(13, 20, 255, 255, 255, "the left ellipse alone is not")]
+        [InlineData(27, 20, 255, 255, 255, "nor the right one alone")]
+        [InlineData(20, 11, 255, 255, 255, "nor the rest of the pair's box")]
+        public void TwoEllipsesIntersected_ClipToTheirOverlap(int x, int y, int r, int g, int b, string what)
+        {
+            var engine = new MilcoreEngine();
+            engine.CreateOrAddRef(2, MilResourceTypeId.Visual);
+            engine.SubmitCommand(MilCmd.SolidColorBrush(3, 1, 0, 0, 1));
+            engine.SubmitCommand(MilCmd.EllipseGeometry(6, 9, 9, 15, 20));
+            engine.SubmitCommand(MilCmd.EllipseGeometry(7, 9, 9, 25, 20));
+            engine.SubmitCommand(MilCmd.CombinedGeometry(4, 1 /* Intersect */, 6, 7));
+            SceneVisual root = Realize(engine, MilCmd.DrawRectangleRecord(3, 0, 0, 0, 40, 40), hVisual: 2, hContent: 5);
+            engine.SubmitCommand(MilCmd.VisualSetClip(2, 4));
+            engine.Realize();
+            root = engine.VisualByHandle(2)!;
+            new Image(NewRenderer().RenderToRgba(root, W, H, White), W, H).AssertPixel(x, y, r, g, b, tol: 6, what);
+        }
     }
 
     /// <summary>

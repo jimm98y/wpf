@@ -39,6 +39,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         VisualSetEffect = 9,  // MILCMD_VISUAL_SETEFFECT
         VisualSetClipGeometry = 10, // MILCMD_VISUAL_SETCLIP (geometry)
         VisualSetOpacityMask = 11,  // MILCMD_VISUAL_SETOPACITYMASK
+        VisualSetClipShape = 12,    // the clip as a combination of shapes (SceneVisual.ClipShape)
     }
 
     /// <summary>Effect discriminator carried by VisualSetEffect.</summary>

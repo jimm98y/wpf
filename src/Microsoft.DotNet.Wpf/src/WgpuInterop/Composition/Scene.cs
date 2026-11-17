@@ -889,6 +889,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public PathGeometry? ClipGeometry { get; set; }
 
+        /// <summary>The clip when it is a combination of shapes (CombinedGeometry) no single path stands for: what the
+        /// clip mask is made of. <see cref="ClipGeometry"/> is then its bounds, which is what everything else that
+        /// asks where the clip is (damage, hit testing, layer regions) reads.</summary>
+        public CombinedGeometry? ClipShape { get; set; }
+
         /// <summary><see cref="Clip"/> as a geometry while the visual is drawn rotated or skewed, where a
         /// rectangle is no longer one on the device (the renderer sets it each frame it draws the visual).</summary>
         internal PathGeometry? TurnedClip;
@@ -946,6 +951,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// is the whole point when magnifying pixel art.
         /// </summary>
         public bool NearestBitmapScaling { get; set; }
+
+        /// <summary>
+        /// RenderOptions.BitmapScalingMode == HighQuality (Fant): an image drawn smaller than it is is sampled from
+        /// its mipmaps, trilinearly, as milcore's hardware path samples it -- not bilinearly from the full image,
+        /// which skips most of its pixels and shimmers.
+        /// </summary>
+        public bool HighQualityBitmapScaling { get; set; }
+
+        /// <summary>
+        /// TextOptions.TextRenderingMode set on this visual: 0 not set (the one above it, or ClearType where it can),
+        /// 1 Aliased, 2 Grayscale, 3 ClearType. Inherited by the subtree; the innermost one set wins.
+        /// </summary>
+        public byte TextRenderingMode { get; set; }
 
         /// <summary>
         /// Pixel-snapping guidelines in this visual's LOCAL space (WPF's GuidelineSet, sent as

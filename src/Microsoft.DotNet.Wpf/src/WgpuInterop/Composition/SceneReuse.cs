@@ -75,10 +75,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
         private static bool SameState(SceneVisual a, SceneVisual b)
             => a.Id == b.Id && a.Offset == b.Offset && a.Transform == b.Transform && a.Opacity == b.Opacity
-            && SameRect(a.Clip, b.Clip) && SameGeometry(a.ClipGeometry, b.ClipGeometry)
+            && SameRect(a.Clip, b.Clip) && SameGeometry(a.ClipGeometry, b.ClipGeometry) && SameGeometry(a.ClipShape, b.ClipShape)
             && ReferenceEquals(a.Effect, b.Effect) && SameBrush(a.OpacityMask, b.OpacityMask)
             && a.BitmapCached == b.BitmapCached && SameSnapshot(a.Snapshot, b.Snapshot)
-            && a.AliasedEdges == b.AliasedEdges && a.NearestBitmapScaling == b.NearestBitmapScaling
+            && a.AliasedEdges == b.AliasedEdges && a.NearestBitmapScaling == b.NearestBitmapScaling && a.HighQualityBitmapScaling == b.HighQualityBitmapScaling && a.TextRenderingMode == b.TextRenderingMode
             && SameFloats(a.GuidelinesX, b.GuidelinesX) && SameFloats(a.GuidelinesY, b.GuidelinesY);
 
         private static bool SameSnapshot(SceneSnapshot? a, SceneSnapshot? b)

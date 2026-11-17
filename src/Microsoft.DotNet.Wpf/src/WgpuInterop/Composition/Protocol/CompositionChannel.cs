@@ -118,6 +118,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             VisualSetClip(handle, visual.Clip);
             if (visual.ClipGeometry is { } clipGeometry)
                 VisualSetClipGeometry(handle, clipGeometry);
+            if (visual.ClipShape is { } clipShape)
+                _writer.Record(MilCommand.VisualSetClipShape, w => { w.U32(handle); WriteGeometry(w, clipShape); });
             if (visual.OpacityMask is { } opacityMask)
                 VisualSetOpacityMask(handle, opacityMask);
             if (visual.Effect is { } effect)
