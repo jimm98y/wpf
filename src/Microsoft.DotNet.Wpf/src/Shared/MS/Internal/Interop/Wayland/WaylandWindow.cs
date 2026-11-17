@@ -1398,6 +1398,36 @@ namespace MS.Internal.Interop.Wayland
             return IntPtr.Zero;
         }
 
+        /// <summary>Shows or updates a notification-area icon (StatusNotifierItem): straight BGRA pixels, a tooltip.</summary>
+        public static bool TrayShow(int id, string title, string tip, byte[]? bgra, int width, int height)
+            => StatusNotifierItem.Show(id, title, tip, bgra, width, height);
+
+        /// <summary>Takes a notification-area icon away.</summary>
+        public static void TrayRemove(int id) => StatusNotifierItem.Remove(id);
+
+        /// <summary>A notification-area icon was clicked: (id, 1 primary / 2 context menu / 3 middle / 4 scroll, x, y).</summary>
+        public static event Action<int, int, int, int> TrayClicked
+        {
+            add => StatusNotifierItem.Clicked += value;
+            remove => StatusNotifierItem.Clicked -= value;
+        }
+
+        /// <summary>Where a notification-area icon's menu comes from, asked as the panel shows it: item i (id i + 1)
+        /// under parents[i] (0 the menu), with labels[i] and flags[i] (1 enabled, 2 visible, 4 separator, 8 check box,
+        /// 16 checked); null for no menu.</summary>
+        public static Func<int, bool, (int[] Parents, string[] Labels, int[] Flags)?>? TrayMenuProvider
+        {
+            get => StatusNotifierItem.MenuProvider;
+            set => StatusNotifierItem.MenuProvider = value;
+        }
+
+        /// <summary>An item of a notification-area icon's menu was chosen: (icon id, item id).</summary>
+        public static event Action<int, int> TrayMenuItemClicked
+        {
+            add => StatusNotifierItem.MenuItemClicked += value;
+            remove => StatusNotifierItem.MenuItemClicked -= value;
+        }
+
         /// <summary>The monitors as the compositor places them: (x, y, width, height, scale) each, logical pixels.</summary>
         public static int[] GetScreensLogical() => WaylandDisplay.OutputsLogical();
 

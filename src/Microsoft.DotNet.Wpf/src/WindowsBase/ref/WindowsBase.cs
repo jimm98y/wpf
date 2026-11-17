@@ -851,6 +851,11 @@ namespace MS.Internal.Interop.Wayland
         public static bool CapsLockOn { get { throw null; } }
         public void SetInputRegion(int[] rects) { }
         public static int[] GetScreensLogical() { throw null; }
+        public static bool TrayShow(int id, string title, string tip, byte[] bgra, int width, int height) { throw null; }
+        public static void TrayRemove(int id) { }
+        public static System.Func<int, bool, (int[] Parents, string[] Labels, int[] Flags)?> TrayMenuProvider { get { throw null; } set { } }
+        public static event System.Action<int, int> TrayMenuItemClicked { add { } remove { } }
+        public static event System.Action<int, int, int, int> TrayClicked { add { } remove { } }
         public static event System.Action ScreensChanged { add { } remove { } }
         public static bool NumLockOn { get { throw null; } }
         public static bool ClaimUiThread() { throw null; }

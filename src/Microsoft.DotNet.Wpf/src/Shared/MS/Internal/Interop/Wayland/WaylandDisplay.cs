@@ -598,7 +598,7 @@ namespace MS.Internal.Interop.Wayland
             Wl.wl_display_flush(Display);
 
             int n;
-            PollFd* fds = stackalloc PollFd[3];
+            PollFd* fds = stackalloc PollFd[4];
             fds[0].fd = Wl.wl_display_get_fd(Display);
             fds[0].events = POLLIN;
             nuint count = 1;
@@ -617,6 +617,15 @@ namespace MS.Internal.Interop.Wayland
             if (a11yFd >= 0)
             {
                 fds[count].fd = a11yFd;
+                fds[count].events = POLLIN;
+                count++;
+            }
+
+            // the notification-area icons' bus: a panel asks an idle application for its icon and tells it of clicks
+            int trayFd = StatusNotifierItem.Fd;
+            if (trayFd >= 0)
+            {
+                fds[count].fd = trayFd;
                 fds[count].events = POLLIN;
                 count++;
             }
@@ -643,6 +652,7 @@ namespace MS.Internal.Interop.Wayland
             // fd is quiet while a message sits undispatched. Draining costs one non-blocking read
             // when there is nothing to do, the same as the session bus below.
             AtSpiBridge.Pump();
+            StatusNotifierItem.Pump();
 
             Wl.wl_display_dispatch_pending(Display);
             if (Decor != IntPtr.Zero) WlDecor.libdecor_dispatch(Decor, 0);

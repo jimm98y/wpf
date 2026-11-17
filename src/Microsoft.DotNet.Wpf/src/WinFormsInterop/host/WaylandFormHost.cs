@@ -71,8 +71,130 @@ namespace System.Windows.Forms
 		{
 			XplatUIWebGpu.ScreensProvider ??= OutputScreens;
 
+			// notification-area icons (NotifyIcon): StatusNotifierItems, which the panel shows
+			XplatUIWebGpu.SystrayAdded ??= (h, tip, icon) => TrayShow (h, tip, icon);
+			XplatUIWebGpu.SystrayChanged ??= (h, tip, icon) => TrayShow (h, tip, icon);
+			XplatUIWebGpu.SystrayRemoved ??= h => { if (s_trayIds.Remove (h, out int id)) WaylandWindow.TrayRemove (id); };
 			// the lock keys as the compositor reports the keyboard
 			XplatUIWebGpu.KeyLockedProvider ??= vk => vk == 0x14 ? WaylandWindow.CapsLockOn : vk == 0x90 ? WaylandWindow.NumLockOn : null;
+		}
+
+		// ---- notification-area icons ----------------------------------------------------------------
+
+		private static readonly Dictionary<IntPtr, int> s_trayIds = new Dictionary<IntPtr, int> ();
+		private static int s_nextTrayId;
+		private static bool s_trayClicks;
+
+		/// <summary>A NotifyIcon shown, or changed: its icon at the size the panel draws (Shell_NotifyIcon on Windows).</summary>
+		private static bool TrayShow (IntPtr window, string tip, Icon icon)
+		{
+			if (!s_trayClicks) {
+				s_trayClicks = true;
+				WaylandWindow.TrayClicked += OnTrayClicked;
+				WaylandWindow.TrayMenuProvider = TrayMenu;
+				WaylandWindow.TrayMenuItemClicked += OnTrayMenuItem;
+			}
+			if (!s_trayIds.TryGetValue (window, out int id))
+				s_trayIds [window] = id = ++s_nextTrayId;
+			byte[] bgra = null;
+			int w = 0, h = 0;
+			if (icon != null) {
+				try {
+					using Bitmap bmp = icon.ToBitmap ();
+					w = bmp.Width; h = bmp.Height;
+					var data = bmp.LockBits (new Rectangle (0, 0, w, h), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+					try {
+						bgra = new byte [w * h * 4];
+						for (int y = 0; y < h; y++)
+							System.Runtime.InteropServices.Marshal.Copy (data.Scan0 + y * data.Stride, bgra, y * w * 4, w * 4);
+					} finally { bmp.UnlockBits (data); }
+				} catch (Exception) { bgra = null; }
+			}
+			string title = System.Reflection.Assembly.GetEntryAssembly ()?.GetName ().Name ?? "";
+			return WaylandWindow.TrayShow (id, title, tip ?? "", bgra, w, h);
+		}
+
+		/// <summary>The panel says an icon was clicked: the messages Windows' shell sends the icon's window (its callback
+		/// message with the mouse message in lParam) -- a press and a release, of the left button for a primary click,
+		/// of the right for the context menu, of the middle one for a middle click.</summary>
+		private static void OnTrayClicked (int id, int what, int x, int y)
+		{
+			IntPtr window = IntPtr.Zero;
+			foreach (KeyValuePair<IntPtr, int> kv in s_trayIds)
+				if (kv.Value == id) { window = kv.Key; break; }
+			if (window == IntPtr.Zero) return;
+			const int WM_USER = 0x0400, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205,
+				WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208;
+			int[] sequence = what switch {
+				1 => new[] { WM_LBUTTONDOWN, WM_LBUTTONUP },
+				2 => new[] { WM_RBUTTONDOWN, WM_RBUTTONUP },
+				3 => new[] { WM_MBUTTONDOWN, WM_MBUTTONUP },
+				_ => Array.Empty<int> (),
+			};
+			foreach (int m in sequence) XplatUI.PostMessage (window, (Msg)WM_USER, IntPtr.Zero, (IntPtr)m);
+		}
+
+		// the menu items each icon's menu was last given as, by item id
+		private static readonly Dictionary<int, List<ToolStripItem>> s_trayMenuItems = new Dictionary<int, List<ToolStripItem>> ();
+
+		private static IntPtr TrayWindow (int id)
+		{
+			foreach (KeyValuePair<IntPtr, int> kv in s_trayIds)
+				if (kv.Value == id) return kv.Key;
+			return IntPtr.Zero;
+		}
+
+		/// <summary>
+		/// A NotifyIcon's ContextMenuStrip as the panel shows it: on Windows the icon's window gets the right click and
+		/// shows the strip; GNOME's panel opens a menu the application publishes instead (dbusmenu), with no right
+		/// click reaching the application. So the strip's items are that menu -- its Opening raised first, as the strip
+		/// would raise it, for an application that fills it then -- and choosing one clicks it.
+		/// </summary>
+		private static (int[] Parents, string[] Labels, int[] Flags)? TrayMenu (int id, bool opening)
+		{
+			Control window = Control.FromHandle (TrayWindow (id));
+			ContextMenuStrip strip = window?.ContextMenuStrip;
+			if (strip == null || strip.IsDisposed)
+				return null;
+			if (strip.InvokeRequired)
+				return ((int[], string[], int[])?)strip.Invoke ((Func<(int[], string[], int[])?>)(() => TrayMenu (id, opening)));
+			if (opening) try {
+				typeof (ToolStripDropDown).GetMethod ("OnOpening", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+					?.Invoke (strip, new object [] { new System.ComponentModel.CancelEventArgs () });
+			} catch (Exception) { }
+			var items = new List<ToolStripItem> ();
+			var parents = new List<int> ();
+			var labels = new List<string> ();
+			var flags = new List<int> ();
+			void Walk (ToolStripItemCollection collection, int parent)
+			{
+				foreach (ToolStripItem item in collection) {
+					items.Add (item);
+					int me = items.Count;
+					parents.Add (parent);
+					labels.Add (item.Text ?? "");
+					int f = (item.Enabled ? 1 : 0) | (item.Available ? 2 : 0) | (item is ToolStripSeparator ? 4 : 0);
+					if (item is ToolStripMenuItem mi) {
+						if (mi.CheckOnClick || mi.Checked) f |= 8;
+						if (mi.Checked) f |= 16;
+						if (mi.HasDropDownItems) Walk (mi.DropDownItems, me);
+					}
+					flags.Add (f);
+				}
+			}
+			Walk (strip.Items, 0);
+			s_trayMenuItems [id] = items;
+			return (parents.ToArray (), labels.ToArray (), flags.ToArray ());
+		}
+
+		private static void OnTrayMenuItem (int id, int itemId)
+		{
+			if (!s_trayMenuItems.TryGetValue (id, out List<ToolStripItem> items) || itemId < 1 || itemId > items.Count)
+				return;
+			ToolStripItem item = items [itemId - 1];
+			if (item.IsDisposed) return;
+			if (item.Owner != null && item.Owner.InvokeRequired) item.Owner.BeginInvoke ((Action)item.PerformClick);
+			else item.PerformClick ();
 		}
 
 		private static string s_screensKey;
