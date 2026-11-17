@@ -338,6 +338,8 @@ namespace System.Windows.Forms
 
 		// ---- present -------------------------------------------------------------------------
 
+		private bool _looked;	// the surface carries the form's look (WgpuPresenter.ApplyFormLook)
+
 		public void Present ()
 		{
 			if (_wgpu == null || _closed)
@@ -376,6 +378,18 @@ namespace System.Windows.Forms
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;
 			// a headset's window -- an XR host's, a WebXR session's -- shown to the two eyes apart (WgpuPresenter.Stereo)
 			_wgpu.Stereo = NativePlatform.IsStereoWindow (_window.Handle);
+			// the form's Region, Opacity and TransparencyKey, which no window of this host's has: drawn into the surface
+			bool look = _wgpu.ApplyFormLook (_form, 0, 0);
+			if (look != _looked) {
+				_looked = look;
+				if (look)
+					_wgpu.SetTransparent (true);
+				else if (!_chrome.HasFrame) {
+					_wgpu.SetTransparent (false);
+					Color bc = _form.BackColor;
+					_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+				}
+			}
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, needW, needH);
 			if (s_trace && (_traced++ < 6 || scenes.Count != _tracedScenes)) {
 				_tracedScenes = scenes.Count;

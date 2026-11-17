@@ -211,6 +211,29 @@ namespace WgpuInterop.Tests.Protocol
                 $"the background outside the effected subtree should be unchanged, was {outside}");
         }
 
+        /// <summary>A colour key (Form.TransparencyKey): pixels of the key's colour are not there, the rest are.</summary>
+        [Fact]
+        public void ColorKey_TakesOutTheKeyColourOnly()
+        {
+            const int S = 64;
+            var root = new SceneVisual();
+            var keyed = new SceneVisual { Effect = ColorKey.Effect(0, 255, 0) };
+            keyed.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(0, 0, 64, 64)), RgbaColor.FromBytes(0, 255, 0, 255)));
+            keyed.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(8, 8, 16, 16)), RgbaColor.FromBytes(255, 0, 0, 255)));
+            root.Children.Add(keyed);
+
+            var img = new Image(Render(root, S, S, RgbaColor.FromBytes(0, 0, 128, 255)), S, S);
+            Rgb lime = img[48, 48], red = img[16, 16];
+            Assert.True(lime.G < 40 && lime.B > 90, $"the key colour should show what is behind it, was {lime}");
+            Assert.True(red.R > 200 && red.G < 40, $"other colours stay, was {red}");
+
+            // on a see-through surface (a layered window's): the key is clear, the rest opaque
+            byte[] clear = Render(root, S, S, RgbaColor.FromBytes(0, 0, 0, 0));
+            int Alpha(int x, int y) => clear[(y * S + x) * 4 + 3];
+            Assert.True(Alpha(48, 48) < 10, $"the key colour should be clear, alpha {Alpha(48, 48)}");
+            Assert.True(Alpha(16, 16) > 245, $"the rest stays opaque, alpha {Alpha(16, 16)}");
+        }
+
         /// <summary>
         /// s0 is WPF's ImplicitInputBrush (the content the effect is applied to) and s1 is a second
         /// image. Multi-input effects -- transitions, masks, blends -- were declined outright before

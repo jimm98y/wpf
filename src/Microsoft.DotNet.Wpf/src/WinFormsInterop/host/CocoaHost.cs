@@ -639,6 +639,25 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         if (s_traceFrames) Console.WriteLine($"frame: '{_form.Text}' opacity {opacity}");
     }
 
+    // Form.TransparencyKey (LWA_COLORKEY): the key's colour see-through. The window has none of that kind, so the
+    // presenter keys it out of the picture (WgpuPresenter.WindowColorKey) and the window shows what is behind.
+    private System.Drawing.Color _appliedKey = System.Drawing.Color.Empty;
+
+    private void ApplyTransparencyKey()
+    {
+        if (_window == IntPtr.Zero || _wgpu == null) return;
+        System.Drawing.Color key = _form.TransparencyKey;
+        if (key == _appliedKey) return;
+        _appliedKey = key;
+        _wgpu.WindowColorKey = key.IsEmpty ? null : key;
+        if (!key.IsEmpty)
+        {
+            MakeTransparent(_window);
+            _wgpu.SetTransparent(true);
+        }
+        _lastVer = -1;
+    }
+
     private bool IsLayered()
     {
         Hwnd hwnd = _form.IsHandleCreated ? Hwnd.ObjectFromHandle(_form.Handle) : null;
@@ -805,7 +824,7 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         // threw ObjectDisposedException out of the message loop and took the application down.
         if (_form.IsDisposed || _form.Disposing)
             return;
-        if (!_offMain) { ApplyFormRegion(); ApplyFormOpacity(); }
+        if (!_offMain) { ApplyFormRegion(); ApplyFormOpacity(); ApplyTransparencyKey(); }
         if (_wgpu != null && _gpuRaster)
         {
             // Runtime DPI detection: re-read the window's backing scale each present; if it changed

@@ -930,10 +930,11 @@ namespace System.Windows.Forms
 				catch { scans = null; }
 			}
 			double opacity = Math.Clamp (_form.Opacity, 0.0, 1.0);
+			Color colorKey = _form.TransparencyKey;
 			// the region is the window's, frame and all; the surface shows the client area
 			Rectangle client = ClientScreen, bounds = _form.Bounds;
 			int fx = client.X - bounds.X, fy = client.Y - bounds.Y;
-			var key = new System.Text.StringBuilder ().Append (opacity).Append ('|').Append (fx).Append (',').Append (fy).Append ('|').Append (_k).Append ('|');
+			var key = new System.Text.StringBuilder ().Append (opacity).Append ('|').Append (colorKey.ToArgb ()).Append ('|').Append (fx).Append (',').Append (fy).Append ('|').Append (_k).Append ('|');
 			if (scans != null)
 				foreach (RectangleF r in scans) key.Append (r.X).Append (',').Append (r.Y).Append (',').Append (r.Width).Append (',').Append (r.Height).Append (';');
 			else key.Append ("none");
@@ -941,7 +942,8 @@ namespace System.Windows.Forms
 			if (k == _shapeKey)
 				return;
 			_shapeKey = k;
-			bool shaped = scans != null || opacity < 1.0;
+			bool shaped = scans != null || opacity < 1.0 || !colorKey.IsEmpty;
+			_wgpu.WindowColorKey = colorKey.IsEmpty ? null : colorKey;
 			if (shaped) {
 				_wgpu.SetTransparent (true);
 			} else if (!IsLayered ()) {

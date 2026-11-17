@@ -441,6 +441,14 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
         // the window's own opacity and shape (Form.Opacity, Form.Region), where the platform has no window of that
         // kind and the surface carries them in its alpha (SetTransparent)
+        if (WindowColorKey is System.Drawing.Color key)
+        {
+            // Form.TransparencyKey: where the window is that colour, it is not there (LWA_COLORKEY)
+            var keyed = new SceneVisual { Effect = ColorKeyEffect(key) };
+            foreach (SceneVisual child in root.Children) keyed.Children.Add(child);
+            root.Children.Clear();
+            root.Children.Add(keyed);
+        }
         if (WindowOpacity < 1f || WindowShape != null)
         {
             var shaped = new SceneVisual { Opacity = Math.Clamp(WindowOpacity, 0f, 1f), ClipGeometry = WindowShape };
@@ -531,6 +539,33 @@ internal sealed unsafe class WgpuPresenter : IDisposable
 
     /// <summary>The window's shape (Form.Region), in client units: nothing is drawn outside it.</summary>
     internal PathGeometry WindowShape;
+
+    /// <summary>The window's transparency key (Form.TransparencyKey): pixels of exactly that colour are see-through.</summary>
+    internal System.Drawing.Color? WindowColorKey;
+
+    private static ShaderEffectDef ColorKeyEffect(System.Drawing.Color key) => ColorKey.Effect(key.R, key.G, key.B);
+
+    /// <summary>A form's look where the platform has no window of that kind: its Region (window coordinates,
+    /// less <paramref name="originX"/>, <paramref name="originY"/> for where the surface starts), its Opacity and
+    /// its TransparencyKey, drawn into the surface. True when the surface needs its alpha for them.</summary>
+    internal bool ApplyFormLook(System.Windows.Forms.Form form, float originX, float originY)
+    {
+        RectangleF[] scans = null;
+        Region region = form.Region;
+        if (region != null)
+        {
+            try { using var identity = new System.Drawing.Drawing2D.Matrix(); scans = region.GetRegionScans(identity); }
+            catch { scans = null; }
+        }
+        if (scans != null)
+            for (int i = 0; i < scans.Length; i++)
+                scans[i] = new RectangleF(scans[i].X - originX, scans[i].Y - originY, scans[i].Width, scans[i].Height);
+        SetWindowShape(scans);
+        WindowOpacity = (float)Math.Clamp(form.Opacity, 0.0, 1.0);
+        System.Drawing.Color key = form.TransparencyKey;
+        WindowColorKey = key.IsEmpty ? null : key;
+        return scans != null || WindowOpacity < 1f || WindowColorKey != null;
+    }
 
     /// <summary>The window's shape as rectangles in client units (a region's scans); null for none.</summary>
     internal void SetWindowShape(IReadOnlyList<RectangleF> rects)

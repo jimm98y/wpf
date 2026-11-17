@@ -397,6 +397,8 @@ namespace System.Windows.Forms
 
 		// ---- present -------------------------------------------------------------------------
 
+		private bool _looked;	// the surface carries the form's look (WgpuPresenter.ApplyFormLook)
+
 		public void Present ()
 		{
 			if (_closed)
@@ -441,6 +443,18 @@ namespace System.Windows.Forms
 			}
 			Rectangle? caret = caretOn && _driver.GetCaret (_form.Handle, out int cx, out int cy, out int cw, out int ch)
 				? new Rectangle (cx - ox, cy - oy, Math.Max (1, cw), ch) : null;
+			// the form's Region, Opacity and TransparencyKey, which no window of this host's has: drawn into the surface
+			bool look = _wgpu.ApplyFormLook (_form, 0, 0);
+			if (look != _looked) {
+				_looked = look;
+				if (look)
+					_wgpu.SetTransparent (true);
+				else if (!_chrome.HasFrame) {
+					_wgpu.SetTransparent (false);
+					Color bc = _form.BackColor;
+					_wgpu.ClearColor = new RgbaColor (SrgbToLinear (bc.R / 255f), SrgbToLinear (bc.G / 255f), SrgbToLinear (bc.B / 255f), 1f);
+				}
+			}
 			_lastPresentOk = _wgpu.PresentScenes (scenes, caret, needW, needH);
 			if (s_trace && scenes.Count > 0)
 				Console.WriteLine ($"[ios form] '{_form.Text}' form={_form.Bounds} scale={_scale} surface={needW}x{needH} ok={_lastPresentOk} scenes={scenes.Count}");
