@@ -117,6 +117,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// supported subset -- never a partial or guessed translation.
         /// </summary>
         public static bool TryTranslate(ReadOnlySpan<byte> bytecode, out TranslatedShader result, out string reason)
+            => TryTranslate(bytecode, null, null, out result, out reason);
+
+        /// <summary>As above, with the effect's integer (i#: four each) and boolean (b#) constant registers.</summary>
+        public static bool TryTranslate(ReadOnlySpan<byte> bytecode, IReadOnlyDictionary<int, int[]>? ints,
+            IReadOnlyDictionary<int, bool>? bools, out TranslatedShader result, out string reason)
         {
             result = new TranslatedShader();
             reason = "";
@@ -146,6 +151,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             var body = new StringBuilder();
             var ctx = new Ctx();
+            // the effect's own integer and boolean constants (ShaderEffect's int and bool registers): what a defi or defb
+            // in the bytecode does not set itself, as D3D9 lets a shader's own definitions win
+            if (ints != null) foreach (KeyValuePair<int, int[]> kv in ints) ctx.Ints[kv.Key] = kv.Value;
+            if (bools != null) foreach (KeyValuePair<int, bool> kv in bools) ctx.Bools[kv.Key] = kv.Value;
             bool wroteOutput = false;
 
             int p = 1;

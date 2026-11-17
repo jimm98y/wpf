@@ -261,7 +261,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         private const uint FontTrailerMagic = 0x544E4657;
         private readonly Dictionary<uint, Effect> _effects = new();
         private readonly Dictionary<uint, byte[]> _pixelShaders = new();
-        private readonly Dictionary<uint, int> _shaderIds = new();
+        private readonly Dictionary<string, int> _shaderIds = new();
         private static int s_nextShaderId = 1;
 
         private static void SkipBytes(ref MilReader r, int count)
@@ -276,12 +276,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// unmodified, which is what milcore does with a shader it cannot compile, and is far
         /// better than dropping the content.
         /// </summary>
-        private Effect? BuildShaderEffect(uint hShader, int[] regIndices, float[] values, bool usesIntOrBool,
-            int[] samplerRegs, uint[] samplerHandles)
+        private Effect? BuildShaderEffect(uint hShader, int[] regIndices, float[] values,
+            Dictionary<int, int[]> ints, Dictionary<int, bool> bools, int[] samplerRegs, uint[] samplerHandles)
         {
-            if (usesIntOrBool) return null;
             if (!_pixelShaders.TryGetValue(hShader, out byte[]? code) || code.Length == 0) return null;
-            if (!D3D9ShaderTranslator.TryTranslate(code, out TranslatedShader tr, out _)) return null;
+            if (!D3D9ShaderTranslator.TryTranslate(code, ints, bools, out TranslatedShader tr, out _)) return null;
 
             int maxReg = -1;
             foreach (int i in regIndices) if (i > maxReg) maxReg = i;
@@ -294,11 +293,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Array.Copy(values, k * 4, packed, dst, 4);
             }
 
-            // One id per distinct PixelShader resource: the module and pipeline are cached on it.
-            if (!_shaderIds.TryGetValue(hShader, out int id))
+            // One id per distinct PixelShader resource and integer/boolean constants (they are literals in the WGSL):
+            // the module and pipeline are cached on it.
+            var key = new System.Text.StringBuilder().Append(hShader);
+            foreach (KeyValuePair<int, int[]> kv in ints) key.Append(";i").Append(kv.Key).Append('=').Append(string.Join(",", kv.Value));
+            foreach (KeyValuePair<int, bool> kv in bools) key.Append(";b").Append(kv.Key).Append('=').Append(kv.Value ? 1 : 0);
+            if (!_shaderIds.TryGetValue(key.ToString(), out int id))
             {
                 id = s_nextShaderId++;
-                _shaderIds[hShader] = id;
+                _shaderIds[key.ToString()] = id;
             }
             // Bind each sampler the shader reads: null means WPF's ImplicitInputBrush (the
             // effect's own input), anything else resolves to a real brush.
@@ -1405,7 +1408,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // hPixelShader@40, DdxUvDdyUvRegisterIndex@44, then eight payload sizes,
                     // then the payloads in that order.
                     uint h = r.U32();
-                    r.F64(); r.F64(); r.F64(); r.F64();        // top/bottom/left/right padding
+                    float padTop = (float)r.F64(), padBottom = (float)r.F64(), padLeft = (float)r.F64(), padRight = (float)r.F64();
                     uint hShader = r.U32();
                     r.U32();                                  // DdxUvDdyUvRegisterIndex
                     int floatRegBytes = (int)r.U32();
@@ -1424,8 +1427,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     for (int i = 0; i < floatCount; i++) regIndices[i] = r.U16();
                     var values = new float[floatCount * 4];
                     for (int i = 0; i < floatCount * 4 && floatValBytes >= 4; i++) values[i] = r.F32();
-                    // Int and bool register classes are unsupported; skip to the sampler payload.
-                    SkipBytes(ref r, intRegBytes + intValBytes + boolRegBytes + boolValBytes);
+                    // 3-6) int registers (Int16 indices, then four Int32 each) and bool registers (Int16 indices, then a
+                    // 4-byte BOOL each), as ShaderEffect marshals them
+                    var ints = new Dictionary<int, int[]>();
+                    int intCount = intRegBytes / 2;
+                    var intRegs = new int[intCount];
+                    for (int i = 0; i < intCount; i++) intRegs[i] = r.U16();
+                    for (int i = 0; i < intCount && intValBytes >= (i + 1) * 16; i++)
+                        ints[intRegs[i]] = new[] { (int)r.U32(), (int)r.U32(), (int)r.U32(), (int)r.U32() };
+                    var bools = new Dictionary<int, bool>();
+                    int boolCount = boolRegBytes / 2;
+                    var boolRegs = new int[boolCount];
+                    for (int i = 0; i < boolCount; i++) boolRegs[i] = r.U16();
+                    for (int i = 0; i < boolCount && boolValBytes >= (i + 1) * 4; i++)
+                        bools[boolRegs[i]] = r.U32() != 0;
 
                     // 7) sampler registration info: (registerIndex, samplingMode) per sampler.
                     int samplerCount = samplerInfoBytes / 8;
@@ -1435,8 +1450,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     var samplerHandles = new uint[samplerValBytes / 4];
                     for (int i = 0; i < samplerHandles.Length; i++) samplerHandles[i] = r.U32();
 
-                    _effects[h] = BuildShaderEffect(hShader, regIndices, values,
-                        intRegBytes + boolRegBytes > 0, samplerRegs, samplerHandles);
+                    _effects[h] = BuildShaderEffect(hShader, regIndices, values, ints, bools, samplerRegs, samplerHandles) is ShaderEffectDef built
+                        ? new ShaderEffectDef(built.ShaderId, built.Wgsl, built.FloatConstants, built.Samplers, built.SamplerBrushes)
+                          { PadLeft = padLeft, PadTop = padTop, PadRight = padRight, PadBottom = padBottom }
+                        : null;
                     break;
                 }
                 case Mil.BlurEffect:

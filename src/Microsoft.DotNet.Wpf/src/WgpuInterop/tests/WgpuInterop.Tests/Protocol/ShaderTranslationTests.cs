@@ -211,6 +211,29 @@ namespace WgpuInterop.Tests.Protocol
                 $"the background outside the effected subtree should be unchanged, was {outside}");
         }
 
+        /// <summary>ShaderEffect padding: the effect draws that far past its element, and only with it.</summary>
+        [Fact]
+        public void ShaderEffectPadding_LetsTheEffectDrawPastItsElement()
+        {
+            const int S = 64;
+            byte[] code = new Ps().Op(Ps.MOV, Dst.ColorOut(), Src.Const(0)).Build();   // red everywhere it may draw
+            Assert.True(D3D9ShaderTranslator.TryTranslate(code, out TranslatedShader tr, out string why), why);
+
+            Rgb Outside(float pad)
+            {
+                var def = new ShaderEffectDef(40 + (int)pad, tr.Wgsl, new[] { 1f, 0f, 0f, 1f }, tr.Samplers.ToArray())
+                    { PadLeft = pad, PadTop = pad, PadRight = pad, PadBottom = pad };
+                var root = new SceneVisual();
+                var child = new SceneVisual { Effect = def };
+                child.Content.Add(new GeometryFill(new RectangleGeometry(new Rect(24, 24, 16, 16)), RgbaColor.FromBytes(255, 255, 255, 255)));
+                root.Children.Add(child);
+                return new Image(Render(root, S, S, RgbaColor.FromBytes(0, 0, 128, 255)), S, S)[20, 32];   // 4 left of the square
+            }
+            Rgb padded = Outside(8), plain = Outside(0);
+            Assert.True(padded.R > 200 && padded.B < 60, $"with 8 of padding the effect reaches 4 past the element, was {padded}");
+            Assert.True(plain.R < 60 && plain.B > 90, $"without padding it stays inside, was {plain}");
+        }
+
         /// <summary>A colour key (Form.TransparencyKey): pixels of the key's colour are not there, the rest are.</summary>
         [Fact]
         public void ColorKey_TakesOutTheKeyColourOnly()

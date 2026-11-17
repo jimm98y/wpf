@@ -1812,6 +1812,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     : ContentDeviceBounds(v, world, width, height);
                 if (v.Effect is BlurEffect be) cb = EffectRegion(cb, be.Radius, 0, 0, UnboundedScissor);
                 else if (v.Effect is DropShadowEffect de) cb = EffectRegion(cb, de.BlurRadius, de.OffsetX, de.OffsetY, UnboundedScissor);
+                else if (v.Effect is ShaderEffectDef { HasPadding: true } padded) cb = PaddedRegion(cb, padded, LinearScale(world));
                 if (!cb.IsEmpty) cb = new Scissor(cb.X, cb.Y, (cb.W + 7) & ~7, (cb.H + 7) & ~7);
                 if (!cb.IsEmpty && cb.W <= width && cb.H <= height)
                 {
@@ -3137,6 +3138,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // name="bound"/> (the absolute-device clip) so the halo stays within the visible area -- NOT to
         // (0,0,width,height), which for a nested layer is the region size, not the window (the absolute
         // content coords would then fall outside it and the region would wrongly come out empty).
+        /// <summary>A shader effect's region with its padding (ShaderEffect.Padding*) round its content, at
+        /// <paramref name="scale"/> device pixels to the element's unit.</summary>
+        private static Scissor PaddedRegion(Scissor content, ShaderEffectDef fx, float scale)
+        {
+            if (content.IsEmpty) return content;
+            int l = (int)MathF.Ceiling(fx.PadLeft * scale), t = (int)MathF.Ceiling(fx.PadTop * scale);
+            int r = (int)MathF.Ceiling(fx.PadRight * scale), b = (int)MathF.Ceiling(fx.PadBottom * scale);
+            return new Scissor(content.X - l, content.Y - t, content.W + l + r, content.H + t + b);
+        }
+
         private static Scissor EffectRegion(Scissor content, double blurRadius, double offX, double offY, Scissor bound)
         {
             // The blur kernel reaches blurRadius pixels (half-extent == radius; see BlurLayer),

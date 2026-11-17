@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
@@ -97,6 +98,33 @@ namespace WgpuInterop.Tests.Protocol
                 .Build();
 
             Assert.Contains("if (false)", Translate(code));
+        }
+
+        /// <summary>A boolean the EFFECT sets (a ShaderEffect bool register) decides the branch, both ways; a defb in
+        /// the bytecode keeps its own value over it, as D3D9 lets the shader's definitions win.</summary>
+        [Fact]
+        public void AnEffectsBooleanRegisterDecidesTheBranch()
+        {
+            byte[] code = new Ps()
+                .If(1)
+                .Op(Ps.MOV, Dst.ColorOut(), Src.Texture(0))
+                .Else()
+                .Op(Ps.MOV, Dst.ColorOut(), Src.Const(0))
+                .EndIf()
+                .Build();
+
+            string Wgsl(bool value)
+            {
+                Assert.True(D3D9ShaderTranslator.TryTranslate(code, null, new Dictionary<int, bool> { [1] = value }, out TranslatedShader tr, out string why), why);
+                return tr.Wgsl;
+            }
+            Assert.Contains("if (true)", Wgsl(true));
+            Assert.Contains("if (false)", Wgsl(false));
+
+            byte[] defined = new Ps().DefB(1, false).If(1).Op(Ps.MOV, Dst.ColorOut(), Src.Texture(0)).EndIf()
+                .Op(Ps.MOV, Dst.ColorOut(), Src.Texture(0)).Build();
+            Assert.True(D3D9ShaderTranslator.TryTranslate(defined, null, new Dictionary<int, bool> { [1] = true }, out TranslatedShader own, out _));
+            Assert.Contains("if (false)", own.Wgsl);
         }
 
         /// <summary>A boolean the shader never defined cannot be evaluated, and must not be guessed.</summary>

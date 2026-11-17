@@ -841,6 +841,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// </summary>
         public Brush?[] SamplerBrushes { get; }
 
+        /// <summary>ShaderEffect.PaddingLeft/Top/Right/Bottom: how far past its element the effect may draw (its
+        /// input and output reach that much further), in the element's units.</summary>
+        public float PadLeft { get; init; }
+        public float PadTop { get; init; }
+        public float PadRight { get; init; }
+        public float PadBottom { get; init; }
+        public bool HasPadding => PadLeft > 0f || PadTop > 0f || PadRight > 0f || PadBottom > 0f;
+
         public ShaderEffectDef(int shaderId, string wgsl, float[] floatConstants, int[] samplers,
             Brush?[]? samplerBrushes = null)
         {

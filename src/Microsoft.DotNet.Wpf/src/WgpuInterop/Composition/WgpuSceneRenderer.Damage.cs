@@ -249,7 +249,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     b = Union(b, SubtreeBox(c, c.LocalToParent * world, out bool k));
                     if (!k) known = false;
                 }
-                b = EffectSpread(v, b);
+                b = EffectSpread(v, b, LinearScale(world));
             }
             if (v.Clip is Rect cr)
                 b = Intersect(b, RectBox(cr, world));
@@ -278,7 +278,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         /// <summary>Where a visual's effect can paint, given where its subtree draws.</summary>
-        private static Scissor EffectSpread(SceneVisual v, Scissor b)
+        private static Scissor EffectSpread(SceneVisual v, Scissor b, float scale = 1f)
         {
             if (b.IsEmpty) return b;
             switch (v.Effect)
@@ -298,6 +298,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     // An opacity mask / clip-geometry / opacity layer is sized to its content and
                     // padded to a multiple of eight; nothing is drawn in the padding.
                     return b;
+                case ShaderEffectDef { HasPadding: true } padded:
+                    // ...and its padding widens the layer it writes in
+                    return Inflate(PaddedRegion(b, padded, scale), 2, 2, 10, 10);
                 default:
                     // A pixel shader may write anywhere in its layer, padding included.
                     return Inflate(b, 2, 2, 10, 10);
