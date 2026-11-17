@@ -263,7 +263,7 @@ namespace WgpuInterop.Tests.Harness
         public static byte[] ImageBrush(uint handle, uint hImageSource, uint stretch,
             double vbX = 0, double vbY = 0, double vbW = 1, double vbH = 1,
             uint tileMode = 0, double vpX = 0, double vpY = 0, double vpW = 1, double vpH = 1,
-            uint alignmentX = 1, uint alignmentY = 1)
+            uint alignmentX = 1, uint alignmentY = 1, uint hTransform = 0, uint hRelativeTransform = 0)
         {
             var b = new Buf();
             b.U32(0x81); b.U32(handle);
@@ -272,7 +272,9 @@ namespace WgpuInterop.Tests.Harness
             b.F64(vpX); b.F64(vpY); b.F64(vpW); b.F64(vpH);   // Viewport @16 (default (0,0,1,1))
             while (b.Length < 48) b.U8(0);
             b.F64(vbX); b.F64(vbY); b.F64(vbW); b.F64(vbH);   // Viewbox @48
-            while (b.Length < 108) b.U8(0);
+            while (b.Length < 100) b.U8(0);
+            b.U32(hTransform);                                // hTransform @100
+            b.U32(hRelativeTransform);                        // hRelativeTransform @104
             b.U32(1);                                         // ViewportUnits @108 = RelativeToBoundingBox
             b.U32(1);                                         // ViewboxUnits  @112 = RelativeToBoundingBox
             while (b.Length < 124) b.U8(0);

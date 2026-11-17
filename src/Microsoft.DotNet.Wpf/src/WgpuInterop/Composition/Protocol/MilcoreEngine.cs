@@ -350,6 +350,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public readonly double Opacity;      // TileBrush.Opacity (base or animated); 1.0 = opaque
             /// <summary>TileBrush.AlignmentX / AlignmentY as fractions: 0 left/top, 0.5 centre, 1 right/bottom.</summary>
             public readonly float AlignX, AlignY;
+            /// <summary>Brush.Transform and Brush.RelativeTransform (transform resource handles; 0 none).</summary>
+            public uint Transform { get; init; }
+            public uint RelativeTransform { get; init; }
             public MilImageBrush(uint imageHandle, TileMode tile, uint stretch,
                 Rect viewport, uint viewportUnits, Rect viewbox, uint viewboxUnits, double opacity,
                 uint alignmentX = 1, uint alignmentY = 1)
@@ -1196,7 +1199,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 132; uint alignX = r.U32();
                     r.Position = 136; uint alignY = r.U32();
                     r.Position = 144; uint hImg = r.U32();
-                    _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, imgOpacity, alignX, alignY);
+                    r.Position = 100; uint hTransform = r.U32(), hRelative = r.U32();
+                    _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, imgOpacity, alignX, alignY)
+                        { Transform = hTransform, RelativeTransform = hRelative };
                     BumpResource(h);
                     break;
                 }
@@ -1216,7 +1221,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 132; uint alignX = r.U32();
                     r.Position = 136; uint alignY = r.U32();
                     r.Position = 144; uint hSource = r.U32();
-                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity, alignX, alignY);
+                    r.Position = 100; uint hTransform = r.U32(), hRelative = r.U32();
+                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity, alignX, alignY)
+                        { Transform = hTransform, RelativeTransform = hRelative };
                     _contentBrushes[h] = (hSource, id == Mil.DrawingBrush);
                     BumpResource(h);
                     break;
@@ -2711,6 +2718,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// <summary>Emit a fill and/or stroke for a geometry, applying the push state.</summary>
         private void EmitDrawing(List<DrawingPrimitive> output, Geometry geometry, uint hBrush, uint hPen, RenderState state)
         {
+            // An image, visual or drawing brush with a Transform or RelativeTransform: the picture is laid out over
+            // the geometry's bounds as without them, then moved by them (RelativeTransform in the bounds' unit
+            // space, Transform in user space) -- a scope carrying that map, the shape taken back through it to cut
+            // the picture. Both were ignored: a flipped or rotated image brush was drawn as declared.
+            if (ImageBrushMap(hBrush, geometry) is Matrix3x2 brushMap)
+            {
+                Matrix3x2 toDevice = brushMap * state.Transform;
+                if (Matrix3x2.Invert(brushMap, out Matrix3x2 toBrush) && Matrix3x2.Invert(toDevice, out Matrix3x2 deviceToBrush))
+                {
+                    Geometry fillable = HasUnfilledFigure(geometry) ? FillableOnly(geometry) : geometry;
+                    if (fillable != null)
+                    {
+                        Rect userBounds = GeometryBounds(geometry);
+                        Geometry bg = TransformGeometry(fillable, toBrush);
+                        if (state.Clip is not null) bg = new CombinedGeometry(GeometryCombineMode.Intersect, bg, TransformGeometry(state.Clip, deviceToBrush));
+                        // The picture is laid out on the bounds alone (not a RectangleGeometry: a content brush's GPU path
+                        // maps its source across whatever it fills), and drawn where the shape, taken into brush space,
+                        // meets it. An image that is not tiled is mapped across the bounds of what it fills, and the shape
+                        // there is not the picture's box: it is drawn as one tile from the picture's corner instead.
+                        Geometry picture = RectPath(userBounds);
+                        if (TryImageBrushFill(hBrush, userBounds, ref picture, out Brush? brushFill) && brushFill != null)
+                        {
+                            Rect dest = GeometryBounds(picture);
+                            var scope = new SceneVisual { Transform = toDevice };
+                            Geometry shape = new CombinedGeometry(GeometryCombineMode.Intersect, bg, new RectangleGeometry(dest));
+                            if (brushFill is ImageBrush one && one.TileMode == TileMode.None && one.SourceVisual == null && dest.Width > 0 && dest.Height > 0)
+                            {
+                                brushFill = new ImageBrush(one.PixelsRgba, one.PixelWidth, one.PixelHeight, TileMode.Tile, dest.Width, dest.Height, one.Opacity)
+                                    { WpfFilter = one.WpfFilter, External = one.External, ExternalVersion = one.ExternalVersion };
+                                scope.Transform = Matrix3x2.CreateTranslation(dest.X, dest.Y) * toDevice;
+                                shape = TransformGeometry(shape, Matrix3x2.CreateTranslation(-dest.X, -dest.Y));
+                            }
+                            if (ApplyOpacity(brushFill, state.Opacity) is { } f)
+                            {
+                                scope.Content.Add(new GeometryDrawing(shape, f));
+                                output.Add(new NestedVisualDraw(scope));
+                            }
+                        }
+                    }
+                    if (hPen != 0) EmitDrawing(output, geometry, 0, hPen, state);
+                    return;
+                }
+            }
+
             // A brush is laid out over the geometry's bounds in the space it is drawn in: a
             // VisualBrush or gradient filling a rotated rectangle turns with it. Baking a rotation
             // into the geometry and resolving the brush over the result's axis-aligned box drew the
@@ -2763,6 +2814,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             if (fill != null || strokeBrush != null)
                 output.Add(new GeometryDrawing(g, fill, strokeBrush, strokeStyle));
+        }
+
+        /// <summary>The map an image brush's own transforms make of its picture, over a geometry's bounds in user space
+        /// (RelativeTransform in their unit space, then Transform); null when it has none, or is no image brush.</summary>
+        private Matrix3x2? ImageBrushMap(uint hBrush, Geometry geometry)
+        {
+            if (hBrush == 0 || !_imageBrushes.TryGetValue(hBrush, out MilImageBrush ib) || ib.Transform == 0 && ib.RelativeTransform == 0) return null;
+            if (ib.Transform != 0) _parseResourceRefs.Add(ib.Transform);             // a transform's change re-lays the brush
+            if (ib.RelativeTransform != 0) _parseResourceRefs.Add(ib.RelativeTransform);
+            Matrix3x2 brushT = Matrix3x2.Identity, relT = Matrix3x2.Identity;
+            bool hasT = ib.Transform != 0 && _transforms.TryGetValue(ib.Transform, out brushT) && !brushT.IsIdentity;
+            bool hasR = ib.RelativeTransform != 0 && _transforms.TryGetValue(ib.RelativeTransform, out relT) && !relT.IsIdentity;
+            if (!hasT && !hasR) return null;
+            Matrix3x2 m = Matrix3x2.Identity;
+            if (hasR)
+            {
+                Rect ub = GeometryBounds(geometry);
+                Matrix3x2 unit = Matrix3x2.CreateScale(ub.Width, ub.Height) * Matrix3x2.CreateTranslation(ub.X, ub.Y);
+                if (Matrix3x2.Invert(unit, out Matrix3x2 fromUnit)) m = fromUnit * relT * unit;
+            }
+            if (hasT) m *= brushT;
+            return m;
         }
 
         private static bool IsRotated(Matrix3x2 m) => MathF.Abs(m.M12) > 1e-6f || MathF.Abs(m.M21) > 1e-6f;
