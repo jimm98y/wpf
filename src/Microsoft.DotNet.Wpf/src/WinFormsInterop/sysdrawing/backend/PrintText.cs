@@ -91,6 +91,12 @@ namespace System.Drawing.WebGpuBackend
                 m.UnderlinePosition = S16(d, post + 8);
                 m.UnderlineThickness = S16(d, post + 10);
             }
+            // a stand-in for a Windows face underlines where that face does (StandInVdmx)
+            if (head >= 0 && head + 12 <= d.Length && StandInVdmx.Underline(U32(d, head + 8), out short ulPosition, out short ulThickness))
+            {
+                m.UnderlinePosition = ulPosition;
+                m.UnderlineThickness = ulThickness;
+            }
             if (m.UnderlineThickness <= 0) m.UnderlineThickness = m.UnitsPerEm / 14;
             if (m.UnderlinePosition == 0) m.UnderlinePosition = -m.UnitsPerEm / 10;
             if (m.StrikeoutSize <= 0) m.StrikeoutSize = m.UnderlineThickness;

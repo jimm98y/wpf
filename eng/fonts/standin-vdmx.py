@@ -37,8 +37,12 @@ for selawik, segoe in PAIRS:
         print(f"standin-vdmx: {segoe} not in {source}: {selawik} keeps its rounded Windows metrics")
         continue
     key = struct.unpack(">I", tables(os.path.join(FONTS, selawik))["head"][8:12])[0]
-    vdmx = tables(path)["VDMX"]
-    rows.append((selawik, segoe, key, vdmx, DROPOUT.get(segoe, 0)))
+    segoeTables = tables(path)
+    vdmx = segoeTables["VDMX"]
+    # the underline Segoe UI's 'post' gives (Selawik's sits less than half as far down: at a menu's size it
+    # rounded onto the baseline, through the letters)
+    underline = struct.unpack(">hh", segoeTables["post"][8:12])
+    rows.append((selawik, segoe, key, vdmx, DROPOUT.get(segoe, 0), underline))
     print(f"standin-vdmx: {selawik} <- {segoe} ({len(vdmx)} bytes)")
 
 with open(OUT, "w", newline="\n") as f:
@@ -61,7 +65,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static byte[]? For(uint checkSumAdjustment) => checkSumAdjustment switch
         {
 """)
-    for selawik, segoe, key, vdmx, _ in rows:
+    for selawik, segoe, key, vdmx, _, _ in rows:
         f.write(f"            0x{key:08X} => {selawik.replace('-', '').replace('.ttf', '')},   // {selawik}: {segoe}\n")
     f.write("            _ => null,\n        };\n")
     f.write("""
@@ -70,10 +74,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         internal static int Dropout(uint checkSumAdjustment) => checkSumAdjustment switch
         {
 """)
-    for selawik, segoe, key, vdmx, drop in rows:
+    for selawik, segoe, key, vdmx, drop, _ in rows:
         if drop: f.write(f"            0x{key:08X} => {drop},   // {selawik}: {segoe}\n")
     f.write("            _ => 0,\n        };\n")
-    for selawik, segoe, key, vdmx, _ in rows:
+    f.write("""
+        /// <summary>The underline of the face's Segoe UI ('post' underlinePosition and underlineThickness, in
+        /// font units), by the stand-in's 'head' checkSumAdjustment; false for any other face.</summary>
+        internal static bool Underline(uint checkSumAdjustment, out short position, out short thickness)
+        {
+            (position, thickness) = checkSumAdjustment switch
+            {
+""")
+    for selawik, segoe, key, vdmx, _, (ulPos, ulThick) in rows:
+        f.write(f"                0x{key:08X} => ((short){ulPos}, (short){ulThick}),   // {selawik}: {segoe}\n")
+    f.write("                _ => ((short)0, (short)0),\n            };\n            return thickness != 0;\n        }\n")
+    for selawik, segoe, key, vdmx, _, _ in rows:
         name = selawik.replace('-', '').replace('.ttf', '')
         f.write(f"\n        private static readonly byte[] {name} = System.Convert.FromHexString(\n")
         h = vdmx.hex().upper()
