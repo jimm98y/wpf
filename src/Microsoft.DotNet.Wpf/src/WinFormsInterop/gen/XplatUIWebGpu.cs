@@ -22,6 +22,9 @@ namespace System.Windows.Forms {
 		internal override bool MenuAccessKeysUnderlined { get { return false; } }
 		internal override Size MinimizedWindowSpacingSize { get { return default(Size); } }
 		internal override Size MinimumWindowSize { get { return default(Size); } }
+		/// <summary>SM_CXMINTRACK x SM_CYMINTRACK, Windows 10 and 11's at 96 dpi: the smallest a window with a
+		/// caption or a sizing border is ever made (WM_GETMINMAXINFO's ptMinTrackSize by default).</summary>
+		internal override Size MinWindowTrackSize { get { return new Size(136, 39); } }
 		internal override bool MouseButtonsSwapped { get { return default(bool); } }
 		// Generated as default(bool) -- false -- which is a claim that the machine has no wheel.
 		// Every head this driver serves has one, and SystemInformation.MouseWheelPresent is what

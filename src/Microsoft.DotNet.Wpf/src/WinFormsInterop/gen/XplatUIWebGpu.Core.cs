@@ -717,6 +717,49 @@ namespace System.Windows.Forms
 		internal IntPtr GrabHandle => _grabHandle;
 		private const int MK_LBUTTON = 0x0001;
 		private const int MK_RBUTTON = 0x0002;
+		private const int MK_SHIFT = 0x0004, MK_CONTROL = 0x0008, MK_MBUTTON = 0x0010;
+
+		/// <summary>The mouse buttons down as the messages delivered so far have them (MK_LBUTTON, MK_RBUTTON,
+		/// MK_MBUTTON): GetKeyState's view of the buttons, which follows the input the thread has read.</summary>
+		private int _mouseKeys;
+
+		private void NoteMouseKeys(Msg message, int wParam)
+		{
+			switch (message)
+			{
+				case Msg.WM_LBUTTONDOWN: case Msg.WM_LBUTTONDBLCLK: _mouseKeys |= MK_LBUTTON; break;
+				case Msg.WM_LBUTTONUP: _mouseKeys &= ~MK_LBUTTON; break;
+				case Msg.WM_RBUTTONDOWN: case Msg.WM_RBUTTONDBLCLK: _mouseKeys |= MK_RBUTTON; break;
+				case Msg.WM_RBUTTONUP: _mouseKeys &= ~MK_RBUTTON; break;
+				case Msg.WM_MBUTTONDOWN: case Msg.WM_MBUTTONDBLCLK: _mouseKeys |= MK_MBUTTON; break;
+				case Msg.WM_MBUTTONUP: _mouseKeys &= ~MK_MBUTTON; break;
+				// a move says where the left button is (the host reads it off the system)
+				case Msg.WM_MOUSEMOVE: _mouseKeys = (_mouseKeys & ~MK_LBUTTON) | (wParam & MK_LBUTTON); break;
+			}
+		}
+
+		/// <summary>Control.MouseButtons: GetKeyState(VK_LBUTTON) and the rest on Windows. Answered None, as
+		/// every driver but Win32's did, a control asking during a drag was told no button was down.</summary>
+		internal override MouseButtons MouseButtons
+		{
+			get
+			{
+				MouseButtons b = MouseButtons.None;
+				if ((_mouseKeys & MK_LBUTTON) != 0) b |= MouseButtons.Left;
+				if ((_mouseKeys & MK_RBUTTON) != 0) b |= MouseButtons.Right;
+				if ((_mouseKeys & MK_MBUTTON) != 0) b |= MouseButtons.Middle;
+				return b;
+			}
+		}
+
+		/// <summary>A mouse message's wParam for now: the buttons down and Shift and Ctrl.</summary>
+		private int MouseKeyState()
+		{
+			int k = _mouseKeys;
+			if ((_modifierKeys & Keys.Shift) != 0) k |= MK_SHIFT;
+			if ((_modifierKeys & Keys.Control) != 0) k |= MK_CONTROL;
+			return k;
+		}
 
 		/// <summary>Route one mouse message from a SCREEN point. While a window has captured the
 		/// mouse (button held), messages go to it (with coords relative to it) even off its rect —
@@ -885,6 +928,7 @@ namespace System.Windows.Forms
 			_cursorX = screenX;
 			_pointerLifted = false;
 			_cursorY = screenY;
+			NoteMouseKeys(message, wParam);
 			if (target == IntPtr.Zero) return;
 			Hwnd h = Hwnd.ObjectFromHandle(target);
 			if (h == null) { if (message == Msg.WM_MOUSEMOVE) TrackHover(target); return; }
@@ -1281,7 +1325,7 @@ namespace System.Windows.Forms
 			Point origin = ScreenLocation(t);
 			int x = _cursorX - origin.X, y = _cursorY - origin.Y;
 			if (InputTrace.On) InputTrace.Log($"synthetic move #{InputTrace.Seq} -> {InputTrace.Describe(target)} at ({x},{y})");
-			PostMessage(target, Msg.WM_MOUSEMOVE, IntPtr.Zero, (IntPtr)((y << 16) | (x & 0xFFFF)));
+			PostMessage(target, Msg.WM_MOUSEMOVE, (IntPtr)MouseKeyState(), (IntPtr)((y << 16) | (x & 0xFFFF)));
 		}
 
 		/// <summary>Repaint whatever a window that has just been hidden was covering.
@@ -1334,6 +1378,17 @@ namespace System.Windows.Forms
 				Size max = MaxWindowTrackSize;
 				if (max.Width > 0 && width > max.Width) width = max.Width;
 				if (max.Height > 0 && height > max.Height) height = max.Height;
+				// ...and no smaller than its minimum tracking size, when it has a caption or a sizing border:
+				// DefWindowProc's WM_WINDOWPOSCHANGING asks WM_GETMINMAXINFO and holds every SetWindowPos to
+				// ptMinTrackSize (136 x 39, or the form's MinimumSize). Held to nothing, a ribbon form a docking
+				// bar sized after the pointer went to 0 high, its region empty and the window gone.
+				if (Control.FromHandle(handle) is Form f && f.FormBorderStyle != FormBorderStyle.None)
+				{
+					Size min = MinWindowTrackSize;
+					min = new Size(Math.Max(min.Width, f.MinimumSize.Width), Math.Max(min.Height, f.MinimumSize.Height));
+					if (width < min.Width) width = min.Width;
+					if (height < min.Height) height = min.Height;
+				}
 			}
 			Padding frame = FrameOf(handle);
 			// Win32 asks a framed window for its frame again whenever it is sized: a form that draws
@@ -2970,8 +3025,17 @@ namespace System.Windows.Forms
 		internal override void GrabWindow(IntPtr hwnd, IntPtr ConfineToHwnd)
 		{
 			if (InputTrace.On) InputTrace.Log($"capture #{InputTrace.Seq} -> {InputTrace.Describe(hwnd)} (was {InputTrace.Describe(_grabHandle)})");
+			IntPtr was = _grabHandle;
 			_grabHandle = hwnd;
 			CaptureChanged?.Invoke(hwnd);
+			// Taken while a button is down -- as WinForms takes it in every press -- the capture is told by a
+			// move where the cursor is, with the buttons (Windows 11: a press that does not move is followed
+			// by WM_MOUSEMOVE MK_LBUTTON at the same point; a capture taken with no button down, by nothing).
+			// DotNetBar's menu, opened under a still pointer, ignores moves that repeat its first one, and
+			// acts on a press only for an item a move made hot: this move, with its button, is the one that
+			// differs -- without it a click on the File button drawn over the open menu did nothing.
+			if (hwnd != was && (_mouseKeys & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) != 0)
+				PostMoveAtCursor(hwnd);
 		}
 		internal override void UngrabWindow(IntPtr hwnd)
 		{

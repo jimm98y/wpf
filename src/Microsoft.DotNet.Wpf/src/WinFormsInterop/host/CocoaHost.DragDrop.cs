@@ -61,10 +61,8 @@ internal sealed partial class CocoaHost
     /// form's controls hit-test -- as a mouse event at that point would be.</summary>
     private Point DriverPoint(double screenX, double screenY)
     {
-        NSRect frame = SendRectRet(_window, Sel("frame"));
-        double lx = (screenX - frame.x) * _k, ly = (screenY - frame.y) * _k;   // in the content, still bottom-up
-        Rectangle client = ClientScreen;
-        return new Point((int)lx + client.Left, (int)(client.Height - ly) + client.Top);
+        NSRect content = ContentScreenRect();
+        return ContentToDriver(new NSPoint { x = screenX - content.x, y = screenY - content.y });
     }
 
     /// <summary>DragEventArgs.KeyState: the left button, and the modifiers as Windows names them (Option

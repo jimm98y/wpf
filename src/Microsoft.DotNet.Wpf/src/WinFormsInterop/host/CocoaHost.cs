@@ -1564,6 +1564,19 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         }
     }
 
+    /// <summary>A point in the native content (points, bottom-left origin) on the driver's screen: where the
+    /// pointer is, by where the window is on the screen now -- not by the form's bounds, which the application
+    /// may have changed since and the window not yet followed (SyncFrame, on the next pump). Measured from the
+    /// form's height, a status bar's size grip setting the form's size in its WM_MOUSEMOVE saw the pointer
+    /// move by as much as the form had shrunk: each move shrank it again, and the window jumped up and down.</summary>
+    private System.Drawing.Point ContentToDriver(NSPoint loc)
+    {
+        NSRect c = ContentScreenRect();
+        double ss = ScreenScale;
+        int left = (int)Math.Round(c.x * ss), top = (int)Math.Round((PrimaryScreenHeight() - c.y - c.h) * ss);
+        return new System.Drawing.Point(left + (int)(loc.x * _k), top + (int)((c.h - loc.y) * _k));
+    }
+
     /// <summary>The form's bounds for a client area on the screen.</summary>
     private Rectangle FormBoundsFor(Rectangle client)
     {
@@ -1786,6 +1799,10 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
                 unchecked((nuint)ulong.MaxValue), IntPtr.Zero, NSStr("kCFRunLoopDefaultMode"), true);
             if (evt == IntPtr.Zero) break;
             Route(evt);
+            // What an event's handler did to the form's bounds is the window's before the next event, as a
+            // SetWindowPos on Windows is: a size grip sizing the form at each WM_MOUSEMOVE had the window
+            // follow only once the drag's moves stopped coming.
+            SyncFrame();
         }
         // A miniaturized window is not visible to AppKit, but it is no less the form's: the form is
         // minimized, as it is on Windows while its window sits in the taskbar. Treated as closed, the
@@ -2031,6 +2048,10 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         }
         // A system drag a form started: AppKit tracks it from the events, wherever the pointer is.
         if (s_systemDragActive) { Send(App(), Sel("sendEvent:"), evt); return; }
+        // the left button let go, wherever: no form is still sizing after it
+        if ((nint)Send(evt, Sel("type")) == 2)
+            lock (s_live)
+                foreach (CocoaHost h in s_live) h._sizingHit = 0;
         if (BlockedByModal(evt)) return;
         CocoaHost host = HostFor(Send(evt, Sel("window"))) ?? HostUnderPointer(evt) ?? HostForWindowlessKey(evt);
         if (host != null) host.HandleEvent(evt);
@@ -2272,9 +2293,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         _wheelUnits -= notches * 120;
 
         NSPoint loc = LocationInContent(evt, out _);
-        int cx = (int)(loc.x * _k) + ClientScreen.Left;
-        int cy = (int)(ClientScreen.Height - loc.y * _k) + ClientScreen.Top;
-        _driver.InjectWheel(cx, cy, notches * 120);
+        System.Drawing.Point wp = ContentToDriver(loc);
+        _driver.InjectWheel(wp.X, wp.Y, notches * 120);
         Application.DoEvents();
         Present();
     }
@@ -2287,6 +2307,9 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     // through the resize notification (OnWindowResized), as a live resize does.
 
     private int _sizingHit;
+
+    /// <summary>The left button is down as the forms have been told (pressed in one, not yet released to them).</summary>
+    private static bool s_formLeftDown;
     private NSRect _sizingFrame;
     private NSPoint _sizingStart;
 
@@ -2304,8 +2327,12 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
     /// the event was the sizing's.</summary>
     private bool ContinueSizing(nint type, NSPoint loc)
     {
-        if (type == 2) { _sizingHit = 0; return true; }
-        if (type != 6) return type == 5 || type == 1;
+        // A sizing ends with the button, wherever it is let go: a release that went elsewhere (outside the
+        // window, to AppKit) left it running, and the next drag anywhere in the form was measured from where
+        // the old one began -- the window jumped to 541 x 39 in one step. A new press is not part of it either.
+        if (type == 2 || RealLeftButtonDown() == false) { _sizingHit = 0; return type == 2; }
+        if (type == 1) { _sizingHit = 0; return false; }
+        if (type != 6) return type == 5;
         // The pointer on the screen, not the event's point in the window: that is measured from where
         // the window was when the event was queued, and each step of the drag moves the window. Taken
         // against the frame as it is now, a queued event counted the last step again -- the bottom
@@ -2374,7 +2401,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             // bar zone at the top, nothing along the other edges, which the content covers.
             if (type == 1 && _ownCaption && !_formHasMouse && !viaLayer && IsResizable())
             {
-                int sizing = HitTest((int)at.x + ClientScreen.Left, (int)(ClientScreen.Height - at.y) + ClientScreen.Top);
+                System.Drawing.Point sp = ContentToDriver(loc);
+                int sizing = HitTest(sp.X, sp.Y);
                 if (sizing >= HTLEFT && sizing <= HTBOTTOMRIGHT)
                 {
                     BeginSizing(sizing, loc);
@@ -2387,8 +2415,9 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             // title bar and a band along the edges stay AppKit's, so the window still moves and
             // resizes the native way; those are not the form's. Bare moves go to both (cursor).
             const double EdgeBand = 4;
-            bool inContent = at.y >= 0 && at.y < ClientScreen.Height && at.x >= 0 && at.x < ClientScreen.Width;
-            bool atEdge = loc.x < EdgeBand || at.x >= ClientScreen.Width - EdgeBand * _k || loc.y < EdgeBand;
+            NSRect nativeContent = ContentScreenRect();
+            bool inContent = at.y >= 0 && at.y < nativeContent.h * _k && at.x >= 0 && at.x < nativeContent.w * _k;
+            bool atEdge = loc.x < EdgeBand || loc.x >= nativeContent.w - EdgeBand || loc.y < EdgeBand;
             // Through the popup layer it is a popup's, wherever it is: the layer lets the pointer
             // through where it shows nothing.
             if (type != 5 && (!inContent || atEdge) && !_formHasMouse && !viaLayer)
@@ -2400,7 +2429,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             // it, as Windows' default handling of HTCAPTION does; a press on its border resizes it.
             if (type == 1 && _ownCaption && !_formHasMouse)
             {
-                int hit = HitTest((int)at.x + ClientScreen.Left, (int)(ClientScreen.Height - at.y) + ClientScreen.Top);
+                System.Drawing.Point hp = ContentToDriver(loc);
+                int hit = HitTest(hp.X, hp.Y);
                 if (hit == HTCAPTION)
                 {
                     if ((nint)Send(evt, Sel("clickCount")) >= 2) SendVoidPtr(_window, Sel("zoom:"), IntPtr.Zero);
@@ -2424,11 +2454,23 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             // hit-tests: the form's client area is drawn at the form's location there. Window
             // coordinates alone were right only while every form sat at (0,0) -- which stopped
             // being true when the form began to report where the window really is.
-            int cx = (int)at.x + ClientScreen.Left;
-            int cy = (int)(ClientScreen.Height - at.y) + ClientScreen.Top;
+            System.Drawing.Point dp = ContentToDriver(loc);
+            int cx = dp.X, cy = dp.Y;
             if (s_traceInput) Console.WriteLine($"[cocoa input] type={type} window=({loc.x},{loc.y}) -> driver=({cx},{cy}) form={_form.Bounds}");
             // A bare move is Windows' WM_SETCURSOR, which ends a Cursor.Current; a drag (captured) keeps it.
             if (type == 5) _driver.EndCursorOverride();
+            // A release the form never had (AppKit took it ending a window drag, or it fell outside every window
+            // of the application) is given to it before anything else, as Windows always delivers it to the window
+            // that has the mouse: a control that began a drag of its own on the press went on acting on every later
+            // move -- a docking bar sized the main form after the pointer, down to nothing.
+            if (s_formLeftDown && (type == 5 || type == 6) && RealLeftButtonDown() == false)
+            {
+                s_formLeftDown = false;
+                _driver.InjectMouseUp(cx, cy);
+                if (type == 6) type = 5;
+            }
+            if (type == 1) s_formLeftDown = true;
+            else if (type == 2) s_formLeftDown = false;
             switch (type)
             {
                 case 1: _driver.InjectMouseDown(cx, cy); break;
