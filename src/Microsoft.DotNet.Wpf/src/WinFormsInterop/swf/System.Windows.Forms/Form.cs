@@ -3074,7 +3074,7 @@ namespace System.Windows.Forms {
 				try {
 					OnLoad (e);
 				}
-				catch (Exception ex) {
+				catch (Exception ex) when (Application.CatchesWindowExceptions) {
 					Application.OnThreadException (ex);
 				}
 

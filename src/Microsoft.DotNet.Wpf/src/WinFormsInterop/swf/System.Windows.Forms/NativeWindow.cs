@@ -86,11 +86,18 @@ namespace System.Windows.Forms
 			OnHandleChange();
 		}
 
+		// Whether a window has been made, on this thread and in the application: from then on the exception
+		// mode cannot change (Application.SetUnhandledExceptionMode), as .NET's NativeWindow keeps them.
+		[ThreadStatic] internal static bool t_anyHandleCreated;
+		internal static volatile bool s_anyHandleCreatedInApp;
+
 		private static void AddToTable (NativeWindow window)
 		{
 			IntPtr handle = window.Handle;
 			if (handle == IntPtr.Zero)
 				return;
+			t_anyHandleCreated = true;
+			s_anyHandleCreatedInApp = true;
 
 			lock (window_collection) {
 				object current = window_collection[handle];
@@ -292,7 +299,9 @@ namespace System.Windows.Forms
 				result = XplatUI.DefWndProc (ref m);
 			}
 			}
-			catch (Exception ex) {
+			// UnhandledExceptionMode.ThrowException: the exception leaves the window procedure, as .NET's
+			// debuggable window procedure lets it (Application.SetUnhandledExceptionMode)
+			catch (Exception ex) when (Application.CatchesWindowExceptions) {
 #if !ExternalExceptionHandler
 				if (window != null) {
 					if (msg == Msg.WM_PAINT && window is Control.ControlNativeWindow) {

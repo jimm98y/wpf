@@ -530,17 +530,35 @@ namespace System.Windows.Forms
 			return false;
 		}
 
-		[MonoNotSupported ("Empty stub.")]
+		// What becomes of an exception a window procedure throws: Automatic and CatchException hand it to
+		// OnThreadException (ThreadException, or the dialog), ThrowException lets it go on up -- out of
+		// Application.Run, to AppDomain.UnhandledException. A thread's own mode, then the application's;
+		// either is fixed once a window has been made there, as .NET's NativeWindow.SetUnhandledExceptionModeInternal.
+		[ThreadStatic] static UnhandledExceptionMode t_exceptionMode;
+		static UnhandledExceptionMode s_exceptionMode;
+
 		public static void SetUnhandledExceptionMode (UnhandledExceptionMode mode)
 		{
-			//FIXME: a stub to fill
+			SetUnhandledExceptionMode (mode, true);
 		}
 
-		[MonoNotSupported ("Empty stub.")]
 		public static void SetUnhandledExceptionMode (UnhandledExceptionMode mode, bool threadScope)
 		{
-			//FIXME: a stub to fill
+			if (mode < UnhandledExceptionMode.Automatic || mode > UnhandledExceptionMode.CatchException)
+				throw new System.ComponentModel.InvalidEnumArgumentException (nameof (mode), (int)mode, typeof (UnhandledExceptionMode));
+			if (!threadScope && NativeWindow.s_anyHandleCreatedInApp)
+				throw new InvalidOperationException ("Application exception mode cannot be changed once any Controls are created in the application.");
+			if (threadScope && NativeWindow.t_anyHandleCreated)
+				throw new InvalidOperationException ("Thread exception mode cannot be changed once any Controls are created on the thread.");
+			if (threadScope)
+				t_exceptionMode = mode;
+			else
+				s_exceptionMode = mode;
 		}
+
+		/// <summary>Whether an exception from a window procedure goes to OnThreadException (true), or on up.</summary>
+		internal static bool CatchesWindowExceptions =>
+			(t_exceptionMode != UnhandledExceptionMode.Automatic ? t_exceptionMode : s_exceptionMode) != UnhandledExceptionMode.ThrowException;
 
 		[MonoNotSupported ("Only applies when Winforms is being hosted by an unmanaged app.")]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
