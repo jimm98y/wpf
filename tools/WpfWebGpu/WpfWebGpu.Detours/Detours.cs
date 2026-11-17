@@ -20,8 +20,10 @@
 //   SystemColors                    off Windows System.Drawing.Primitives answers a palette compiled
 //                                   into it, Windows XP's (a beige #ECE9D8 Control). On Windows it asks
 //                                   GetSysColor, and so does this, of the stack's user32.
+//   Serial port names               an app's own System.IO.Ports opens devices by path off Windows; its
+//                                   ports are COMn to it (SerialPorts.cs).
 //
-// Only installed where needed (macOS); the bootstrap logs which ones are active.
+// Only installed where needed (off Windows); the bootstrap logs which ones are active.
 
 using System.Drawing;
 using System.IO.MemoryMappedFiles;
@@ -49,6 +51,7 @@ public static class Detours
         Try(installed, "system colours", InstallSystemColors);
         Try(installed, "HttpListener prefix case", InstallHttpListenerCase);
         Try(installed, "processor affinity", InstallProcessorAffinity);
+        Try(installed, "serial port names", InstallSerialPorts);
         return installed.ToArray();
     }
 
@@ -66,6 +69,8 @@ public static class Detours
     }
 
     private static void Add(MethodBase target, Delegate hook) => s_hooks.Add(new Hook(target, hook));
+
+    internal static void InstallSerialPorts() => SerialPorts.Install(Add);
 
     // ---- apartment state --------------------------------------------------------------------------
 

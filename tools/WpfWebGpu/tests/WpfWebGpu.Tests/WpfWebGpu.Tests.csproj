@@ -13,6 +13,8 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="3.0.0" />
     <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
+    <!-- an app's serial ports, by the package's own Unix build (SerialPortTests) -->
+    <PackageReference Include="System.IO.Ports" Version="10.0.7" />
   </ItemGroup>
 
   <ItemGroup>
