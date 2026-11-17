@@ -68,6 +68,9 @@ namespace MS.Internal.Interop.Wayland
         [DllImport(Lib)] private static extern int dbus_connection_read_write(IntPtr connection, int timeoutMs);
         [DllImport(Lib)] private static extern int dbus_connection_dispatch(IntPtr connection);
         [DllImport(Lib)] private static extern int dbus_connection_get_unix_fd(IntPtr connection, int* fd);
+        [DllImport(Lib)] private static extern int dbus_connection_add_filter(IntPtr connection, IntPtr function, IntPtr userData, IntPtr freeData);
+        [DllImport(Lib)] private static extern void dbus_bus_add_match(IntPtr connection, [MarshalAs(UnmanagedType.LPUTF8Str)] string rule, DBusError* error);
+        [DllImport(Lib)] private static extern int dbus_message_is_signal(IntPtr message, [MarshalAs(UnmanagedType.LPUTF8Str)] string iface, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
 
         /// <summary>A click on an icon: its id, and what was done -- 1 activate (primary click), 2 context menu
         /// (secondary click), 3 secondary activate (middle click), 4 scroll -- with the pointer's screen position.</summary>
@@ -138,6 +141,9 @@ namespace MS.Internal.Interop.Wayland
                 if (dbus_connection_register_fallback(bus, PathPrefix, s_vtable, IntPtr.Zero) == 0) { Trace("register_fallback failed"); return false; }
                 s_bus = bus;
                 s_name = Marshal.PtrToStringUTF8(dbus_bus_get_unique_name(bus)) ?? "";
+                // the notification server's answers (a notification clicked, closed)
+                dbus_connection_add_filter(bus, (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)&FilterSignals, IntPtr.Zero, IntPtr.Zero);
+                dbus_bus_add_match(bus, "type='signal',interface='org.freedesktop.Notifications'", &err);
                 Trace($"attached as {s_name}");
                 return true;
             }
@@ -194,6 +200,98 @@ namespace MS.Internal.Interop.Wayland
         }
 
         private static string PathOf(int id) => PathPrefix + "/" + id;
+
+        // ---- notifications: a balloon tip ------------------------------------------------------------
+
+        /// <summary>A notification's fate: (tag, 1 shown, 2 clicked, 3 closed by the user or timed out, 4 taken away).</summary>
+        internal static event Action<int, int>? NotificationEvent;
+
+        private static readonly Dictionary<uint, int> s_notifications = new();   // server id -> tag
+        private static readonly HashSet<uint> s_clicked = new();
+
+        /// <summary>
+        /// A desktop notification (org.freedesktop.Notifications.Notify): Windows 10 shows a NotifyIcon's balloon tip as
+        /// one. <paramref name="icon"/> is a freedesktop icon name ("dialog-information"); <paramref name="replaces"/> the
+        /// tag whose notification this one replaces, as a second balloon of an icon replaces its first.
+        /// </summary>
+        internal static bool Notify(int tag, string title, string body, string icon)
+        {
+            lock (s_lock)
+            {
+                if (!Attach()) return false;
+                uint replaces = 0;
+                foreach (KeyValuePair<uint, int> kv in s_notifications)
+                    if (kv.Value == tag) { replaces = kv.Key; break; }
+                IntPtr call = dbus_message_new_method_call("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                                                           "org.freedesktop.Notifications", "Notify");
+                if (call == IntPtr.Zero) return false;
+                byte* iter = stackalloc byte[IterSize], a = stackalloc byte[IterSize];
+                dbus_message_iter_init_append(call, iter);
+                AppendString(iter, AppId);
+                dbus_message_iter_append_basic(iter, 'u', &replaces);
+                AppendString(iter, icon ?? "");
+                AppendString(iter, title ?? "");
+                AppendString(iter, body ?? "");
+                // the "default" action: a click on the notification (NIN_BALLOONUSERCLICK)
+                dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "s", a);
+                AppendString(a, "default");
+                AppendString(a, "");
+                dbus_message_iter_close_container(iter, a);
+                dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, "{sv}", a);
+                dbus_message_iter_close_container(iter, a);
+                int expire = -1;   // the server's own (Windows has ignored the balloon's timeout since Vista)
+                dbus_message_iter_append_basic(iter, DBUS_TYPE_INT32, &expire);
+                DBusError err;
+                dbus_error_init(&err);
+                IntPtr reply = dbus_connection_send_with_reply_and_block(s_bus, call, 2000, &err);
+                dbus_message_unref(call);
+                dbus_error_free(&err);
+                if (reply == IntPtr.Zero) { Trace("no notification server"); return false; }
+                uint id = 0;
+                byte* r = stackalloc byte[IterSize];
+                if (dbus_message_iter_init(reply, r) != 0 && dbus_message_iter_get_arg_type(r) == 'u') dbus_message_iter_get_basic(r, &id);
+                dbus_message_unref(reply);
+                if (replaces != 0) s_notifications.Remove(replaces);
+                s_notifications[id] = tag;
+                Trace($"notification {id} for {tag}: '{title}'");
+            }
+            try { NotificationEvent?.Invoke(tag, 1); } catch (Exception) { }
+            return true;
+        }
+
+        [UnmanagedCallersOnly]
+        private static int FilterSignals(IntPtr connection, IntPtr message, IntPtr userData)
+        {
+            try
+            {
+                bool closed = dbus_message_is_signal(message, "org.freedesktop.Notifications", "NotificationClosed") != 0;
+                bool action = dbus_message_is_signal(message, "org.freedesktop.Notifications", "ActionInvoked") != 0;
+                if (!closed && !action) return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+                byte* iter = stackalloc byte[IterSize];
+                uint id = 0, reason = 0;
+                if (dbus_message_iter_init(message, iter) == 0 || dbus_message_iter_get_arg_type(iter) != 'u') return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+                dbus_message_iter_get_basic(iter, &id);
+                if (closed && dbus_message_iter_next(iter) != 0 && dbus_message_iter_get_arg_type(iter) == 'u') dbus_message_iter_get_basic(iter, &reason);
+                int tag, kind;
+                lock (s_lock)
+                {
+                    if (!s_notifications.TryGetValue(id, out tag)) return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+                    if (action) { s_clicked.Add(id); kind = 2; }
+                    else
+                    {
+                        s_notifications.Remove(id);
+                        // after a click the balloon is gone and said so (NIN_BALLOONUSERCLICK alone, as on Windows);
+                        // closed by the application (3) it was hidden; else it timed out or the user closed it
+                        if (s_clicked.Remove(id)) return DBUS_HANDLER_RESULT_HANDLED;
+                        kind = reason == 3 ? 4 : 3;
+                    }
+                }
+                Trace($"notification {id}: {(action ? "clicked" : $"closed ({reason})")}");
+                try { NotificationEvent?.Invoke(tag, kind); } catch (Exception) { }
+                return DBUS_HANDLER_RESULT_HANDLED;
+            }
+            catch (Exception) { return DBUS_HANDLER_RESULT_NOT_YET_HANDLED; }
+        }
 
         private static void Register(Item item)
         {

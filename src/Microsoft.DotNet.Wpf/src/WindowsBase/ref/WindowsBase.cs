@@ -853,6 +853,8 @@ namespace MS.Internal.Interop.Wayland
         public static int[] GetScreensLogical() { throw null; }
         public static bool TrayShow(int id, string title, string tip, byte[] bgra, int width, int height) { throw null; }
         public static void TrayRemove(int id) { }
+        public static bool ShowNotification(int tag, string title, string body, string icon) { throw null; }
+        public static event System.Action<int, int> NotificationEvent { add { } remove { } }
         public static System.Func<int, bool, (int[] Parents, string[] Labels, int[] Flags)?> TrayMenuProvider { get { throw null; } set { } }
         public static event System.Action<int, int> TrayMenuItemClicked { add { } remove { } }
         public static event System.Action<int, int, int, int> TrayClicked { add { } remove { } }

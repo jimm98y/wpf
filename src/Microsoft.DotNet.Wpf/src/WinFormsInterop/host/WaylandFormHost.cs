@@ -75,6 +75,7 @@ namespace System.Windows.Forms
 			XplatUIWebGpu.SystrayAdded ??= (h, tip, icon) => TrayShow (h, tip, icon);
 			XplatUIWebGpu.SystrayChanged ??= (h, tip, icon) => TrayShow (h, tip, icon);
 			XplatUIWebGpu.SystrayRemoved ??= h => { if (s_trayIds.Remove (h, out int id)) WaylandWindow.TrayRemove (id); };
+			XplatUIWebGpu.SystrayBalloonShown ??= TrayBalloon;
 			// the lock keys as the compositor reports the keyboard
 			XplatUIWebGpu.KeyLockedProvider ??= vk => vk == 0x14 ? WaylandWindow.CapsLockOn : vk == 0x90 ? WaylandWindow.NumLockOn : null;
 		}
@@ -185,6 +186,36 @@ namespace System.Windows.Forms
 			Walk (strip.Items, 0);
 			s_trayMenuItems [id] = items;
 			return (parents.ToArray (), labels.ToArray (), flags.ToArray ());
+		}
+
+		private static readonly Dictionary<int, IntPtr> s_balloonWindows = new Dictionary<int, IntPtr> ();
+		private static bool s_balloonEvents;
+
+		/// <summary>NotifyIcon.ShowBalloonTip: a desktop notification, tagged with the icon's window.</summary>
+		private static void TrayBalloon (IntPtr window, int timeout, string title, string text, ToolTipIcon icon)
+		{
+			if (!s_balloonEvents) {
+				s_balloonEvents = true;
+				WaylandWindow.NotificationEvent += OnBalloonEvent;
+			}
+			if (!s_trayIds.TryGetValue (window, out int tag))
+				s_trayIds [window] = tag = ++s_nextTrayId;
+			s_balloonWindows [tag] = window;
+			string name = icon switch {
+				ToolTipIcon.Info => "dialog-information",
+				ToolTipIcon.Warning => "dialog-warning",
+				ToolTipIcon.Error => "dialog-error",
+				_ => "",
+			};
+			WaylandWindow.ShowNotification (tag, title ?? "", text ?? "", name);
+		}
+
+		private static void OnBalloonEvent (int tag, int kind)
+		{
+			if (!s_balloonWindows.TryGetValue (tag, out IntPtr window)) return;
+			const int WM_USER = 0x0400, NIN_BALLOONSHOW = 0x402, NIN_BALLOONHIDE = 0x403, NIN_BALLOONTIMEOUT = 0x404, NIN_BALLOONUSERCLICK = 0x405;
+			int m = kind switch { 1 => NIN_BALLOONSHOW, 2 => NIN_BALLOONUSERCLICK, 3 => NIN_BALLOONTIMEOUT, _ => NIN_BALLOONHIDE };
+			XplatUI.PostMessage (window, (Msg)WM_USER, IntPtr.Zero, (IntPtr)m);
 		}
 
 		private static void OnTrayMenuItem (int id, int itemId)

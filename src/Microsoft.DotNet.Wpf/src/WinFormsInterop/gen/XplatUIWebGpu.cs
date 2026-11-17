@@ -107,7 +107,15 @@ namespace System.Windows.Forms {
 			try { SystrayRemoved?.Invoke(hwnd); }
 			catch (Exception) { }
 		}
-		internal override void SystrayBalloon(IntPtr hwnd, int timeout, string title, string text, ToolTipIcon icon) {  }
+		/// <summary>Set by a host: shows a NotifyIcon's balloon tip as the platform's notification (Windows 10 shows it as
+		/// one, a toast). The host sends the icon's window what became of it (NIN_BALLOONSHOW, NIN_BALLOONUSERCLICK,
+		/// NIN_BALLOONTIMEOUT, NIN_BALLOONHIDE in lParam of its callback message), as the shell does.</summary>
+		internal static Action<IntPtr, int, string, string, ToolTipIcon> SystrayBalloonShown;
+
+		internal override void SystrayBalloon(IntPtr hwnd, int timeout, string title, string text, ToolTipIcon icon)
+		{
+			try { SystrayBalloonShown?.Invoke(hwnd, timeout, title, text, icon); } catch (Exception) { }
+		}
 		internal override Point GetMenuOrigin(IntPtr hwnd) { return default(Point); }
 		internal override void MenuToScreen(IntPtr hwnd, ref int x, ref int y) {  }
 		internal override void ScreenToMenu(IntPtr hwnd, ref int x, ref int y) {  }

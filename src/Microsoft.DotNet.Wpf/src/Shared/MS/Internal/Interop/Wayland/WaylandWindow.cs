@@ -1428,6 +1428,16 @@ namespace MS.Internal.Interop.Wayland
             remove => StatusNotifierItem.MenuItemClicked -= value;
         }
 
+        /// <summary>A desktop notification (a balloon tip), tagged; a second one with the same tag replaces the first.</summary>
+        public static bool ShowNotification(int tag, string title, string body, string icon) => StatusNotifierItem.Notify(tag, title, body, icon);
+
+        /// <summary>What became of a notification: (tag, 1 shown, 2 clicked, 3 closed or timed out, 4 taken away).</summary>
+        public static event Action<int, int> NotificationEvent
+        {
+            add => StatusNotifierItem.NotificationEvent += value;
+            remove => StatusNotifierItem.NotificationEvent -= value;
+        }
+
         /// <summary>The monitors as the compositor places them: (x, y, width, height, scale) each, logical pixels.</summary>
         public static int[] GetScreensLogical() => WaylandDisplay.OutputsLogical();
 
