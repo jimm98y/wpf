@@ -1066,7 +1066,11 @@ namespace System.Windows.Forms
 
 			document.CharIndexToLineTag (index, out line, out tag, out pos);
 
-			return new Point ((int) (line.widths [pos] +
+			// where the character shows: its cell's left edge, in a line laid out in visual order (Line.Visual) too
+			float x = line.widths [pos];
+			if (line.Visual is Line.VisualLayout v)
+				x = pos < v.Left.Length ? v.Left [pos] : line.CaretX (pos);
+			return new Point ((int) (x +
 							  line.X + document.viewport_x),
 					line.Y + document.viewport_y + tag.Shift);
 		}
@@ -1339,7 +1343,11 @@ namespace System.Windows.Forms
 				}
 			}
 
-			switch (keyData & Keys.KeyCode) {
+			// In a right-to-left box the arrows go the way the text shows: Left moves on through it.
+			Keys code = keyData & Keys.KeyCode;
+			if (RightToLeft == RightToLeft.Yes && (code == Keys.Left || code == Keys.Right))
+				code = code == Keys.Left ? Keys.Right : Keys.Left;
+			switch (code) {
 				case Keys.Left: {
 					if (control) {
 						document.MoveCaret(CaretDirection.WordBack);

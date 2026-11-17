@@ -27,6 +27,7 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Text;
 using System.Text;
@@ -1069,6 +1070,153 @@ namespace System.Windows.Forms
 		#endregion	// Internal Methods
 
 		#region Administrative
+		// ---- bidi: the line as the edit control shows it -------------------------------------------
+		//
+		// Windows' edit and rich edit controls run the bidi algorithm over every line (Uniscribe): Hebrew and Arabic
+		// read right to left, a right-to-left box's lines are right-to-left paragraphs, and the caret, the
+		// selection and a click all go by where the characters SHOW. Laid out in logical order, a Hebrew word
+		// came out mirrored and a right-to-left box read left to right. A line with nothing that reads right to
+		// left, in a left-to-right box, has no visual layout and goes the logical way it always went.
+
+		internal sealed class VisualLayout
+		{
+			public float [] Left;		// each character's left edge as shown (the widths' space)
+			public float [] Width;
+			public bool [] Rtl;		// the character reads right to left (an odd level)
+			public List<(int Start, int End, bool Rtl)> Runs;	// in visual order, logical [Start, End)
+		}
+
+		VisualLayout visual;
+		string visual_text;
+		float visual_extent;
+		bool visual_rtl;
+
+		/// <summary>The line's visual layout, or null when it is laid out in logical order.</summary>
+		internal VisualLayout Visual {
+			get {
+				bool rtlBase = document.owner != null && document.owner.RightToLeft == RightToLeft.Yes;
+				int n = TextLengthWithoutEnding ();
+				if (n > widths.Length - 1)
+					n = widths.Length - 1;
+				string chars = text.ToString (0, Math.Max (0, n));
+				if (visual_text != null && visual_text == chars && visual_rtl == rtlBase && visual_extent == widths [n])
+					return visual;
+				visual_text = chars;
+				visual_rtl = rtlBase;
+				visual_extent = widths [n];
+				visual = BuildVisual (chars, rtlBase);
+				return visual;
+			}
+		}
+
+		VisualLayout BuildVisual (string chars, bool rtlBase)
+		{
+			int n = chars.Length;
+			bool any = rtlBase;
+			foreach (char c in chars)
+				if (c >= '\u0590' && c <= '\u08FF' || c >= '\uFB1D' && c <= '\uFEFC' || c >= '\u200E' && c <= '\u200F' || c >= '\u202A' && c <= '\u202E') {
+					any = true;
+					break;
+				}
+			if (!any || n == 0)
+				return null;
+			var flags = rtlBase ? System.Drawing.WebGpuBackend.Gdip.GpBidi.Flags.DirectionRightToLeft : System.Drawing.WebGpuBackend.Gdip.GpBidi.Flags.DirectionLeftToRight;
+			if (!System.Drawing.WebGpuBackend.Gdip.GpBidi.Analyze (chars.ToCharArray (), n, n, flags, null, out byte [] levels, out _))
+				return null;
+			bool reordered = false;
+			foreach (byte l in levels)
+				reordered |= l != 0;
+			if (!reordered)
+				return null;
+
+			var runs = new List<(int Start, int End, byte Level)> ();
+			for (int i = 0; i < n;) {
+				int j = i + 1;
+				while (j < n && levels [j] == levels [i])
+					j++;
+				runs.Add ((i, j, levels [i]));
+				i = j;
+			}
+			int max = 0, minOdd = int.MaxValue;
+			foreach (var r in runs) {
+				max = Math.Max (max, r.Level);
+				if ((r.Level & 1) != 0)
+					minOdd = Math.Min (minOdd, r.Level);
+			}
+			for (int level = max; level >= minOdd && level > 0; level--)
+				for (int i = 0; i < runs.Count;) {
+					if (runs [i].Level < level) { i++; continue; }
+					int j = i;
+					while (j + 1 < runs.Count && runs [j + 1].Level >= level)
+						j++;
+					runs.Reverse (i, j - i + 1);
+					i = j + 1;
+				}
+
+			var v = new VisualLayout { Left = new float [n], Width = new float [n], Rtl = new bool [n], Runs = new List<(int, int, bool)> () };
+			float x = widths [0];
+			foreach (var r in runs) {
+				bool rtl = (r.Level & 1) != 0;
+				v.Runs.Add ((r.Start, r.End, rtl));
+				if (rtl) {
+					for (int i = r.End - 1; i >= r.Start; i--) {
+						v.Width [i] = widths [i + 1] - widths [i];
+						v.Left [i] = x;
+						v.Rtl [i] = true;
+						x += v.Width [i];
+					}
+				} else {
+					for (int i = r.Start; i < r.End; i++) {
+						v.Width [i] = widths [i + 1] - widths [i];
+						v.Left [i] = x;
+						x += v.Width [i];
+					}
+				}
+			}
+			return v;
+		}
+
+		/// <summary>Where the caret shows at logical position <paramref name="pos"/>: the leading edge of the
+		/// character after it, or at the line's end the trailing edge of the one before (the widths' space).</summary>
+		internal float CaretX (int pos)
+		{
+			VisualLayout v = Visual;
+			if (v == null || v.Left.Length == 0)
+				return widths [Math.Min (Math.Max (pos, 0), widths.Length - 1)];
+			int n = v.Left.Length;
+			if (pos < 0)
+				pos = 0;
+			if (pos < n)
+				return v.Rtl [pos] ? v.Left [pos] + v.Width [pos] : v.Left [pos];
+			int last = n - 1;
+			return v.Rtl [last] ? v.Left [last] : v.Left [last] + v.Width [last];
+		}
+
+		/// <summary>The logical position a click at <paramref name="x"/> (the widths' space) puts the caret at:
+		/// before or after the character there, by which half of it was hit and which way it reads.</summary>
+		internal int PosAtX (float x)
+		{
+			VisualLayout v = Visual;
+			int n = v.Left.Length;
+			int leftmost = 0, rightmost = 0;
+			for (int i = 0; i < n; i++) {
+				float l = v.Left [i], r = l + v.Width [i];
+				if (x >= l && x < r) {
+					bool leftHalf = x < l + v.Width [i] / 2;
+					return leftHalf != v.Rtl [i] ? i : i + 1;
+				}
+				if (l < v.Left [leftmost])
+					leftmost = i;
+				if (r > v.Left [rightmost] + v.Width [rightmost])
+					rightmost = i;
+			}
+			if (n == 0)
+				return 0;
+			if (x < v.Left [leftmost])
+				return v.Rtl [leftmost] ? leftmost + 1 : leftmost;
+			return v.Rtl [rightmost] ? rightmost : rightmost + 1;
+		}
+
 		/// <summary>The bullet character RichEdit draws (U+2022, the Symbol font's 0xB7).</summary>
 		internal const string BulletText = "\u2022";
 

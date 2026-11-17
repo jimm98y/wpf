@@ -705,7 +705,7 @@ namespace System.Windows.Forms
 						g.FillRectangle (b, x, y, Extent (s, 0, s.Length), Height);
 				}
 				bool saved = g.rtl_reading;
-				g.rtl_reading = RtlReading;
+				g.rtl_reading = RtlReading || saved;	// a right-to-left piece of an edit control's line stays one
 				try {
 					g.TextOutGdi (s, font, ForeColor, x, y);
 				} finally {

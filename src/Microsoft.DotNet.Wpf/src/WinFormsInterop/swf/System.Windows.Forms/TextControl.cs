@@ -367,7 +367,7 @@ namespace System.Windows.Forms {
 
 		internal Point Caret {
 			get {
-				return new Point((int)caret.tag.Line.widths[caret.pos] + caret.line.X, caret.line.Y);
+				return new Point((int)caret.tag.Line.CaretX(caret.pos) + caret.line.X, caret.line.Y);
 			}
 		}
 
@@ -1461,7 +1461,7 @@ namespace System.Windows.Forms {
 		void SetCaretPos ()
 		{
 			XplatUI.SetCaretPos (owner.Handle,
-				(int)Math.Min(offset_x + caret.tag.Line.widths[caret.pos] + caret.line.X - viewport_x,
+				(int)Math.Min(offset_x + caret.tag.Line.CaretX(caret.pos) + caret.line.X - viewport_x,
 					viewport_width - caret.tag.Line.right_indent - caret_width), // Limit X, because whitespace can be outside this.
 				(int)(offset_y + caret.line.Y + caret.line.SpacingBefore + caret.tag.OffsetY -
 				caret.tag.CharOffset + caret.tag.Shift - viewport_y + caret_shift));
@@ -1623,7 +1623,7 @@ namespace System.Windows.Forms {
 					if (caret.line.line_no > 1) {
 						int	pixel;
 
-						pixel = (int)caret.line.widths[caret.pos] + caret.line.align_shift;
+						pixel = (int)caret.line.CaretX(caret.pos) + caret.line.align_shift;
 						PositionCaret(pixel, GetLine(caret.line.line_no - 1).Y);
 
 						DisplayCaret ();
@@ -1635,7 +1635,7 @@ namespace System.Windows.Forms {
 					if (caret.line.line_no < lines) {
 						int	pixel;
 
-						pixel = (int)caret.line.widths[caret.pos] + caret.line.align_shift;
+						pixel = (int)caret.line.CaretX(caret.pos) + caret.line.align_shift;
 						PositionCaret(pixel, GetLine(caret.line.line_no + 1).Y);
 
 						DisplayCaret ();
@@ -1673,11 +1673,11 @@ namespace System.Windows.Forms {
 					int y_offset = caret.line.Y + caret.line.height - 1 - viewport_y;
 					int expected_y = viewport_y - viewport_height;
 					int index;
-					LineTag top = FindCursor ((int) caret.line.widths [caret.pos] + caret.line.align_shift,
+					LineTag top = FindCursor ((int) caret.line.CaretX (caret.pos) + caret.line.align_shift,
 							expected_y, out index);
 
 					owner.vscroll.Value = Math.Min (top.Line.Y, owner.vscroll.Maximum - viewport_height);
-					PositionCaret ((int) caret.line.widths [caret.pos] + caret.line.align_shift,
+					PositionCaret ((int) caret.line.CaretX (caret.pos) + caret.line.align_shift,
 						(expected_y >= 0) ? y_offset + viewport_y : 0);
 
 					break;
@@ -1695,11 +1695,11 @@ namespace System.Windows.Forms {
 					int y_offset = caret.line.Y - viewport_y;
 					int expected_y = viewport_y + viewport_height;
 					int index;
-					LineTag top = FindCursor ((int) caret.line.widths [caret.pos] + caret.line.align_shift,
+					LineTag top = FindCursor ((int) caret.line.CaretX (caret.pos) + caret.line.align_shift,
 							expected_y, out index);
 
 					owner.vscroll.Value = Math.Min (top.Line.Y, owner.vscroll.Maximum - viewport_height);
-					PositionCaret ((int) caret.line.widths [caret.pos] + caret.line.align_shift,
+					PositionCaret ((int) caret.line.CaretX (caret.pos) + caret.line.align_shift,
 						(expected_y <= document_y - viewport_height) ? y_offset + viewport_y : document_y);
 					
 					break;
@@ -1875,7 +1875,7 @@ namespace System.Windows.Forms {
 			// highlight runs one pixel past the selection's last character (stock Segoe UI 9: "1"
 			// is 6 wide and highlights 7 columns, "100%" 28 and 29, a selection inside the text
 			// too); a rich edit's does not.
-			if (!multiline && selection_visible && owner.ShowSelection) {
+			if (!multiline && selection_visible && owner.ShowSelection && selection_start.line.Visual == null) {
 				float x0 = selection_start.line.X + selection_start.line.widths [selection_start.pos];
 				float x1 = selection_end.line.X + selection_end.line.widths [selection_end.pos];
 				if (x1 > x0 && !(owner is RichTextBox))
@@ -1933,12 +1933,18 @@ namespace System.Windows.Forms {
 						// There isn't really selection
 						line_selection_start = text.Length + 1;
 						line_selection_end = line_selection_start;
-					} else if (multiline) {
+					} else if (multiline && line.Visual == null) {
 						// lets draw some selection baby!!  (non multiline selection is drawn outside the loop)
 						g.FillRectangle (ThemeEngine.Current.ResPool.GetSolidBrush (ThemeEngine.Current.ColorHighlight),
 							offset_x + line.widths [line_selection_start - 1] + line.X - viewport_x, line_y - line.SpacingBefore,
 							line.widths [line_selection_end - 1] - line.widths [line_selection_start - 1], line.height);
 					}
+				}
+
+				// a line shown in visual order is drawn by where its characters show
+				if (!calc_pass && line.Visual is Line.VisualLayout visual) {
+					DrawVisualLine (g, line, visual, text, line_y, line_selection_start - 1, line_selection_end - 1);
+					tag = null;
 				}
 
 				while (tag != null) {
@@ -2016,6 +2022,47 @@ namespace System.Windows.Forms {
 			}
 			if (text_clip != null)
 				g.Restore (text_clip);
+		}
+
+		/// <summary>A line in visual order (Line.Visual): the selection behind the characters it covers, then each
+		/// piece of each run -- one tag, selected or not -- at the place its characters show, a right-to-left piece
+		/// reading right to left. <paramref name="selStart"/> and <paramref name="selEnd"/> are 0-based.</summary>
+		private void DrawVisualLine (Graphics g, Line line, Line.VisualLayout v, StringBuilder text, float line_y, int selStart, int selEnd)
+		{
+			float baseX = offset_x + line.X - viewport_x;
+			int n = v.Left.Length;
+			bool selection = selection_visible && owner.ShowSelection && selEnd > selStart;
+			if (selection) {
+				Brush hi = ThemeEngine.Current.ResPool.GetSolidBrush (ThemeEngine.Current.ColorHighlight);
+				for (int i = Math.Max (0, selStart); i < Math.Min (selEnd, n); i++)
+					g.FillRectangle (hi, baseX + v.Left [i], line_y - line.SpacingBefore, v.Width [i], line.height);
+			}
+			string all = text.ToString ();
+			bool savedRtl = g.rtl_reading;
+			try {
+				foreach (var run in v.Runs) {
+					int i = run.Start;
+					while (i < run.End) {
+						LineTag tag = LineTag.FindTag (line, i + 1) ?? line.tags;
+						int end = Math.Min (run.End, Math.Max (i + 1, tag.End - 1));
+						bool selected = selection && i >= selStart && i < selEnd;
+						if (selection && !selected && i < selStart && end > selStart) end = selStart;
+						if (selection && selected && end > selEnd) end = selEnd;
+						if (tag.Visible && tag.Length > 0) {
+							Color color = selected ? ThemeEngine.Current.ColorHighlightText : tag.ColorToDisplay;
+							if (!owner.Enabled && !selected)
+								color = ThemeEngine.Current.ColorGrayText;
+							float left = run.Rtl ? v.Left [end - 1] : v.Left [i];
+							g.rtl_reading = run.Rtl;
+							tag.Draw (g, color, baseX + left - line.widths [i], line_y + tag.Shift - tag.CharOffset,
+								i, end, all, out Rectangle _, false);
+						}
+						i = end;
+					}
+				}
+			} finally {
+				g.rtl_reading = savedRtl;
+			}
 		}
 
 		private int GetLineEnding (string line, int start, out LineEnding ending)
@@ -3787,6 +3834,12 @@ namespace System.Windows.Forms {
 			y -= offset_y;
 
 			line = GetLineByPixel (multiline ? y : x, false);
+
+			// a line laid out in visual order: by where its characters show (Line.Visual)
+			if (line.Visual != null) {
+				index = line.PosAtX (x - line.align_shift);
+				return LineTag.FindTag (line, index) ?? line.tags;
+			}
 
 			LineTag tag = line.GetTag (x);
 				
