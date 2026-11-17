@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Replacement for the System.Data.OleDb package's runtime assembly, off Windows, where the package's
+       own build throws PlatformNotSupportedException from every member: an OLE DB connection opened on
+       the managed provider for what its OLE DB provider reaches: SQL Server's providers (SQLOLEDB,
+       SQLNCLI, MSOLEDBSQL) on Microsoft.Data.SqlClient, MSDASQL on System.Data.Odbc; with OLE DB's
+       own surface: positional ? parameters, OleDbType, its schema rowsets (GetOleDbSchemaTable),
+       OleDbException. A provider with no managed equivalent (Jet, ACE) is not registered, as on a
+       Windows machine without it.
+
+       Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
+       as the package, AssemblyVersion above it. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Data.OleDb</AssemblyName>
+    <RootNamespace>System.Data.OleDb</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>open.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;SYSLIB0051;CS0108;CS0114;CS0618;CS0672;CS8597;CS8625;CS0809</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>
