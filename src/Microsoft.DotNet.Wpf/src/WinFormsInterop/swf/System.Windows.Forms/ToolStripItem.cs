@@ -223,13 +223,29 @@ namespace System.Windows.Forms
 			}
 		}
 
-		[MonoTODO ("Stub, does nothing")]
+		// The item a drop target of its own: its strip hands it the drags over it (ToolStrip.OnDragOver).
 		[Browsable (false)]
 		[DefaultValue (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public virtual bool AllowDrop {
 			get { return this.allow_drop; }
-			set { this.allow_drop = value; }
+			set {
+				this.allow_drop = value;
+				this.Owner?.UpdateDropRegistration ();
+			}
+		}
+
+		/// <summary>A drag over the item, from its strip: 0 enter, 1 over, 2 drop, 3 leave, 4 feedback, 5 query.</summary>
+		internal void FireDrag (int kind, EventArgs e)
+		{
+			switch (kind) {
+			case 0: OnDragEnter ((DragEventArgs)e); break;
+			case 1: OnDragOver ((DragEventArgs)e); break;
+			case 2: OnDragDrop ((DragEventArgs)e); break;
+			case 3: OnDragLeave (e); break;
+			case 4: OnGiveFeedback ((GiveFeedbackEventArgs)e); break;
+			case 5: OnQueryContinueDrag ((QueryContinueDragEventArgs)e); break;
+			}
 		}
 		
 		[Browsable (false)]
@@ -900,11 +916,14 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region Public Methods
-		[MonoTODO ("Stub, does nothing")]
+		// A drag from the item: its strip's DoDragDrop, with the item told the feedback and asked whether to go on.
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public DragDropEffects DoDragDrop (Object data, DragDropEffects allowedEffects)
 		{
-			return allowedEffects;
+			ToolStrip strip = this.Owner;
+			if (strip == null)
+				return DragDropEffects.None;
+			return strip.DoItemDragDrop (this, data, allowedEffects);
 		}
 		
 		public ToolStrip GetCurrentParent ()
@@ -1399,7 +1418,6 @@ namespace System.Windows.Forms
 			remove {Events.RemoveHandler (DoubleClickEvent, value); }
 		}
 
-		[MonoTODO ("Event never raised")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public event DragEventHandler DragDrop {
@@ -1407,7 +1425,6 @@ namespace System.Windows.Forms
 			remove { Events.RemoveHandler (DragDropEvent, value); }
 		}
 
-		[MonoTODO ("Event never raised")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public event DragEventHandler DragEnter {
@@ -1415,7 +1432,6 @@ namespace System.Windows.Forms
 			remove { Events.RemoveHandler (DragEnterEvent, value); }
 		}
 
-		[MonoTODO ("Event never raised")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public event EventHandler DragLeave {
@@ -1423,7 +1439,6 @@ namespace System.Windows.Forms
 			remove { Events.RemoveHandler (DragLeaveEvent, value); }
 		}
 
-		[MonoTODO ("Event never raised")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public event DragEventHandler DragOver {
@@ -1441,7 +1456,6 @@ namespace System.Windows.Forms
 			remove {Events.RemoveHandler (ForeColorChangedEvent, value); }
 		}
 
-		[MonoTODO ("Event never raised")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public event GiveFeedbackEventHandler GiveFeedback {
@@ -1500,7 +1514,6 @@ namespace System.Windows.Forms
 			remove { Events.RemoveHandler (QueryAccessibilityHelpEvent, value); }
 		}
 
-		[MonoTODO ("Event never raised")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public event QueryContinueDragEventHandler QueryContinueDrag {

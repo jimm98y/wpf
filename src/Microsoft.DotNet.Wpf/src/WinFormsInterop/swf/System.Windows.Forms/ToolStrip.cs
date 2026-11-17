@@ -136,17 +136,223 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region Public Properties
-		[MonoTODO ("Stub, does nothing")]
+		// AllowDrop: the strip's own drag events (or an item's, where it allows drops); AllowItemReorder: Alt+drag
+		// moves an item, here or to another strip that allows it. Not both, as in .NET.
 		public override bool AllowDrop {
 			get { return base.AllowDrop; }
-			set { base.AllowDrop = value; }
+			set {
+				if (value && this.allow_item_reorder)
+					throw new ArgumentException ("AllowItemReorder and AllowDrop cannot both be true.");
+				base.AllowDrop = value;
+				UpdateDropRegistration ();
+			}
 		}
 
-		[MonoTODO ("Stub, does nothing")]
 		[DefaultValue (false)]
 		public bool AllowItemReorder {
 			get { return this.allow_item_reorder; }
-			set { this.allow_item_reorder = value; }
+			set {
+				if (value && base.AllowDrop)
+					throw new ArgumentException ("AllowItemReorder and AllowDrop cannot both be true.");
+				this.allow_item_reorder = value;
+				UpdateDropRegistration ();
+			}
+		}
+
+		/// <summary>The strip a drop target while it reorders items, takes drops, or has an item that does.</summary>
+		internal void UpdateDropRegistration ()
+		{
+			if (!IsHandleCreated)
+				return;
+			bool any = base.AllowDrop || this.allow_item_reorder;
+			if (!any)
+				foreach (ToolStripItem i in this.Items)
+					any |= i.AllowDrop;
+			XplatUI.SetAllowDrop (Handle, any);
+		}
+
+		// ---- dragging items: reordering, and an item's own drag and drop -----------------------------
+
+		private ToolStripItem reorder_pending;	// an item pressed with Alt, not dragged far enough yet
+		private Point reorder_from;
+		private ToolStripItem item_dragging;	// the item whose DoDragDrop is under way
+		private ToolStripItem drag_over_item;	// the item a drag is over, that takes drops
+		private Rectangle insertion_mark = Rectangle.Empty;
+
+		internal DragDropEffects DoItemDragDrop (ToolStripItem item, object data, DragDropEffects allowed)
+		{
+			item_dragging = item;
+			try {
+				return DoDragDrop (data, allowed);
+			} finally {
+				item_dragging = null;
+			}
+		}
+
+		protected override void OnGiveFeedback (GiveFeedbackEventArgs gfbevent)
+		{
+			if (item_dragging != null)
+				item_dragging.FireDrag (4, gfbevent);
+			base.OnGiveFeedback (gfbevent);
+		}
+
+		protected override void OnQueryContinueDrag (QueryContinueDragEventArgs qcdevent)
+		{
+			if (item_dragging != null)
+				item_dragging.FireDrag (5, qcdevent);
+			base.OnQueryContinueDrag (qcdevent);
+		}
+
+		static bool IsReorderDrag (DragEventArgs e) => e.Data != null && e.Data.GetDataPresent (typeof (ToolStripItem));
+
+		/// <summary>Where a dragged item would go at a point of the strip: the index among the items, and the mark
+		/// between them.</summary>
+		private int ReorderIndexAt (Point p, out Rectangle mark)
+		{
+			bool horizontal = this.Orientation == Orientation.Horizontal;
+			int index = this.Items.Count;
+			ToolStripItem after = null, before = null;
+			for (int i = 0; i < this.Items.Count; i++) {
+				ToolStripItem it = this.Items [i];
+				if (!it.Available || it.Placement != ToolStripItemPlacement.Main)
+					continue;
+				Rectangle b = it.Bounds;
+				int mid = horizontal ? b.X + b.Width / 2 : b.Y + b.Height / 2;
+				if ((horizontal ? p.X : p.Y) < mid) {
+					index = i;
+					before = it;
+					break;
+				}
+				after = it;
+			}
+			// the mark: an I-beam six pixels wide, on the line between the items
+			const int beam = 6;
+			Rectangle row = before != null ? before.Bounds : after != null ? after.Bounds : this.DisplayRectangle;
+			int edge = before != null ? (horizontal ? before.Bounds.Left : before.Bounds.Top)
+			                          : after != null ? (horizontal ? after.Bounds.Right : after.Bounds.Bottom)
+			                          : (horizontal ? this.DisplayRectangle.Left : this.DisplayRectangle.Top);
+			mark = horizontal ? new Rectangle (edge - beam / 2, row.Y, beam, row.Height)
+			                  : new Rectangle (row.X, edge - beam / 2, row.Width, beam);
+			return index;
+		}
+
+		private void SetInsertionMark (Rectangle mark)
+		{
+			if (mark == insertion_mark)
+				return;
+			if (!insertion_mark.IsEmpty)
+				Invalidate (insertion_mark);
+			insertion_mark = mark;
+			if (!mark.IsEmpty)
+				Invalidate (mark);
+		}
+
+		private void PaintInsertionMark (Graphics g)
+		{
+			if (insertion_mark.IsEmpty)
+				return;
+			Rectangle m = insertion_mark;
+			Pen pen = SystemPens.ControlText;
+			if (this.Orientation == Orientation.Horizontal) {
+				int x = m.X + m.Width / 2 - 1;
+				g.DrawLine (pen, x, m.Y, x, m.Bottom - 1);
+				g.DrawLine (pen, x + 1, m.Y, x + 1, m.Bottom - 1);
+				g.DrawLine (pen, m.X, m.Y, m.Right - 1, m.Y);
+				g.DrawLine (pen, m.X + 1, m.Y + 1, m.Right - 2, m.Y + 1);
+				g.DrawLine (pen, m.X, m.Bottom - 1, m.Right - 1, m.Bottom - 1);
+				g.DrawLine (pen, m.X + 1, m.Bottom - 2, m.Right - 2, m.Bottom - 2);
+			} else {
+				int y = m.Y + m.Height / 2 - 1;
+				g.DrawLine (pen, m.X, y, m.Right - 1, y);
+				g.DrawLine (pen, m.X, y + 1, m.Right - 1, y + 1);
+				g.DrawLine (pen, m.X, m.Y, m.X, m.Bottom - 1);
+				g.DrawLine (pen, m.X + 1, m.Y + 1, m.X + 1, m.Bottom - 2);
+				g.DrawLine (pen, m.Right - 1, m.Y, m.Right - 1, m.Bottom - 1);
+				g.DrawLine (pen, m.Right - 2, m.Y + 1, m.Right - 2, m.Bottom - 2);
+			}
+		}
+
+		/// <summary>The item that takes drops under a drag, told when the drag comes onto it and leaves it.</summary>
+		private ToolStripItem TrackDropItem (DragEventArgs e)
+		{
+			Point p = PointToClient (new Point (e.X, e.Y));
+			ToolStripItem under = GetItemAt (p.X, p.Y);
+			if (under != null && !under.AllowDrop)
+				under = null;
+			if (under != drag_over_item) {
+				drag_over_item?.FireDrag (3, EventArgs.Empty);
+				drag_over_item = under;
+				under?.FireDrag (0, e);
+			}
+			return under;
+		}
+
+		protected override void OnDragEnter (DragEventArgs drgevent)
+		{
+			if (this.allow_item_reorder && IsReorderDrag (drgevent)) {
+				drgevent.Effect = drgevent.AllowedEffect & DragDropEffects.Move;
+				ReorderIndexAt (PointToClient (new Point (drgevent.X, drgevent.Y)), out Rectangle mark);
+				SetInsertionMark (mark);
+				return;
+			}
+			if (TrackDropItem (drgevent) != null)
+				return;
+			base.OnDragEnter (drgevent);
+		}
+
+		protected override void OnDragOver (DragEventArgs drgevent)
+		{
+			if (this.allow_item_reorder && IsReorderDrag (drgevent)) {
+				drgevent.Effect = drgevent.AllowedEffect & DragDropEffects.Move;
+				ReorderIndexAt (PointToClient (new Point (drgevent.X, drgevent.Y)), out Rectangle mark);
+				SetInsertionMark (mark);
+				return;
+			}
+			ToolStripItem item = TrackDropItem (drgevent);
+			if (item != null) {
+				item.FireDrag (1, drgevent);
+				return;
+			}
+			base.OnDragOver (drgevent);
+		}
+
+		protected override void OnDragLeave (EventArgs e)
+		{
+			SetInsertionMark (Rectangle.Empty);
+			if (drag_over_item != null) {
+				drag_over_item.FireDrag (3, e);
+				drag_over_item = null;
+				return;
+			}
+			base.OnDragLeave (e);
+		}
+
+		protected override void OnDragDrop (DragEventArgs drgevent)
+		{
+			SetInsertionMark (Rectangle.Empty);
+			if (this.allow_item_reorder && IsReorderDrag (drgevent)) {
+				ToolStripItem moved = (ToolStripItem)drgevent.Data.GetData (typeof (ToolStripItem));
+				int index = ReorderIndexAt (PointToClient (new Point (drgevent.X, drgevent.Y)), out _);
+				if (moved != null) {
+					int from = this.Items.IndexOf (moved);
+					if (from >= 0 && from < index)
+						index--;	// it leaves its own place first
+					if (from != index) {
+						this.SuspendLayout ();
+						this.Items.Insert (Math.Min (index, this.Items.Contains (moved) ? this.Items.Count - 1 : this.Items.Count), moved);
+						this.ResumeLayout ();
+					}
+					drgevent.Effect = DragDropEffects.Move;
+				}
+				return;
+			}
+			ToolStripItem item = drag_over_item ?? TrackDropItem (drgevent);
+			if (item != null) {
+				drag_over_item = null;
+				item.FireDrag (2, drgevent);
+				return;
+			}
+			base.OnDragDrop (drgevent);
 		}
 		
 		[DefaultValue (true)]
@@ -402,11 +608,70 @@ namespace System.Windows.Forms
 			set { this.image_scaling_size = value; }
 		}
 
-		[MonoTODO ("Always returns false, dragging not implemented yet.")]
 		[Browsable (false)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public bool IsCurrentlyDragging {
-			get { return false; }
+			get { return grip_dragging; }
+		}
+
+		// ---- moving the strip by its grip --------------------------------------------------------
+		//
+		// A strip in a ToolStripPanel is moved by its grip: along its row, to another row, to a row of its own
+		// above or below the others, or into another panel of the same ToolStripContainer -- BeginDrag when the
+		// grip is pressed, EndDrag when it is let go, the four-way arrow over the grip.
+
+		private bool grip_dragging;
+		private Point grip_grab;		// where in the strip the pointer holds it
+		private bool grip_cursor;		// the grip's cursor is up
+		private Cursor cursor_before_grip;
+
+		private bool GripDraggable =>
+			this.grip_style == ToolStripGripStyle.Visible && this.Parent is ToolStripPanel && !(this is ToolStripDropDown)
+			&& this.layout_style != ToolStripLayoutStyle.Flow && this.layout_style != ToolStripLayoutStyle.Table;
+
+		private void ShowGripCursor (bool show)
+		{
+			if (show == grip_cursor)
+				return;
+			grip_cursor = show;
+			if (show) {
+				cursor_before_grip = this.Cursor;
+				this.Cursor = Cursors.SizeAll;
+			} else
+				this.Cursor = cursor_before_grip;
+		}
+
+		/// <summary>The panel a dragged strip goes into at a point of the screen: its own, or another visible one
+		/// of its container -- an empty one (no thickness) across a band at its edge.</summary>
+		private ToolStripPanel PanelUnder (Point screen)
+		{
+			ToolStripPanel own = this.Parent as ToolStripPanel;
+			var candidates = new System.Collections.Generic.List<ToolStripPanel> ();
+			if (own != null)
+				candidates.Add (own);
+			if (own?.Parent != null)
+				foreach (Control c in own.Parent.Controls)
+					if (c is ToolStripPanel p && p != own && p.Visible && p.Enabled)
+						candidates.Add (p);
+			foreach (ToolStripPanel p in candidates) {
+				Rectangle r = p.RectangleToScreen (p.ClientRectangle);
+				bool horizontal = p.Orientation == Orientation.Horizontal;
+				const int band = 6;
+				if (horizontal && r.Height < band) {
+					if (p.Dock == DockStyle.Bottom)
+						r = new Rectangle (r.X, r.Bottom - band, r.Width, band);
+					else
+						r = new Rectangle (r.X, r.Y, r.Width, band);
+				} else if (!horizontal && r.Width < band) {
+					if (p.Dock == DockStyle.Right)
+						r = new Rectangle (r.Right - band, r.Y, band, r.Height);
+					else
+						r = new Rectangle (r.X, r.Y, band, r.Height);
+				}
+				if (r.Contains (screen))
+					return p;
+			}
+			return own;
 		}
 		
 		[Browsable (false)]
@@ -791,7 +1056,6 @@ namespace System.Windows.Forms
 			}
 		}
 
-		[MonoTODO ("Stub, never called")]
 		protected virtual void OnBeginDrag (EventArgs e)
 		{
 			EventHandler eh = (EventHandler)(Events[BeginDragEvent]);
@@ -804,7 +1068,6 @@ namespace System.Windows.Forms
 			base.OnDockChanged (e);
 		}
 
-		[MonoTODO ("Stub, never called")]
 		protected virtual void OnEndDrag (EventArgs e)
 		{
 			EventHandler eh = (EventHandler)(Events[EndDragEvent]);
@@ -838,6 +1101,7 @@ namespace System.Windows.Forms
 		protected override void OnHandleCreated (EventArgs e)
 		{
 			base.OnHandleCreated (e);
+			UpdateDropRegistration ();
 		}
 
 		protected override void OnHandleDestroyed (EventArgs e)
@@ -852,6 +1116,8 @@ namespace System.Windows.Forms
 
 		protected internal virtual void OnItemAdded (ToolStripItemEventArgs e)
 		{
+			if (e.Item.AllowDrop)
+				UpdateDropRegistration ();
 			if (e.Item.InternalVisible)
 				e.Item.Available = true;
 				
@@ -921,6 +1187,24 @@ namespace System.Windows.Forms
 		
 		protected override void OnMouseDown (MouseEventArgs mea)
 		{
+			// Alt and a press on an item: the start of moving it (AllowItemReorder)
+			if (mea.Button == MouseButtons.Left && this.allow_item_reorder && (Control.ModifierKeys & Keys.Alt) != 0) {
+				ToolStripItem pressed = this.GetItemAt (mea.X, mea.Y);
+				if (pressed != null && pressed != this.overflow_button) {
+					reorder_pending = pressed;
+					reorder_from = mea.Location;
+					return;
+				}
+			}
+
+			if (mea.Button == MouseButtons.Left && GripDraggable && this.GripRectangle.Contains (mea.Location)) {
+				grip_dragging = true;
+				grip_grab = mea.Location;
+				this.Capture = true;
+				OnBeginDrag (EventArgs.Empty);
+				return;
+			}
+
 			if (mouse_currently_over != null)
 			{
 				ToolStripItem focused = GetCurrentlyFocusedItem ();
@@ -949,6 +1233,8 @@ namespace System.Windows.Forms
 
 		protected override void OnMouseLeave (EventArgs e)
 		{
+			if (!grip_dragging)
+				ShowGripCursor (false);
 			if (mouse_currently_over != null) {
 				MouseLeftItem (mouse_currently_over);
 				mouse_currently_over.FireEvent (e, ToolStripItemEventType.MouseLeave);
@@ -960,6 +1246,33 @@ namespace System.Windows.Forms
 
 		protected override void OnMouseMove (MouseEventArgs mea)
 		{
+			if (reorder_pending != null) {
+				Size slop = SystemInformation.DragSize;
+				if ((mea.Button & MouseButtons.Left) == 0) {
+					reorder_pending = null;
+				} else if (Math.Abs (mea.X - reorder_from.X) > slop.Width / 2 || Math.Abs (mea.Y - reorder_from.Y) > slop.Height / 2) {
+					ToolStripItem moving = reorder_pending;
+					reorder_pending = null;
+					var data = new DataObject ();
+					data.SetData (typeof (ToolStripItem), moving);
+					moving.DoDragDrop (data, DragDropEffects.Move);
+				}
+				return;
+			}
+
+			if (grip_dragging) {
+				Point screen = PointToScreen (mea.Location);
+				ToolStripPanel panel = PanelUnder (screen);
+				if (panel != null) {
+					Point pointer = panel.PointToClient (screen);
+					if (panel != this.Parent)
+						panel.Join (this, pointer);
+					panel.MoveTo (this, new Point (pointer.X - grip_grab.X, pointer.Y - grip_grab.Y), pointer);
+				}
+				return;
+			}
+			ShowGripCursor (GripDraggable && this.GripRectangle.Contains (mea.Location));
+
 			ToolStripItem tsi;
 			// Find the item we are now 
 			if (this.overflow_button != null && this.overflow_button.Visible && this.overflow_button.Bounds.Contains (mea.Location))
@@ -1004,6 +1317,18 @@ namespace System.Windows.Forms
 
 		protected override void OnMouseUp (MouseEventArgs mea)
 		{
+			if (reorder_pending != null) {
+				reorder_pending = null;
+				return;
+			}
+
+			if (grip_dragging) {
+				grip_dragging = false;
+				this.Capture = false;
+				OnEndDrag (EventArgs.Empty);
+				return;
+			}
+
 			// If we're currently over an item (set in MouseMove)
 			if (mouse_currently_over != null && !(mouse_currently_over is ToolStripControlHost) && mouse_currently_over.Enabled) {
 				// Fire our ItemClicked event, but only for a left mouse click.
@@ -1046,6 +1371,9 @@ namespace System.Windows.Forms
 				this.overflow_button.FireEvent (e, ToolStripItemEventType.Paint);
 				e.Graphics.ResetTransform ();
 			}
+
+			// where a dragged item would go (AllowItemReorder)
+			PaintInsertionMark (e.Graphics);
 
 			Rectangle affected_bounds = new Rectangle (Point.Empty, this.Size);
 
@@ -1199,10 +1527,19 @@ namespace System.Windows.Forms
 			return base.ProcessMnemonic (charCode);
 		}
 
-		[MonoTODO ("Stub, does nothing")]
+		private IntPtr hwnd_that_lost_focus;
+
+		// The focus back where it was before the strip took it (a menu's keyboard mode ending, as .NET's).
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected virtual void RestoreFocus ()
 		{
+			IntPtr was = hwnd_that_lost_focus;
+			hwnd_that_lost_focus = IntPtr.Zero;
+			if (was == IntPtr.Zero || (IsHandleCreated && was == Handle))
+				return;
+			Control c = Control.FromHandle (was);
+			if (c != null && c.Visible && c.CanFocus)
+				c.Focus ();
 		}
 
 		protected override void Select (bool directed, bool forward)
@@ -1266,6 +1603,9 @@ namespace System.Windows.Forms
 
 		protected override void WndProc (ref Message m)
 		{
+			// the window the strip took the focus from (WM_SETFOCUS's wParam), for RestoreFocus
+			if (m.Msg == (int)Msg.WM_SETFOCUS && m.WParam != Handle)
+				hwnd_that_lost_focus = m.WParam;
 			base.WndProc (ref m);
 		}
 		#endregion
@@ -1288,7 +1628,6 @@ namespace System.Windows.Forms
 			remove { base.AutoSizeChanged -= value; }
 		}
 
-		[MonoTODO ("Event never raised")]
 		public event EventHandler BeginDrag {
 			add { Events.AddHandler (BeginDragEvent, value); }
 			remove { Events.RemoveHandler (BeginDragEvent, value); }
@@ -1320,7 +1659,6 @@ namespace System.Windows.Forms
 			remove { base.CursorChanged -= value; }
 		}
 
-		[MonoTODO ("Event never raised")]
 		public event EventHandler EndDrag {
 			add { Events.AddHandler (EndDragEvent, value); }
 			remove { Events.RemoveHandler (EndDragEvent, value); }
@@ -1382,6 +1720,9 @@ namespace System.Windows.Forms
 						Application.KeyboardCapture = null;
 						ToolStripManager.ActivatedByKeyboard = false;
 					}
+					// leaving the keyboard mode with the focus: it goes back where it came from
+					if (!value && this.Focused)
+						RestoreFocus ();
 					
 					// Redraw for mnemonic underlines
 					this.Invalidate ();

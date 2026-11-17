@@ -229,31 +229,137 @@ namespace System.Windows.Forms
 		{
 		}
 
-		[MonoTODO("Not implemented")]
 		public void Join (ToolStrip toolStripToDrag)
 		{
-			if (!Contains (toolStripToDrag))
-				Controls.Add (toolStripToDrag);
+			Join (toolStripToDrag, 0);
 		}
 
-		[MonoTODO("Not implemented")]
+		/// <summary>The strip into the row <paramref name="row"/> (a new row at the end, past the last), at its start.</summary>
 		public void Join (ToolStrip toolStripToDrag, int row)
 		{
-			Join (toolStripToDrag);
+			if (toolStripToDrag == null)
+				throw new ArgumentNullException (nameof (toolStripToDrag));
+			if (row < 0)
+				throw new ArgumentOutOfRangeException (nameof (row), row, $"Value of '{row}' is not valid for 'row'. 'row' must be greater than or equal to 0.");
+			Adopt (toolStripToDrag);
+			ToolStripPanelRow target = row < this.rows.Count ? this.rows [row] : NewRow (this.rows.Count);
+			PlaceInRow (toolStripToDrag, target, 0);
 		}
 
-		[MonoTODO("Not implemented")]
+		/// <summary>The strip at a point of the panel: into the row there (a new one above the first or below the
+		/// last), as far along it as the point is.</summary>
 		public void Join (ToolStrip toolStripToDrag, Point location)
 		{
-			Join (toolStripToDrag);
+			if (toolStripToDrag == null)
+				throw new ArgumentNullException (nameof (toolStripToDrag));
+			Adopt (toolStripToDrag);
+			MoveTo (toolStripToDrag, location, location);
 		}
 
-		[MonoTODO("Not implemented")]
 		public void Join (ToolStrip toolStripToDrag, int x, int y)
 		{
-			Join (toolStripToDrag);
+			Join (toolStripToDrag, new Point (x, y));
 		}
-		
+
+		private ToolStrip adopting;	// a strip being joined: placed by Join, not by OnControlAdded
+
+		/// <summary>The strip one of this panel's controls (it leaves the panel it was in), in no row yet.</summary>
+		private void Adopt (ToolStrip ts)
+		{
+			if (!Contains (ts)) {
+				adopting = ts;
+				try {
+					Controls.Add (ts);
+				} finally {
+					adopting = null;
+				}
+			}
+			// rows are made at the first layout: a strip joined before it is placed now, and kept there
+		}
+
+		private bool Horizontal => !(this.Dock == DockStyle.Left || this.Dock == DockStyle.Right);
+
+		private ToolStripPanelRow NewRow (int index)
+		{
+			ToolStripPanelRow new_row = new ToolStripPanelRow (this);
+			if (Horizontal)
+				new_row.SetBounds (new Rectangle (0, 0, Math.Max (this.Width, 1), 25));
+			else
+				new_row.SetBounds (new Rectangle (0, 0, 25, Math.Max (this.Height, 1)));
+			this.rows.Insert (Math.Min (index, this.rows.Count), new_row);
+			return new_row;
+		}
+
+		private void RemoveFromRows (ToolStrip ts)
+		{
+			for (int i = this.rows.Count - 1; i >= 0; i--) {
+				ToolStripPanelRow row = this.rows [i];
+				if (row.controls.Contains (ts)) {
+					row.OnControlRemoved (ts, 0);
+					if (row.controls.Count == 0)
+						this.rows.RemoveAt (i);
+				}
+			}
+		}
+
+		private void PlaceInRow (ToolStrip ts, ToolStripPanelRow row, int offset)
+		{
+			if (!row.controls.Contains (ts)) {
+				for (int i = this.rows.Count - 1; i >= 0; i--)
+					if (this.rows [i] != row && this.rows [i].controls.Contains (ts))
+						this.rows [i].OnControlRemoved (ts, 0);
+				row.SetOffset (ts, offset);
+				row.OnControlAdded (ts, 0);
+			} else {
+				row.SetOffset (ts, offset);
+				row.Relayout ();
+			}
+			// a row left empty goes
+			for (int i = this.rows.Count - 1; i >= 0; i--)
+				if (this.rows [i].controls.Count == 0)
+					this.rows.RemoveAt (i);
+			if (this.Created)
+				PerformLayout ();
+		}
+
+		/// <summary>A strip whose top-left corner is at <paramref name="corner"/> and that the pointer holds at
+		/// <paramref name="pointer"/> (points of this panel): into the row the pointer is over -- a new one above
+		/// the first or below the last -- at the corner's place along it. How a dragged strip moves.</summary>
+		internal void MoveTo (ToolStrip ts, Point corner, Point pointer)
+		{
+			bool horizontal = Horizontal;
+			int across = horizontal ? pointer.Y : pointer.X;
+			ToolStripPanelRow current = null;
+			foreach (ToolStripPanelRow r in this.rows)
+				if (r.controls.Contains (ts))
+					current = r;
+			ToolStripPanelRow target = null;
+			int index = this.rows.Count;
+			for (int i = 0; i < this.rows.Count; i++) {
+				Rectangle b = this.rows [i].Bounds;
+				int lo = horizontal ? b.Top : b.Left, hi = horizontal ? b.Bottom : b.Right;
+				if (across < lo) {
+					index = i;
+					break;
+				}
+				if (across < hi) {
+					target = this.rows [i];
+					break;
+				}
+			}
+			if (target == null) {
+				// past an edge: a row of its own -- unless it is alone in the row there already
+				int at = current == null ? -1 : this.rows.IndexOf (current);
+				if (current != null && current.controls.Count == 1 && (index == at || index == at + 1))
+					target = current;
+				else
+					target = NewRow (index);
+			}
+			Rectangle tb = target.Bounds;
+			PlaceInRow (ts, target, horizontal ? corner.X - tb.X : corner.Y - tb.Y);
+		}
+
+
 		public ToolStripPanelRow PointToRow (Point clientLocation)
 		{
 			foreach (ToolStripPanelRow row in this.rows)
@@ -282,7 +388,7 @@ namespace System.Windows.Forms
 			else
 				(e.Control as ToolStrip).LayoutStyle = ToolStripLayoutStyle.HorizontalStackWithOverflow;
 			
-			if (done_first_layout && e.Control is ToolStrip)
+			if (done_first_layout && e.Control is ToolStrip && e.Control != adopting)
 				this.AddControlToRows (e.Control);
 			
 			base.OnControlAdded (e);
@@ -291,10 +397,11 @@ namespace System.Windows.Forms
 		protected override void OnControlRemoved (ControlEventArgs e)
 		{
 			base.OnControlRemoved (e);
-			
-			foreach (ToolStripPanelRow row in this.rows)
-				if (row.controls.Contains (e.Control))
-					row.OnControlRemoved (e.Control, 0);
+
+			if (e.Control is ToolStrip ts)
+				RemoveFromRows (ts);
+			if (this.Created)
+				PerformLayout ();
 		}
 
 		protected override void OnDockChanged (EventArgs e)
@@ -314,8 +421,13 @@ namespace System.Windows.Forms
 				ArrayList al = new ArrayList (this.Controls);
 				al.Sort (new TabIndexComparer ());
 				
-				foreach (ToolStrip ts in al)
-					this.AddControlToRows (ts);
+				foreach (ToolStrip ts in al) {
+					bool placed = false;
+					foreach (ToolStripPanelRow row in this.rows)
+						placed |= row.controls.Contains (ts);
+					if (!placed)	// one Join put somewhere already stays there
+						this.AddControlToRows (ts);
+				}
 					
 				done_first_layout = true;
 			}
@@ -540,8 +652,12 @@ namespace System.Windows.Forms
 			#region IList Members
 			object IList.this [int index] {
 				get { return this [index]; }
-				[MonoTODO ("Stub, does nothing")]
-				set { }
+				set {
+					if (!(value is ToolStripPanelRow row))
+						throw new ArgumentException (nameof (value));
+					base.InternalRemoveAt (index);
+					Insert (index, row);
+				}
 			}
 
 			bool IList.IsFixedSize {

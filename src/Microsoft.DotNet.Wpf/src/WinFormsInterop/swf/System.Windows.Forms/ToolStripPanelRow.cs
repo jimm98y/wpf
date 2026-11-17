@@ -39,6 +39,10 @@ namespace System.Windows.Forms
 	{
 		private Rectangle bounds;
 		internal List<Control> controls;
+		// Where each strip wants to be along the row, from its start: a strip dragged along the row, or joined
+		// at a point, stays there (pushed on by the strips before it, and back from the row's end); one with no
+		// place of its own packs against the one before.
+		internal readonly Dictionary<Control, int> offsets = new Dictionary<Control, int> ();
 		private Padding margin;
 		private Padding padding;
 		private ToolStripPanel parent;
@@ -138,6 +142,7 @@ namespace System.Windows.Forms
 		{
 			control.SizeChanged -= new EventHandler (control_SizeChanged);
 			controls.Remove (control);
+			offsets.Remove (control);
 			this.OnLayout (new LayoutEventArgs (control, string.Empty));
 		}
 		
@@ -180,35 +185,79 @@ namespace System.Windows.Forms
 			}
 		}
 		
+		/// <summary>Puts <paramref name="control"/> <paramref name="offset"/> along the row from its start (it is laid
+		/// out there, or as near as the strips before it and the row's end allow).</summary>
+		internal void SetOffset (Control control, int offset)
+		{
+			offsets [control] = Math.Max (0, offset);
+		}
+
+		internal void Relayout ()
+		{
+			this.OnLayout (new LayoutEventArgs (null, string.Empty));
+		}
+
 		private bool Layout (object container, LayoutEventArgs args)
 		{
 			ToolStripPanelRow tspr = (ToolStripPanelRow)container;
-			Point position = tspr.DisplayRectangle.Location;
-			foreach (ToolStrip ts in tspr.Controls)
-			{
-				if (Orientation == Orientation.Horizontal) {
+			bool horizontal = Orientation == Orientation.Horizontal;
+			int start = horizontal ? tspr.DisplayRectangle.X : tspr.DisplayRectangle.Y;
+			int length = horizontal ? this.bounds.Width : this.bounds.Height;
+
+			// In the order they want to be in: a strip with a place of its own where that is, the rest after the
+			// one before them (a stable order, so strips at the same place keep theirs).
+			var want = new Dictionary<Control, int> ();
+			int packed = 0;
+			foreach (Control c in this.controls) {
+				ToolStrip t = (ToolStrip)c;
+				int w = offsets.TryGetValue (c, out int o) ? o : packed;
+				want [c] = w;
+				Size pref = t.GetPreferredSize (Size.Empty);
+				packed = w + (horizontal ? pref.Width + t.Margin.Horizontal : pref.Height + t.Margin.Vertical);
+			}
+			var order = new List<Control> (System.Linq.Enumerable.OrderBy (this.controls, c => want [c]));
+			if (!System.Linq.Enumerable.SequenceEqual (order, this.controls)) {
+				this.controls.Clear ();
+				this.controls.AddRange (order);
+			}
+
+			// each strip's size, then its place: where it wants to be, past the one before it
+			var at = new int [order.Count];
+			var size = new int [order.Count];
+			int next = 0;
+			for (int i = 0; i < order.Count; i++) {
+				ToolStrip ts = (ToolStrip)order [i];
+				if (horizontal) {
 					if (ts.Stretch)
 						ts.Width = this.bounds.Width - ts.Margin.Horizontal - this.Padding.Horizontal;
 					else
 						ts.Width = ts.GetPreferredSize (Size.Empty).Width;
-						
-					position.X += ts.Margin.Left;
-					ts.Location = position;
-					
-					position.X += (ts.Width + ts.Margin.Left);
+					size [i] = ts.Width + ts.Margin.Horizontal;
 				} else {
 					if (ts.Stretch)
 						ts.Size = new Size (ts.GetPreferredSize (Size.Empty).Width, this.bounds.Height - ts.Margin.Vertical - this.Padding.Vertical);
 					else
 						ts.Size = ts.GetPreferredSize (Size.Empty);
-
-					position.Y += ts.Margin.Top;
-					ts.Location = position;
-
-					position.Y += (ts.Height + ts.Margin.Top);
+					size [i] = ts.Height + ts.Margin.Vertical;
 				}
+				at [i] = Math.Max (next, want [ts]);
+				next = at [i] + size [i];
 			}
-			
+			// and back from the row's end, as far as its start allows: a strip moved to the end pushes the ones
+			// before it back in rather than off the row
+			int limit = length;
+			for (int i = order.Count - 1; i >= 0; i--) {
+				if (at [i] + size [i] > limit)
+					at [i] = Math.Max (0, limit - size [i]);
+				limit = at [i];
+			}
+			for (int i = 0; i < order.Count; i++) {
+				ToolStrip ts = (ToolStrip)order [i];
+				if (horizontal)
+					ts.Location = new Point (start + at [i] + ts.Margin.Left, tspr.DisplayRectangle.Y + ts.Margin.Top);
+				else
+					ts.Location = new Point (tspr.DisplayRectangle.X + ts.Margin.Left, start + at [i] + ts.Margin.Top);
+			}
 			return false;
 		}
 

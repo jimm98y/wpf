@@ -178,20 +178,166 @@ namespace System.Windows.Forms
 			return false;
 		}
 
-		[MonoTODO ("Stub, does nothing")]
+		// Each named strip of a form in the user's settings (.NET's ToolStripSettings, an ApplicationSettingsBase
+		// keyed "<key>.<strip name>", the key the form's type by default): where it is and in which panel, its
+		// size, whether it shows, and its items' order. Loaded, the strips go back into their panels row by row
+		// and their items back into that order -- items moved between strips included.
 		public static void LoadSettings (Form targetForm)
 		{
 			if (targetForm == null)
 				throw new ArgumentNullException ("targetForm");
+			LoadSettings (targetForm, targetForm.GetType ().FullName);
 		}
 
-		[MonoTODO ("Stub, does nothing")]
 		public static void LoadSettings (Form targetForm, string key)
 		{
 			if (targetForm == null)
 				throw new ArgumentNullException ("targetForm");
 			if (string.IsNullOrEmpty (key))
 				throw new ArgumentNullException ("key");
+
+			var strips = new List<ToolStrip> ();
+			FindToolStrips (targetForm.Controls, strips);
+			var saved = new List<(ToolStrip strip, ToolStripSettings settings)> ();
+			foreach (ToolStrip ts in strips) {
+				if (string.IsNullOrEmpty (ts.Name))
+					continue;
+				var settings = new ToolStripSettings (key + "." + ts.Name);
+				if (!settings.IsDefault)
+					saved.Add ((ts, settings));
+			}
+			if (saved.Count == 0)
+				return;
+
+			// every named item, wherever it is now: an item the user moved to another strip goes back
+			var items = new Dictionary<string, ToolStripItem> ();
+			foreach (ToolStrip ts in strips)
+				foreach (ToolStripItem item in ts.Items)
+					if (!string.IsNullOrEmpty (item.Name) && !items.ContainsKey (item.Name))
+						items [item.Name] = item;
+
+			var panels = new Dictionary<string, ToolStripPanel> ();
+			FindPanels (targetForm.Controls, panels);
+
+			targetForm.SuspendLayout ();
+			try {
+				foreach (var (ts, settings) in saved) {
+					ts.SuspendLayout ();
+					if (!string.IsNullOrEmpty (settings.ItemOrder)) {
+						string [] names = settings.ItemOrder.Split (',');
+						for (int i = 0; i < names.Length; i++)
+							if (items.TryGetValue (names [i], out ToolStripItem item) && i <= ts.Items.Count)
+								ts.Items.Insert (Math.Min (i, ts.Items.Contains (item) ? ts.Items.Count - 1 : ts.Items.Count), item);
+					}
+					if (!ts.AutoSize)
+						ts.Size = settings.Size;
+					ts.ResumeLayout ();
+				}
+				// into the panels, row by row and along each row as they were
+				saved.Sort ((a, b) => a.settings.Location.Y != b.settings.Location.Y
+					? a.settings.Location.Y.CompareTo (b.settings.Location.Y) : a.settings.Location.X.CompareTo (b.settings.Location.X));
+				foreach (var (ts, settings) in saved) {
+					if (!string.IsNullOrEmpty (settings.ToolStripPanelName) && panels.TryGetValue (settings.ToolStripPanelName, out ToolStripPanel panel))
+						panel.Join (ts, settings.Location);
+					else if (!(ts.Parent is ToolStripPanel))
+						ts.Location = settings.Location;
+					ts.Visible = settings.Visible;
+				}
+			} finally {
+				targetForm.ResumeLayout ();
+			}
+		}
+
+		private static void FindToolStrips (Control.ControlCollection controls, List<ToolStrip> into)
+		{
+			foreach (Control c in controls) {
+				if (c is ToolStrip ts && !(c is ToolStripDropDown))
+					into.Add (ts);
+				if (c.HasChildren)
+					FindToolStrips (c.Controls, into);
+			}
+		}
+
+		private static void FindPanels (Control.ControlCollection controls, Dictionary<string, ToolStripPanel> into)
+		{
+			foreach (Control c in controls) {
+				if (c is ToolStripPanel p && !string.IsNullOrEmpty (p.Name) && !into.ContainsKey (p.Name))
+					into [p.Name] = p;
+				if (c.HasChildren)
+					FindPanels (c.Controls, into);
+			}
+		}
+
+		/// <summary>A strip's order of items as the settings keep it: their names, "null" for one without.</summary>
+		private static string ItemOrderOf (ToolStrip ts)
+		{
+			var sb = new System.Text.StringBuilder ();
+			foreach (ToolStripItem item in ts.Items) {
+				if (sb.Length != 0)
+					sb.Append (',');
+				sb.Append (string.IsNullOrEmpty (item.Name) ? "null" : item.Name);
+			}
+			return sb.ToString ();
+		}
+
+		// .NET's ToolStripSettings, field for field
+		private sealed class ToolStripSettings : System.Configuration.ApplicationSettingsBase
+		{
+			internal ToolStripSettings (string settingsKey) : base (settingsKey)
+			{
+			}
+
+			[System.Configuration.UserScopedSetting]
+			[System.Configuration.DefaultSettingValue ("true")]
+			public bool IsDefault {
+				get { return (bool)this [nameof (IsDefault)]; }
+				set { this [nameof (IsDefault)] = value; }
+			}
+
+			[System.Configuration.UserScopedSetting]
+			public string ItemOrder {
+				get { return (string)this [nameof (ItemOrder)]; }
+				set { this [nameof (ItemOrder)] = value; }
+			}
+
+			[System.Configuration.UserScopedSetting]
+			[System.Configuration.DefaultSettingValue ("0,0")]
+			public Point Location {
+				get { return (Point)this [nameof (Location)]; }
+				set { this [nameof (Location)] = value; }
+			}
+
+			[System.Configuration.UserScopedSetting]
+			public string Name {
+				get { return (string)this [nameof (Name)]; }
+				set { this [nameof (Name)] = value; }
+			}
+
+			[System.Configuration.UserScopedSetting]
+			[System.Configuration.DefaultSettingValue ("0,0")]
+			public Size Size {
+				get { return (Size)this [nameof (Size)]; }
+				set { this [nameof (Size)] = value; }
+			}
+
+			[System.Configuration.UserScopedSetting]
+			public string ToolStripPanelName {
+				get { return (string)this [nameof (ToolStripPanelName)]; }
+				set { this [nameof (ToolStripPanelName)] = value; }
+			}
+
+			[System.Configuration.UserScopedSetting]
+			[System.Configuration.DefaultSettingValue ("true")]
+			public bool Visible {
+				get { return (bool)this [nameof (Visible)]; }
+				set { this [nameof (Visible)] = value; }
+			}
+
+			public override void Save ()
+			{
+				IsDefault = false;
+				base.Save ();
+			}
 		}
 		
 		[MonoLimitation ("Only supports one level of merging, cannot merge the same ToolStrip multiple times")]
@@ -422,6 +568,7 @@ namespace System.Windows.Forms
 		{
 			if (sourceForm == null)
 				throw new ArgumentNullException ("sourceForm");
+			SaveSettings (sourceForm, sourceForm.GetType ().FullName);
 		}
 
 		public static void SaveSettings (Form sourceForm, string key)
@@ -430,6 +577,21 @@ namespace System.Windows.Forms
 				throw new ArgumentNullException ("sourceForm");
 			if (string.IsNullOrEmpty (key))
 				throw new ArgumentNullException ("key");
+
+			var strips = new List<ToolStrip> ();
+			FindToolStrips (sourceForm.Controls, strips);
+			foreach (ToolStrip ts in strips) {
+				if (string.IsNullOrEmpty (ts.Name))
+					continue;
+				var settings = new ToolStripSettings (key + "." + ts.Name);
+				settings.ItemOrder = ItemOrderOf (ts);
+				settings.Name = ts.Name;
+				settings.Location = ts.Location;
+				settings.Size = ts.Size;
+				settings.ToolStripPanelName = ts.Parent is ToolStripPanel panel ? panel.Name : string.Empty;
+				settings.Visible = ts.Visible;
+				settings.Save ();
+			}
 		}
 		#endregion
 		
