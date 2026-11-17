@@ -1021,6 +1021,62 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     public bool CreateView(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface)
         => OnMain(() => CreateViewCore(handle, x, y, width, height, borderless, fillsScreen, ownSurface));
 
+    // ---- notifications (a NotifyIcon's balloon tip) ------------------------------------------------------
+    //
+    // Windows 10 shows a balloon as a toast; here it is a notification of the app's, in a channel of its own. A click
+    // and a swipe away come back through a receiver of the app's (registered as it runs, not exported) and are told
+    // to the icon's window as the shell tells it (AndroidWindow.NotificationEvent: NIN_BALLOONUSERCLICK, TIMEOUT).
+
+    private const string NotificationChannel = "wpfwebgpu-notifications";
+    private string? _notificationAction;
+    private NotificationReceiver? _notificationReceiver;
+
+    public bool ShowNotification(int tag, string title, string text, int kind)
+    {
+        Activity activity = _activity;
+        if (activity.GetSystemService(Context.NotificationService) is not NotificationManager manager) return false;
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.O && manager.GetNotificationChannel(NotificationChannel) is null)
+            manager.CreateNotificationChannel(new NotificationChannel(NotificationChannel, "Notifications", NotificationImportance.High));
+        // Android 13: an app asks for leave to notify (the manifest declares it); the first balloon asks
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu
+            && activity.CheckSelfPermission("android.permission.POST_NOTIFICATIONS") != Android.Content.PM.Permission.Granted)
+            OnMain(() => activity.RequestPermissions(new[] { "android.permission.POST_NOTIFICATIONS" }, 0x5EED));
+        if (_notificationReceiver is null)
+        {
+            _notificationAction = activity.PackageName + ".WPFWEBGPU_NOTIFICATION";
+            _notificationReceiver = new NotificationReceiver();
+            var filter = new IntentFilter(_notificationAction);
+            if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu) activity.RegisterReceiver(_notificationReceiver, filter, ReceiverFlags.NotExported);
+            else activity.RegisterReceiver(_notificationReceiver, filter);
+        }
+        PendingIntent Pending(int what)
+        {
+            var intent = new Intent(_notificationAction).SetPackage(activity.PackageName).PutExtra("tag", tag).PutExtra("what", what);
+            return PendingIntent.GetBroadcast(activity, tag * 4 + what, intent, PendingIntentFlags.Immutable | PendingIntentFlags.UpdateCurrent)!;
+        }
+        int icon = kind switch { 2 or 3 => Android.Resource.Drawable.IcDialogAlert, _ => Android.Resource.Drawable.IcDialogInfo };
+#pragma warning disable CA1422 // Notification.Builder(Context) is the one below API 26
+        Notification.Builder builder = Build.VERSION.SdkInt >= BuildVersionCodes.O
+            ? new Notification.Builder(activity, NotificationChannel)
+            : new Notification.Builder(activity);
+#pragma warning restore CA1422
+        builder.SetContentTitle(title).SetContentText(text).SetSmallIcon(icon).SetAutoCancel(true)
+               .SetContentIntent(Pending(2)).SetDeleteIntent(Pending(3));
+        manager.Notify("wpfwebgpu", tag, builder.Build());
+        AndroidWindow.NotifyNotification(tag, 1);
+        return true;
+    }
+
+    private sealed class NotificationReceiver : BroadcastReceiver
+    {
+        public override void OnReceive(Context? context, Intent? intent)
+        {
+            if (intent is null) return;
+            int tag = intent.GetIntExtra("tag", -1), what = intent.GetIntExtra("what", 0);
+            if (tag >= 0 && what > 0) AndroidWindow.NotifyNotification(tag, what);
+        }
+    }
+
     public void BringToFront(IntPtr handle) => OnMain(() =>
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;

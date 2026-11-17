@@ -383,6 +383,8 @@ internal static partial class Bundle
             // the network, which every Windows program has
             [assembly: UsesPermission(Android.Manifest.Permission.Internet)]
             [assembly: UsesPermission(Android.Manifest.Permission.AccessNetworkState)]
+            // notifications (a NotifyIcon's balloon tip), which Android 13 asks the user to allow
+            [assembly: UsesPermission("android.permission.POST_NOTIFICATIONS")]
             {{xrAssembly}}
 
             namespace {{ns}};

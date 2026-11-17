@@ -62,6 +62,9 @@ namespace System.Windows.Forms
 		internal static void InstallScreens ()
 		{
 			XplatUIWebGpu.ScreensProvider ??= RootScreens;
+			// a NotifyIcon has no notification area on iOS (its icon shows nowhere); its balloon tip is a notification
+			XplatUIWebGpu.SystrayAdded ??= (h, tip, icon) => true;
+			XplatUIWebGpu.SystrayBalloonShown ??= (h, timeout, title, text, icon) => AppleNotifications.Show (h, title ?? "", text ?? "");
 		}
 
 		private static Screen[] RootScreens ()

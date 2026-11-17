@@ -76,6 +76,9 @@ namespace MS.Internal.Interop
     {
         public const int RightPress = 5;
         public const int RightRelease = 6;
+        public static event System.Action<int, int> NotificationEvent { add { } remove { } }
+        public static void NotifyNotification(int tag, int kind) { }
+        public static bool ShowNotification(int tag, string title, string text, int kind) { throw null; }
         public AndroidWindow() { }
         public System.IntPtr Handle { get { throw null; } }
         public static MS.Internal.Interop.IAndroidHost Host { get { throw null; } set { } }
@@ -528,6 +531,7 @@ namespace MS.Internal.Interop
     }
     public partial interface IAndroidHost
     {
+        bool ShowNotification(int tag, string title, string text, int kind) { throw null; }
         double Density { get; }
         double RefreshRateHz { get { throw null; } }
         bool DesktopWindows { get { throw null; } }

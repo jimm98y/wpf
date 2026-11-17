@@ -57,6 +57,30 @@ namespace System.Windows.Forms
 		internal static void InstallScreens ()
 		{
 			XplatUIWebGpu.ScreensProvider ??= RootScreens;
+			// a NotifyIcon has no notification area on Android (its icon shows nowhere); its balloon tip is a notification
+			XplatUIWebGpu.SystrayAdded ??= (h, tip, icon) => true;
+			XplatUIWebGpu.SystrayBalloonShown ??= Balloon;
+		}
+
+		private static readonly Dictionary<int, IntPtr> s_balloonWindows = new Dictionary<int, IntPtr> ();
+		private static bool s_balloonEvents;
+
+		private static void Balloon (IntPtr window, int timeout, string title, string text, ToolTipIcon icon)
+		{
+			if (!s_balloonEvents) {
+				s_balloonEvents = true;
+				AndroidWindow.NotificationEvent += (tag, what) => {
+					IntPtr w;
+					lock (s_balloonWindows) if (!s_balloonWindows.TryGetValue (tag, out w)) return;
+					const int NIN_BALLOONSHOW = 0x402, NIN_BALLOONTIMEOUT = 0x404, NIN_BALLOONUSERCLICK = 0x405;
+					int m = what switch { 1 => NIN_BALLOONSHOW, 2 => NIN_BALLOONUSERCLICK, _ => NIN_BALLOONTIMEOUT };
+					XplatUI.PostMessage (w, (Msg)0x0400, IntPtr.Zero, (IntPtr)m);
+				};
+			}
+			int tag = (int)(window.ToInt64 () & 0x7FFFFFFF);
+			lock (s_balloonWindows) s_balloonWindows [tag] = window;
+			int kind = icon switch { ToolTipIcon.Info => 1, ToolTipIcon.Warning => 2, ToolTipIcon.Error => 3, _ => 0 };
+			AndroidWindow.ShowNotification (tag, title ?? "", text ?? "", kind);
 		}
 
 		private static Screen[] RootScreens ()

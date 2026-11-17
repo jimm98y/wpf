@@ -65,6 +65,11 @@ namespace MS.Internal.Interop
         /// <summary>A window to the front, above the others (SetForegroundWindow).</summary>
         void BringToFront(IntPtr handle) { }
 
+        /// <summary>A notification (a NotifyIcon's balloon tip, which Windows 10 shows as a toast), tagged; a second
+        /// with the same tag replaces the first. <paramref name="kind"/>: 0 none, 1 info, 2 warning, 3 error. What
+        /// becomes of it is told through <see cref="AndroidWindow.NotifyNotification"/>.</summary>
+        bool ShowNotification(int tag, string title, string text, int kind) => false;
+
         /// <summary>A child window's parent (WS_CHILD): its view lies just above the parent's and goes where
         /// the parent goes in the z-order, under the windows above the parent, as Windows stacks a child
         /// window with its parent.</summary>
@@ -465,6 +470,19 @@ namespace MS.Internal.Interop
 
         /// <summary>The Java-side half of this backend, installed by the app head before WPF starts.</summary>
         public static IAndroidHost Host { get; set; }
+
+        /// <summary>What became of a notification: (tag, 1 shown, 2 clicked, 3 dismissed).</summary>
+        public static event Action<int, int> NotificationEvent;
+
+        /// <summary>From the host: a notification's fate (see <see cref="NotificationEvent"/>).</summary>
+        public static void NotifyNotification(int tag, int kind) => NotificationEvent?.Invoke(tag, kind);
+
+        /// <summary>Shows a notification through the host; false where it has none.</summary>
+        public static bool ShowNotification(int tag, string title, string text, int kind)
+        {
+            try { return Host?.ShowNotification(tag, title, text, kind) ?? false; }
+            catch (Exception) { return false; }
+        }
 
         public static AndroidWindow FromHandle(IntPtr handle)
             => s_byHandle.TryGetValue(handle, out AndroidWindow w) ? w : null;

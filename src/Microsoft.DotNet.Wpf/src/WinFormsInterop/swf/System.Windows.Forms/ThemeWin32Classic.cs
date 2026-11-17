@@ -6343,8 +6343,8 @@ namespace System.Windows.Forms
 			Rectangle rect = new Rectangle ();
 			rect.Height = (int) (titlesize.Height + textsize.Height + (3 * balloon_bordersize));
 			rect.Width = (int) ((titlesize.Width > textsize.Width) ? titlesize.Width : textsize.Width) + (2 * balloon_bordersize);
-			rect.X = deskrect.Width - rect.Width - 2;
-			rect.Y = deskrect.Height - rect.Height - 2;
+			rect.X = deskrect.Right - rect.Width - 2;
+			rect.Y = XplatUIWebGpu.TrayAtTop ? deskrect.Top + 2 : deskrect.Bottom - rect.Height - 2;
 			
 			return rect;
 		}

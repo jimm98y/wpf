@@ -112,6 +112,10 @@ namespace System.Windows.Forms {
 		/// NIN_BALLOONTIMEOUT, NIN_BALLOONHIDE in lParam of its callback message), as the shell does.</summary>
 		internal static Action<IntPtr, int, string, string, ToolTipIcon> SystrayBalloonShown;
 
+		/// <summary>The notification area is at the top of the screen (a Mac's menu bar): a balloon the theme draws goes
+		/// at the top right of the work area, not at the bottom right where Windows' taskbar is.</summary>
+		internal static bool TrayAtTop;
+
 		internal override void SystrayBalloon(IntPtr hwnd, int timeout, string title, string text, ToolTipIcon icon)
 		{
 			try { SystrayBalloonShown?.Invoke(hwnd, timeout, title, text, icon); } catch (Exception) { }

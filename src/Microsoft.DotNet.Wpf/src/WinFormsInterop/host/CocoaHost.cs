@@ -1291,6 +1291,8 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         XplatUIWebGpu.SystrayAdded ??= (h, tip, icon) => { OnMain(() => TrayAdd(h, tip, icon)); return true; };
         XplatUIWebGpu.SystrayChanged ??= (h, tip, icon) => OnMain(() => TrayChange(h, tip, icon));
         XplatUIWebGpu.SystrayRemoved ??= h => OnMain(() => TrayRemove(h));
+        XplatUIWebGpu.SystrayBalloonShown ??= MacBalloon;
+        XplatUIWebGpu.TrayAtTop = true;   // the menu bar: a balloon drawn by the theme goes under it
         // Caps Lock is the one lock key a Mac has (NSEventModifierFlagCapsLock); its keypad has no Num Lock
         XplatUIWebGpu.KeyLockedProvider ??= vk => vk == 0x14 /* VK_CAPITAL */
             ? (((nuint)(nint)Send(Cls("NSEvent"), Sel("modifierFlags"))) & (1u << 16)) != 0
@@ -3010,6 +3012,37 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         }
         s_trayTarget = Send(Send(cls, Sel("alloc")), Sel("init"));
         return s_trayTarget;
+    }
+
+    // ---- balloon tips (NotifyIcon.ShowBalloonTip) ----------------------------------------------------
+    //
+    // A notification of the notification centre (AppleNotifications), as Windows 10 shows a balloon as a toast -- for an
+    // application that is a bundle, the only kind the centre accepts. A process that is no bundle (an application run
+    // straight from its folder) gets the balloon the theme draws, under the menu bar where its icon is.
+
+    private static bool? s_bundled;
+
+    private static void MacBalloon(IntPtr window, int timeout, string title, string text, ToolTipIcon icon)
+    {
+        bool bundled;
+        try { bundled = s_bundled ??= OnMainResult(AppleNotifications.Available); } catch (Exception) { bundled = false; }
+        if (!bundled)
+        {
+            ThemeEngine.Current.ShowBalloonWindow(window, timeout, title, text, icon);
+            XplatUI.PostMessage(window, (Msg)0x0400, IntPtr.Zero, (IntPtr)AppleNotifications.NIN_BALLOONSHOW);
+            return;
+        }
+        OnMain(() => AppleNotifications.Show(window, title ?? "", text ?? ""));
+    }
+
+    private static T OnMainResult<T>(Func<T> f)
+    {
+        T result = default;
+        if (pthread_main_np() != 0) return f();
+        var done = new System.Threading.ManualResetEventSlim();
+        OnMain(() => { try { result = f(); } finally { done.Set(); } });
+        done.Wait(2000);
+        return result;
     }
 
     private static void TrayAdd(IntPtr window, string tip, System.Drawing.Icon icon)

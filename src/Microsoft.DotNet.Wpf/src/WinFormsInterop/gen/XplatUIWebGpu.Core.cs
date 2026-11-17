@@ -78,6 +78,9 @@ namespace System.Windows.Forms
 			// macOS: the screens are the Mac's displays, known before any form places itself.
 			if (OperatingSystem.IsMacOS ())
 				CocoaHost.InstallScreens ();
+			// Windows: the notification area is the shell's, before any form is up (an application of a tray icon alone)
+			if (OperatingSystem.IsWindows ())
+				Win32Host.InstallTray ();
 		}
 
 		/// <summary>The next window handle. On Windows a handle is skipped while it names a real

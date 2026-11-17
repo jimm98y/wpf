@@ -265,6 +265,9 @@ namespace System.Windows.Forms {
 				base.Dispose (disposing);
 			}
 
+			// a balloon is the shell's tooltip window: it never takes the activation from the window in front
+			protected override bool ShowWithoutActivation => true;
+
 			protected override CreateParams CreateParams {
 				get {
 					CreateParams cp;

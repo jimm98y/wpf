@@ -536,6 +536,7 @@ internal sealed unsafe partial class Win32Host : IWinFormsHost, WinFormsWebGpu.A
         System.Windows.Forms.XplatUIWebGpu.BeginWindowSize ??= (h, edge) => BeginSystemCommand(h, 0xF000 | edge);   // SC_SIZE | WMSZ_*
         System.Windows.Forms.XplatUIWebGpu.KeyLockedProvider ??= vk => (GetKeyState(vk) & 1) != 0;
         System.Windows.Forms.XplatUIWebGpu.SystemBeep ??= () => MessageBeep(0);
+        InstallTray();
         IntPtr title = Marshal.StringToHGlobalUni(_form.Text ?? "WinForms");
         try
         {
