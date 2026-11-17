@@ -1,0 +1,17 @@
+T:System.Speech.AudioFormat.SpeechAudioFormatInfo
+T:System.Speech.Synthesis.SpeechSynthesizer
+T:System.Speech.Synthesis.Prompt
+T:System.Speech.Synthesis.PromptBuilder
+T:System.Speech.Synthesis.PromptStyle
+T:System.Speech.Synthesis.InstalledVoice
+T:System.Speech.Synthesis.VoiceInfo
+T:System.Speech.Synthesis.PromptEventArgs
+T:System.Speech.Synthesis.SpeakStartedEventArgs
+T:System.Speech.Synthesis.SpeakCompletedEventArgs
+T:System.Speech.Synthesis.SpeakProgressEventArgs
+T:System.Speech.Synthesis.StateChangedEventArgs
+T:System.Speech.Synthesis.VoiceChangeEventArgs
+T:System.Speech.Synthesis.BookmarkReachedEventArgs
+T:System.Speech.Synthesis.PhonemeReachedEventArgs
+T:System.Speech.Synthesis.VisemeReachedEventArgs
+T:System.Speech.Synthesis.FilePrompt

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Replacement for the System.Speech package's runtime assembly, off Windows, where the package's own
+       build throws PlatformNotSupportedException: speech synthesis on the system's voices (macOS's,
+       through say; speech-dispatcher's on Linux, where it is installed), queued, paused and cancelled
+       as SAPI does it, with its events raised on the synthesizer's creator's context. Recognition stays
+       unsupported.
+
+       Public surface: Surface.g.cs (../Surface/gen-surface.sh) less implemented.txt. Same identity
+       as the package, AssemblyVersion above it. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>System.Speech</AssemblyName>
+    <RootNamespace>System.Speech</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyVersion>10.0.9999.0</AssemblyVersion>
+    <FileVersion>10.0.9999.0</FileVersion>
+    <Version>10.0.9999</Version>
+    <SignAssembly>true</SignAssembly>
+    <PublicSign>true</PublicSign>
+    <AssemblyOriginatorKeyFile>wpf.publickey</AssemblyOriginatorKeyFile>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>CA1416;SYSLIB0051;CS0108;CS0114;CS0618;CS0672;CS8597;CS8625;CS0809;CS0067</NoWarn>
+    <ImportDirectoryBuildProps>false</ImportDirectoryBuildProps>
+    <ImportDirectoryBuildTargets>false</ImportDirectoryBuildTargets>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>

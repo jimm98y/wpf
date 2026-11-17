@@ -100,6 +100,8 @@
     <ProjectReference Include="$(_WpfWebGpuShims)Microsoft.AspNetCore.Cryptography.Internal/Microsoft.AspNetCore.Cryptography.Internal.csproj" />
     <!-- OLE DB connections on the managed provider of what their provider reaches (SQL Server's on SqlClient) -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Data.OleDb/System.Data.OleDb.csproj" />
+    <!-- speech synthesis on the system's voices (say; speech-dispatcher where installed) -->
+    <ProjectReference Include="$(_WpfWebGpuShims)System.Speech/System.Speech.csproj" />
     <!-- HttpListener an http.sys client again: its prefixes share ports with every other process's -->
     <ProjectReference Include="$(_WpfWebGpuShims)System.Net.HttpListener/System.Net.HttpListener.csproj" />
   </ItemGroup>

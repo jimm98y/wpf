@@ -35,3 +35,7 @@ fi
 NULLABLE='\[(return: )?System\.Runtime\.CompilerServices\.Nullable(Context)?Attribute\((?:[^()]|\([^()]*\))*\)\]'
 perl -i -ne "print unless /^\\s*$NULLABLE\\s*\$/" "$SHIM/Surface.g.cs"
 perl -i -pe "s/$NULLABLE ?//g" "$SHIM/Surface.g.cs"
+
+# A type closed to derivation elsewhere by internal abstract members: the generated derived types cannot implement them,
+# so they are virtual here, throwing as the rest does.
+perl -i -pe 's/^(\s+)internal abstract (.+?\));\s*$/$1internal virtual $2 { throw new System.PlatformNotSupportedException("'"$ID"' is not supported on this platform."); }\n/' "$SHIM/Surface.g.cs"
