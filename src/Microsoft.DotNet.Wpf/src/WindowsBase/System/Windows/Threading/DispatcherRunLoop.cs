@@ -437,6 +437,11 @@ namespace System.Windows.Threading
             {
                 return;
             }
+            // Kept for good: CFRunLoopGetCurrent does not retain it, and the thread's run loop is freed when
+            // the thread ends. A BeginInvoke to a control of that thread afterwards (a splash screen's, its
+            // thread done) woke the freed run loop through Signal and never returned. Retained, waking it is
+            // harmless; never released, as the wake handle is not (Signal may run on any thread at any time).
+            CFRetain(_cfRunLoop);
 
             // kCFRunLoopCommonModes has to be the EXPORTED CONSTANT, not a string with the same
             // characters. CFRunLoopAddSource/AddTimer/AddObserver recognise the common-modes SET by
@@ -675,6 +680,8 @@ namespace System.Windows.Threading
         private static extern IntPtr CFStringCreateWithCString(IntPtr allocator, [MarshalAs(UnmanagedType.LPUTF8Str)] string cStr, uint encoding);
         [DllImport(CoreFoundation)]
         private static extern void CFRelease(IntPtr cf);
+        [DllImport(CoreFoundation)]
+        private static extern IntPtr CFRetain(IntPtr cf);
 
         private const string ClassName = "WpfDispatcherRunLoop";
         private const uint WM_TIMER = 0x0113;
