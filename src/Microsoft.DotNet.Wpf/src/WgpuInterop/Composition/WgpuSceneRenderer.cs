@@ -3447,6 +3447,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var figure = new PathFigure { Closed = true };
             switch (geometry)
             {
+                // A path is its own path. Left out, it fell through to an empty figure: everything that asks for
+                // a shape's path whatever the shape -- a CombinedGeometry's coverage, both its operands -- drew a
+                // path as nothing, and a path clipped by a path, or a path minus one, vanished.
+                case PathGeometry path:
+                    return path;
                 case RectangleGeometry rg:
                     figure.Start = new Vector2(rg.Rect.X, rg.Rect.Y);
                     figure.Segments.Add(new LineSegment(new Vector2(rg.Rect.X + rg.Rect.Width, rg.Rect.Y)));
