@@ -6655,7 +6655,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Text.IFont? found = null;
             Text.FontFiles.LinkedFamily(requested, needed, family =>
             {
-                if (LoadFamily(family, style) is not Text.IFont f) return false;
+                if (LinkFamily(family, style) is not Text.IFont f) return false;
                 if (f is not Text.IShapingFont sf || sf.GlyphIndex(needed) <= 0) return false;
                 found = f;
                 return true;
@@ -6665,6 +6665,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private readonly Dictionary<(string?, char, int), Text.IFont?> _linkCache = new();
+
+        // ONE FACE PER LINKED FAMILY AND STYLE: links are found per character, and a face loaded afresh for each
+        // was a different face for each -- an itemized line (Text.TextItemizer) then broke between every two
+        // Arabic letters, and each letter was shaped alone, unjoined.
+        private readonly Dictionary<(string, int), Text.IFont?> _linkFamilies = new();
+
+        private Text.IFont? LinkFamily(string family, int style)
+        {
+            if (!_linkFamilies.TryGetValue((family, style), out Text.IFont? face))
+                _linkFamilies[(family, style)] = face = LoadFamily(family, style);
+            return face;
+        }
 
         /// <summary>A string run (WinForms text: <see cref="GlyphRunDraw"/>) configures the
         /// rasterizer for its face and size -- GDI's symmetric rows, dropout, simulated-bold smear,
@@ -6704,6 +6716,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private bool _inStringRun;
+
+        // The segment of an itemized line being drawn (EmitStringRun): its face, the face the line asked
+        // for, and whether it reads right to left.
+        private Text.IFont? _segmentFont, _segmentPrimary;
+        private bool _segmentRtl;
 
         /// <summary>Set for a string run that stands in for GDI text on a WINDOW (every string run
         /// unless it says MemorySurfaceSimulation): its known-paper curve is the display driver's
@@ -6771,13 +6788,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private static readonly int s_wpfTextRows =
             int.TryParse(Environment.GetEnvironmentVariable("WPF_WPF_TEXT_ROWS"), out int wr) ? wr : SymmetricRows;
 
-        private void EmitStringRun(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
+        private float EmitStringRun(GlyphRunDraw run, Matrix3x2 world, double opacity, Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
             if (s_traceText)
                 Console.Error.WriteLine($"[emit] '{run.Text}' family={run.FontFamily ?? "-"} sims={run.Simulations} "
                     + $"em={run.EmSize} origin={run.Origin} colorA={run.Color.A} clipEmpty={clip.IsEmpty} "
                     + $"opacity={opacity} clip=({clip.X},{clip.Y},{clip.W},{clip.H}) world=({world.M31},{world.M32}) target={width}x{height}");
-            if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return;
+            if (clip.IsEmpty || string.IsNullOrEmpty(run.Text)) return run.Origin.X;
 
             // What the APP asks for, as opposed to what the parity suite asks for. The suite passes
             // an integer pen and an integer em; the app passes whatever its layout computed, and a
@@ -6792,11 +6809,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             // The face this run asked for. Style is per-run, so it cannot be resolved once at
             // construction the way the regular face is.
-            Text.IFont font = FontFor(run.Simulations, run.FontFamily);
+            Text.IFont font = _segmentFont ?? FontFor(run.Simulations, run.FontFamily);
+
+            // A line that mixes directions, or needs characters its face does not have, is drawn as GDI
+            // draws it: in segments, each one direction and one face, in visual order, each starting where
+            // the one before it ended (Text.TextItemizer).
+            if (_segmentFont is null
+                && Text.TextItemizer.Itemize(run.Text, (run.Simulations & GlyphRunDraw.RtlReadingSimulation) != 0, font,
+                       c => LinkedFontFor(c.ToString(), font, run.FontFamily, run.Simulations & 3)) is { } segments)
+            {
+                float x = run.Origin.X;
+                foreach (Text.TextSegment seg in segments)
+                {
+                    var part = new GlyphRunDraw(run.Text.Substring(seg.Start, seg.Length), new Vector2(x, run.Origin.Y),
+                                                run.EmSize, run.Color, run.Simulations, run.FontFamily);
+                    _segmentFont = seg.Font;
+                    _segmentPrimary = font;
+                    _segmentRtl = seg.RightToLeft;
+                    try { x = EmitStringRun(part, world, opacity, clip, width, height, format, data); }
+                    finally { _segmentFont = null; _segmentPrimary = null; }
+                }
+                return x;
+            }
+
             // If that face has none of the run's characters, draw them from one that
             // does, the way GDI links rather than drawing boxes.
             Text.IFont? linkedFrom = null;
-            if (LinkedFontFor(run.Text, font, run.FontFamily, run.Simulations & 3) is Text.IFont linked)
+            if (_segmentFont is not null)
+            {
+                if (!ReferenceEquals(_segmentFont, _segmentPrimary))
+                    linkedFrom = _segmentPrimary;   // a linked segment: its baseline below, as a linked run's
+            }
+            else if (LinkedFontFor(run.Text, font, run.FontFamily, run.Simulations & 3) is Text.IFont linked)
             {
                 linkedFrom = font;          // the face that asked, for the baseline adjustment below
                 font = linked;
@@ -6830,7 +6874,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // then lay them out. Advances come from the shaper (so kerning etc.
             // are honoured); the atlas provides each glyph's bitmap and bearings.
             // A run that asks not to be kerned gets the plain shaper, whatever this renderer's is.
-            if ((run.Simulations & GlyphRunDraw.NoKerningSimulation) != 0)
+            if (Text.TextItemizer.Joins(run.Text))
+                ((run.Simulations & GlyphRunDraw.NoKerningSimulation) != 0 ? Text.TextItemizer.JoiningPlainShaper : Text.TextItemizer.JoiningShaper)
+                    .Shape((Text.IShapingFont)font, run.Text, _shapeScratch);
+            else if ((run.Simulations & GlyphRunDraw.NoKerningSimulation) != 0)
                 s_plainShaper.Shape(font, run.Text, _shapeScratch);
             else if ((run.Simulations & GlyphRunDraw.GposKerningSimulation) != 0)
                 s_gposShaper.Shape(font, run.Text, _shapeScratch);
@@ -6839,7 +6886,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // ...AND INTO VISUAL ORDER, because this pen only goes one way. A run that arrives as a
             // STRING carries no bidi level for MilcoreEngine's backwards walk to read, so Hebrew and
             // Arabic came out mirrored. See Text.BidiOrder.
-            Text.BidiOrder.ToVisual(run.Text, _shapeScratch);
+            // A segment of an itemized line knows its direction already: right to left, last glyph first.
+            if (_segmentFont is not null)
+            {
+                if (_segmentRtl) _shapeScratch.Reverse();
+            }
+            else
+                Text.BidiOrder.ToVisual(run.Text, _shapeScratch);
 
             float scale = run.EmSize / font.PixelsPerEm;
 
@@ -7035,7 +7088,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
 
                 FlushBatch();
-                return;
+                return pen;
             }
 
             float a = (float)Math.Clamp(run.Color.A * opacity, 0.0, 1.0);
@@ -7070,6 +7123,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // taken when the font has no outlines to fit.
                 penX += MathF.Round((sg.Advance + sg.Kern) * scale, MidpointRounding.AwayFromZero);
             }
+            return penX;
         }
 
         // Appends two triangles (0,1,2, 0,2,3) for a quad starting at baseVertex -- avoids allocating

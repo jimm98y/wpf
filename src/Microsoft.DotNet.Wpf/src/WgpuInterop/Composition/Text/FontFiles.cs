@@ -742,6 +742,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             {
                 yield return "Segoe UI";
                 yield return "Simplified Arabic";
+                // Where none of Windows' faces is (Linux, macOS, a browser): faces that JOIN Arabic -- their GSUB
+                // has the 'arab' forms. The scan's first face with Arabic letters may have none, and every letter
+                // then stood alone. Windows has none of these names, so nothing changes there.
+                yield return "Noto Sans Arabic UI";
+                yield return "Noto Sans Arabic";
+                yield return "Noto Naskh Arabic";
+                yield return "Geeza Pro";
+                yield return "DejaVu Sans";
             }
             else if (c is >= '܀' and <= 'ݏ')             // Syriac
                 yield return "Segoe UI Historic";
@@ -984,9 +992,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             var found = new Dictionary<string, string?[]>(StringComparer.OrdinalIgnoreCase);
             var instances = new Dictionary<string, NamedInstance?[]>(StringComparer.OrdinalIgnoreCase);
             var toScan = new List<string>();
+            // EVERY LEVEL of each folder: Linux keeps its fonts in folders of folders (/usr/share/fonts/truetype/
+            // dejavu, .../noto), and reading only the top level found not one of them -- every system face was
+            // unknown on Linux, and a script the stack carries no face for (Arabic) was drawn from whatever
+            // bundled face happened to have a few of its letters, unjoined.
+            var everyLevel = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
             foreach (string dir in s_directories.Value)
             {
-                try { toScan.AddRange(Directory.GetFiles(dir)); }
+                try { toScan.AddRange(Directory.GetFiles(dir, "*", everyLevel)); }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
             }

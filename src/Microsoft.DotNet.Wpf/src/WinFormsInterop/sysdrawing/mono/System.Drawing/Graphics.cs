@@ -3232,6 +3232,10 @@ namespace System.Drawing
 		/// <summary>Set while TextOutGdi draws a line for TextRenderer: kern from GPOS.</summary>
 		internal bool gpos_kerning;
 
+		/// <summary>Set while a line of DrawText with DT_RTLREADING (TextFormatFlags.RightToLeft) is drawn: its
+		/// paragraph reads right to left (GlyphRunDraw.RtlReadingSimulation).</summary>
+		internal bool rtl_reading;
+
 		/// <summary>TextRenderingHint on a recording Graphics, which has no GDI+ object to hold it.
 		/// The single-bit hints draw the run bi-level (GlyphRunDraw.BiLevelSimulation); TextRenderer
 		/// reads it too, as .NET's maps it to the font's quality (NONANTIALIASED_QUALITY).</summary>
@@ -3849,7 +3853,9 @@ namespace System.Drawing
 					   | (no_kerning ? WebGpuBackend.TextMetrics.NoKerning : 0)
 					   | (gpos_kerning && !no_kerning ? WebGpuBackend.TextMetrics.GposKerning : 0)
 					   | (BiLevelText ? WebGpuBackend.TextMetrics.BiLevel : 0)
-					   | (memory_surface_text ? WebGpuBackend.TextMetrics.MemorySurface : 0);
+					   | (memory_surface_text ? WebGpuBackend.TextMetrics.MemorySurface : 0)
+					   | (rtl_reading || format != null && (format.FormatFlags & StringFormatFlags.DirectionRightToLeft) != 0
+					      ? WebGpuBackend.TextMetrics.RtlReading : 0);
 				// The family the caller asked for. A run used to arrive at the renderer with
 				// nothing but a size, a colour and a style, so everything came out in one
 				// hard-coded face -- and a fixed-width font could not be had at all.
@@ -3936,7 +3942,11 @@ namespace System.Drawing
 					string line = lines[i].TrimEnd ('\r');
 					if (line.Length == 0) continue;
 					float tx = layoutRectangle.X;
-					if (format != null && layoutRectangle.Width > 0 && format.Alignment != StringAlignment.Near) {
+					// DirectionRightToLeft: Near is the right edge and Far the left, as GDI+ aligns a right-to-left line
+					StringAlignment halign = format == null ? StringAlignment.Near : format.Alignment;
+					if (format != null && (format.FormatFlags & StringFormatFlags.DirectionRightToLeft) != 0 && halign != StringAlignment.Center)
+						halign = halign == StringAlignment.Near ? StringAlignment.Far : StringAlignment.Near;
+					if (format != null && layoutRectangle.Width > 0 && halign != StringAlignment.Near) {
 						// Managed measurement (no libgdiplus) with the renderer's font -> exact centring.
 						WebGpuBackend.GpuRaster.MeasureText (line, emPx, sims, family, out float mw, out float mh);
 						// GDI TRUNCATES the centring offset -- DT_CENTER is integer arithmetic on whole
@@ -3946,7 +3956,7 @@ namespace System.Drawing
 						// where stock starts it at 14. GDI+ does centre in float, so only the GDI-metric
 						// path (TextRenderer, which is what every control caption goes through) rounds
 						// the same way GDI does.
-						if (format.Alignment == StringAlignment.Center) {
+						if (halign == StringAlignment.Center) {
 							float off = (layoutRectangle.Width - mw) / 2f;
 							tx += gdi_text_metrics ? MathF.Floor (off) : off;
 						}

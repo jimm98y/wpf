@@ -737,6 +737,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// driver's DXGK_GDIOP_CLEARTYPEBLEND (WgpuSceneRenderer.SubpixelLutForInkOnWindow).</summary>
         public const int MemorySurfaceSimulation = 32;
 
+        /// <summary>Bit 6 of Simulations: the run's paragraph reads RIGHT TO LEFT -- DrawText's
+        /// DT_RTLREADING, a StringFormat's DirectionRightToLeft. Without it the bidi algorithm takes a
+        /// left-to-right paragraph, as GDI does for a string with no such flag, whatever its first letter.</summary>
+        public const int RtlReadingSimulation = 64;
+
         /// <summary>Style to render the run in, as WPF's StyleSimulations counts it: 1 = bold,
         /// 2 = italic. A string run carries only a size and a colour otherwise, so without this
         /// every run comes out in the regular face however the caller asked for it.</summary>

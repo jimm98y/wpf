@@ -643,6 +643,7 @@ namespace System.Windows.Forms
 			private readonly int sims;
 			private readonly string family;
 			internal Color ForeColor, BackColor;
+			internal bool RtlReading;	// DT_RTLREADING: each line's paragraph reads right to left
 			private int height = -1, ascent = -1, ave = -1;
 
 			internal GdiTextDevice (Graphics g, Font font)
@@ -703,7 +704,13 @@ namespace System.Windows.Forms
 					using (var b = new SolidBrush (BackColor))
 						g.FillRectangle (b, x, y, Extent (s, 0, s.Length), Height);
 				}
-				g.TextOutGdi (s, font, ForeColor, x, y);
+				bool saved = g.rtl_reading;
+				g.rtl_reading = RtlReading;
+				try {
+					g.TextOutGdi (s, font, ForeColor, x, y);
+				} finally {
+					g.rtl_reading = saved;
+				}
 			}
 
 			public void FillRect (Rectangle r)
@@ -726,6 +733,7 @@ namespace System.Windows.Forms
 			var dev = new GdiTextDevice (g, font) { ForeColor = foreColor, BackColor = backColor };
 			GlyphOverhang (font, flags, out int left, out int right);
 			uint dt = DtFlags (flags);
+			dev.RtlReading = (dt & GdiDrawText.DT_RTLREADING) != 0;
 			if ((dt & (GdiDrawText.DT_BOTTOM | GdiDrawText.DT_VCENTER)) != 0 && (dt & GdiDrawText.DT_SINGLELINE) == 0 && (dt & GdiDrawText.DT_CALCRECT) == 0) {
 				Rectangle calc = bounds;
 				int h = GdiDrawText.DrawTextEx (dev, text, ref calc, dt | GdiDrawText.DT_CALCRECT, left, right, 0, null);

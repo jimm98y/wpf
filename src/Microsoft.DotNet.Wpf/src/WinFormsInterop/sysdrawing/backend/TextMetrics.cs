@@ -78,6 +78,12 @@ namespace System.Drawing.WebGpuBackend
                 string line = raw.TrimEnd('\r');
                 if (line.Length == 0) continue;
                 float lineWidth;
+                // a line that mixes directions or faces is measured in the segments it is drawn in
+                if (TryMeasureSegments(line, emPx, simulations, family, font, (simulations & NoKerning) != 0 ? PlainShaper : Shaper, out float segmented))
+                {
+                    if (segmented > width) width = segmented;
+                    continue;
+                }
                 lock (Buf)
                 {
                     // Bit 2 of the simulations asks for no kerning -- see GlyphRunDraw. The measure
@@ -122,6 +128,7 @@ namespace System.Drawing.WebGpuBackend
         /// legacy 'kern' pairs only to a string holding U+2015 or U+2020).</summary>
         internal const int GposKerning = Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.GposKerningSimulation;
         internal const int BiLevel = Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.BiLevelSimulation;
+        internal const int RtlReading = Microsoft.Wpf.Interop.WebGpu.Composition.GlyphRunDraw.RtlReadingSimulation;
         private static readonly ITextShaper GposShaper = new GposKerningTextShaper();
 
         /// <summary>A run's extent as user32's DrawText measures it: every character through the
@@ -132,6 +139,8 @@ namespace System.Drawing.WebGpuBackend
         {
             if (string.IsNullOrEmpty(text)) return 0;
             IFont font = FontFor(simulations & 3, family);
+            if (TryMeasureSegments(text, emPx, simulations, family, font, (simulations & NoKerning) != 0 ? PlainShaper : GposShaper, out float segmented))
+                return (int)Math.Round(segmented);
             float width = 0f;
             lock (Buf)
             {
@@ -228,6 +237,65 @@ namespace System.Drawing.WebGpuBackend
         // that file; one that does not has the style synthesized from its regular face, which is
         // what the flags on TrueTypeFont do.
         private static readonly Dictionary<string, IFont> Faces = new Dictionary<string, IFont>();
+
+        /// <summary>A line's width when it is drawn in segments (TextItemizer: mixed directions, or characters its
+        /// face lacks drawn from a linked one) -- the sum of each segment's whole-pixel advances in its own face,
+        /// as the renderer steps through them; false for a line drawn as one run.</summary>
+        private static bool TryMeasureSegments(string line, float emPx, int simulations, string family, IFont font,
+                                               ITextShaper shaper, out float width)
+        {
+            width = 0f;
+            int style = simulations & 3;
+            List<TextSegment> segments = TextItemizer.Itemize(line, false, font, c => LinkedFace(family, c, style));
+            if (segments == null)
+                return false;
+            lock (Buf)
+            {
+                foreach (TextSegment seg in segments)
+                {
+                    string part = line.Substring(seg.Start, seg.Length);
+                    (TextItemizer.Joins(part) ? ((simulations & NoKerning) != 0 ? TextItemizer.JoiningPlainShaper : TextItemizer.JoiningShaper) : shaper)
+                        .Shape((IShapingFont)seg.Font, part, Buf);
+                    float scale = emPx / seg.Font.PixelsPerEm;
+                    var faced = seg.Font as IHintedGlyphFont;
+                    foreach (ShapedGlyph g in Buf)
+                    {
+                        width += faced is not null && faced.TryGetDeviceAdvance(g.GlyphId, emPx, out float device)
+                                 ? device : (float)Math.Round(g.Advance * scale);
+                        if (g.Kern != 0f) width += (float)Math.Round(g.Kern * scale);
+                    }
+                }
+            }
+            return true;
+        }
+
+        private static readonly Dictionary<(string, char, int), IFont> LinkedFaces = new Dictionary<(string, char, int), IFont>();
+        private static readonly Dictionary<(string, int), IFont> LinkedFamilies = new Dictionary<(string, int), IFont>();
+
+        /// <summary>The face a character is drawn from when the family asked for has none: the renderer's choice
+        /// (FontFiles.LinkedFamily, loaded as the renderer loads it), so what is measured is what is drawn.</summary>
+        private static IFont LinkedFace(string family, char c, int style)
+        {
+            lock (LinkedFaces)
+            {
+                if (LinkedFaces.TryGetValue((family, c, style), out IFont cached))
+                    return cached;
+                IFont found = null;
+                FontFiles.LinkedFamily(family, c, f =>
+                {
+                    // one face per family and style, or each character's link is a face of its own (see
+                    // WgpuSceneRenderer.LinkFamily)
+                    if (!LinkedFamilies.TryGetValue((f, style), out IFont loaded))
+                        LinkedFamilies[(f, style)] = loaded = Microsoft.Wpf.Interop.WebGpu.Composition.WgpuSceneRenderer.LoadFamily(f, style);
+                    if (loaded is not IShapingFont face || face.GlyphIndex(c) <= 0)
+                        return false;
+                    found = (IFont)face;
+                    return true;
+                });
+                LinkedFaces[(family, c, style)] = found;
+                return found;
+            }
+        }
 
         internal static IFont FontFor(int simulations, string family)
         {
