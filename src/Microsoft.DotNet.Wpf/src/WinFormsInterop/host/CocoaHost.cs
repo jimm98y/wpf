@@ -2574,12 +2574,16 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
         }
         ulong flags = (ulong)(nint)Send(evt, Sel("modifierFlags"));
         const ulong Shift = 1UL << 17, Ctrl = 1UL << 18, Option = 1UL << 19, Command = 1UL << 20;
-        bool control = (flags & (Ctrl | Command)) != 0;
+        int keyCode = type == 12 ? -1 : (int)(nint)Send(evt, Sel("keyCode"));
+        // Command+Delete (the Mac's delete, Windows' Backspace) is the Delete key: the Mac's gesture for
+        // deleting an item, and the one way a Mac keyboard without a forward-delete key deletes a selected
+        // control. Command is then not Control: the key is a plain Delete, not Ctrl+Delete.
+        bool commandDelete = keyCode == 0x33 && (flags & Command) != 0;
+        bool control = (flags & Ctrl) != 0 || (flags & Command) != 0 && !commandDelete;
         d.SetModifierKeys((control ? Keys.Control : 0) | ((flags & Shift) != 0 ? Keys.Shift : 0) | ((flags & Option) != 0 ? Keys.Alt : 0));
         if (type == 12) return;   // a modifier alone: the state is what changed
 
-        int keyCode = (int)(nint)Send(evt, Sel("keyCode"));
-        int vk = VirtualKey(keyCode, Characters(evt, "charactersIgnoringModifiers"));
+        int vk = commandDelete ? 0x2E /* VK_DELETE */ : VirtualKey(keyCode, Characters(evt, "charactersIgnoringModifiers"));
         if (type == 11)
         {
             if (vk != 0) d.InjectKeyUp(vk);

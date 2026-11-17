@@ -1035,6 +1035,16 @@ namespace System.Windows.Interop
                 Console.Error.WriteLine($"[keys] provider 0x{msg.View:x} down={msg.IsDown} code={msg.KeyCode} chars='{msg.Characters}' focus={System.Windows.Input.Keyboard.FocusedElement?.GetType().Name ?? "null"}");
 
             int virtualKey = MapMacKeyCodeToVirtualKey(msg.KeyCode);
+            // Command+Delete (the Mac's delete, Windows' Backspace) is the Delete key: the Mac's gesture for
+            // deleting an item, and the one way a Mac keyboard without a forward-delete key deletes a
+            // selection. While it is down Command is not Control (Win32KeyboardDevice.MacModifierState): a
+            // plain Delete, not Ctrl+Delete.
+            if (msg.KeyCode == 0x33)
+            {
+                bool commandDelete = msg.IsDown ? (msg.ModifierFlags & 0x100000) != 0 : Win32KeyboardDevice.MacCommandIsDelete;
+                Win32KeyboardDevice.MacCommandIsDelete = msg.IsDown && commandDelete;
+                if (commandDelete) virtualKey = 0x2E;   // VK_DELETE
+            }
             if (virtualKey != 0)
             {
                 const ulong Option = 0x80000;   // NSEventModifierFlagOption: Alt

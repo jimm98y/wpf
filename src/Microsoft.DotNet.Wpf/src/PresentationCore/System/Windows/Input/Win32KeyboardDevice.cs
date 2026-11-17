@@ -86,6 +86,10 @@ namespace System.Windows.Input
         /// as up: Alt+drag never rotated a 3D view. On Windows GetKeyState is the thread's keyboard state.
         /// Null for any other key.
         /// </summary>
+        /// <summary>macOS: Command+Delete is down, reported as the Delete key (HwndKeyboardInputProvider): Command
+        /// is not Control while it is.</summary>
+        internal static bool MacCommandIsDelete;
+
         private static KeyStates? MacModifierState(int vk)
         {
             const ulong Caps = 0x10000, Shift = 0x20000, Control = 0x40000, Option = 0x80000, Command = 0x100000;
@@ -117,6 +121,7 @@ namespace System.Windows.Input
                 default: return null;
             }
             ulong flags = MS.Internal.Interop.CocoaWindow.CurrentModifierFlags();
+            if (MacCommandIsDelete && (want & Command) != 0) { want &= ~Command; side &= ~(LCmd | RCmd); }
             bool down = (flags & want) != 0 && (side == 0 || (flags & side) != 0);
             return down ? KeyStates.Down : KeyStates.None;
         }
