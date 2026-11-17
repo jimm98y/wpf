@@ -355,20 +355,11 @@ namespace System.Windows.Forms
 				if (style != value) {
 					style = value;
 
-					if (style == ProgressBarStyle.Marquee) {
-						if (marquee_timer == null) {
-							marquee_timer = new Timer ();
-							marquee_timer.Interval = MarqueeInterval;
-							marquee_timer.Tick += new EventHandler (marquee_timer_Tick);
-						}
+					if (style == ProgressBarStyle.Marquee)
 						marquee_pos = -1;
-						marquee_timer.Start ();
-					} else {
-						if (marquee_timer != null) {
-							marquee_timer.Stop ();
-						}
+					UpdateMarquee ();
+					if (style != ProgressBarStyle.Marquee)
 						Refresh ();
-					}
 				}
 			}
 		}
@@ -387,6 +378,28 @@ namespace System.Windows.Forms
 		// 31.25 ms in a stock process, and later still while the thread is busy -- a timer that runs
 		// late slows the chunk down on Windows too. (Steps counted on a clock instead moved it 6 pixels
 		// every 20 ms whatever the timer did: a splash screen's bar crossed about twice as fast.)
+		// The marquee's timer is the bar's window's, as comctl32's is (PBM_SETMARQUEE, which WinForms sends
+		// once the handle exists and whenever Style or MarqueeAnimationSpeed changes): it runs on the thread
+		// the window is on, while there is a window, and a speed of 0 stops it. Started when Style was set, it
+		// was the timer of the thread that set it -- a splash screen built on the main thread and run on one
+		// of its own (Application.Run there) had its bar's timer on the main thread, busy loading the whole
+		// time the splash was up: the marquee never moved.
+		void UpdateMarquee ()
+		{
+			bool run = IsHandleCreated && style == ProgressBarStyle.Marquee && marquee_animation_speed != 0;
+			if (!run) {
+				marquee_timer?.Stop ();
+				return;
+			}
+			if (marquee_timer == null) {
+				marquee_timer = new Timer ();
+				marquee_timer.Interval = MarqueeInterval;
+				marquee_timer.Tick += new EventHandler (marquee_timer_Tick);
+			}
+			marquee_timer.Stop ();   // (re)enabled on this thread: the window's
+			marquee_timer.Start ();
+		}
+
 		void marquee_timer_Tick (object sender, EventArgs e)
 		{
 			marquee_pos += MarqueeStep;
@@ -403,7 +416,10 @@ namespace System.Windows.Forms
 			}
 
 			set {
+				if (value < 0)
+					throw new ArgumentOutOfRangeException (nameof (value));
 				marquee_animation_speed = value;
+				UpdateMarquee ();
 			}
 		}
 
@@ -473,6 +489,7 @@ namespace System.Windows.Forms
 
 			UpdateAreas ();
 			SetHighlightTimer (true);
+			UpdateMarquee ();
 		}
 
 		protected override void OnBackColorChanged (EventArgs e)
@@ -548,6 +565,7 @@ namespace System.Windows.Forms
 				s_active_highlights--;
 			}
 			highlight_delay?.Stop ();
+			marquee_timer?.Stop ();
 			Animation.Forget (this);
 			base.OnHandleDestroyed (e);
 		}

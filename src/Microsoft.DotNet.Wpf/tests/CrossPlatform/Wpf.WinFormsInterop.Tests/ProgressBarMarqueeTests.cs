@@ -63,6 +63,45 @@ namespace Wpf.WinFormsInterop.Tests
             if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
         }
 
+        // A splash screen's way: the bar made (Style = Marquee) on one thread, its window created and its
+        // messages run on another. The marquee is the window's timer, so it steps in that thread's loop.
+        [Fact]
+        public void TheMarqueeStepsOnTheThreadOfTheBarsWindow()
+        {
+            SWF.ProgressBar bar = null!;
+            var maker = new Thread(() => bar = new SWF.ProgressBar { Bounds = new Rectangle(0, 0, 200, 20), Style = SWF.ProgressBarStyle.Marquee });
+            maker.TrySetApartmentState(ApartmentState.STA);
+            maker.Start(); maker.Join();
+
+            Exception? failure = null;
+            var ui = new Thread(() =>
+            {
+                try
+                {
+                    using var form = new SWF.Form { StartPosition = SWF.FormStartPosition.Manual, Location = new Point(8000, 100), ClientSize = new Size(220, 40), ShowInTaskbar = false };
+                    form.Controls.Add(bar);
+                    FieldInfo pos = typeof(SWF.ProgressBar).GetField("marquee_pos", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                    int start = 0, moved = 0, stoppedAt = 0, stoppedLater = 0, ticks = 0;
+                    var check = new SWF.Timer { Interval = 30 };
+                    check.Tick += (_, _) =>
+                    {
+                        ticks++;
+                        if (ticks == 1) { start = (int)pos.GetValue(bar)!; return; }
+                        if (ticks == 20) { moved = (int)pos.GetValue(bar)!; bar.MarqueeAnimationSpeed = 0; stoppedAt = moved; return; }
+                        if (ticks == 30) { stoppedLater = (int)pos.GetValue(bar)!; check.Stop(); form.Close(); }
+                    };
+                    form.Shown += (_, _) => check.Start();
+                    SWF.Application.Run(form);
+                    Assert.NotEqual(start, moved);                     // it stepped, in this thread's loop
+                    Assert.Equal(stoppedAt, stoppedLater);             // a speed of 0 stops it, as PBM_SETMARQUEE(FALSE)
+                }
+                catch (Exception ex) { failure = ex; }
+            });
+            ui.TrySetApartmentState(ApartmentState.STA);
+            ui.Start(); ui.Join();
+            if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
         [Fact]
         public void AChunkPastTheEndStartsAgainAtFive()
         {
