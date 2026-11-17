@@ -127,9 +127,12 @@ namespace WgpuInterop.Tests.Harness
         /// MILCMD_DRAWINGGROUP (0x8b): Handle@4, Opacity@8, ChildrenSize@16, hTransform@32; the fixed
         /// struct runs to 52 (ClearTypeHint is the last field) and children follow.
         /// </summary>
-        public static byte[] DrawingGroup(uint h, double opacity, uint[] children)
+        public static byte[] DrawingGroup(uint h, double opacity, uint[] children, uint hClip = 0, uint hMask = 0)
         {
             var q = new Buf(); q.U32(0x8b); q.U32(h); q.F64(opacity); q.U32((uint)(children.Length * 4));
+            q.U32(hClip);       // hClipGeometry@20
+            q.U32(0);           // hOpacityAnimations@24
+            q.U32(hMask);       // hOpacityMask@28
             while (q.Length < 52) q.U32(0);
             foreach (uint c in children) q.U32(c);
             return q.ToArray();
@@ -258,13 +261,15 @@ namespace WgpuInterop.Tests.Harness
         /// lands hImageSource dozens of bytes early and decodes as a null brush.
         /// </summary>
         public static byte[] ImageBrush(uint handle, uint hImageSource, uint stretch,
-            double vbX = 0, double vbY = 0, double vbW = 1, double vbH = 1)
+            double vbX = 0, double vbY = 0, double vbW = 1, double vbH = 1,
+            uint tileMode = 0, double vpX = 0, double vpY = 0, double vpW = 1, double vpH = 1,
+            uint alignmentX = 1, uint alignmentY = 1)
         {
             var b = new Buf();
             b.U32(0x81); b.U32(handle);
             b.F64(1.0);                                       // Opacity @8
             while (b.Length < 16) b.U8(0);
-            b.F64(0); b.F64(0); b.F64(1); b.F64(1);           // Viewport @16 = (0,0,1,1)
+            b.F64(vpX); b.F64(vpY); b.F64(vpW); b.F64(vpH);   // Viewport @16 (default (0,0,1,1))
             while (b.Length < 48) b.U8(0);
             b.F64(vbX); b.F64(vbY); b.F64(vbW); b.F64(vbH);   // Viewbox @48
             while (b.Length < 108) b.U8(0);
@@ -272,7 +277,10 @@ namespace WgpuInterop.Tests.Harness
             b.U32(1);                                         // ViewboxUnits  @112 = RelativeToBoundingBox
             while (b.Length < 124) b.U8(0);
             b.U32(stretch);                                   // Stretch @124
-            while (b.Length < 144) b.U8(0);                    // TileMode @128 = None
+            b.U32(tileMode);                                  // TileMode @128 (None = 0)
+            b.U32(alignmentX);                                // AlignmentX @132 (Left 0, Center 1, Right 2)
+            b.U32(alignmentY);                                // AlignmentY @136 (Top 0, Center 1, Bottom 2)
+            while (b.Length < 144) b.U8(0);
             b.U32(hImageSource);                              // hImageSource @144
             return b.ToArray();
         }
@@ -500,14 +508,15 @@ namespace WgpuInterop.Tests.Harness
         /// writes the count decodes as a truncated stop list.
         /// </summary>
         public static byte[] LinearGradientBrush(uint handle, double sx, double sy, double ex, double ey,
-            uint mappingMode, (float Pos, float R, float G, float B, float A)[] stops, uint spreadMethod = 0)
+            uint mappingMode, (float Pos, float R, float G, float B, float A)[] stops, uint spreadMethod = 0,
+            uint hTransform = 0, uint hRelativeTransform = 0)
         {
             var b = new Buf();
             b.U32(0x7f); b.U32(handle);
             b.F64(1.0);                        // Opacity
             b.F64(sx); b.F64(sy);              // StartPoint
             b.F64(ex); b.F64(ey);              // EndPoint
-            b.U32(0); b.U32(0); b.U32(0);      // hOpacityAnim, hTransform, hRelativeTransform
+            b.U32(0); b.U32(hTransform); b.U32(hRelativeTransform);   // hOpacityAnim, hTransform, hRelativeTransform
             b.U32(0);                          // ColorInterpolationMode
             b.U32(mappingMode);                // BrushMappingMode (1 = RelativeToBoundingBox)
             b.U32(spreadMethod);

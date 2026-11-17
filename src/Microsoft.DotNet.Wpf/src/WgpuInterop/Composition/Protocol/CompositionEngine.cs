@@ -301,13 +301,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             double thickness = r.F64();
             var cap = (LineCap)r.U8();
+            var endCap = (LineCap)r.U8();
+            var dashCap = (LineCap)r.U8();
             var join = (LineJoin)r.U8();
             double miterLimit = r.F64();
             double dashOffset = r.F64();
             int dashCount = r.U16();
             double[]? dashes = dashCount > 0 ? new double[dashCount] : null;
             for (int i = 0; i < dashCount; i++) dashes![i] = r.F64();
-            return new StrokeStyle(thickness, cap, join, miterLimit, dashes, dashOffset);
+            return new StrokeStyle(thickness, cap, join, miterLimit, dashes, dashOffset, endCap, dashCap);
         }
 
         private static Brush ReadBrush(CommandReader r)
@@ -332,12 +334,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 {
                     var center = new Vector2(r.F32(), r.F32());
                     float radiusX = r.F32(), radiusY = r.F32();
+                    var origin = new Vector2(r.F32(), r.F32());
                     var spread = (GradientSpreadMethod)r.U8();
                     int stopCount = r.U16();
                     var stops = new GradientStop[stopCount];
                     for (int i = 0; i < stopCount; i++)
                         stops[i] = new GradientStop(r.F32(), ReadColor(r));
-                    return new RadialGradientBrush(center, radiusX, radiusY, stops, spread);
+                    return new RadialGradientBrush(center, radiusX, radiusY, stops, spread, origin);
                 }
                 case BrushKind.Image:
                 {

@@ -348,12 +348,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public readonly Rect Viewbox;        // source sub-region
             public readonly uint ViewboxUnits;
             public readonly double Opacity;      // TileBrush.Opacity (base or animated); 1.0 = opaque
+            /// <summary>TileBrush.AlignmentX / AlignmentY as fractions: 0 left/top, 0.5 centre, 1 right/bottom.</summary>
+            public readonly float AlignX, AlignY;
             public MilImageBrush(uint imageHandle, TileMode tile, uint stretch,
-                Rect viewport, uint viewportUnits, Rect viewbox, uint viewboxUnits, double opacity)
+                Rect viewport, uint viewportUnits, Rect viewbox, uint viewboxUnits, double opacity,
+                uint alignmentX = 1, uint alignmentY = 1)
             {
                 ImageHandle = imageHandle; Tile = tile; Stretch = stretch;
                 Viewport = viewport; ViewportUnits = viewportUnits; Viewbox = viewbox; ViewboxUnits = viewboxUnits;
                 Opacity = opacity;
+                AlignX = Math.Min(alignmentX, 2u) / 2f; AlignY = Math.Min(alignmentY, 2u) / 2f;
             }
         }
 
@@ -449,7 +453,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // CPU pixel path (readback). See TryBuildGpuSourceBrush.
         private static readonly bool s_gpuVisualBrush = System.Environment.GetEnvironmentVariable("WPF_GPU_VISUALBRUSH") != "0";
         private readonly Dictionary<uint, (uint Brush, uint Pen, uint Geometry)> _geometryDrawings = new();
-        private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity)> _drawingGroups = new();
+        private readonly Dictionary<uint, (List<uint> Children, uint Transform, double Opacity, uint Clip, uint Mask)> _drawingGroups = new();
         // The other leaf Drawing types. Without these a DrawingGroup or DrawingBrush containing
         // an image or a glyph run silently rendered those children as nothing.
         private readonly Dictionary<uint, (Rect Rect, uint ImageSource)> _imageDrawings = new();
@@ -496,6 +500,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             public bool Relative;      // BrushMappingMode.RelativeToBoundingBox
             public GradientSpreadMethod Spread;
             public GradientStop[] Stops = Array.Empty<GradientStop>();
+            public uint Transform;          // Brush.Transform, in the drawing's user space
+            public uint RelativeTransform;  // Brush.RelativeTransform, in the filled bounds' unit space
+            public Vector2 Origin;          // RadialGradientBrush.GradientOrigin: the focus
         }
 
         /// <summary>A decoded WPF Pen resource (stroke parameters + brush handle).</summary>
@@ -792,12 +799,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     double miter = r.F64();
                     uint hBrush = r.U32();
                     _ = r.U32();                       // hThicknessAnimations
+                    // the start, end and dash caps each their own (the end and dash caps were drawn as the start's)
                     var cap = MapCap(r.U32());
-                    _ = r.U32();                       // EndLineCap (use start for both)
-                    _ = r.U32();                       // DashCap
+                    var endCap = MapCap(r.U32());
+                    var dashCap = MapCap(r.U32());
                     var join = (LineJoin)Math.Min(r.U32(), 2u);
                     uint hDash = r.U32();              // hDashStyle@48
-                    _pens[ph] = new MilPen(new StrokeStyle(thickness, cap, join, miter), hBrush, hDash);
+                    _pens[ph] = new MilPen(new StrokeStyle(thickness, cap, join, miter, endCap: endCap, dashCap: dashCap), hBrush, hDash);
                     BumpResource(ph);
                     break;
                 }
@@ -1030,7 +1038,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     double opacity = r.F64();
                     var start = new Vector2((float)r.F64(), (float)r.F64());
                     var end = new Vector2((float)r.F64(), (float)r.F64());
-                    r.U32(); r.U32(); r.U32();          // hOpacityAnim, hTransform, hRelativeTransform
+                    r.U32();                            // hOpacityAnim
+                    uint hTransform = r.U32(), hRelative = r.U32();
                     r.U32();                            // ColorInterpolationMode
                     uint mapping = r.U32();             // BrushMappingMode (1 = RelativeToBoundingBox)
                     var spread = (GradientSpreadMethod)Math.Min(r.U32(), 2u);
@@ -1041,6 +1050,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         Radial = false, Start = start, End = end,
                         Relative = mapping == 1, Spread = spread,
                         Stops = ReadGradientStops(ref r, stopsSize, opacity),
+                        Transform = hTransform, RelativeTransform = hRelative,
                     };
                     BumpResource(h);
                     break;
@@ -1054,8 +1064,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     double opacity = r.F64();
                     var center = new Vector2((float)r.F64(), (float)r.F64());
                     float rx = (float)r.F64(), ry = (float)r.F64();
-                    r.F64(); r.F64();                   // GradientOrigin (focus) -- not modelled
-                    r.U32(); r.U32(); r.U32();          // hOpacityAnim, hTransform, hRelativeTransform
+                    var origin = new Vector2((float)r.F64(), (float)r.F64());   // GradientOrigin (the focus)
+                    r.U32();                            // hOpacityAnim
+                    uint hTransform = r.U32(), hRelative = r.U32();
                     r.U32();                            // ColorInterpolationMode
                     uint mapping = r.U32();
                     var spread = (GradientSpreadMethod)Math.Min(r.U32(), 2u);
@@ -1066,6 +1077,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                         Radial = true, Start = center, RadiusX = rx, RadiusY = ry,
                         Relative = mapping == 1, Spread = spread,
                         Stops = ReadGradientStops(ref r, stopsSize, opacity),
+                        Transform = hTransform, RelativeTransform = hRelative, Origin = origin,
                     };
                     BumpResource(h);
                     break;
@@ -1181,8 +1193,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 112; uint viewboxUnits = r.U32();
                     r.Position = 124; uint stretch = r.U32();
                     r.Position = 128; var tile = (TileMode)r.U32();
+                    r.Position = 132; uint alignX = r.U32();
+                    r.Position = 136; uint alignY = r.U32();
                     r.Position = 144; uint hImg = r.U32();
-                    _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, imgOpacity);
+                    _imageBrushes[h] = new MilImageBrush(hImg, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, imgOpacity, alignX, alignY);
                     BumpResource(h);
                     break;
                 }
@@ -1199,8 +1213,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     r.Position = 112; uint viewboxUnits = r.U32();
                     r.Position = 124; uint stretch = r.U32();
                     r.Position = 128; var tile = (TileMode)r.U32();
+                    r.Position = 132; uint alignX = r.U32();
+                    r.Position = 136; uint alignY = r.U32();
                     r.Position = 144; uint hSource = r.U32();
-                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity);
+                    _imageBrushes[h] = new MilImageBrush(hSource, tile, stretch, viewport, viewportUnits, viewbox, viewboxUnits, srcOpacity, alignX, alignY);
                     _contentBrushes[h] = (hSource, id == Mil.DrawingBrush);
                     BumpResource(h);
                     break;
@@ -1272,11 +1288,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     uint h = r.U32();
                     double opacity = r.F64();
                     r.Position = 16; uint childrenSize = r.U32();
+                    r.Position = 20; uint hClip = r.U32();      // ClipGeometry
+                    r.Position = 28; uint hMask = r.U32();      // OpacityMask
                     r.Position = 32; uint hTransform = r.U32();
                     r.Position = 52;
                     var children = new List<uint>();
                     for (uint i = 0; i + 4 <= childrenSize && r.Remaining >= 4; i += 4) children.Add(r.U32());
-                    _drawingGroups[h] = (children, hTransform, opacity);
+                    _drawingGroups[h] = (children, hTransform, opacity, hClip, hMask);
                     break;
                 }
                 case Mil.BitmapCache:
@@ -1967,11 +1985,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // A DrawingImage just wraps another Drawing; render that.
                 return BuildDrawingVisual(hInner);
             }
-            else if (_drawingGroups.TryGetValue(handle, out (List<uint> Children, uint Transform, double Opacity) dg))
+            else if (_drawingGroups.TryGetValue(handle, out var dg))
             {
                 v.Opacity = dg.Opacity;
                 if (dg.Transform != 0 && _transforms.TryGetValue(dg.Transform, out Matrix3x2 m)) v.Transform = m;
                 foreach (uint child in dg.Children) v.Children.Add(BuildDrawingVisual(child));
+                // its clip and its opacity mask, in its own space as a visual's are (inside its transform)
+                if (dg.Clip != 0) ApplyClip(v, dg.Clip);
+                if (dg.Mask != 0) v.OpacityMask = ResolveBrush(dg.Mask, VisualSubtreeBounds(v, Matrix3x2.Identity));
             }
             return v;
         }
@@ -2132,13 +2153,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 EmitDrawingResource(output, hInner, state, depth + 1);
             }
-            else if (_drawingGroups.TryGetValue(handle, out (List<uint> Children, uint Transform, double Opacity) dg))
+            else if (_drawingGroups.TryGetValue(handle, out var dg))
             {
+                // As a DrawingContext draws a DrawingGroup: its transform outermost, then its clip and opacity, and its
+                // opacity mask over what its children draw. The clip and the mask were dropped, so a vector icon whose
+                // group clips it drew everything past the clip, and a masked one drew unmasked.
                 RenderState child = state;
                 child.Opacity *= (float)dg.Opacity;
                 if (dg.Transform != 0 && _transforms.TryGetValue(dg.Transform, out Matrix3x2 m))
                     child.Transform = m * state.Transform;
-                foreach (uint c in dg.Children) EmitDrawingResource(output, c, child, depth + 1);
+                if (dg.Clip != 0)
+                {
+                    NoteGeometryDeps(dg.Clip);
+                    if (_geometries.TryGetValue(dg.Clip, out Geometry? clip))
+                    {
+                        // the region its geometry fills, as a PushClip's (unfilled figures add nothing)
+                        Geometry clipLocal = TransformGeometry(FillableOnly(clip) ?? new RectangleGeometry(new Rect(0, 0, 0, 0)), child.Transform);
+                        child.Clip = child.Clip is null ? clipLocal : new CombinedGeometry(GeometryCombineMode.Intersect, child.Clip, clipLocal);
+                    }
+                }
+                if (dg.Mask == 0)
+                {
+                    foreach (uint c in dg.Children) EmitDrawingResource(output, c, child, depth + 1);
+                }
+                else
+                {
+                    // a scope of its own, as PushOpacityMask makes one: the mask laid over what the children drew
+                    var scope = new SceneVisual();
+                    foreach (uint c in dg.Children) EmitDrawingResource(scope.Content, c, child, depth + 1);
+                    if (scope.Content.Count > 0)
+                    {
+                        scope.OpacityMask = ResolveBrush(dg.Mask, ContentBounds(scope.Content), child.Transform);
+                        output.Add(new NestedVisualDraw(scope));
+                    }
+                }
             }
         }
 
@@ -2694,9 +2742,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (TryImageBrushFill(hBrush, bounds, ref g, out Brush? imgFill))
                 fill = ApplyOpacity(imgFill, state.Opacity);
             else
-                fill = ApplyOpacity(ResolveBrush(hBrush, bounds), state.Opacity);
+                fill = ApplyOpacity(ResolveBrush(hBrush, bounds, state.Transform), state.Opacity);
 
-            (Brush? strokeBrush, StrokeStyle strokeStyle) = ResolvePen(hPen, bounds);
+            (Brush? strokeBrush, StrokeStyle strokeStyle) = ResolvePen(hPen, bounds, state.Transform);
             strokeBrush = ApplyOpacity(strokeBrush, state.Opacity);
             // A figure that is not filled (BeginFigure(isFilled: false), PathFigure.IsFilled = false) is
             // stroked but takes no part in the fill. Such a geometry is drawn twice: its fillable figures
@@ -2823,6 +2871,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             if (bmp.External != null && ext == null) Trace("a cropped viewbox of a D3DImage brush draws nothing (its pixels are the GPU's)");
             if (ib.Tile != TileMode.None)
             {
+                // Each tile holds the image as the brush's Stretch and alignment place it in the viewport, as WPF
+                // tiles it -- not stretched to fill the tile whatever they say. Uniform and None leave room in the
+                // tile, which is transparent (the image is laid onto a canvas of the tile's proportions);
+                // UniformToFill crops the image to the tile.
+                if (ext == null && ib.Stretch != 1 && TileContent(pixels, iw, ih, vw, vh, ib) is var (tp, tw, th))
+                    (pixels, iw, ih) = (tp, tw, th);
                 fill = new ImageBrush(pixels, iw, ih, ib.Tile, vw, vh, (float)ib.Opacity) { WpfFilter = true, External = ext, ExternalVersion = bmp.Version };
                 return true;
             }
@@ -2833,8 +2887,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 float scale = MathF.Max(vw / iw, vh / ih);
                 int cw = Math.Clamp((int)MathF.Round(vw / scale), 1, iw);
                 int ch = Math.Clamp((int)MathF.Round(vh / scale), 1, ih);
-                int cx = Math.Clamp((iw - cw) / 2, 0, iw - cw);
-                int cy = Math.Clamp((ih - ch) / 2, 0, ih - ch);
+                // the part of the image the alignment keeps (AlignmentX Left: its left side)
+                int cx = Math.Clamp((int)MathF.Round((iw - cw) * ib.AlignX), 0, iw - cw);
+                int cy = Math.Clamp((int)MathF.Round((ih - ch) * ib.AlignY), 0, ih - ch);
                 if (vp.Width != bw || vp.Height != bh || vp.X != bounds.X || vp.Y != bounds.Y)
                     g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(vp));
                 fill = new ImageBrush(CropRgba(pixels, iw, cx, cy, cw, ch), cw, ch, TileMode.None, vw, vh, (float)ib.Opacity) { WpfFilter = true };
@@ -2855,13 +2910,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             {
                 dw = MathF.Min(iw, vw); dh = MathF.Min(ih, vh);
             }
-            var dest = new Rect(vp.X + (vw - dw) / 2, vp.Y + (vh - dh) / 2, dw, dh);
+            // placed in the viewport by the brush's alignment (AlignmentX, AlignmentY), centred by default
+            var dest = new Rect(vp.X + (vw - dw) * ib.AlignX, vp.Y + (vh - dh) * ib.AlignY, dw, dh);
 
             // Clip to the painted sub-rect unless it already covers the whole bounds (plain Fill).
             if (dest.X != bounds.X || dest.Y != bounds.Y || dest.Width != bw || dest.Height != bh)
                 g = new CombinedGeometry(GeometryCombineMode.Intersect, g, new RectangleGeometry(dest));
             fill = new ImageBrush(pixels, iw, ih, TileMode.None, dest.Width, dest.Height, (float)ib.Opacity) { WpfFilter = true, External = ext, ExternalVersion = bmp.Version };
             return true;
+        }
+
+        /// <summary>The picture one tile of a tiled image brush holds, for a Stretch other than Fill: the image placed in a
+        /// tile of the viewport's proportions as the Stretch and alignment place it, transparent round it (Uniform, None),
+        /// or the aligned part of it that covers the tile (UniformToFill). Null when nothing changes.</summary>
+        private static (byte[] Pixels, int Width, int Height)? TileContent(byte[] pixels, int iw, int ih, float vw, float vh, MilImageBrush ib)
+        {
+            if (vw <= 0 || vh <= 0 || iw <= 0 || ih <= 0) return null;
+            if (ib.Stretch == 3)   // UniformToFill: crop to the tile's proportions
+            {
+                float scale = MathF.Max(vw / iw, vh / ih);
+                int cw = Math.Clamp((int)MathF.Round(vw / scale), 1, iw), ch = Math.Clamp((int)MathF.Round(vh / scale), 1, ih);
+                if (cw == iw && ch == ih) return null;
+                int cx = Math.Clamp((int)MathF.Round((iw - cw) * ib.AlignX), 0, iw - cw);
+                int cy = Math.Clamp((int)MathF.Round((ih - ch) * ib.AlignY), 0, ih - ch);
+                return (CropRgba(pixels, iw, cx, cy, cw, ch), cw, ch);
+            }
+            // Uniform fits the image in the tile; None keeps its own size (cut to the tile)
+            float s = ib.Stretch == 2 ? MathF.Min(vw / iw, vh / ih) : 1f;
+            float dw = iw * s, dh = ih * s;
+            if (ib.Stretch == 0 && (dw > vw || dh > vh))
+            {
+                // larger than the tile at its own size: the aligned part of it that fits
+                int cw = Math.Clamp((int)MathF.Round(MathF.Min(dw, vw)), 1, iw), ch = Math.Clamp((int)MathF.Round(MathF.Min(dh, vh)), 1, ih);
+                int cx = Math.Clamp((int)MathF.Round((iw - cw) * ib.AlignX), 0, iw - cw), cy = Math.Clamp((int)MathF.Round((ih - ch) * ib.AlignY), 0, ih - ch);
+                pixels = CropRgba(pixels, iw, cx, cy, cw, ch); iw = cw; ih = ch; dw = cw; dh = ch;
+                if (dw >= vw - 0.5f && dh >= vh - 0.5f) return (pixels, iw, ih);
+            }
+            if (dw >= vw - 0.5f && dh >= vh - 0.5f) return null;
+            // a canvas of the tile's proportions, in the image's pixels, with the image where the alignment puts it
+            int canvasW = Math.Clamp((int)MathF.Round(iw * vw / dw), iw, 4096), canvasH = Math.Clamp((int)MathF.Round(ih * vh / dh), ih, 4096);
+            int ox = (int)MathF.Round((canvasW - iw) * ib.AlignX), oy = (int)MathF.Round((canvasH - ih) * ib.AlignY);
+            var canvas = new byte[canvasW * canvasH * 4];
+            for (int y = 0; y < ih; y++)
+                Buffer.BlockCopy(pixels, y * iw * 4, canvas, ((oy + y) * canvasW + ox) * 4, iw * 4);
+            return (canvas, canvasW, canvasH);
         }
 
         // Build a GPU-live source brush for a content brush (see TryImageBrushFill): wrap the live source
@@ -3107,7 +3199,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         }
 
         /// <summary>Resolve a brush handle to a Scene brush (solid, gradient, or image).</summary>
-        private Brush? ResolveBrush(uint handle, Rect bounds)
+        /// <param name="userToLocal">The drawing's own transform (its PushTransforms), which took the geometry from its user
+        /// space into the space the fill is drawn in: a brush laid out in user space (absolute points, Brush.Transform) goes
+        /// the same way.</param>
+        private Brush? ResolveBrush(uint handle, Rect bounds, Matrix3x2? userToLocal = null)
         {
             if (handle == 0) return null;
             // The brush's VALUE is baked into the content this parse produces, so the consuming visual
@@ -3116,7 +3211,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             _parseResourceRefs.Add(handle);
             if (_contentBrushes.ContainsKey(handle)) { _parseTouchedContentBrush = true; _contentBrushes2D.Add(handle); }
             if (_solidBrushes.TryGetValue(handle, out RgbaColor c)) return new SolidColorBrush(c);
-            if (_gradients.TryGetValue(handle, out MilGradient? g)) return BuildGradient(g, bounds);
+            if (_gradients.TryGetValue(handle, out MilGradient? g))
+            {
+                if (g.Transform != 0) _parseResourceRefs.Add(g.Transform);           // a transform's change re-lays the brush
+                if (g.RelativeTransform != 0) _parseResourceRefs.Add(g.RelativeTransform);
+                return BuildGradient(g, bounds, userToLocal ?? Matrix3x2.Identity);
+            }
             if (_imageBrushes.TryGetValue(handle, out MilImageBrush ib) && _bitmaps.TryGetValue(ib.ImageHandle, out MilBitmap bmp))
             {
                 _parseResourceRefs.Add(ib.ImageHandle);   // the pixels are baked in too
@@ -3203,7 +3303,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         }
 
         /// <summary>Resolve a pen handle to its stroke brush + style.</summary>
-        private (Brush?, StrokeStyle) ResolvePen(uint handle, Rect bounds)
+        private (Brush?, StrokeStyle) ResolvePen(uint handle, Rect bounds, Matrix3x2? userToLocal = null)
         {
             if (handle != 0 && _pens.TryGetValue(handle, out MilPen pen))
             {
@@ -3216,27 +3316,77 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     double t = pen.Style.Thickness;
                     var scaled = new double[ds.Dashes.Length];
                     for (int i = 0; i < scaled.Length; i++) scaled[i] = ds.Dashes[i] * t;
-                    style = new StrokeStyle(pen.Style.Thickness, pen.Style.Cap, pen.Style.Join, pen.Style.MiterLimit, scaled, ds.Offset * t);
+                    style = pen.Style.WithDashes(scaled, ds.Offset * t);
                 }
-                return (ResolveBrush(pen.BrushHandle, bounds), style);
+                return (ResolveBrush(pen.BrushHandle, bounds, userToLocal), style);
             }
             return (null, default);
         }
 
         // WPF gradients default to RelativeToBoundingBox: endpoints/radii are in [0,1] of the
         // filled geometry's bounds. Our renderer evaluates in absolute local space, so map here.
-        private static Brush BuildGradient(MilGradient g, Rect b)
+        //
+        // A brush's own transforms are laid on as WPF lays them (Brush.RelativeTransform in the unit space of the
+        // filled bounds, then Brush.Transform in the drawing's user space), and then the drawing's transform, which
+        // took the geometry into the space the fill is drawn in: all of them were ignored, so a rotated gradient ran
+        // the way it was declared, and an absolute one under a PushTransform stood where the geometry no longer was.
+        // A linear gradient stays one under any affine map -- its start goes along, and its end is placed so the
+        // ramp still reaches 1 across the mapped lines of equal colour. A radial one is exact unless the map turns
+        // it (its ellipse is axis-aligned here); then its radii are the lengths of the mapped axes.
+        private Brush BuildGradient(MilGradient g, Rect b, Matrix3x2 userToLocal)
         {
+            Matrix3x2 brushT = Matrix3x2.Identity, relT = Matrix3x2.Identity;
+            bool hasT = g.Transform != 0 && _transforms.TryGetValue(g.Transform, out brushT) && !brushT.IsIdentity;
+            bool hasR = g.RelativeTransform != 0 && _transforms.TryGetValue(g.RelativeTransform, out relT) && !relT.IsIdentity;
+            bool mapsLocal = !userToLocal.IsIdentity;
+            if (!hasT && !hasR && (g.Relative || !mapsLocal))
+            {
+                // as before: relative points on the (already local) bounds, absolute ones as they are
+                if (g.Radial)
+                {
+                    Vector2 center = g.Relative ? MapToBounds(g.Start, b) : g.Start;
+                    Vector2 focus = g.Relative ? MapToBounds(g.Origin, b) : g.Origin;
+                    float rx = g.Relative ? g.RadiusX * b.Width : g.RadiusX;
+                    float ry = g.Relative ? g.RadiusY * b.Height : g.RadiusY;
+                    return new RadialGradientBrush(center, rx, ry, g.Stops, g.Spread, focus);
+                }
+                Vector2 start = g.Relative ? MapToBounds(g.Start, b) : g.Start;
+                Vector2 end = g.Relative ? MapToBounds(g.End, b) : g.End;
+                return new LinearGradientBrush(start, end, g.Stops, g.Spread);
+            }
+
+            // The bounds in user space (the fill's bounds are the local ones; the drawing's transform is axis-aligned
+            // here -- a turned drawing is given a scope of its own, and its fill is drawn untransformed).
+            Rect ub = b;
+            if (mapsLocal && Matrix3x2.Invert(userToLocal, out Matrix3x2 toUser))
+                ub = TransformRect(b, toUser);
+            // user unit space -> user space, and the whole map: relative transform, brush transform, drawing transform
+            Matrix3x2 unit = Matrix3x2.CreateScale(ub.Width, ub.Height) * Matrix3x2.CreateTranslation(ub.X, ub.Y);
+            Matrix3x2 m = Matrix3x2.Identity;
+            if (hasR && Matrix3x2.Invert(unit, out Matrix3x2 fromUnit)) m = fromUnit * relT * unit;
+            if (hasT) m *= brushT;
+            m *= userToLocal;
+            Vector2 User(Vector2 p) => g.Relative ? new Vector2(ub.X + p.X * ub.Width, ub.Y + p.Y * ub.Height) : p;
+
             if (g.Radial)
             {
-                Vector2 center = g.Relative ? MapToBounds(g.Start, b) : g.Start;
-                float rx = g.Relative ? g.RadiusX * b.Width : g.RadiusX;
-                float ry = g.Relative ? g.RadiusY * b.Height : g.RadiusY;
-                return new RadialGradientBrush(center, rx, ry, g.Stops, g.Spread);
+                Vector2 c = Vector2.Transform(User(g.Start), m), focus = Vector2.Transform(User(g.Origin), m);
+                float urx = g.Relative ? g.RadiusX * ub.Width : g.RadiusX, ury = g.Relative ? g.RadiusY * ub.Height : g.RadiusY;
+                Vector2 ax = new Vector2(urx * m.M11, urx * m.M12), ay = new Vector2(ury * m.M21, ury * m.M22);
+                bool axisAligned = MathF.Abs(m.M12) < 1e-6f && MathF.Abs(m.M21) < 1e-6f;
+                float rx2 = axisAligned ? MathF.Abs(ax.X) : ax.Length(), ry2 = axisAligned ? MathF.Abs(ay.Y) : ay.Length();
+                return new RadialGradientBrush(c, rx2, ry2, g.Stops, g.Spread, focus);
             }
-            Vector2 start = g.Relative ? MapToBounds(g.Start, b) : g.Start;
-            Vector2 end = g.Relative ? MapToBounds(g.End, b) : g.End;
-            return new LinearGradientBrush(start, end, g.Stops, g.Spread);
+            Vector2 su = User(g.Start), eu = User(g.End), d = eu - su;
+            Vector2 s0 = Vector2.Transform(su, m);
+            float dd = d.LengthSquared();
+            if (dd < 1e-12f || !Matrix3x2.Invert(m, out Matrix3x2 inv))
+                return new LinearGradientBrush(s0, Vector2.Transform(eu, m), g.Stops, g.Spread);
+            // the ramp's gradient in local space: d through the inverse's transpose, over |d|^2
+            var n = new Vector2((inv.M11 * d.X + inv.M12 * d.Y) / dd, (inv.M21 * d.X + inv.M22 * d.Y) / dd);
+            float nn = n.LengthSquared();
+            Vector2 e0 = nn > 1e-12f ? s0 + n / nn : Vector2.Transform(eu, m);
+            return new LinearGradientBrush(s0, e0, g.Stops, g.Spread);
         }
 
         private static Vector2 MapToBounds(Vector2 rel, Rect b)

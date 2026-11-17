@@ -154,7 +154,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private static bool SameStyle(StrokeStyle a, StrokeStyle b)
-            => a.Thickness == b.Thickness && a.Cap == b.Cap && a.Join == b.Join && a.MiterLimit == b.MiterLimit
+            => a.Thickness == b.Thickness && a.Cap == b.Cap && a.EndCap == b.EndCap && a.DashCap == b.DashCap && a.Join == b.Join && a.MiterLimit == b.MiterLimit
             && a.DashOffset == b.DashOffset && SameDoubles(a.DashArray, b.DashArray);
 
         private static bool SameColor(RgbaColor a, RgbaColor b) => a.R == b.R && a.G == b.G && a.B == b.B && a.A == b.A;
@@ -174,7 +174,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 case RadialGradientBrush r:
                 {
                     var s2 = (RadialGradientBrush)b;
-                    return r.Center == s2.Center && r.RadiusX == s2.RadiusX && r.RadiusY == s2.RadiusY && r.SpreadMethod == s2.SpreadMethod
+                    return r.Center == s2.Center && r.Origin == s2.Origin && r.RadiusX == s2.RadiusX && r.RadiusY == s2.RadiusY && r.SpreadMethod == s2.SpreadMethod
                         && SameStops(r.Stops, s2.Stops);
                 }
                 case ImageBrush i:

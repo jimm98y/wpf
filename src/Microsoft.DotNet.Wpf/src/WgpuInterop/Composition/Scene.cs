@@ -322,10 +322,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public float RadiusY { get; }
         public GradientStop[] Stops { get; }
         public GradientSpreadMethod SpreadMethod { get; }
+        /// <summary>WPF's GradientOrigin: the focus, where the ramp starts (offset 0), in the same space as the centre;
+        /// the ramp runs from it out to the ellipse. The centre when it has none.</summary>
+        public Vector2 Origin { get; }
 
-        public RadialGradientBrush(Vector2 center, float radiusX, float radiusY, GradientStop[] stops, GradientSpreadMethod spread = GradientSpreadMethod.Pad)
+        public RadialGradientBrush(Vector2 center, float radiusX, float radiusY, GradientStop[] stops, GradientSpreadMethod spread = GradientSpreadMethod.Pad,
+            Vector2? origin = null)
         {
-            Center = center; RadiusX = radiusX; RadiusY = radiusY; Stops = stops; SpreadMethod = spread;
+            Center = center; RadiusX = radiusX; RadiusY = radiusY; Stops = stops; SpreadMethod = spread; Origin = origin ?? center;
+        }
+
+        /// <summary>The focus in the ellipse's unit space: (origin - centre) / radii; zero when it is the centre.</summary>
+        public Vector2 UnitOrigin => new(RadiusX > 0f ? (Origin.X - Center.X) / RadiusX : 0f, RadiusY > 0f ? (Origin.Y - Center.Y) / RadiusY : 0f);
+
+        /// <summary>The ramp's position at a point of the ellipse's unit space (the point less the centre, over the
+        /// radii): the t at which the point lies on the ellipse scaled by t about the focus <paramref name="o"/> --
+        /// the root of (|o|^2 - 1) t^2 + 2 (o.d) t + |d|^2 = 0, d = p - o. With the focus at the centre, |p|.</summary>
+        public static float FocalT(Vector2 p, Vector2 o)
+        {
+            float oo = o.LengthSquared();
+            if (oo < 1e-12f) return p.Length();
+            Vector2 d = p - o;
+            float a = oo - 1f, b = Vector2.Dot(o, d), c = d.LengthSquared();
+            if (System.MathF.Abs(a) < 1e-6f) return System.MathF.Abs(b) > 1e-12f ? -c / (2f * b) : 0f;
+            float disc = System.MathF.Max(b * b - a * c, 0f);
+            return (-b - System.MathF.Sqrt(disc)) / a;
         }
     }
 
@@ -492,9 +513,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Alternating on/off dash lengths (pixels); null = solid.</summary>
         public readonly double[]? DashArray;
         public readonly double DashOffset;
+        /// <summary>The cap at the end of an open figure (WPF's Pen.EndLineCap); <see cref="Cap"/> is the start's.</summary>
+        public readonly LineCap EndCap;
+        /// <summary>The cap at the ends of each dash inside a figure (Pen.DashCap).</summary>
+        public readonly LineCap DashCap;
 
         public StrokeStyle(double thickness, LineCap cap = LineCap.Round, LineJoin join = LineJoin.Round,
-            double miterLimit = 10.0, double[]? dashArray = null, double dashOffset = 0.0)
+            double miterLimit = 10.0, double[]? dashArray = null, double dashOffset = 0.0,
+            LineCap? endCap = null, LineCap? dashCap = null)
         {
             Thickness = thickness;
             Cap = cap;
@@ -502,7 +528,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             MiterLimit = miterLimit;
             DashArray = dashArray;
             DashOffset = dashOffset;
+            EndCap = endCap ?? cap;
+            DashCap = dashCap ?? cap;
         }
+
+        /// <summary>The same stroke with other dashes, its caps kept.</summary>
+        public StrokeStyle WithDashes(double[]? dashArray, double dashOffset)
+            => new StrokeStyle(Thickness, Cap, Join, MiterLimit, dashArray, dashOffset, EndCap, DashCap);
     }
 
     /// <summary>
@@ -667,6 +699,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>The brush as GDI+ holds it, not premultiplied.</summary>
         public int Argb { get; }
         public GlyphRunDraw Fallback { get; }
+
+        /// <summary>The run's pixels as GDI+ realized them, as an image at the layout's scale: what is drawn,
+        /// stretched, where the device is at another scale (WgpuSceneRenderer.EmitGdiPlusText). Made once.</summary>
+        internal GeometryFill? Pixels;
+        internal bool PixelsMade;
     }
 
     internal sealed class GlyphRunDraw : DrawingPrimitive

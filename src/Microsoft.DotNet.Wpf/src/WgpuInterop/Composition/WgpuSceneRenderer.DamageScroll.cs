@@ -522,7 +522,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
             private static bool SameStyle(StrokeStyle a, StrokeStyle b)
             {
-                if (a.Thickness != b.Thickness || a.Cap != b.Cap || a.Join != b.Join || a.MiterLimit != b.MiterLimit || a.DashOffset != b.DashOffset)
+                if (a.Thickness != b.Thickness || a.Cap != b.Cap || a.EndCap != b.EndCap || a.DashCap != b.DashCap || a.Join != b.Join || a.MiterLimit != b.MiterLimit || a.DashOffset != b.DashOffset)
                     return false;
                 if (a.DashArray == null || b.DashArray == null) return a.DashArray == null && b.DashArray == null;
                 return a.DashArray.AsSpan().SequenceEqual(b.DashArray);
@@ -601,7 +601,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         return Near(ln.Start, lo.Start + delta) && Near(ln.End, lo.End + delta) && ln.SpreadMethod == lo.SpreadMethod
                             && ln.Bands == lo.Bands && SameStops(ln.Stops, lo.Stops);
                     case RadialGradientBrush rn when o is RadialGradientBrush ro:
-                        return Near(rn.Center, ro.Center + delta) && rn.RadiusX == ro.RadiusX && rn.RadiusY == ro.RadiusY
+                        return Near(rn.Center, ro.Center + delta) && Near(rn.Origin, ro.Origin + delta) && rn.RadiusX == ro.RadiusX && rn.RadiusY == ro.RadiusY
                             && rn.SpreadMethod == ro.SpreadMethod && SameStops(rn.Stops, ro.Stops);
                     case ImageBrush inn when o is ImageBrush io:
                         // Mapped to the geometry's bounds, so it moves with it; the pixels must be the same.

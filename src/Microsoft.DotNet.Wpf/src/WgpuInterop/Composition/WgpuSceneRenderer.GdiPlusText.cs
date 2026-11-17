@@ -47,6 +47,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                                         + $"origin=({run.OriginX},{run.OriginY}) world=({world.M11},{world.M22},{world.M31},{world.M32}) drawable={drawable}");
             if (!drawable)
             {
+                // A window presented at another scale than its text was realized at (a system-aware
+                // application's window on a display of another DPI): Windows stretches the pixels the
+                // application drew, and so these are -- the run's levels as GDI+ made them, through the
+                // device's scale. Drawn again from the string, every run of a trimmed caption ("Exp" and
+                // its ellipsis) showed the whole caption over its neighbours, and every caption sat where
+                // this renderer's own layout put it, not GDI+'s.
+                if (world.M12 == 0f && world.M21 == 0f && world.M11 > 0f && world.M22 > 0f && run.Sx > 0f && run.Sy > 0f
+                    && PixelsOf(draw) is { } pixels)
+                {
+                    EmitFill(pixels, Matrix3x2.CreateScale(1f / run.Sx, 1f / run.Sy) * world, opacity, clip, width, height, format, data);
+                    return;
+                }
                 EmitText(draw.Fallback, world, opacity, clip, width, height, format, data);
                 return;
             }
@@ -107,6 +119,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 glyphKey = glyphKey * 31 + BitConverter.SingleToInt32Bits(y - lv.Top);
             }
             EmitGdiPlusLevels(draw, lv, opacity, clip, width, height, format, data, glyphKey);
+        }
+
+        /// <summary>The run's levels at the scale it was laid out under, at no translation, as an image of the
+        /// brush's colour with the levels' coverage (cut to the layout rectangle where GDI+ clips to it); null when
+        /// they cannot be had (no face for an unprecomposed run, nothing inked).</summary>
+        private GeometryFill? PixelsOf(GdiPlusTextDraw draw)
+        {
+            if (draw.PixelsMade) return draw.Pixels;
+            draw.PixelsMade = true;
+            Text.GdiPlusText.Run run = draw.Run;
+            Text.GdiPlusText.Levels lv;
+            if (run.Pre is { } pre) lv = pre;
+            else
+            {
+                if (FontFor(draw.Style, draw.FontFamily) is not Text.TrueTypeFont font || run.Glyphs.Length == 0) return null;
+                lv = Text.GdiPlusText.ComposeRun(font, run, 0f, 0f, out _, out _);
+            }
+            int w = lv.Width, h = lv.Height;
+            if (w <= 0 || h <= 0 || lv.Index.Length < w * h) return null;
+            int cx0 = int.MinValue, cy0 = int.MinValue, cx1 = int.MaxValue, cy1 = int.MaxValue;
+            if (run.Pre is null && run.HasClip)
+            {
+                cx0 = (int)MathF.Ceiling(run.Sx * run.ClipX); cy0 = (int)MathF.Ceiling(run.Sy * run.ClipY);
+                cx1 = (int)MathF.Ceiling(run.Sx * (run.ClipX + run.ClipW)); cy1 = (int)MathF.Ceiling(run.Sy * (run.ClipY + run.ClipH));
+            }
+            int argb = draw.Argb, a = (argb >> 24) & 0xff;
+            byte r = (byte)(argb >> 16), g = (byte)(argb >> 8), b = (byte)argb;
+            var rgba = new byte[w * h * 4];
+            bool any = false;
+            for (int row = 0; row < h; row++)
+            {
+                int py = lv.Top + row;
+                if (py < cy0 || py >= cy1) continue;
+                for (int col = 0; col < w; col++)
+                {
+                    int px = lv.Left + col;
+                    if (px < cx0 || px >= cx1) continue;
+                    int idx = lv.Index[row * w + col];
+                    if (idx == 0) continue;
+                    float cover;
+                    if (lv.Grey) cover = Math.Min(idx, 15) / 15f;
+                    else { (int l0, int l1, int l2) = Text.GdiPlusText.LevelsOf(idx); cover = (l0 + l1 + l2) / 18f; }
+                    int o = (row * w + col) * 4;
+                    rgba[o] = r; rgba[o + 1] = g; rgba[o + 2] = b;
+                    rgba[o + 3] = (byte)Math.Clamp((int)MathF.Round(cover * a), 0, 255);
+                    any |= rgba[o + 3] != 0;
+                }
+            }
+            if (!any) return null;
+            draw.Pixels = new GeometryFill(new RectangleGeometry(new Rect(lv.Left, lv.Top, w, h)), new ImageBrush(rgba, w, h));
+            return draw.Pixels;
         }
 
         /// <summary>A precomposed run's levels moved by a whole-pixel translation.</summary>

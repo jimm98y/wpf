@@ -44,12 +44,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
 
                 if (dashed)
                 {
-                    foreach (List<Vector2> run in DashPolyline(pts, figure.Closed, style.DashArray!, style.DashOffset))
-                        StrokePolyline(run, closed: false, style, half, contours, tolerance);
+                    // Each dash ends in the dash cap, but where a dash begins the figure (an open one) it has the
+                    // figure's start cap, and where one ends the figure its end cap, as WPF's pen draws them.
+                    List<List<Vector2>> runs = DashPolyline(pts, figure.Closed, style.DashArray!, style.DashOffset);
+                    for (int i = 0; i < runs.Count; i++)
+                    {
+                        List<Vector2> run = runs[i];
+                        bool atStart = !figure.Closed && i == 0 && Vector2.DistanceSquared(run[0], pts[0]) < 1e-8f;
+                        bool atEnd = !figure.Closed && i == runs.Count - 1 && Vector2.DistanceSquared(run[^1], pts[^1]) < 1e-8f;
+                        StrokePolyline(run, closed: false, style, half, contours, tolerance,
+                            atStart ? style.Cap : style.DashCap, atEnd ? style.EndCap : style.DashCap);
+                    }
                 }
                 else
                 {
-                    StrokePolyline(pts, figure.Closed, style, half, contours, tolerance);
+                    StrokePolyline(pts, figure.Closed, style, half, contours, tolerance, style.Cap, style.EndCap);
                 }
             }
 
@@ -57,7 +66,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         private static void StrokePolyline(List<Vector2> pts, bool closed, StrokeStyle style, float half, List<PathFigure> contours,
-            float tolerance)
+            float tolerance, LineCap startCap, LineCap endCap)
         {
             int n = pts.Count;
             if (n < 2) return;
@@ -88,8 +97,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // Caps on open figures.
             if (!closed)
             {
-                AddCap(contours, pts[1], pts[0], half, style.Cap, tolerance);
-                AddCap(contours, pts[n - 2], pts[n - 1], half, style.Cap, tolerance);
+                AddCap(contours, pts[1], pts[0], half, startCap, tolerance);
+                AddCap(contours, pts[n - 2], pts[n - 1], half, endCap, tolerance);
             }
         }
 

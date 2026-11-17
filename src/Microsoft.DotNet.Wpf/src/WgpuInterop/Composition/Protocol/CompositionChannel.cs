@@ -289,6 +289,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         {
             w.F64(style.Thickness);
             w.U8((byte)style.Cap);
+            w.U8((byte)style.EndCap);
+            w.U8((byte)style.DashCap);
             w.U8((byte)style.Join);
             w.F64(style.MiterLimit);
             w.F64(style.DashOffset);
@@ -315,6 +317,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 case RadialGradientBrush rad:
                     w.U8((byte)BrushKind.RadialGradient);
                     w.F32(rad.Center.X); w.F32(rad.Center.Y); w.F32(rad.RadiusX); w.F32(rad.RadiusY);
+                    w.F32(rad.Origin.X); w.F32(rad.Origin.Y);
                     w.U8((byte)rad.SpreadMethod);
                     w.U16((ushort)rad.Stops.Length);
                     foreach (GradientStop stop in rad.Stops) { w.F32(stop.Offset); WriteColor(w, stop.Color); }

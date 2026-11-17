@@ -2444,7 +2444,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 : new RectangleGeometry(centred);
 
             var style = new StrokeStyle(snappedThickness, d.StrokeStyle.Cap, d.StrokeStyle.Join,
-                                        d.StrokeStyle.MiterLimit, d.StrokeStyle.DashArray, d.StrokeStyle.DashOffset);
+                                        d.StrokeStyle.MiterLimit, d.StrokeStyle.DashArray, d.StrokeStyle.DashOffset,
+                                        d.StrokeStyle.EndCap, d.StrokeStyle.DashCap);
             return new GeometryDrawing(snapped, d.Fill, d.Stroke, style);
         }
 
@@ -2913,7 +2914,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // DashOffset in particular is what "marching ants" and indeterminate progress indicators
             // animate -- with nothing else about the drawing moving at all.
             HF((float)s.Thickness);
-            HV((long)s.Cap); HV((long)s.Join); HF((float)s.MiterLimit); HF((float)s.DashOffset);
+            HV((long)s.Cap); HV((long)s.EndCap); HV((long)s.DashCap); HV((long)s.Join); HF((float)s.MiterLimit); HF((float)s.DashOffset);
             if (s.DashArray is { } dashes) { HV(43); foreach (double d in dashes) HF((float)d); }
         }
 
@@ -2948,7 +2949,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     foreach (GradientStop st in lg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
                     break;
                 case RadialGradientBrush rg:
-                    HV(13); HF(rg.Center.X); HF(rg.Center.Y); HF(rg.RadiusX); HF(rg.RadiusY);
+                    HV(13); HF(rg.Center.X); HF(rg.Center.Y); HF(rg.RadiusX); HF(rg.RadiusY); HF(rg.Origin.X); HF(rg.Origin.Y);
                     foreach (GradientStop st in rg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
                     break;
                 case ImageBrush img when img.SourceVisual is not null:
@@ -4242,7 +4243,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // Reference equality on DashArray: a pen keeps its array, and two pens that happen to hold
         // equal dash patterns in different arrays only cost a miss.
         private static bool SameStrokeStyle(in StrokeStyle a, in StrokeStyle b)
-            => a.Thickness == b.Thickness && a.Cap == b.Cap && a.Join == b.Join &&
+            => a.Thickness == b.Thickness && a.Cap == b.Cap && a.EndCap == b.EndCap && a.DashCap == b.DashCap && a.Join == b.Join &&
                a.MiterLimit == b.MiterLimit && a.DashOffset == b.DashOffset &&
                ReferenceEquals(a.DashArray, b.DashArray);
 
@@ -6302,7 +6303,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 {
                     float dx = radial.RadiusX > 0f ? (localPos.X - radial.Center.X) / radial.RadiusX : 0f;
                     float dy = radial.RadiusY > 0f ? (localPos.Y - radial.Center.Y) / radial.RadiusY : 0f;
-                    float t = MathF.Sqrt(dx * dx + dy * dy);
+                    float t = RadialGradientBrush.FocalT(new Vector2(dx, dy), radial.UnitOrigin);
                     return SampleStops(radial.Stops, ApplySpread(t, radial.SpreadMethod));
                 }
                 case ImageBrush img when img.PixelWidth > 0 && img.PixelHeight > 0:
@@ -6403,7 +6404,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         {
                             float dx = rx > 0f ? (originX + x + 0.5f - c.X) / rx : 0f;
                             float dy = ry > 0f ? (originY + y + 0.5f - c.Y) / ry : 0f;
-                            float t = ApplySpread(MathF.Sqrt(dx * dx + dy * dy), rad.SpreadMethod);
+                            float t = ApplySpread(RadialGradientBrush.FocalT(new Vector2(dx, dy), rad.UnitOrigin), rad.SpreadMethod);
                             bytes[y * width + x] = ToByte(SampleStops(rad.Stops, t).A);
                         }
                     break;
@@ -8474,6 +8475,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 u[0] = 2; u[1] = SpreadCode(((RadialGradientBrush)brush).SpreadMethod);
                 f[4] = g0.X; f[5] = g0.Y; f[6] = g1.X; f[7] = g1.Y;  // g1 = (radiusX, radiusY)
+                // the focus (GradientOrigin) in the ellipse's unit space, as kindSpread.zw (bit-cast floats)
+                Vector2 o = ((RadialGradientBrush)brush).UnitOrigin;
+                f[2] = o.X; f[3] = o.Y;
             }
             f[8] = rectX; f[9] = rectY; f[10] = rectW; f[11] = rectH; // rect
             f[12] = opacity;                                          // misc.x
