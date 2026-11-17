@@ -2640,6 +2640,24 @@ namespace System.Windows.Forms
 			return Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
 		}
 
+		/// <summary>A step of the user's move of a window: WM_MOVING with the rectangle it is going to, which the window
+		/// may change (an application snapping its window to an edge, or keeping it on a screen). Returns where the
+		/// window is to go. Never sent, such a window went wherever the pointer took it.</summary>
+		internal Rectangle HostMoving(IntPtr handle, Rectangle proposed)
+		{
+			if (Hwnd.ObjectFromHandle(handle) == null) return proposed;
+			var r = new SizingRect { left = proposed.Left, top = proposed.Top, right = proposed.Right, bottom = proposed.Bottom };
+			IntPtr mem = Marshal.AllocHGlobal(Marshal.SizeOf<SizingRect>());
+			try
+			{
+				Marshal.StructureToPtr(r, mem, false);
+				SendMessage(handle, Msg.WM_MOVING, IntPtr.Zero, mem);
+				r = Marshal.PtrToStructure<SizingRect>(mem);
+			}
+			finally { Marshal.FreeHGlobal(mem); }
+			return Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
+		}
+
 		private bool? _appActive;
 
 		/// <summary>The application became the active one, or stopped being it (the host knows: AppKit's

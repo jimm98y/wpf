@@ -82,6 +82,35 @@ namespace Wpf.WinFormsInterop.Tests
             Assert.Equal(new Rectangle(100, 100, 300, 300), asked);       // the form's own answer
         }
 
+        /// <summary>A form that snaps itself to a 50-pixel grid while it is moved, from WM_MOVING.</summary>
+        private sealed class SnappingForm : SWF.Form
+        {
+            protected override void WndProc(ref SWF.Message m)
+            {
+                if (m.Msg == 0x216)   // WM_MOVING
+                {
+                    var r = Marshal.PtrToStructure<RECT>(m.LParam);
+                    int w = r.right - r.left, h = r.bottom - r.top;
+                    r.left = (r.left + 25) / 50 * 50; r.top = (r.top + 25) / 50 * 50;
+                    r.right = r.left + w; r.bottom = r.top + h;
+                    Marshal.StructureToPtr(r, m.LParam, false);
+                    m.Result = (IntPtr)1;
+                    return;
+                }
+                base.WndProc(ref m);
+            }
+        }
+
+        [Fact]
+        public void EachStepOfAMove_AsksTheWindow()
+        {
+            SWF.XplatUIWebGpu driver = SWF.XplatUIWebGpu.GetInstance();
+            using var form = new SnappingForm { ClientSize = new Size(200, 150) };
+            Assert.NotEqual(IntPtr.Zero, form.Handle);
+            Rectangle asked = driver.HostMoving(form.Handle, new Rectangle(118, 141, 216, 189));
+            Assert.Equal(new Rectangle(100, 150, 216, 189), asked);       // snapped by the form
+        }
+
         [Fact]
         public void TheWindowGoesWhereItsWindowPosChangingSays()
         {

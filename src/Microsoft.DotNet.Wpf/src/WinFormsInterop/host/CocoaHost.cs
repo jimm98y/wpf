@@ -1582,6 +1582,15 @@ internal sealed partial class CocoaHost : IWinFormsHost, WinFormsWebGpu.Accessib
             // application moving its own window (SetBoundsCore): DotNetBar's ribbon form takes the
             // Win32 frame off a size set that way while maximized, so a zoomed window was set back
             // 16 x 39 smaller than the screen, and no longer zoomed, it could not be restored.
+            // a step of the user's drag of the window (the size unchanged): the form is asked where it goes (WM_MOVING),
+            // and where it says other than where the pointer took it, the window follows it on the next pass
+            if (_windowMoving && native.Size == _knownBounds.Size && native.Location != _knownBounds.Location
+                && _driver is XplatUIWebGpu md && md.HostMoving(_form.Handle, native) is var moved && moved != native)
+            {
+                _knownBounds = native;
+                XplatUI.SetWindowPos(_form.Handle, moved.X, moved.Y, moved.Width, moved.Height);
+                return;
+            }
             _knownBounds = native;
             if (_form.Bounds != native) XplatUI.SetWindowPos(_form.Handle, native.X, native.Y, native.Width, native.Height);
             return;
