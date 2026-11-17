@@ -332,8 +332,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             Center = center; RadiusX = radiusX; RadiusY = radiusY; Stops = stops; SpreadMethod = spread; Origin = origin ?? center;
         }
 
-        /// <summary>The focus in the ellipse's unit space: (origin - centre) / radii; zero when it is the centre.</summary>
-        public Vector2 UnitOrigin => new(RadiusX > 0f ? (Origin.X - Center.X) / RadiusX : 0f, RadiusY > 0f ? (Origin.Y - Center.Y) / RadiusY : 0f);
+        /// <summary>The ellipse's turn: its RadiusX axis along (cos, sin), its RadiusY axis along (-sin, cos). (1, 0)
+        /// for an upright one; a brush transformed by a rotation or a skew (Brush.Transform, a turned visual) is one.</summary>
+        public Vector2 Rotation { get; init; } = Vector2.UnitX;
+
+        public bool IsRotated => Rotation != Vector2.UnitX;
+
+        /// <summary>A point's offset from the centre in the ellipse's own frame: turned back by its rotation.</summary>
+        public Vector2 ToEllipseFrame(Vector2 p)
+        {
+            Vector2 d = p - Center;
+            return IsRotated ? new Vector2(Rotation.X * d.X + Rotation.Y * d.Y, -Rotation.Y * d.X + Rotation.X * d.Y) : d;
+        }
+
+        /// <summary>The focus in the ellipse's unit space: its offset in the ellipse's frame over the radii; zero at the centre.</summary>
+        public Vector2 UnitOrigin
+        {
+            get
+            {
+                Vector2 o = ToEllipseFrame(Origin);
+                return new(RadiusX > 0f ? o.X / RadiusX : 0f, RadiusY > 0f ? o.Y / RadiusY : 0f);
+            }
+        }
+
+        /// <summary>The ellipse a unit circle becomes under <paramref name="ax"/>, <paramref name="ay"/> (where its x and y
+        /// unit vectors go) about <paramref name="center"/>, with its focus at the point <paramref name="origin"/>: its
+        /// radii and turn by the 2x2 map's singular value decomposition. Any affine image of a circle is one.</summary>
+        public static RadialGradientBrush FromAxes(Vector2 center, Vector2 ax, Vector2 ay, GradientStop[] stops,
+            GradientSpreadMethod spread, Vector2 origin)
+        {
+            // A = [ax ay] as rows [a b; c d]
+            float a = ax.X, b = ay.X, c = ax.Y, d = ay.Y;
+            if (System.MathF.Abs(b) < 1e-7f && System.MathF.Abs(c) < 1e-7f)
+                return new RadialGradientBrush(center, System.MathF.Abs(a), System.MathF.Abs(d), stops, spread, origin);
+            float e = (a + d) / 2f, f = (a - d) / 2f, g = (c + b) / 2f, h = (c - b) / 2f;
+            float q = System.MathF.Sqrt(e * e + h * h), r = System.MathF.Sqrt(f * f + g * g);
+            float sx = q + r, sy = System.MathF.Abs(q - r);
+            float a1 = System.MathF.Atan2(g, f), a2 = System.MathF.Atan2(h, e);
+            float phi = (a2 + a1) / 2f;     // the left singular vectors' turn: where the ellipse's axes point
+            return new RadialGradientBrush(center, sx, sy, stops, spread, origin)
+            {
+                Rotation = new Vector2(System.MathF.Cos(phi), System.MathF.Sin(phi)),
+            };
+        }
+
+        /// <summary>This gradient as <paramref name="m"/> carries it (to device space, say).</summary>
+        public RadialGradientBrush Transformed(System.Numerics.Matrix3x2 m)
+        {
+            Vector2 ax = new Vector2(Rotation.X, Rotation.Y) * RadiusX, ay = new Vector2(-Rotation.Y, Rotation.X) * RadiusY;
+            return FromAxes(Vector2.Transform(Center, m), Vector2.TransformNormal(ax, m), Vector2.TransformNormal(ay, m),
+                Stops, SpreadMethod, Vector2.Transform(Origin, m));
+        }
 
         /// <summary>The ramp's position at a point of the ellipse's unit space (the point less the centre, over the
         /// radii): the t at which the point lies on the ellipse scaled by t about the focus <paramref name="o"/> --

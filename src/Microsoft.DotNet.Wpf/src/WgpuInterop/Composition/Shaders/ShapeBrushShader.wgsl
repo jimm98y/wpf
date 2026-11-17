@@ -26,7 +26,11 @@ fn brushT(local : vec2<f32>) -> f32 {
         // misc.w: GDI+'s pixel centres sit half a device pixel before the GPU's (see the mesh fill).
         t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y - params.misc.w;
     } else {
-        let d = (local - params.g0.xy) / params.g0.zw;
+        var off = local - params.g0.xy;
+        // a turned ellipse (a rotated or skewed brush): the offset in its own frame, (cos, sin) in misc.zw
+        let cs = params.misc.zw;
+        if (cs.x != 0.0 || cs.y != 0.0) { off = vec2<f32>(cs.x * off.x + cs.y * off.y, -cs.y * off.x + cs.x * off.y); }
+        let d = off / params.g0.zw;
         t = focalT(d, vec2<f32>(bitcast<f32>(params.kindSpread.z), bitcast<f32>(params.kindSpread.w)));
     }
     switch params.kindSpread.y {
@@ -39,7 +43,7 @@ fn brushT(local : vec2<f32>) -> f32 {
     }
     // misc.z: GDI+'s bands -- a hard step to band round(bands t), a boundary pixel keeping the
     // lower band. The ramp is banded already, so sampling at k / bands reads band k exactly.
-    if (params.misc.z > 0.0) {
+    if (params.kindSpread.x == 1u && params.misc.z > 0.0) {
         t = floor(t * params.misc.z + 0.5 - 1e-3) / params.misc.z;
     }
     return t;

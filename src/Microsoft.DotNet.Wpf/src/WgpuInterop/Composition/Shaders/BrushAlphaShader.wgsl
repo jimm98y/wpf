@@ -23,7 +23,11 @@ fn brushT(params : BrushParams, local : vec2<f32>) -> f32 {
     if (params.kindSpread.x == 1u) {
         t = dot(local - params.g0.xy, params.g0.zw) * params.misc.y;
     } else {
-        let d = (local - params.g0.xy) / params.g0.zw;
+        var off = local - params.g0.xy;
+        // a turned ellipse (a rotated or skewed brush): the offset in its own frame, (cos, sin) in misc.zw
+        let cs = params.misc.zw;
+        if (cs.x != 0.0 || cs.y != 0.0) { off = vec2<f32>(cs.x * off.x + cs.y * off.y, -cs.y * off.x + cs.x * off.y); }
+        let d = off / params.g0.zw;
         t = focalT(d, vec2<f32>(bitcast<f32>(params.kindSpread.z), bitcast<f32>(params.kindSpread.w)));
     }
     switch params.kindSpread.y {

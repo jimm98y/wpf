@@ -2971,6 +2971,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     break;
                 case RadialGradientBrush rg:
                     HV(13); HF(rg.Center.X); HF(rg.Center.Y); HF(rg.RadiusX); HF(rg.RadiusY); HF(rg.Origin.X); HF(rg.Origin.Y);
+                    HF(rg.Rotation.X); HF(rg.Rotation.Y);
                     foreach (GradientStop st in rg.Stops) { HF(st.Offset); HF(st.Color.R); HF(st.Color.G); HF(st.Color.B); HF(st.Color.A); }
                     break;
                 case ImageBrush img when img.SourceVisual is not null:
@@ -6369,8 +6370,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 }
                 case RadialGradientBrush radial:
                 {
-                    float dx = radial.RadiusX > 0f ? (localPos.X - radial.Center.X) / radial.RadiusX : 0f;
-                    float dy = radial.RadiusY > 0f ? (localPos.Y - radial.Center.Y) / radial.RadiusY : 0f;
+                    Vector2 off = radial.ToEllipseFrame(localPos);
+                    float dx = radial.RadiusX > 0f ? off.X / radial.RadiusX : 0f;
+                    float dy = radial.RadiusY > 0f ? off.Y / radial.RadiusY : 0f;
                     float t = RadialGradientBrush.FocalT(new Vector2(dx, dy), radial.UnitOrigin);
                     return SampleStops(radial.Stops, ApplySpread(t, radial.SpreadMethod));
                 }
@@ -6462,17 +6464,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         }
                     break;
                 }
-                case RadialGradientBrush rad:
+                case RadialGradientBrush radLocal:
                 {
-                    Vector2 c = Vector2.Transform(rad.Center, world);
-                    float rx = rad.RadiusX * new Vector2(world.M11, world.M12).Length();
-                    float ry = rad.RadiusY * new Vector2(world.M21, world.M22).Length();
+                    RadialGradientBrush rad = radLocal.Transformed(world);   // in device space, turned as the world turns it
+                    float rx = rad.RadiusX, ry = rad.RadiusY;
+                    Vector2 unitOrigin = rad.UnitOrigin;
                     for (int y = 0; y < height; y++)
                         for (int x = 0; x < width; x++)
                         {
-                            float dx = rx > 0f ? (originX + x + 0.5f - c.X) / rx : 0f;
-                            float dy = ry > 0f ? (originY + y + 0.5f - c.Y) / ry : 0f;
-                            float t = ApplySpread(RadialGradientBrush.FocalT(new Vector2(dx, dy), rad.UnitOrigin), rad.SpreadMethod);
+                            Vector2 off = rad.ToEllipseFrame(new Vector2(originX + x + 0.5f, originY + y + 0.5f));
+                            float dx = rx > 0f ? off.X / rx : 0f;
+                            float dy = ry > 0f ? off.Y / ry : 0f;
+                            float t = ApplySpread(RadialGradientBrush.FocalT(new Vector2(dx, dy), unitOrigin), rad.SpreadMethod);
                             bytes[y * width + x] = ToByte(SampleStops(rad.Stops, t).A);
                         }
                     break;
@@ -8665,6 +8668,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // the focus (GradientOrigin) in the ellipse's unit space, as kindSpread.zw (bit-cast floats)
                 Vector2 o = ((RadialGradientBrush)brush).UnitOrigin;
                 f[2] = o.X; f[3] = o.Y;
+                // a turned ellipse's (cos, sin) as misc.zw; zero for an upright one
+                if (((RadialGradientBrush)brush).IsRotated)
+                {
+                    f[14] = ((RadialGradientBrush)brush).Rotation.X;
+                    f[15] = ((RadialGradientBrush)brush).Rotation.Y;
+                }
             }
             f[8] = rectX; f[9] = rectY; f[10] = rectW; f[11] = rectH; // rect
             f[12] = opacity;                                          // misc.x
@@ -8820,10 +8829,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
             else
             {
-                var rg = (RadialGradientBrush)brush;
-                g0 = Vector2.Transform(rg.Center, world);
-                g1 = new Vector2(rg.RadiusX * new Vector2(world.M11, world.M12).Length(),
-                                 rg.RadiusY * new Vector2(world.M21, world.M22).Length());
+                // in device space, turned as the world turns it
+                var rg = ((RadialGradientBrush)brush).Transformed(world);
+                brush = rg;
+                g0 = rg.Center;
+                g1 = new Vector2(rg.RadiusX, rg.RadiusY);
             }
             byte[] uni = BuildBrushParams(brush, g0, g1, originX, originY, width, height, 1f);
             IntPtr ubuf = GetOrCreateUniform(uni);

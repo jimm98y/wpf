@@ -3478,9 +3478,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 Vector2 c = Vector2.Transform(User(g.Start), m), focus = Vector2.Transform(User(g.Origin), m);
                 float urx = g.Relative ? g.RadiusX * ub.Width : g.RadiusX, ury = g.Relative ? g.RadiusY * ub.Height : g.RadiusY;
                 Vector2 ax = new Vector2(urx * m.M11, urx * m.M12), ay = new Vector2(ury * m.M21, ury * m.M22);
-                bool axisAligned = MathF.Abs(m.M12) < 1e-6f && MathF.Abs(m.M21) < 1e-6f;
-                float rx2 = axisAligned ? MathF.Abs(ax.X) : ax.Length(), ry2 = axisAligned ? MathF.Abs(ay.Y) : ay.Length();
-                return new RadialGradientBrush(c, rx2, ry2, g.Stops, g.Spread, focus);
+                // the ellipse the transforms make of it, turned as they turn it (a rotation, a skew)
+                return RadialGradientBrush.FromAxes(c, ax, ay, g.Stops, g.Spread, focus);
             }
             Vector2 su = User(g.Start), eu = User(g.End), d = eu - su;
             Vector2 s0 = Vector2.Transform(su, m);

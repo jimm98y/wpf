@@ -454,6 +454,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         return true;
                     case RadialGradientBrush rg:
                         h = Mix(h, 13); h = Mix(h, rg.Stops.Length); h = MixF(h, rg.RadiusX); h = MixF(h, rg.RadiusY);
+                        h = MixF(h, rg.Rotation.X); h = MixF(h, rg.Rotation.Y);
                         return true;
                     case ImageBrush ib when ib.SourceVisual == null && ib.TileMode == TileMode.None:
                         h = Mix(h, 14); h = Mix(h, ib.PixelWidth); h = Mix(h, ib.PixelHeight); h = Mix(h, (int)ib.ExternalVersion);
@@ -602,6 +603,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                             && ln.Bands == lo.Bands && SameStops(ln.Stops, lo.Stops);
                     case RadialGradientBrush rn when o is RadialGradientBrush ro:
                         return Near(rn.Center, ro.Center + delta) && Near(rn.Origin, ro.Origin + delta) && rn.RadiusX == ro.RadiusX && rn.RadiusY == ro.RadiusY
+                            && rn.Rotation == ro.Rotation
                             && rn.SpreadMethod == ro.SpreadMethod && SameStops(rn.Stops, ro.Stops);
                     case ImageBrush inn when o is ImageBrush io:
                         // Mapped to the geometry's bounds, so it moves with it; the pixels must be the same.
