@@ -60,7 +60,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
 
         /// <summary>Microsoft Sans Serif over <paramref name="liberationSans"/>' glyphs (LiberationSans-Regular.ttf).</summary>
         internal static byte[] MicrosoftSansSerif(byte[] liberationSans)
-            => Build(liberationSans, Metrics(StandInMetrics.MicrosoftSansSerif), "Microsoft Sans Serif", "MicrosoftSansSerif");
+            => Build(liberationSans, Metrics(StandInMetrics.MicrosoftSansSerif), "Microsoft Sans Serif", "MicrosoftSansSerif",
+                     underlinePosition: -220, underlineThickness: 102);
 
         private static bool Has(List<string> dirs, params string[] names) => Locate(dirs, names) != null;
 
@@ -126,8 +127,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
         private static void Put16(byte[] b, int o, int v) { b[o] = (byte)(v >> 8); b[o + 1] = (byte)v; }
 
         /// <summary>The open face <paramref name="glyphs"/> with <paramref name="m"/>'s metrics, named
-        /// <paramref name="family"/>: a complete sfnt.</summary>
-        private static byte[] Build(byte[] glyphs, Data m, string family, string postScript)
+        /// <paramref name="family"/>, underlined where the Windows face is ('post', font units): a complete sfnt.</summary>
+        private static byte[] Build(byte[] glyphs, Data m, string family, string postScript, short underlinePosition, short underlineThickness)
         {
             var tables = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             int count = U16(glyphs, 4);
@@ -211,6 +212,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
             }
             tables["hdmx"] = hdmx;
             tables["VDMX"] = m.Vdmx;
+            // Liberation's own underline is a thickness higher than any Windows face's (StandInUnderline), and
+            // the face is no longer called Liberation for that to be put right when it is read
+            byte[] post = (byte[])tables["post"].Clone();
+            Put16(post, 8, (ushort)underlinePosition);
+            Put16(post, 10, (ushort)underlineThickness);
+            tables["post"] = post;
             tables["name"] = Names(family, postScript);
             foreach (string gone in new[] { "kern", "GPOS", "DSIG", "FFTM", "LTSH" }) tables.Remove(gone);
 

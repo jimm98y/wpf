@@ -256,13 +256,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Text
                     _vdmx = 0;
                 }
                 _standInDropout = StandInVdmx.Dropout(standInKey);
-                // and underlines where that face does: Selawik's own underline sits less than half as far
-                // down, so a menu's mnemonic underline at 9 points rounded onto the baseline, through the letters
-                if (StandInVdmx.Underline(standInKey, out short ulPosition, out short ulThickness))
-                {
-                    UnderlinePosition = ulPosition;
-                    UnderlineThickness = ulThickness;
-                }
+            }
+            // and underlines where that face does (StandInUnderline): a menu's mnemonic underline at 9 points
+            // rounded onto the baseline, through the letters
+            {
+                short ulPosition = (short)UnderlinePosition, ulThickness = (short)UnderlineThickness;
+                StandInUnderline.Apply(_data, _sfntBase, tables.TryGetValue("head", out int ulHead) ? ulHead : -1, ref ulPosition, ref ulThickness);
+                UnderlinePosition = ulPosition;
+                UnderlineThickness = ulThickness;
             }
             _isFixedPitch = tables.TryGetValue("post", out int postTable) && postTable + 16 <= _data.Length
                             && U32(postTable + 12) != 0;

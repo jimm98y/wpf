@@ -281,13 +281,12 @@ namespace MS.Internal.Text.TextInterface.Managed
             UnderlinePosition = S16(o + 8);
             UnderlineThickness = S16(o + 10);
             IsFixedPitch = U32(o + 12) != 0;
-            // a stand-in for a Windows face underlines where that face does (StandInVdmx)
-            if (_tables.TryGetValue("head", out var head) && head.off + 12 <= Raw.Length
-                && Microsoft.Wpf.Interop.WebGpu.Composition.Text.StandInVdmx.Underline(U32(head.off + 8), out short position, out short thickness))
-            {
-                UnderlinePosition = position;
-                UnderlineThickness = thickness;
-            }
+            // a stand-in for a Windows face underlines where that face does (StandInUnderline)
+            short position = UnderlinePosition, thickness = UnderlineThickness;
+            Microsoft.Wpf.Interop.WebGpu.Composition.Text.StandInUnderline.Apply(
+                _data, _sfntBase, _tables.TryGetValue("head", out var head) ? head.off : -1, ref position, ref thickness);
+            UnderlinePosition = position;
+            UnderlineThickness = thickness;
         }
 
         private void ParseHmtx()
