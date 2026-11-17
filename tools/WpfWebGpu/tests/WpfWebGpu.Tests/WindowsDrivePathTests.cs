@@ -83,6 +83,10 @@ public sealed class WindowsDrivePathTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_state, "Drives", "D")), "the drive's folder is there to write into");
         Assert.Equal(Path.Combine(_state, "Drives", "E"), Native(@"E:\"));
         Assert.Equal("C:relative", Native("C:relative"));                                      // relative to a drive: left alone
+        // a device is no place on a disk: as it always was
+        Assert.Equal("//./pipe/FwxServer", Native(@"\\.\pipe\FwxServer"));
+        Assert.Equal("//?/Volume{1234}/x", Native(@"\\?\Volume{1234}\x"));
+        Assert.Equal(Path.Combine(_state, "Drives", "D", "long/name"), Native(@"\\?\D:\long\name"));
         Assert.Equal("sub/file.txt", Native(@"sub\file.txt"));
     }
 

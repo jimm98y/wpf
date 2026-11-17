@@ -45,8 +45,11 @@ namespace WpfWebGpu.Paths
         private static string Locate(string path)
         {
             string p = path.Replace('/', '\\');
+            // a device (\\.\pipe\name, \\.\COM1, \\?\Volume{...}) is no place on a disk: left as it was, as it was before
+            // any of this -- only \\?\ in front of a drive or a share is the long-path spelling of one
             if (p.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) p = @"\\" + p.Substring(8);
-            else if (p.StartsWith(@"\\?\", StringComparison.Ordinal) || p.StartsWith(@"\\.\", StringComparison.Ordinal)) p = p.Substring(4);
+            else if (p.StartsWith(@"\\?\", StringComparison.Ordinal) && p.Length >= 7 && p[5] == ':' && char.IsAsciiLetter(p[4])) p = p.Substring(4);
+            else if (p.StartsWith(@"\\?\", StringComparison.Ordinal) || p.StartsWith(@"\\.\", StringComparison.Ordinal)) return path;
             if (p.StartsWith(@"\\", StringComparison.Ordinal)) return Share(p) ?? path;
             if (p.Length < 2 || p[1] != ':' || !char.IsAsciiLetter(p[0])) return path;
             if (p.Length > 2 && p[2] != '\\') return path;               // "C:name": relative to a drive's own current folder
