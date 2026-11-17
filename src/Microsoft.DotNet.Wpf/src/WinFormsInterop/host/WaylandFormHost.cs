@@ -1229,7 +1229,11 @@ namespace System.Windows.Forms
 
 			// Over a hosted WPF tree, unless a WinForms control holds the mouse: that window's input, as
 			// the OS routes it to a child window on Windows. It keeps the pointer from a press to its release.
-			IntPtr wpf = s_pointerOwner != IntPtr.Zero ? s_pointerOwner : _driver.GrabHandle == IntPtr.Zero ? HostedWindowAt (vx, vy) : IntPtr.Zero;
+			// Not over the popup layer: what it shows (a menu, a drop-down) is above the form, a hosted WPF tree
+			// included -- asked of the form's windows alone, a menu over the canvas gave its clicks to the canvas.
+			bool overLayer = _layer != null && m.Window == _layer.Handle;
+			IntPtr wpf = s_pointerOwner != IntPtr.Zero ? s_pointerOwner
+				: _driver.GrabHandle == IntPtr.Zero && !overLayer ? HostedWindowAt (vx, vy) : IntPtr.Zero;
 			if (s_trace && m.Kind == 1) {
 				IntPtr under = WaylandWindow.HitTest (vx, vy);
 				Console.WriteLine ($"[wayland form] press at ({vx},{vy}) under=0x{under:x} claimed={(under != IntPtr.Zero && HostedWpfContent.Any && HostedWpfContent.IsClaimed ((ulong)under))} grab=0x{_driver.GrabHandle:x} -> wpf=0x{wpf:x}");
