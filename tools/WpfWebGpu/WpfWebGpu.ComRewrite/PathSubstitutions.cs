@@ -26,6 +26,11 @@ public sealed class PathSubstitutions
         "System.Threading.Thread", "Microsoft.Extensions.FileProviders.PhysicalFileProvider",
         // a local file read through WebClient (WindowsPaths: WebAddress)
         "System.Net.WebClient",
+        // the other members that open a file by its path: a folder watched, an image or icon loaded, an archive, a
+        // data set's XML, a stylesheet, a file's version
+        "System.IO.FileSystemWatcher", "System.Drawing.Image", "System.Drawing.Bitmap", "System.Drawing.Icon",
+        "System.IO.Compression.ZipFile", "System.Data.DataSet", "System.Data.DataTable", "System.Xml.Xsl.XslCompiledTransform",
+        "System.Diagnostics.FileVersionInfo",
         // the machine's certificate stores (WindowsPaths: MachineCertificateStore)
         "System.Security.Cryptography.X509Certificates.X509Store",
         // COM classes by ProgID or CLSID (WindowsPaths: the registry's, and the servers run here)

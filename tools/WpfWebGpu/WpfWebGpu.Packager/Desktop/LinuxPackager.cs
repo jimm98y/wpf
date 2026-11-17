@@ -64,6 +64,12 @@ public static partial class LinuxPackager
                 installedBytes += tar.AddFile(hive, $"{root}/seed/registry/{Path.GetFileName(hive)}", executable: false);
             foreach (var (source, target) in staged.ProgramDataFiles)
                 installedBytes += tar.AddFile(source, $"{root}/seed/ProgramData/{target}", executable: false);
+            if (DesktopCommon.PathTable(manifest) is { } table)
+            {
+                string tableFile = Path.Combine(work, "paths.json");
+                File.WriteAllText(tableFile, table);
+                installedBytes += tar.AddFile(tableFile, $"{root}/seed/paths.json", executable: false);
+            }
             log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData");
 
             // the installation's web sites, as IIS serves them on its machine (iis.json, installed into the machine's state
@@ -369,6 +375,11 @@ public static partial class LinuxPackager
           done
         fi
         if [ ! -d "$STATE/ProgramData" ] && [ -d "$SEED/ProgramData" ]; then cp -a "$SEED/ProgramData" "$STATE/ProgramData"; fi
+        # where the installation's Windows folders are, for the paths the application names itself: this version's
+        if [ -f "$SEED/paths.json" ]; then
+          sed -e "s|\${WPFRUN_INSTALLDIR}|{{root}}/app|g" -e "s|\${WPFRUN_PROGRAMDATA}|$STATE/ProgramData|g" \
+              -e "s|\${WPFRUN_APPDIR}|{{root}}/app|g" "$SEED/paths.json" > "$STATE/paths.json"
+        fi
         # the service manager's database: the services this version registers, replaced on every install
         if [ -f "{{root}}/services.json" ]; then cp "{{root}}/services.json" "$STATE/services.json"; fi
         if [ -f "{{root}}/iis.json" ]; then cp "{{root}}/iis.json" "$STATE/iis.json"; fi

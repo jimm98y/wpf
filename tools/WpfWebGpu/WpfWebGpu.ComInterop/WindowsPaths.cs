@@ -506,6 +506,49 @@ public static class WindowsPaths
         }
     }
 
+    // ---- the other members an app hands a file's path to ----
+    //
+    // A folder watched, an image or an icon loaded, an archive opened or made, a data set's XML read or written,
+    // a stylesheet applied, a file's version read: each took the app's Windows path as this system's file name
+    // and found nothing (C:\ProgramData\Vendor\Logo.png, Config\Rules.xslt).
+
+    public static FileSystemWatcher FileSystemWatcher_new(string path) => new(Disk(path)!);
+    public static FileSystemWatcher FileSystemWatcher_new(string path, string filter) => new(Disk(path)!, filter);
+    public static void FileSystemWatcher_set_Path(FileSystemWatcher watcher, string path) => watcher.Path = Disk(path)!;
+
+    public static System.Drawing.Image Image_FromFile(string filename) => System.Drawing.Image.FromFile(Disk(filename)!);
+    public static System.Drawing.Image Image_FromFile(string filename, bool useEmbeddedColorManagement) => System.Drawing.Image.FromFile(Disk(filename)!, useEmbeddedColorManagement);
+    public static System.Drawing.Bitmap Bitmap_new(string filename) => new(Disk(filename)!);
+    public static System.Drawing.Bitmap Bitmap_new(string filename, bool useIcm) => new(Disk(filename)!, useIcm);
+    public static System.Drawing.Icon Icon_new(string fileName) => new(Disk(fileName)!);
+    public static System.Drawing.Icon Icon_new(string fileName, int width, int height) => new(Disk(fileName)!, width, height);
+    public static System.Drawing.Icon Icon_new(string fileName, System.Drawing.Size size) => new(Disk(fileName)!, size);
+
+    public static System.IO.Compression.ZipArchive ZipFile_OpenRead(string archiveFileName) => System.IO.Compression.ZipFile.OpenRead(Disk(archiveFileName)!);
+    public static System.IO.Compression.ZipArchive ZipFile_Open(string archiveFileName, System.IO.Compression.ZipArchiveMode mode) => System.IO.Compression.ZipFile.Open(Disk(archiveFileName)!, mode);
+    public static void ZipFile_ExtractToDirectory(string sourceArchiveFileName, string destinationDirectoryName)
+        => System.IO.Compression.ZipFile.ExtractToDirectory(Disk(sourceArchiveFileName)!, Disk(destinationDirectoryName)!);
+    public static void ZipFile_ExtractToDirectory(string sourceArchiveFileName, string destinationDirectoryName, bool overwriteFiles)
+        => System.IO.Compression.ZipFile.ExtractToDirectory(Disk(sourceArchiveFileName)!, Disk(destinationDirectoryName)!, overwriteFiles);
+    public static void ZipFile_CreateFromDirectory(string sourceDirectoryName, string destinationArchiveFileName)
+        => System.IO.Compression.ZipFile.CreateFromDirectory(Disk(sourceDirectoryName)!, Disk(destinationArchiveFileName)!);
+
+    public static System.Data.XmlReadMode DataSet_ReadXml(System.Data.DataSet set, string fileName) => set.ReadXml(Disk(fileName)!);
+    public static System.Data.XmlReadMode DataSet_ReadXml(System.Data.DataSet set, string fileName, System.Data.XmlReadMode mode) => set.ReadXml(Disk(fileName)!, mode);
+    public static void DataSet_WriteXml(System.Data.DataSet set, string fileName) => set.WriteXml(Disk(fileName)!);
+    public static void DataSet_WriteXml(System.Data.DataSet set, string fileName, System.Data.XmlWriteMode mode) => set.WriteXml(Disk(fileName)!, mode);
+    public static void DataSet_ReadXmlSchema(System.Data.DataSet set, string fileName) => set.ReadXmlSchema(Disk(fileName)!);
+    public static void DataSet_WriteXmlSchema(System.Data.DataSet set, string fileName) => set.WriteXmlSchema(Disk(fileName)!);
+    public static System.Data.XmlReadMode DataTable_ReadXml(System.Data.DataTable table, string fileName) => table.ReadXml(Disk(fileName)!);
+    public static void DataTable_WriteXml(System.Data.DataTable table, string fileName) => table.WriteXml(Disk(fileName)!);
+    public static void DataTable_WriteXml(System.Data.DataTable table, string fileName, System.Data.XmlWriteMode mode) => table.WriteXml(Disk(fileName)!, mode);
+
+    public static void XslCompiledTransform_Load(System.Xml.Xsl.XslCompiledTransform transform, string stylesheetUri) => transform.Load(DiskOrUri(stylesheetUri)!);
+    public static void XslCompiledTransform_Transform(System.Xml.Xsl.XslCompiledTransform transform, string inputUri, string resultsFile)
+        => transform.Transform(DiskOrUri(inputUri)!, Disk(resultsFile)!);
+
+    public static System.Diagnostics.FileVersionInfo FileVersionInfo_GetVersionInfo(string fileName) => System.Diagnostics.FileVersionInfo.GetVersionInfo(Disk(fileName)!);
+
     // ---- System.IO.Path ----
 
     public static string? Path_GetFileName(string? path) => Path.GetFileName(Native(path));

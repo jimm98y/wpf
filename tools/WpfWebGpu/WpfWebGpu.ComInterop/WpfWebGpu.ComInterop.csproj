@@ -19,6 +19,9 @@
     <!-- the types of a stand-in's signature only (an ASP.NET app's PhysicalFileProvider): an app that calls one has
          the assembly (its shared framework), and no other app loads it -->
     <PackageReference Include="Microsoft.Extensions.FileProviders.Physical" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
+    <!-- for the stand-ins of System.Drawing's members that open a file (Image.FromFile, new Bitmap(path)); at run time
+         the stack's System.Drawing answers, through its forwarders -->
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

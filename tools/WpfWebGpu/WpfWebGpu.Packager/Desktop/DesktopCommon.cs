@@ -9,6 +9,19 @@ internal static class DesktopCommon
     /// <summary>A name as an identifier's segment: lower case letters, digits and '-'.</summary>
     public static string Segment(string s) => WpfWebGpu.Services.ServiceUnits.Segment(s);
 
+    /// <summary>
+    /// The machine's path table (paths.json in its state, read by WindowsPathCore): each Windows folder of the
+    /// installation and what it is, in tokens the installer makes this machine's -- so a path the application
+    /// names itself (C:\Program Files\Vendor\Product\Config.xml, in its code or its files) is found where the
+    /// installation is. Null where the manifest maps nothing.
+    /// </summary>
+    public static string? PathTable(PackageManifest manifest)
+    {
+        var rows = manifest.PathMappings.Where(m => m.From.Length > 0 && m.To.Length > 0)
+            .Select(m => new Dictionary<string, string> { ["from"] = m.From, ["to"] = m.To }).ToList();
+        return rows.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(rows, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    }
+
     private static readonly string[] s_architectureSuffixes = { "_ARM64", "_x64", "_x86" };
 
     /// <summary>The program an app entry is, whichever processor's executable it names: App for App.exe and for

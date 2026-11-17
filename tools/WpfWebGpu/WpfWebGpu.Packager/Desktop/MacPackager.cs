@@ -55,6 +55,11 @@ public static partial class MacPackager
             Clone(hive, Path.Combine(home, "seed", "registry", Path.GetFileName(hive)));
         foreach (var (source, target) in staged.ProgramDataFiles)
             Clone(source, Path.Combine(home, "seed", "ProgramData", target));
+        if (DesktopCommon.PathTable(manifest) is { } table)
+        {
+            Directory.CreateDirectory(Path.Combine(home, "seed"));
+            File.WriteAllText(Path.Combine(home, "seed", "paths.json"), table);
+        }
         log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData");
 
         // the services: each one's daemon, a disabled one's too (kept disabled, so that its start type can be changed)
@@ -401,6 +406,11 @@ public static partial class MacPackager
         fi
         if [ ! -d "$STATE/ProgramData" ] && [ -d "$SEED/ProgramData" ]; then
           mv "$SEED/ProgramData" "$STATE/ProgramData"
+        fi
+        # where the installation's Windows folders are, for the paths the application names itself: this version's
+        if [ -f "$SEED/paths.json" ]; then
+          sed -e "s|\${WPFRUN_INSTALLDIR}|{{root}}/app|g" -e "s|\${WPFRUN_PROGRAMDATA}|{{root}}/state/ProgramData|g" \
+              -e "s|\${WPFRUN_APPDIR}|{{root}}/app|g" "$SEED/paths.json" > "$STATE/paths.json"
         fi
         rm -rf "$SEED"
         # the service manager's database and the web server's sites: this version's, replaced on every install
