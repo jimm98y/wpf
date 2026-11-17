@@ -2271,6 +2271,9 @@ namespace System.Windows.Forms
 			MsgQueue q = CurrentQueue;
 			while (true)
 			{
+				// Linux: a thread of its own forms stands in for the compositor's thread while that one is busy
+				// elsewhere (WaylandFormHost.DrainPumpWork) -- a splash screen's loop while the main thread loads
+				if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid()) DrainWaylandWork();
 				// Before anything else, because a Tick handler is app code that can post messages,
 				// change the UI (so the next present has something to show) or quit the app.
 				int nextTimer = TickTimers();

@@ -483,7 +483,18 @@ namespace System.Windows.Forms
 		/// <summary>On the compositor's thread, runs the window work other threads have queued for it.</summary>
 		internal static void DrainPumpWork ()
 		{
-			if (s_pumpWork.IsEmpty || !WaylandWindow.IsUiThread) return;
+			// a thread of its own forms (a splash screen's) while the compositor's thread is busy elsewhere -- the main
+			// thread loading under the splash: it stands in, running the window work and reading the compositor's
+			// events, or its window waited for them (an output entered, a frame done) and showed nothing new
+			if (!WaylandWindow.IsUiThread) {
+				if (s_hosts.Count > 0) WaylandWindow.ServiceIfStalled (RunPumpWork);
+				return;
+			}
+			RunPumpWork ();
+		}
+
+		private static void RunPumpWork ()
+		{
 			while (s_pumpWork.TryDequeue (out Action work)) {
 				try { work (); }
 				catch (Exception e) { Console.Error.WriteLine ($"[WaylandFormHost] window work failed: {e}"); }
@@ -869,6 +880,7 @@ namespace System.Windows.Forms
 			// next frame for it waited for good inside the property grid's drop-down loop. Not now; again
 			// once it is on screen (WaylandWindow.CanPresent, as WPF's windows are asked).
 			if (!_window.ReadyToPresent ()) {
+				if (s_trace && _lastPresentOk) Console.WriteLine ($"[wayland form] '{_form.Text}' not ready to present (thread {Environment.CurrentManagedThreadId})");
 				_lastPresentOk = false;
 				return;
 			}

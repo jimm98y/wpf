@@ -1438,6 +1438,11 @@ namespace MS.Internal.Interop.Wayland
             remove => StatusNotifierItem.NotificationEvent -= value;
         }
 
+        /// <summary>From a UI thread that does not read the compositor connection: when the one that does is busy
+        /// elsewhere, runs <paramref name="work"/> (window work queued for it) and reads and dispatches for it, so this
+        /// thread's windows go on (a splash screen while the main thread loads). See WaylandDisplay.ServiceIfStalled.</summary>
+        public static bool ServiceIfStalled(Action? work) => WaylandDisplay.ServiceIfStalled(work);
+
         /// <summary>The monitors as the compositor places them: (x, y, width, height, scale) each, logical pixels.</summary>
         public static int[] GetScreensLogical() => WaylandDisplay.OutputsLogical();
 

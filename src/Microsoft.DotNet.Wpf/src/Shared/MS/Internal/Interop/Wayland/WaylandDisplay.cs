@@ -92,8 +92,68 @@ namespace MS.Internal.Interop.Wayland
             get
             {
                 if (Display == IntPtr.Zero) return false;
+                if (t_standIn) return true;
                 System.Threading.Thread? ui = System.Threading.Volatile.Read(ref s_uiThread);
                 return ui == null || ui == System.Threading.Thread.CurrentThread || !ui.IsAlive;
+            }
+        }
+
+        // ---- standing in for a UI thread that does not read the connection --------------------------------
+        //
+        // On Windows every thread pumps its own windows' messages: a splash screen on a thread of its own animates
+        // while the main thread loads. Here one thread reads the compositor connection, and a window of another
+        // thread waits on what it reads -- the output its surface entered, its frame callbacks, the window work
+        // queued for it. While that thread is busy elsewhere (loading under the splash, not in its pump and not
+        // waiting in poll), another UI thread stands in: it reads and dispatches under the service lock, the input
+        // it dispatches set aside for the UI thread (see DeferInput). A splash's progress bar stood still until the
+        // application had loaded.
+
+        private static readonly object s_serviceLock = new();
+        private static long s_lastUiService;
+        private static int s_standIns;
+        private static volatile bool s_uiPolling;
+        [ThreadStatic] private static bool t_standIn;
+        private static readonly System.Collections.Concurrent.ConcurrentQueue<Action> s_deferredInput = new();
+
+        /// <summary>Whether the calling thread is standing in for the UI thread now.</summary>
+        internal static bool IsStandIn => t_standIn;
+
+        /// <summary>Input dispatched by a stand-in: delivered by the UI thread, whose windows' handlers expect it there.</summary>
+        internal static bool DeferInput(Action deliver)
+        {
+            if (!t_standIn) return false;
+            s_deferredInput.Enqueue(deliver);
+            return true;
+        }
+
+        private static bool IsRealUiThread()
+        {
+            System.Threading.Thread? ui = System.Threading.Volatile.Read(ref s_uiThread);
+            return ui == null || ui == System.Threading.Thread.CurrentThread || !ui.IsAlive;
+        }
+
+        /// <summary>
+        /// On a thread other than the UI thread: when the UI thread has not serviced the connection for a while and is
+        /// not waiting on it, runs <paramref name="work"/> (window work queued for the UI thread) and one non-blocking
+        /// read and dispatch, as the UI thread would. Returns whether it stood in.
+        /// </summary>
+        public static bool ServiceIfStalled(Action? work)
+        {
+            if (Display == IntPtr.Zero || IsRealUiThread() || t_standIn) return false;
+            if (s_uiPolling || Environment.TickCount64 - System.Threading.Interlocked.Read(ref s_lastUiService) < 100) return false;
+            if (!System.Threading.Monitor.TryEnter(s_serviceLock)) return false;
+            try
+            {
+                t_standIn = true;
+                if (s_standIns++ % 50 == 0) LogSink?.Invoke($"thread {Environment.CurrentManagedThreadId} stands in for the UI thread ({s_standIns})");
+                work?.Invoke();
+                ReadEvents(0);
+                return true;
+            }
+            finally
+            {
+                t_standIn = false;
+                System.Threading.Monitor.Exit(s_serviceLock);
             }
         }
 
@@ -101,6 +161,8 @@ namespace MS.Internal.Interop.Wayland
         /// any protocol object exists, on any other thread while the claimant is alive.</summary>
         internal static void ClaimUiThread()
         {
+            // a thread standing in for the UI thread (ServiceIfStalled) makes its windows for it, under the service lock
+            if (t_standIn) return;
             System.Threading.Thread me = System.Threading.Thread.CurrentThread;
             while (true)
             {
@@ -587,7 +649,25 @@ namespace MS.Internal.Interop.Wayland
         public static bool ReadEvents(int timeoutMs, int extraFd = -1)
         {
             if (Display == IntPtr.Zero) return false;
+            bool ui = !t_standIn && IsRealUiThread();
+            if (ui)
+            {
+                System.Threading.Interlocked.Exchange(ref s_lastUiService, Environment.TickCount64);
+                // what a stand-in dispatched for this thread's windows
+                while (s_deferredInput.TryDequeue(out Action? deliver))
+                    try { deliver(); } catch (Exception) { }
+            }
+            System.Threading.Monitor.Enter(s_serviceLock);
+            try { return ReadEventsLocked(timeoutMs, extraFd, ui); }
+            finally
+            {
+                System.Threading.Monitor.Exit(s_serviceLock);
+                if (ui) System.Threading.Interlocked.Exchange(ref s_lastUiService, Environment.TickCount64);
+            }
+        }
 
+        private static bool ReadEventsLocked(int timeoutMs, int extraFd, bool ui)
+        {
             // prepare_read fails while the queue still holds undispatched events; drain and retry,
             // otherwise read_events would block behind events already in memory.
             while (Wl.wl_display_prepare_read(Display) != 0)
@@ -630,8 +710,20 @@ namespace MS.Internal.Interop.Wayland
                 count++;
             }
 
-            do { n = poll(fds, count, timeoutMs); }
-            while (n < 0 && Marshal.GetLastPInvokeError() == 4 /* EINTR */);
+            // waiting here, the UI thread services the connection (anything arriving wakes it): no stand-in is
+            // needed, and none may take the lock it holds -- it is let go for the wait
+            if (ui) s_uiPolling = true;
+            if (timeoutMs != 0) System.Threading.Monitor.Exit(s_serviceLock);
+            try
+            {
+                do { n = poll(fds, count, timeoutMs); }
+                while (n < 0 && Marshal.GetLastPInvokeError() == 4 /* EINTR */);
+            }
+            finally
+            {
+                if (timeoutMs != 0) System.Threading.Monitor.Enter(s_serviceLock);
+                if (ui) s_uiPolling = false;
+            }
 
             bool read = false;
             if (n > 0 && (fds[0].revents & POLLIN) != 0)

@@ -668,7 +668,19 @@ namespace MS.Internal.Interop.Wayland
         internal static int Px(double x, IntPtr surface) => (int)Math.Round(x * WaylandDisplay.ScaleForSurface(surface));
         internal static int Py(double y, IntPtr surface) => (int)Math.Round(y * WaylandDisplay.ScaleForSurface(surface));
 
-        private static void Raise(in WaylandMouseMessage m) => MouseInput?.Invoke(m);
+        private static void Raise(in WaylandMouseMessage m)
+        {
+            WaylandMouseMessage copy = m;
+            if (WaylandDisplay.DeferInput(() => MouseInput?.Invoke(copy))) return;
+            MouseInput?.Invoke(m);
+        }
+
+        /// <summary>A key, delivered on the UI thread (set aside while another thread stands in for it).</summary>
+        private static void RaiseKey(WaylandKeyMessage k)
+        {
+            if (WaylandDisplay.DeferInput(() => KeyInput?.Invoke(k))) return;
+            KeyInput?.Invoke(k);
+        }
 
         // Maps an XKB keysym to a Win32 virtual-key code, which WPF's KeyInterop turns into a Key.
         // Keysyms rather than scancodes because the keysym already accounts for the user's layout,
@@ -880,7 +892,7 @@ namespace MS.Internal.Interop.Wayland
                 if (down && scancode == 58) s_locksFlipping |= WaylandModifiers.CapsLock;    // KEY_CAPSLOCK
                 if (down && scancode == 69) s_locksFlipping |= WaylandModifiers.NumLock;     // KEY_NUMLOCK
 
-                KeyInput?.Invoke(new WaylandKeyMessage(KeyboardFocusSurface, down, keysym, scancode, text, false, s_modifiers, (int)time));
+                RaiseKey(new WaylandKeyMessage(KeyboardFocusSurface, down, keysym, scancode, text, false, s_modifiers, (int)time));
 
                 if (down && s_xkbKeymap != IntPtr.Zero && WlXkb.xkb_keymap_key_repeats(s_xkbKeymap, xkbCode) && s_repeatRate > 0)
                 {

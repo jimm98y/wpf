@@ -855,6 +855,7 @@ namespace MS.Internal.Interop.Wayland
         public static bool CapsLockOn { get { throw null; } }
         public void SetInputRegion(int[] rects) { }
         public static int[] GetScreensLogical() { throw null; }
+        public static bool ServiceIfStalled(System.Action work) { throw null; }
         public static bool TrayShow(int id, string title, string tip, byte[] bgra, int width, int height) { throw null; }
         public static void TrayRemove(int id) { }
         public static bool ShowNotification(int tag, string title, string body, string icon) { throw null; }
