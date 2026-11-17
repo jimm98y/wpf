@@ -26,6 +26,7 @@ public static partial class LinuxPackager
         IReadOnlyList<WebPages.Page>? pages = null)
     {
         bool sqlServer = manifest.SqlServer.Include;
+        bool webView = UsesWebView(manifest);
         string product = manifest.Product.Name;
         string rid = runtimePack["rid"];
         string arch = rid.EndsWith("arm64", StringComparison.Ordinal) ? "arm64" : "amd64";
@@ -131,6 +132,13 @@ public static partial class LinuxPackager
             tar.AddText($"{root}/bin/{pkg}-startup", Launcher(manifest.Product.Name + " startup programs", pkg, state, manifest.Product.OsIdentity,
                 $"exec {Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} startup"), executable: true);
             tar.AddText($"/etc/xdg/autostart/{pkg}-startup.desktop", Autostart(manifest, $"{root}/bin/{pkg}-startup"), executable: false);
+            // web content: WPE WebKit's apt source (LinuxPackager.WebView.cs)
+            if (webView)
+            {
+                tar.AddText(WebViewSourcesPath(pkg), WebViewSources, executable: false);
+                tar.AddText(WebViewPinPath(pkg), WebViewPin, executable: false);
+                log("  web content: WPE WebKit, from Debian's archive pinned to its packages");
+            }
             tar.Finish();
         }
 
@@ -140,8 +148,8 @@ public static partial class LinuxPackager
         using (var gz = new GZipStream(file, CompressionLevel.Optimal))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlServer), executable: false);
-            tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg)), executable: true);
+            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlServer, webView), executable: false);
+            tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg), webView ? WebViewPostInst(pkg) : ""), executable: true);
             tar.AddText("./preinst", PreInst(pkg), executable: true);
             tar.AddText("./prerm", PreRm(units, root), executable: true);
             tar.AddText("./postrm", PostRm(state, units, pkg), executable: true);
@@ -169,7 +177,7 @@ public static partial class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg),
-                sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : ""), executable: true);
+                (sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : "") + (webView ? WebViewInstallStep(pkg) : "")), executable: true);
             tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units,
                 sqlServer ? SqlServerUninstallStep(arch, pkg) : ""), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
@@ -319,14 +327,14 @@ public static partial class LinuxPackager
 
         """;
 
-    private static string Control(PackageManifest manifest, string pkg, string arch, long bytes, bool sqlServer) => $"""
+    private static string Control(PackageManifest manifest, string pkg, string arch, long bytes, bool sqlServer, bool webView) => $"""
         Package: {pkg}
         Version: {DebVersion(manifest.Product.Version)}
         Architecture: {arch}
         Maintainer: {(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : manifest.Product.Name)} <noreply@localhost>
         Installed-Size: {Math.Max(1, bytes / 1024)}
-        Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu74 | libicu72 | libicu70 | libicu67 | libicu66, acl
-        Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1{(sqlServer ? ", " + SqlServerPackageName(pkg) : "")}
+        Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu78 | libicu77 | libicu76 | libicu75 | libicu74 | libicu72 | libicu70 | libicu67 | libicu66, acl
+        Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1{(sqlServer ? ", " + SqlServerPackageName(pkg) : "")}{(webView ? ", debian-archive-keyring, " + WpePackages.Replace(" ", ", ") : "")}
         Section: misc
         Priority: optional
         Description: {manifest.Product.Name}
@@ -358,9 +366,10 @@ public static partial class LinuxPackager
         return sb.ToString();
     }
 
-    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts) =>
+    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
+        string webViewStep) =>
         "#!/bin/sh\n# the machine's state made from the seed on the first install (the registry's paths this installation's) and\n"
-        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units, masked, accounts) + "exit 0\n";
+        + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units, masked, accounts) + webViewStep + "exit 0\n";
 
     private static string PostInstBody(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts) => $$"""
         STATE="{{state}}"
