@@ -93,6 +93,7 @@ namespace MS.Internal.Interop.Wayland
         private int _scale120;                           // fractional scale in 120ths, 0 = unknown
         private int _outputScale = 1;                    // integer wl_output scale fallback
         private int _virtualX, _virtualY;                // device px, virtual global space
+        private int _shownX, _shownY;                    // a popup's: where the compositor last placed it (its configure)
         private bool _configured;
         private bool _closeRequested;
         private bool _destroyed;
@@ -271,8 +272,8 @@ namespace MS.Internal.Interop.Wayland
             if (!borderless && owner == IntPtr.Zero && !CenterWhenMapped && IsCenteredOnScreen(x, y, width, height))
                 CenterWhenMapped = true;
             _title = title ?? string.Empty;
-            _virtualX = x;
-            _virtualY = y;
+            _virtualX = _shownX = x;
+            _virtualY = _shownY = y;
 
             double scale = GetBackingScale();
             _contentW = Math.Max(1, (int)Math.Round(width / scale) - (borderless ? 0 : (int)NonClientWidthDips));
@@ -773,8 +774,8 @@ namespace MS.Internal.Interop.Wayland
                 if (owner is not null)
                 {
                     OwnerGeometryToVirtual(owner, x, y, out int vx, out int vy);
-                    w._virtualX = vx;
-                    w._virtualY = vy;
+                    w._virtualX = w._shownX = vx;
+                    w._virtualY = w._shownY = vy;
                     owner.GetClientScreenOriginPixels(out ownerClientX, out ownerClientY);
                 }
                 if (width > 0 && height > 0)
@@ -1053,6 +1054,23 @@ namespace MS.Internal.Interop.Wayland
             // the caption down -- the same split the sizing path applies.
             sx = _virtualX + (int)Math.Round(ncW / 2.0 * scale);
             sy = _virtualY + (int)Math.Round(ncH * scale);
+        }
+
+        /// <summary>
+        /// Where a popup is on the screen as the compositor shows it: its last configure, not the move asked for
+        /// since (SetFrameOrigin records that at once, but the compositor applies it with a later frame, and may slide
+        /// it). What its pixels are laid out from and its pointer events are relative to. Other windows: their client
+        /// origin.
+        /// </summary>
+        public void GetShownOriginPixels(out int sx, out int sy)
+        {
+            if (_xdgPopup == IntPtr.Zero)
+            {
+                GetClientScreenOriginPixels(out sx, out sy);
+                return;
+            }
+            sx = _shownX;
+            sy = _shownY;
         }
 
         /// <summary>Show/hide the surface (WPF's ShowWindow SW_HIDE/SW_SHOW).</summary>

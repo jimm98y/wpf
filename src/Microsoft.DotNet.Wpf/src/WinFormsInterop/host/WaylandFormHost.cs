@@ -977,6 +977,7 @@ namespace System.Windows.Forms
 		private WaylandWindow _layer;
 		private WgpuPresenter _layerWgpu;
 		private Rectangle _layerRect;           // what the layer shows, in client space (driver units)
+		private static int s_lastMoveX = int.MinValue, s_lastMoveY = int.MinValue;   // the pointer's last move (virtual pixels)
 		private int _layerX, _layerY;           // where it was put on the virtual screen (device pixels)
 		private bool _layerDismissed, _layerCreating;
 
@@ -1042,9 +1043,14 @@ namespace System.Windows.Forms
 					_layerWgpu = new WgpuPresenter (ctx, surface, bounds.Width, bounds.Height, _scale, srgb: true, threadDevice: true);
 					_layerWgpu.SetTransparent (true);
 				}
+				// laid out from where the compositor shows the layer -- a move asked for (a menu growing its shadow)
+				// takes effect with a later frame, and may be slid: drawn for it meanwhile, a menu stood a few pixels
+				// off, and so did the points of its pointer events
+				_layer.GetShownOriginPixels (out int lx, out int ly);
+				int ox = (int)Math.Round ((lx - cx) / _scale), oy = (int)Math.Round ((ly - cy) / _scale);
 				var placed = new List<(object, int, int)> (popups.Count);
 				foreach (var (scene, x, y) in popups)
-					placed.Add ((scene, x - bounds.X, y - bounds.Y));
+					placed.Add ((scene, x - ox, y - oy));
 				if (!_layerWgpu.PresentScenes (placed, null, bounds.Width, bounds.Height))
 					_lastPresentOk = false;
 			} catch (Exception e) {
@@ -1210,10 +1216,11 @@ namespace System.Windows.Forms
 			ExitSizeMove ();
 			int vx, vy;
 			if (_layer != null && m.Window == _layer.Handle) {
-				// over the popup layer: the point of the screen it shows (where it was put, whatever the
-				// compositor made of that)
-				vx = _layerX + m.X;
-				vy = _layerY + m.Y;
+				// over the popup layer: the point of the screen it shows, from where the compositor shows it (what
+				// its pixels are laid out from, PresentPopups) -- not where it was last asked to go
+				_layer.GetShownOriginPixels (out int lx, out int ly);
+				vx = lx + m.X;
+				vy = ly + m.Y;
 			} else {
 				_window.GetClientScreenOriginPixels (out int cx, out int cy);
 				vx = cx + m.X;
@@ -1221,11 +1228,21 @@ namespace System.Windows.Forms
 			}
 			if (m.Kind == 4) {
 				_pointerOver = false;
-				if (s_pointerOwner == IntPtr.Zero)
+				// Not while a button is down or a window holds the mouse: Windows tells a captured window nothing of
+				// the pointer leaving. A menu opened by a press takes the pointer (its popup's grab), so the form's
+				// surface is left at once -- and the button that opened it, told so, forgot its press and took the
+				// release for a new click, which closed the menu.
+				if (s_pointerOwner == IntPtr.Zero && _driver.GrabHandle == IntPtr.Zero && !s_leftDown)
 					_driver.InjectMouseLeaveAll ();
 				return;
 			}
 			_pointerOver = true;
+			// a move that is none -- the pointer entering a surface that appeared under it (a menu's, opened by the
+			// press): Windows sends no WM_MOUSEMOVE where the pointer has not moved. Told one, a menu took the item
+			// under the pointer for the one pointed at, and the release of the press that opened it chose that item.
+			if (m.Kind == 0 && vx == s_lastMoveX && vy == s_lastMoveY)
+				return;
+			if (m.Kind == 0) { s_lastMoveX = vx; s_lastMoveY = vy; }
 
 			// Over a hosted WPF tree, unless a WinForms control holds the mouse: that window's input, as
 			// the OS routes it to a child window on Windows. It keeps the pointer from a press to its release.

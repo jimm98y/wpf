@@ -817,6 +817,7 @@ namespace MS.Internal.Interop.Wayland
         public void SetResizeMode(bool canResize, bool canMinimize) { }
         public void GetResizeMode(out bool canResize, out bool canMinimize) { throw null; }
         public void GetClientScreenOriginPixels(out int sx, out int sy) { throw null; }
+        public void GetShownOriginPixels(out int sx, out int sy) { throw null; }
         public void GetContentSize(out int width, out int height) { throw null; }
         public void GetPixelSize(out int width, out int height) { throw null; }
         public static bool GetPrimaryScreenPixels(out int monLeft, out int monTop, out int monRight, out int monBottom, out int workLeft, out int workTop, out int workRight, out int workBottom) { throw null; }
