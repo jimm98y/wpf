@@ -229,6 +229,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     };
                 }
                 case CastExpr c: return ConstInt(c.Value);
+                case NameExpr n when Lookup(n.Name) is NumValue lv && lv.N.Imm != null:
+                    return lv.N.Type.IsFloatLike ? (long)BitConverter.UInt32BitsToSingle(lv.N.Imm[0]) : lv.N.Type.Scalar == ScalarKind.Uint ? lv.N.Imm[0] : (int)lv.N.Imm[0];
                 case NameExpr n when _constants.TryGetValue(n.Name, out var v) && v is NumValue nv && nv.N.Imm != null:
                     return nv.N.Type.IsFloatLike ? (long)BitConverter.UInt32BitsToSingle(nv.N.Imm[0]) : (int)nv.N.Imm[0];
                 case ConditionalExpr c: return ConstInt(c.Cond) != 0 ? ConstInt(c.Then) : ConstInt(c.Else);

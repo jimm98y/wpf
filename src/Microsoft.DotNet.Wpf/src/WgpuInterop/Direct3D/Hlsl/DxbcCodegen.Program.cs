@@ -296,6 +296,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             /// <summary>The first component it takes in its register (fxc packs several into one).</summary>
             public int Start;
             public bool InArray;
+            /// <summary>A geometry shader's output: its stream.</summary>
+            public int Stream;
             public int Mask => ((1 << Math.Max(1, Math.Min(4, Type.Count))) - 1) << Start;
             public int SystemValue;
             public HashSet<string> Modifiers = new();
@@ -373,8 +375,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 if (output) throw Err(at, "a compute shader has no outputs", 4502);
                 return ComputeInput(semantic, nt, at)!;
             }
-            var e = new SigEntry { Semantic = sname, Index = sindex, Type = nt, SystemValue = sv, Modifiers = mods, Output = output, InArray = inArray };
-            var list = output ? _outputs : _inputs;
+            if (!output && SpecialInput(sname, nt) is { } special) return special;
+            var e = new SigEntry { Semantic = sname, Index = sindex, Type = nt, SystemValue = sv, Modifiers = mods, Output = output, InArray = inArray, Stream = output ? _currentStream : 0 };
+            // a geometry shader's streams each have their registers
+            var list = output ? _outputs.Where(x => x.Stream == _currentStream).ToList() : _inputs;
             if (!output && sv == 66)
             {
                 // the input coverage is a register of its own (vCoverage), not a signature element
@@ -398,7 +402,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     if (used + Math.Max(1, nt.Count) <= 4 && g.All(x => Packs(x, e))) { e.Register = g.Key; e.Start = used; break; }
                 }
             }
-            list.Add(e);
+            (output ? _outputs : _inputs).Add(e);
             var comps = Enumerable.Range(e.Start, Math.Max(1, nt.Count)).Select(i => (byte)i).ToArray();
             if (output)
             {
@@ -429,6 +433,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 throw new HlslException(default, $"entrypoint not found", 3501);
             var f = fs.First(x => x.Body != null);
             if (_stage == ShaderStage.Compute) ThreadGroup(f);
+            if (_stage == ShaderStage.Geometry) GeometryAttributes(f);
             // the first pass learns what is used; the second binds it in declaration order and emits
             Generate(f, record: true);
             AssignRegisters();
@@ -448,6 +453,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             _writesDepth = false;
             _scopes.Clear();
             _computeInputs.Clear();
+            _specialInputs.Clear();
+            _streams.Clear();
             _tgsmCount = 0;
             foreach (var g in _groupShared.Values) g.Register = -1;
         }
@@ -473,6 +480,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 var type = Resolve(p.Type, p.ArrayDims);
                 if (p.Modifiers.Contains("uniform")) throw Err(p, "uniform entry-point parameters are not supported");
+                if (_stage == ShaderStage.Geometry && type is ObjectType { IsStream: true } st) { frame.Locals[p.Name] = GeometryStream(p, st); continue; }
+                if (_stage == ShaderStage.Geometry && PrimitiveOf(p.Modifiers) > 0) { frame.Locals[p.Name] = GeometryInput(p, type); continue; }
                 if (p.IsOut)
                 {
                     var stores = new List<Store>();
@@ -739,6 +748,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     _w.Emit(Opcode.EndIf, 0);
                     return;
                 }
+                case ForStmt f when Unrollable(f, out string counter, out var values, out bool unsigned):
+                    Unrolled(f, counter, values, unsigned);
+                    return;
                 case ForStmt f:
                 {
                     _scopes.Add(new Dictionary<string, object>());
@@ -864,14 +876,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 ("RDEF", Rdef()),
                 ("ISGN", Signature(_inputs, false)),
-                ("OSGN", Signature(_outputs, true)),
+                (Sm5 && _stage == ShaderStage.Geometry ? "OSG5" : "OSGN", Signature(_outputs, true, Sm5 && _stage == ShaderStage.Geometry)),
                 (Sm5 ? "SHEX" : "SHDR", _w.Program()),
                 ("STAT", Stat()),
             };
             return DxbcWriter.Container(chunks);
         }
 
-        private static byte[] Signature(List<SigEntry> list, bool output)
+        private static byte[] Signature(List<SigEntry> list, bool output, bool withStream = false)
         {
             var els = list.Select(e => new DxbcWriter.SigElement
             {
@@ -881,8 +893,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 Register = e.Register < 0 ? -1 : e.Register,
                 Mask = e.Mask,
                 ReadWriteMask = output ? 0 : e.Mask,
+                Stream = e.Stream,
             }).ToList();
-            return DxbcWriter.Signature(els, withStream: false);
+            return DxbcWriter.Signature(els, withStream);
         }
 
         private byte[] Stat()
@@ -922,7 +935,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             foreach (var e in _inputs)
             {
                 int mask = e.Mask;
-                var o = DxOperand.Dest(OperandType.Input, mask, e.Register);
+                var o = _stage == ShaderStage.Geometry ? DxOperand.Dest(OperandType.Input, mask, _gsVertices, e.Register) : DxOperand.Dest(OperandType.Input, mask, e.Register);
                 if (_stage == ShaderStage.Pixel)
                 {
                     uint interp = Interpolation(e);
@@ -931,10 +944,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     else _w.EmitWith(Opcode.DclInputPsSiv, interp, null, new[] { o }, new[] { (uint)e.SystemValue });
                 }
                 else if (e.SystemValue is 6 or 8 or 7) _w.EmitWith(Opcode.DclInputSgv, 0, null, new[] { o }, new[] { (uint)e.SystemValue });
+                else if (e.SystemValue > 0) _w.EmitWith(Opcode.DclInputSiv, 0, null, new[] { o }, new[] { (uint)e.SystemValue });
                 else _w.Emit(Opcode.DclInput, 0, o);
             }
+            DeclareSpecialInputs();
             if (_readsCoverage) _w.Emit(Opcode.DclInput, 0, DxOperand.Bare(OperandType.InputCoverageMask));
-            foreach (var e in _outputs)
+            if (_stage != ShaderStage.Geometry) DeclareOutputs(_outputs);
+            if (_stage == ShaderStage.Compute) ComputeDeclarations();
+            if (_temps > 0) _w.Declare(Opcode.DclTemps, 0, (uint)_temps);
+            if (_stage == ShaderStage.Geometry) GeometryDeclarations();
+            foreach (var (x, size, comps) in _indexables) _w.Declare(Opcode.DclIndexableTemp, 0, (uint)x, (uint)size, (uint)comps);
+        }
+
+        private void DeclareOutputs(IEnumerable<SigEntry> outputs)
+        {
+            foreach (var e in outputs)
             {
                 int mask = e.Mask;
                 if (e.SystemValue > 64)
@@ -947,9 +971,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 if (e.SystemValue is > 0 and < 64) _w.EmitWith(Opcode.DclOutputSiv, 0, null, new[] { o }, new[] { (uint)e.SystemValue });
                 else _w.Emit(Opcode.DclOutput, 0, o);
             }
-            if (_stage == ShaderStage.Compute) ComputeDeclarations();
-            if (_temps > 0) _w.Declare(Opcode.DclTemps, 0, (uint)_temps);
-            foreach (var (x, size, comps) in _indexables) _w.Declare(Opcode.DclIndexableTemp, 0, (uint)x, (uint)size, (uint)comps);
         }
 
         private bool Packs(SigEntry a, SigEntry b)

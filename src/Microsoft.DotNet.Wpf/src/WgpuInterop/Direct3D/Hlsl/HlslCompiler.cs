@@ -52,8 +52,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var (stage, major, minor) = prof.Value;
             if (major < 4)
                 return new Result(null, $"{fileName}: error X3501: target '{profile}': shader model 2 and 3 are not supported by this compiler yet\n");
-            if (stage is not (ShaderStage.Vertex or ShaderStage.Pixel or ShaderStage.Compute))
-                return new Result(null, $"{fileName}: error X3501: target '{profile}': geometry and tessellation shaders are not supported by this compiler yet\n");
+            if (stage is ShaderStage.Hull or ShaderStage.Domain)
+                return new Result(null, $"{fileName}: error X3501: target '{profile}': tessellation shaders are not supported by this compiler yet\n");
             try
             {
                 var tokens = new HlslPreprocessor(defines, include).Run(source, fileName);

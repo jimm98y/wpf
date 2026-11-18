@@ -590,6 +590,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var target = EvalValue(m.Target);
             if (target is not ObjValue o) throw Err(m, $"'{m.Name}' is not a method of a {target.Type}", 3018);
             if (MemoryMethod(o, m) is { } memory) return memory;
+            if (StreamMethod(o, m) is { } stream) return stream;
             var t = o.Obj;
             ObjValue SamplerArg(int i) => EvalValue(m.Args[i]) as ObjValue ?? throw Err(m.Args[i], "a sampler was expected", 3017);
             Num Coord(int i, int n) => ConvertNum(Arg(m.Args, i, m), NumericType.Vector(ScalarKind.Float, n), m);

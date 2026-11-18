@@ -482,7 +482,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private void ComputeDeclarations()
         {
-            foreach (var (file, mask) in _computeInputs) _w.Emit(Opcode.DclInput, 0, DxOperand.Dest(file, mask));
             foreach (var g in _groupShared.Values.Where(g => g.Register >= 0).OrderBy(g => g.Register))
                 _w.EmitWith(Opcode.DclThreadGroupSharedMemoryStructured, 0, null, new[] { DxOperand.Bare(OperandType.ThreadGroupSharedMemory, g.Register) }, new[] { (uint)g.Stride, (uint)g.Count });
             _w.Declare(Opcode.DclThreadGroup, 0, _threads.X, _threads.Y, _threads.Z);

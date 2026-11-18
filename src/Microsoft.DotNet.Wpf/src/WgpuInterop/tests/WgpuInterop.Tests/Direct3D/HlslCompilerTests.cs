@@ -96,7 +96,7 @@ namespace WgpuInterop.Tests.Direct3D
         };
 
         private static bool Drawable(Entry e) => e.Profile.StartsWith("ps_", StringComparison.Ordinal) || e.Profile.StartsWith("vs_", StringComparison.Ordinal);
-        private static bool Compiled(Entry e) => Drawable(e) || e.Profile.StartsWith("cs_", StringComparison.Ordinal);
+        private static bool Compiled(Entry e) => Drawable(e) || e.Profile.StartsWith("cs_", StringComparison.Ordinal) || e.Profile.StartsWith("gs_", StringComparison.Ordinal);
 
         /// <summary>Compute shaders whose UAVs depend on the order threads run in (DxbcCoverageTests):
         /// run, not compared.</summary>
@@ -270,6 +270,73 @@ namespace WgpuInterop.Tests.Direct3D
                 foreach (IntPtr p in new[] { ctx, dev }) DxbcPixelParity.Release(p);
             }
             string summary = $"{same} compute as fxc's compute, {differ} differ";
+            Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
+        }
+
+        /// <summary>A probe: HLSL_DUMP_FXC=dir writes each corpus blob's instructions (with their
+        /// opcode tokens' control bits), the reference the back end is written against.</summary>
+        [Fact]
+        public void DumpFxc()
+        {
+            string? dir = Environment.GetEnvironmentVariable("HLSL_DUMP_FXC");
+            Assert.SkipWhen(string.IsNullOrEmpty(dir), "a probe: HLSL_DUMP_FXC=<directory>");
+            Directory.CreateDirectory(dir!);
+            foreach (var e in Entries())
+            {
+                var s = DxbcShader.Parse(Fxc(e));
+                File.WriteAllLines(Path.Combine(dir!, e.Blob + ".txt"), s.Instructions.Select(i => $"{i} ; ctl 0x{(i.Token >> 11) & 0x1FFF:x}"));
+            }
+        }
+
+        /// <summary>Each geometry shader drawn between a generated vertex and pixel shader (our
+        /// compiler's), with fxc's blob and with ours, the targets compared.</summary>
+        [Fact]
+        public void EveryGeometryShaderOfTheCorpus_DrawsAsFxcsDraws()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx;
+            uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            var lines = new List<string>();
+            int same = 0, differ = 0;
+            try
+            {
+                foreach (var e in Entries().Where(x => x.Profile.StartsWith("gs_", StringComparison.Ordinal)))
+                {
+                    byte[] fxcBlob = Fxc(e);
+                    var ours = Compile(Source(e), e.File, e.Name, e.Profile, e.Defines, out string errors);
+                    if (ours == null) { differ++; lines.Add($"FAIL {e}: {errors.Trim()}"); continue; }
+                    if (Environment.GetEnvironmentVariable("HLSL_DUMP") is { Length: > 0 } dump)
+                    {
+                        Directory.CreateDirectory(dump);
+                        File.WriteAllLines(Path.Combine(dump, e.Blob + ".ours.txt"), DxbcShader.Parse(ours).Instructions.Select(i => $"{i} ; ctl 0x{(i.Token >> 11) & 0x1FFF:x}"));
+                    }
+                    try
+                    {
+                        var gs = DxbcShader.Parse(fxcBlob);
+                        var topo = DxbcGeometryParity.TopologyFor(GeometryInfo.Of(gs)) ?? throw new InvalidOperationException("an input primitive not drawn here");
+                        string profile = gs.Major >= 5 ? "_5_0" : "_4_0";
+                        var vs = Compile(DxbcGeometryParity.VertexShaderFor(gs), "gen.hlsl", "main", "vs" + profile, Array.Empty<string>(), out string verr) ?? throw new InvalidOperationException("vertex shader: " + verr);
+                        var ps = Compile(DxbcGeometryParity.PixelShaderFor(gs), "gen.hlsl", "main", "ps" + profile, Array.Empty<string>(), out string perr) ?? throw new InvalidOperationException("pixel shader: " + perr);
+                        var psShader = DxbcShader.Parse(ps);
+                        float[] positions = DxbcGeometryParity.Positions(topo.Vertices);
+                        var a = DxbcGeometryParity.Draw(dev, ctx, vs, fxcBlob, ps, psShader, DxbcPixelParity.Reflect(fxcBlob), topo.Topology, positions, 5);
+                        var b = DxbcGeometryParity.Draw(dev, ctx, vs, ours, ps, psShader, DxbcPixelParity.Reflect(ours), topo.Topology, positions, 5);
+                        var (count, first) = DxbcPixelParity.Compare(a, b);
+                        // a draw that covers nothing compares nothing
+                        if (DxbcPixelParity.Covered(a) == 0) { differ++; lines.Add($"FAIL {e}: fxc's blob covered nothing"); }
+                        else if (count == 0 && a.Count == b.Count) { same++; lines.Add($"OK   {e} ({DxbcPixelParity.Covered(a)} covered)"); }
+                        else { differ++; lines.Add($"FAIL {e}: {count} components differ; {first}"); }
+                    }
+                    catch (Exception x) { differ++; lines.Add($"FAIL {e}: {x.GetType().Name}: {x.Message.Split('\n')[0]}"); }
+                }
+            }
+            finally
+            {
+                foreach (IntPtr p in new[] { ctx, dev }) DxbcPixelParity.Release(p);
+            }
+            string summary = $"{same} draw as fxc's draw, {differ} differ";
+            Console.Error.WriteLine(summary + Environment.NewLine + string.Join(Environment.NewLine, lines));
             Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
         }
 
