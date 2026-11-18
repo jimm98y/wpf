@@ -606,9 +606,45 @@ export function isComposing() { return imeComposing; }
 // The mirror is inert: pointer-events are off so it never intercepts a click meant for the canvas,
 // and the elements carry no text, only ARIA attributes. Keyboard activation IS routed back, because
 // that is the only way a keyboard-only user can operate the app at all.
+//
+// The elements are flat -- every one a child of the mirror's host, positioned by itself -- so the
+// tree's shape is given by aria-owns: a list owns its items, a grid its rows and a row its cells,
+// which is what makes "item 3 of 12" and a screen reader's table navigation work.
+//
+// Three kinds of node are more than an ARIA attribute set, because the user's screen reader has to
+// operate them and ARIA alone cannot say what it needs:
+//
+//   * a text field is a real <input> or <textarea> holding WPF's text and selection, so the screen
+//     reader's own reading commands (by character, word, line) and its selection commands work. Its
+//     value and selection follow WPF's on every sync; a selection or an edit the screen reader makes
+//     is queued back. The keyboard never types into it -- every key is WPF's (pushKey) -- and a
+//     paste or a drop is refused, since WPF has its own and would get it twice. Focus stays with the
+//     input method's proxy while a WPF text field has it (enableTextInput): taking it away would
+//     end a composition the user is in the middle of.
+//   * a scrolling pane is a real overflow container, with an empty spacer the size of WPF's content,
+//     scrolled to where WPF's pane is; scrolling it (a screen reader's scroll gesture) is queued
+//     back as a position. The wheel and the keys never scroll it: both are WPF's.
+//   * a modal window is a dialog with aria-modal, the mirror of every other window inert while it
+//     is up, and Escape in it closes it -- after WPF has had the key, so a Cancel button or an edit
+//     being abandoned sees it first.
 
 let a11yHost = null;
 const a11yNodes = new Map();   // id -> element
+const a11yInfo = new Map();    // id -> the node as last synced
+// What a screen reader did to a mirror element, waiting for the managed side to take it
+// (a11yTake*): the queued event carries only the node and the kind.
+const a11yPendingSelection = new Map();
+const a11yPendingScroll = new Map();
+const a11yPendingValue = new Map();
+
+const A11Y_ACTIVATE = 0, A11Y_FOCUS = 1, A11Y_TEXT_SELECTION = 2, A11Y_SCROLL = 3, A11Y_CLOSE_MODAL = 4, A11Y_SET_VALUE = 5;
+
+// Where ARIA allows each attribute; set elsewhere, it is at best ignored.
+const A11Y_MULTISELECT_ROLES = new Set(["grid", "listbox", "tablist", "tree", "treegrid"]);
+const A11Y_SELECTED_ROLES = new Set(["gridcell", "option", "row", "tab", "columnheader", "rowheader", "treeitem"]);
+const A11Y_GRID_ROLES = new Set(["grid", "table", "treegrid"]);
+const A11Y_ROWINDEX_ROLES = new Set(["row", "cell", "gridcell", "columnheader", "rowheader"]);
+const A11Y_COLINDEX_ROLES = new Set(["cell", "gridcell", "columnheader", "rowheader"]);
 
 function a11yEnsureHost() {
     if (a11yHost) return a11yHost;
@@ -618,6 +654,11 @@ function a11yEnsureHost() {
     // are focusable, so a screen reader's "activate" still lands.
     a11yHost.style.cssText = "position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;";
     host().appendChild(a11yHost);
+    // Older engines report a text control's selection only at the document.
+    document.addEventListener("selectionchange", () => {
+        const el = document.activeElement;
+        if (el && el.dataset && el.dataset.wpfNode !== undefined && a11yIsText(el)) a11yTextSelected(Number(el.dataset.wpfNode), el);
+    });
     return a11yHost;
 }
 
@@ -628,80 +669,314 @@ export function a11yIsEnabled() {
     return !(meta && meta.getAttribute("content") === "off");
 }
 
+function a11yIsText(el) { return el.tagName === "INPUT" || el.tagName === "TEXTAREA"; }
+
+function a11yTagFor(n) {
+    if (n.tx === undefined) return "DIV";
+    return n.ml ? "TEXTAREA" : "INPUT";
+}
+
+function a11yCreate(n, tag) {
+    const id = n.id;
+    const el = document.createElement(tag);
+    el.id = `wpf-a11y-${id}`;
+    el.dataset.wpfNode = String(id);
+
+    el.addEventListener("click", () => pushA11y(id, A11Y_ACTIVATE));
+    el.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { a11yEscape(id); return; }
+        // In a text field Enter and Space are text, and reach WPF as keys like every other.
+        if (a11yIsText(el)) return;
+        if (e.key === "Enter" || e.key === " ") { pushA11y(id, A11Y_ACTIVATE); e.preventDefault(); }
+    });
+    el.addEventListener("focus", () => pushA11y(id, A11Y_FOCUS));
+
+    if (tag === "DIV") {
+        el.addEventListener("scroll", () => a11yScrolled(id, el), { passive: true });
+        return el;
+    }
+
+    if (tag === "INPUT") el.type = "text";
+    // Nothing of the browser's own: no autofill, no spelling marks, no capitalising for a phone.
+    el.autocomplete = "off";
+    el.spellcheck = false;
+    el.setAttribute("autocapitalize", "off");
+    el.setAttribute("autocorrect", "off");
+    el.style.resize = "none";
+
+    const selected = () => a11yTextSelected(id, el);
+    el.addEventListener("select", selected);
+    el.addEventListener("selectionchange", selected);   // fired at the element by newer engines
+    el.addEventListener("beforeinput", (e) => {
+        const info = a11yInfo.get(id);
+        if (!info || !info.ed || /^(insertFromPaste|insertFromDrop|insertFromYank|deleteByCut|deleteByDrag|history)/.test(e.inputType || "")) {
+            if (e.cancelable) e.preventDefault();
+        }
+    });
+    el.addEventListener("input", (e) => { if (!e.isComposing) a11yTextEdited(id, el); });
+    el.addEventListener("compositionend", () => a11yTextEdited(id, el));
+    return el;
+}
+
+// The screen reader moved the selection of a mirror text field. The selection last put there by a
+// sync is remembered, so the events that putting it there raises are not sent back as the user's.
+function a11yTextSelected(id, el) {
+    const s = el.selectionStart, e = el.selectionEnd;
+    if (s === null || e === null) return;
+    const known = el._wpfSelection;
+    if (known && known[0] === s && known[1] === e) return;
+    el._wpfSelection = [s, e];
+    a11yPendingSelection.set(id, `${s},${e}`);
+    pushA11y(id, A11Y_TEXT_SELECTION);
+}
+
+// The screen reader edited a mirror text field (keys never do: pushKey keeps them). An editable one
+// sends its new text to WPF; anything else is put back as it was.
+function a11yTextEdited(id, el) {
+    const info = a11yInfo.get(id);
+    if (!info) return;
+    if (!info.ed) { if (el.value !== info.tx) el.value = info.tx; return; }
+    if (el.value === info.tx && !a11yPendingValue.has(id)) return;
+    a11yPendingValue.set(id, el.value);
+    pushA11y(id, A11Y_SET_VALUE);
+}
+
+// The screen reader scrolled a mirror pane. A position this file set is not the user's.
+function a11yScrolled(id, el) {
+    const known = el._wpfScroll;
+    if (known && Math.abs(el.scrollLeft - known[0]) < 1 && Math.abs(el.scrollTop - known[1]) < 1) return;
+    const info = a11yInfo.get(id);
+    if (!info || !info.scr) return;
+    const maxX = el.scrollWidth - el.clientWidth, maxY = el.scrollHeight - el.clientHeight;
+    const h = info.sh >= 0 && maxX > 0 ? Math.min(100, Math.max(0, el.scrollLeft / maxX * 100)) : -1;
+    const v = info.sv >= 0 && maxY > 0 ? Math.min(100, Math.max(0, el.scrollTop / maxY * 100)) : -1;
+    el._wpfScroll = [el.scrollLeft, el.scrollTop];
+    a11yPendingScroll.set(id, `${h},${v}`);
+    pushA11y(id, A11Y_SCROLL);
+}
+
+// Escape in a modal dialog: close it. Queued after the key itself, so WPF handles the Escape first
+// and the managed side closes the dialog only if it is still there; and not while the focused node
+// is an open drop-down or menu, which is what Escape is closing.
+function a11yEscape(id) {
+    const info = a11yInfo.get(id);
+    if (info && info.exp === 1) return;
+    let root = id;
+    for (let n = info; n && n.p >= 0; n = a11yInfo.get(n.p)) root = n.p;
+    const top = a11yInfo.get(root);
+    if (!top || !top.modal) return;
+    setTimeout(() => pushA11y(root, A11Y_CLOSE_MODAL), 0);
+}
+
+export function a11yTakeTextSelection(nodeId) { return a11yTake(a11yPendingSelection, nodeId) ?? ""; }
+export function a11yTakeScroll(nodeId) { return a11yTake(a11yPendingScroll, nodeId) ?? ""; }
+export function a11yTakeValue(nodeId) { return a11yTake(a11yPendingValue, nodeId); }
+
+function a11yTake(map, nodeId) {
+    const value = map.get(nodeId);
+    map.delete(nodeId);
+    return value ?? null;
+}
+
 export function a11ySync(json) {
     const nodes = JSON.parse(json);
     const host = a11yEnsureHost();
     const seen = new Set();
     const dpr = window.devicePixelRatio || 1;
 
+    // Each node's window, through its root (the payload lists a parent before its children), and the
+    // topmost modal dialog showing, if any: everything outside it is inert while it is up.
+    const rootOf = new Map();
+    const owned = new Map();
+    let topModal = -1, topZ = -Infinity;
+    for (const n of nodes) {
+        rootOf.set(n.id, n.p >= 0 && rootOf.has(n.p) ? rootOf.get(n.p) : n.id);
+        if (n.p >= 0) {
+            if (!owned.has(n.p)) owned.set(n.p, []);
+            owned.get(n.p).push(`wpf-a11y-${n.id}`);
+        }
+        if (n.p < 0 && n.modal) {
+            const w = windows.get(n.wh);
+            if (w && w.canvas.style.display !== "none") {
+                const z = parseInt(w.canvas.style.zIndex || "0", 10);
+                if (z >= topZ) { topZ = z; topModal = n.id; }
+            }
+        }
+    }
+    const hiddenRoots = new Set();
+    for (const n of nodes) {
+        if (n.p >= 0 || n.wh === undefined) continue;
+        const w = windows.get(n.wh);
+        if (w && w.canvas.style.display === "none") hiddenRoots.add(n.id);
+    }
+
     for (const n of nodes) {
         seen.add(n.id);
-        let el = a11yNodes.get(n.id);
-        if (!el) {
-            el = document.createElement("div");
-            el.dataset.wpfNode = String(n.id);
-            a11yNodes.set(n.id, el);
-            host.appendChild(el);
+        a11yInfo.set(n.id, n);
 
-            el.addEventListener("click", () => pushA11y(n.id, 0));
-            el.addEventListener("keydown", (e) => {
-                if (e.key === "Enter" || e.key === " ") { pushA11y(n.id, 0); e.preventDefault(); }
-            });
-            el.addEventListener("focus", () => pushA11y(n.id, 1));
+        const tag = a11yTagFor(n);
+        let el = a11yNodes.get(n.id);
+        if (!el || el.tagName !== tag) {
+            const fresh = a11yCreate(n, tag);
+            if (el) el.replaceWith(fresh); else host.appendChild(fresh);
+            el = fresh;
+            a11yNodes.set(n.id, el);
         }
 
-        if (n.r) {
+        if (tag !== "DIV") {
+            // A real text control: its own role (textbox) and its own read-only and multi-line
+            // states, which an explicit role or aria-readonly would only contradict.
+            el.removeAttribute("role");
+            setAttr(el, "aria-label", n.n || null);
+            el.readOnly = !!n.ro;
+            if (!a11yPendingValue.has(n.id) && el.value !== n.tx) el.value = n.tx;
+            if (n.ss !== undefined && !a11yPendingSelection.has(n.id) && (el.selectionStart !== n.ss || el.selectionEnd !== n.se)) {
+                el._wpfSelection = [n.ss, n.se];
+                try { el.setSelectionRange(n.ss, n.se); } catch { }
+            }
+        } else if (n.r) {
             el.setAttribute("role", n.r);
-            if (n.n) el.setAttribute("aria-label", n.n); else el.removeAttribute("aria-label");
-            if (el.firstChild) el.textContent = "";
+            setAttr(el, "aria-label", n.n || null);
+            a11ySetText(el, "");
         } else {
             // No ARIA role means a generic element, and a generic element's aria-label is IGNORED
             // by every browser -- name-from-author is prohibited for it. Static text has to become
             // actual text, or a label in a WPF app is simply absent from the accessibility tree.
             el.removeAttribute("role");
             el.removeAttribute("aria-label");
-            const text = n.n || "";
-            if (el.textContent !== text) el.textContent = text;
+            a11ySetText(el, n.n || "");
         }
 
         setAttr(el, "aria-disabled", n.dis ? "true" : null);
         setAttr(el, "aria-checked", n.chk === 2 ? "mixed" : n.chk === 1 ? "true" : (n.r === "checkbox" || n.r === "radio") ? "false" : null);
         setAttr(el, "aria-expanded", n.exp === 1 ? "true" : n.exp === 0 ? "false" : null);
-        setAttr(el, "aria-selected", n.sel ? "true" : null);
+        // An item that can be selected says so when it is not, where ARIA lets it: a multi-select
+        // list is read as "not selected" item by item, and silence would mean "cannot be".
+        setAttr(el, "aria-selected", n.sel ? "true" : (n.sbl && A11Y_SELECTED_ROLES.has(n.r)) ? "false" : null);
+        setAttr(el, "aria-multiselectable", n.ms && A11Y_MULTISELECT_ROLES.has(n.r) ? "true" : null);
         setAttr(el, "aria-valuenow", n.v !== undefined ? String(n.v) : null);
         setAttr(el, "aria-valuemin", n.vmin !== undefined ? String(n.vmin) : null);
         setAttr(el, "aria-valuemax", n.vmax !== undefined ? String(n.vmax) : null);
         setAttr(el, "aria-valuetext", n.vt ?? null);
+        setAttr(el, "aria-modal", n.modal && n.r === "dialog" ? "true" : null);
+
+        setAttr(el, "aria-rowcount", n.rc !== undefined && A11Y_GRID_ROLES.has(n.r) ? String(n.rc) : null);
+        setAttr(el, "aria-colcount", n.cc !== undefined && A11Y_GRID_ROLES.has(n.r) ? String(n.cc) : null);
+        setAttr(el, "aria-rowindex", n.ri !== undefined && A11Y_ROWINDEX_ROLES.has(n.r) ? String(n.ri) : null);
+        setAttr(el, "aria-colindex", n.ci !== undefined && A11Y_COLINDEX_ROLES.has(n.r) ? String(n.ci) : null);
+        setAttr(el, "aria-rowspan", n.rs !== undefined && A11Y_COLINDEX_ROLES.has(n.r) ? String(n.rs) : null);
+        setAttr(el, "aria-colspan", n.cs !== undefined && A11Y_COLINDEX_ROLES.has(n.r) ? String(n.cs) : null);
+
+        // The tree's shape. A text control cannot own anything: its content is its value.
+        const children = owned.get(n.id);
+        setAttr(el, "aria-owns", children && tag === "DIV" ? children.join(" ") : null);
+
+        // A window that is not showing has no mirror showing either; a window under a modal one is
+        // out of reach, as it is for the mouse.
+        const root = rootOf.get(n.id);
+        el.hidden = hiddenRoots.has(root);
+        if (topModal >= 0 && root !== topModal) el.setAttribute("inert", ""); else el.removeAttribute("inert");
 
         // Focusable and clickable only where WPF says there is something to do; everything else
         // stays out of the tab order so keyboard navigation matches what the app actually offers.
+        // A text control is focusable by itself, so it is taken out explicitly.
         if (n.foc || n.act) { el.setAttribute("tabindex", "0"); el.style.pointerEvents = "auto"; }
-        else { el.removeAttribute("tabindex"); el.style.pointerEvents = "none"; }
+        else { if (tag === "DIV") el.removeAttribute("tabindex"); else el.setAttribute("tabindex", "-1"); el.style.pointerEvents = "none"; }
 
         // Bounds arrive in device pixels; CSS wants points.
-        el.style.cssText += "";
+        const width = n.w / dpr, height = n.h / dpr;
         el.style.position = "fixed";
         el.style.left = `${n.x / dpr}px`;
         el.style.top = `${n.y / dpr}px`;
-        el.style.width = `${n.w / dpr}px`;
-        el.style.height = `${n.h / dpr}px`;
+        el.style.width = `${width}px`;
+        el.style.height = `${height}px`;
         el.style.opacity = "0";
-        el.style.overflow = "hidden";
+        el.style.margin = "0";
+        el.style.padding = "0";
+        el.style.border = "0";
+        el.style.boxSizing = "border-box";
+        if (tag === "DIV") a11ySyncScroll(n.id, el, n, width, height);
+        else el.style.overflow = "hidden";
     }
 
     for (const [id, el] of a11yNodes) {
-        if (!seen.has(id)) { el.remove(); a11yNodes.delete(id); }
+        if (!seen.has(id)) {
+            el.remove();
+            a11yNodes.delete(id);
+            a11yInfo.delete(id);
+            a11yPendingSelection.delete(id);
+            a11yPendingScroll.delete(id);
+            a11yPendingValue.delete(id);
+        }
     }
+}
+
+// A generic element's text, kept in a text node of its own so a scrolling pane's spacer survives.
+function a11ySetText(el, text) {
+    let node = el._wpfText;
+    if (!text) {
+        if (node) { node.remove(); el._wpfText = null; }
+        for (const c of [...el.childNodes]) if (c !== el._wpfSpacer) c.remove();
+        return;
+    }
+    if (!node) {
+        for (const c of [...el.childNodes]) if (c !== el._wpfSpacer) c.remove();
+        node = document.createTextNode("");
+        el.insertBefore(node, el.firstChild);
+        el._wpfText = node;
+    }
+    if (node.data !== text) node.data = text;
+}
+
+// A scrolling pane as an overflow container: a spacer as big as WPF's content (the view size is the
+// viewport's share of it), scrolled to WPF's position -- unless the screen reader's own scroll is on
+// its way to WPF, which would be undone.
+function a11ySyncScroll(id, el, n, width, height) {
+    let spacer = el._wpfSpacer;
+    if (!n.scr) {
+        if (spacer) { spacer.remove(); el._wpfSpacer = null; }
+        el.style.overflow = "hidden";
+        return;
+    }
+    if (!spacer) {
+        spacer = document.createElement("div");
+        spacer.setAttribute("aria-hidden", "true");
+        spacer.style.cssText = "pointer-events:none;margin:0;padding:0;border:0;";
+        el.appendChild(spacer);
+        el._wpfSpacer = spacer;
+    }
+    const contentWidth = n.sh >= 0 && n.szh > 0 ? width * 100 / n.szh : width;
+    const contentHeight = n.sv >= 0 && n.szv > 0 ? height * 100 / n.szv : height;
+    spacer.style.width = `${contentWidth}px`;
+    spacer.style.height = `${contentHeight}px`;
+    el.style.overflowX = n.sh >= 0 ? "auto" : "hidden";
+    el.style.overflowY = n.sv >= 0 ? "auto" : "hidden";
+    // The pane never scrolls for a finger or the wheel: those are WPF's (the wheel is taken at the
+    // window, and touch-action keeps a pan from starting here).
+    el.style.touchAction = "none";
+    if (a11yPendingScroll.has(id)) return;
+
+    const left = n.sh >= 0 ? (contentWidth - width) * n.sh / 100 : 0;
+    const top = n.sv >= 0 ? (contentHeight - height) * n.sv / 100 : 0;
+    if (Math.abs(el.scrollLeft - left) >= 1 || Math.abs(el.scrollTop - top) >= 1) {
+        el.scrollLeft = left;
+        el.scrollTop = top;
+    }
+    el._wpfScroll = [el.scrollLeft, el.scrollTop];
 }
 
 export function a11ySetFocus(nodeId) {
     const el = a11yNodes.get(nodeId);
-    if (el && document.activeElement !== el) el.focus({ preventScroll: true });
+    if (!el || document.activeElement === el) return;
+    // A WPF text field took focus and the input method's proxy has it (enableTextInput): the text
+    // control mirroring that field must not take it, or the composition the user is typing ends.
+    if (a11yIsText(el) && imeElement && document.activeElement === imeElement) return;
+    el.focus({ preventScroll: true });
 }
 
 function setAttr(el, name, value) {
-    if (value === null || value === undefined) el.removeAttribute(name);
-    else el.setAttribute(name, value);
+    if (value === null || value === undefined) { if (el.hasAttribute(name)) el.removeAttribute(name); }
+    else if (el.getAttribute(name) !== value) el.setAttribute(name, value);
 }
 
 function pushA11y(nodeId, kind) {
