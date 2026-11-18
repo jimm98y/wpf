@@ -361,6 +361,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         protected override void OnFinalRelease()
         {
             ReleaseDrawResources();
+            Occlusion?.Dispose();
+            Occlusion = null;
             Device11.Release();
             Parent.Release();
         }

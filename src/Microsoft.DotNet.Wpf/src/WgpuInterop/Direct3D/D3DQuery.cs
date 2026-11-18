@@ -9,8 +9,8 @@
 //   the context's recorded work; GetData asks wgpu (without blocking) whether the queue has drained.
 // - TIMESTAMP_DISJOINT answers disjoint, so an app ignores the timestamps, which are the CPU's clock in
 //   ns.
-// - OCCLUSION and OCCLUSION_PREDICATE answer "visible" (one sample past per query, the predicate true).
-//   That is never wrong for culling, only less effective; it is logged once.
+// - OCCLUSION and OCCLUSION_PREDICATE count the samples that passed, over WebGPU's occlusion queries
+//   (OcclusionQueries.cs); GetData submits what holds them unless told not to, and reads them back.
 // - PIPELINE_STATISTICS and the stream-output statistics answer zeros, also logged once.
 //
 
@@ -35,6 +35,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public readonly D3D11_QUERY_DESC Desc;
         /// <summary>End was called (and not Begin since).</summary>
         public bool Ended;
+        /// <summary>An occlusion query's segments.</summary>
+        public readonly OcclusionQuery Samples = new();
+        public bool IsOcclusion => Desc.Query is Occlusion or OcclusionPredicate;
 
         public D3DQuery(D3DDevice device, D3D11_QUERY_DESC desc, bool predicate) : base(device, predicate ? s_predicate : s_query) { Desc = desc; }
 
@@ -72,11 +75,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
     internal sealed unsafe partial class D3DContext
     {
-        public void Begin(D3DQuery q) => Run(c => q.Ended = false, q);
+        public void Begin(D3DQuery q) => Run(c =>
+        {
+            q.Ended = false;
+            // a pass begun before the context had a query set cannot hold the query: the next one will
+            if (q.IsOcclusion && c.OcclusionOrNew.Begin(q.Samples)) c.EndPass();
+        }, q);
 
         public void End(D3DQuery q) => Run(c =>
         {
             q.Ended = true;
+            if (q.IsOcclusion && q.Samples.Open) c.OcclusionOrNew.End(q.Samples);
             // the work before it, on its way to the GPU: the event is done when it is
             if (q.Desc.Query == D3DQuery.Event) c.FlushToGpu(wait: false);
         }, q);
@@ -98,18 +107,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     if (data != null) *(int*)data = 1;
                     return HResult.S_OK;
                 }
+                if (q.IsOcclusion)
+                {
+                    // its samples: in work still recording, submitted first (unless the caller said not to)
+                    if (Occlusion != null && q.Samples.InCurrentBatch(Occlusion))
+                    {
+                        if ((flags & 1) != 0) return HResult.S_FALSE;
+                        FlushToGpu(wait: false);
+                    }
+                    ulong samples = Occlusion?.Result(q.Samples) ?? 0;
+                    if (data == null) return HResult.S_OK;
+                    if (q.Desc.Query == D3DQuery.Occlusion) *(ulong*)data = samples;
+                    else *(int*)data = samples != 0 ? 1 : 0;
+                    return HResult.S_OK;
+                }
                 if (data == null) return HResult.S_OK;
                 new Span<byte>(data, (int)need).Clear();
                 switch (q.Desc.Query)
                 {
-                    case D3DQuery.Occlusion:
-                        D3DLog.Once("qocc", "occlusion queries answer one sample passed (WebGPU's occlusion queries are not wired up): culling by them draws everything");
-                        *(ulong*)data = 1;
-                        break;
-                    case D3DQuery.OcclusionPredicate:
-                        D3DLog.Once("qocc", "occlusion queries answer one sample passed (WebGPU's occlusion queries are not wired up): culling by them draws everything");
-                        *(int*)data = 1;
-                        break;
                     case D3DQuery.Timestamp:
                         *(ulong*)data = (ulong)(Stopwatch.GetTimestamp() * (1e9 / Stopwatch.Frequency));
                         break;

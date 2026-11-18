@@ -106,6 +106,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [JSImport("createCommandEncoder", ModuleName)]
         internal static partial int CreateCommandEncoder(int device);
 
+        [JSImport("createQuerySet", ModuleName)]
+        internal static partial int CreateQuerySet(int device, int type, int count);
+
         [JSImport("beginRenderPass", ModuleName)]
         internal static partial int BeginRenderPass(int encoder, string descJson);
 

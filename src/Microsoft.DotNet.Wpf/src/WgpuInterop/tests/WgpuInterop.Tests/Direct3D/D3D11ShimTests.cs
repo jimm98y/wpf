@@ -71,7 +71,7 @@ namespace WgpuInterop.Tests.Direct3D
         /// <summary>Clears a 64x64 BGRA target to a dark blue, draws one triangle (vertex colour times a
         /// constant-buffer tint, moved by a constant-buffer offset), and reads the target back through a
         /// staging texture: BGRA rows, tightly packed.</summary>
-        internal static byte[] RenderTriangle(IntPtr dev, IntPtr ctx)
+        internal static byte[] RenderTriangle(IntPtr dev, IntPtr ctx, ulong[]? samples = null)
         {
             var created = new System.Collections.Generic.List<IntPtr>();
             IntPtr Keep(IntPtr p) { created.Add(p); return p; }
@@ -147,7 +147,33 @@ namespace WgpuInterop.Tests.Direct3D
                 ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
                 float* clear = stackalloc float[] { 0.0f, 0.125f, 0.5f, 1f };
                 ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
-                ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, 3, 0);
+                if (samples == null) ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, 3, 0);
+                else
+                {
+                    // occlusion: one query around the draw; one open across a draw, a clear (a new pass) and the draw again
+                    IntPtr q1, q2;
+                    var qd = new D3D11_QUERY_DESC { Query = 1 };
+                    Check(((delegate* unmanaged<IntPtr, D3D11_QUERY_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateQuery))(dev, &qd, &q1), "CreateQuery");
+                    Keep(q1);
+                    Check(((delegate* unmanaged<IntPtr, D3D11_QUERY_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateQuery))(dev, &qd, &q2), "CreateQuery");
+                    Keep(q2);
+                    var begin = (delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Begin);
+                    var end = (delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.End);
+                    var draw = (delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw);
+                    begin(ctx, q1); draw(ctx, 3, 0); end(ctx, q1);
+                    begin(ctx, q2); draw(ctx, 3, 0);
+                    ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
+                    draw(ctx, 3, 0); end(ctx, q2);
+                    var getData = (delegate* unmanaged<IntPtr, IntPtr, void*, uint, uint, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.GetData);
+                    ulong n;
+                    for (int i = 0; i < 2; i++)
+                    {
+                        int hr;
+                        do hr = getData(ctx, i == 0 ? q1 : q2, &n, 8, 0); while (hr == 1);
+                        Check(hr, "GetData");
+                        samples[i] = n;
+                    }
+                }
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, staging, rt);
 
                 D3D11_MAPPED_SUBRESOURCE m;
@@ -187,6 +213,33 @@ namespace WgpuInterop.Tests.Direct3D
                 // and the offset moved it right: the left tip's column is clear
                 var left = At(px, 17, H / 2 + 14);
                 Assert.Equal((128, 32, 0), ((int)left.B, (int)left.G, (int)left.R));
+            }
+            finally
+            {
+                Release(ctx);
+                Release(dev);
+            }
+        }
+
+        /// <summary>Occlusion queries count the samples drawn while they are open, across passes.</summary>
+        [Fact]
+        public void OcclusionQueries_CountTheSamplesDrawn()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            var (dev, ctx) = Ours();
+            try
+            {
+                var samples = new ulong[2];
+                RenderTriangle(dev, ctx, samples);
+                // the triangle: half of a 0.5 x 0.55 NDC box of the 64x64 target, some 450 pixels where the
+                // backend counts samples; Metal's answer is 1 per pass segment that drew (OcclusionQueries.cs)
+                Assert.True(samples[0] > 0, "the visible triangle counted");
+                if (samples[0] > 1)
+                {
+                    Assert.InRange(samples[0], 400UL, 520UL);
+                    Assert.Equal(samples[0] * 2, samples[1]);
+                }
+                else Assert.True(samples[1] >= 1);
             }
             finally
             {

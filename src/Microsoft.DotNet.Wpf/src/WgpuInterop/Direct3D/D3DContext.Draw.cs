@@ -655,8 +655,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 colorAttachmentCount = (nuint)count, colorAttachments = atts,
                 depthStencilAttachment = _dsv != null ? (IntPtr)(&ds) : IntPtr.Zero,
+                occlusionQuerySet = Occlusion?.QuerySetForPass ?? IntPtr.Zero,
             };
             _pass = wgpuCommandEncoderBeginRenderPass(Encoder(), &desc);
+            if (_pass != IntPtr.Zero) Occlusion?.PassBegun(_pass);
             return _pass != IntPtr.Zero;
         }
 

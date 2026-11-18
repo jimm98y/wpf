@@ -133,7 +133,34 @@ namespace Microsoft.Wpf.Interop.WebGpu
             public IntPtr userdata2;
         }
 
+        /// <summary>WGPUQuerySetDescriptor; type 1 occlusion, 2 timestamp.</summary>
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct WGPUQuerySetDescriptor
+        {
+            public IntPtr nextInChain;
+            public WGPUStringView label;
+            public uint type;
+            public uint count;
+        }
+
+        internal const uint WGPUQueryType_Occlusion = 1;
+
 #if !WGPU_BROWSER     // the browser's: Browser/Wgpu.Browser.cs
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr wgpuDeviceCreateQuerySet(IntPtr device, WGPUQuerySetDescriptor* descriptor);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuQuerySetRelease(IntPtr querySet);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuRenderPassEncoderBeginOcclusionQuery(IntPtr pass, uint queryIndex);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuRenderPassEncoderEndOcclusionQuery(IntPtr pass);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void wgpuCommandEncoderResolveQuerySet(IntPtr encoder, IntPtr querySet, uint firstQuery, uint queryCount, IntPtr destination, ulong destinationOffset);
+
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         internal static extern uint wgpuAdapterHasFeature(IntPtr adapter, uint feature);
 

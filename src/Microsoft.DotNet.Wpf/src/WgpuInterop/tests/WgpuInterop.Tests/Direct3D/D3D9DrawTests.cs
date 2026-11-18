@@ -998,6 +998,56 @@ namespace WgpuInterop.Tests.Direct3D
             Near(colors[4], s.Pixels()[32 * W + 32], 2, "the +z face");
         }
 
+        /// <summary>Occlusion queries: the pixels a quad covers, none for one behind the depth buffer, and a query
+        /// left open across a Clear counting both of its draws.</summary>
+        [Fact]
+        public void OcclusionQueries_CountThePixelsThatPassed()
+        {
+            RequireGpu();
+            using var s = new Scene(depth: true);
+            IntPtr Query()
+            {
+                IntPtr q;
+                Check(((delegate* unmanaged<IntPtr, int, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.CreateQuery))(s.Dev, 9, &q), "CreateQuery");
+                return s.Own(q);
+            }
+            void Issue(IntPtr q, uint f) => Check(((delegate* unmanaged<IntPtr, uint, int>)Fn(q, Vtbl.IDirect3DQuery9.Issue))(q, f), "Issue");
+            uint Result(IntPtr q)
+            {
+                uint n = 0; int hr;
+                do hr = ((delegate* unmanaged<IntPtr, void*, uint, uint, int>)Fn(q, Vtbl.IDirect3DQuery9.GetData))(q, &n, 4, 1); while (hr == 1);
+                Check(hr, "GetData");
+                return n;
+            }
+            RhwColor[] Quad(float x0, float x1, float z) => new[]
+            {
+                new RhwColor { X = x0, Y = 0, Z = z, Rhw = 1, Color = 0xFFFF0000 }, new RhwColor { X = x1, Y = 0, Z = z, Rhw = 1, Color = 0xFFFF0000 },
+                new RhwColor { X = x0, Y = 32, Z = z, Rhw = 1, Color = 0xFFFF0000 }, new RhwColor { X = x1, Y = 32, Z = z, Rhw = 1, Color = 0xFFFF0000 },
+            };
+            s.Fvf(FVF_XYZRHW | FVF_DIFFUSE);
+            s.RS(D3DRS.ZENABLE, 1);           // off by default without an automatic depth surface
+            s.Clear(3, 0xFF000000, 1);
+            IntPtr front = Query(), hidden = Query(), across = Query();
+            Issue(front, 2); s.DrawUp(5, 2, Quad(0, 32, 0.25f)); Issue(front, 1);
+            Issue(hidden, 2); s.DrawUp(5, 2, Quad(0, 16, 0.75f)); Issue(hidden, 1);       // behind the first quad
+            Issue(across, 2);
+            s.DrawUp(5, 2, Quad(32, 48, 0.25f));
+            s.Clear(2, 0, 1);                                                         // depth only: a new pass
+            s.DrawUp(5, 2, Quad(48, 64, 0.25f));
+            Issue(across, 1);
+            s.EndScene();
+            uint visible = Result(front);
+            Assert.Equal(0u, Result(hidden));
+            Assert.True(visible > 0);
+            // a backend that counts samples (Metal answers 1 per segment: OcclusionQueries.cs)
+            if (visible > 1)
+            {
+                Assert.Equal(32u * 32u, visible);
+                Assert.Equal(2u * 16u * 32u, Result(across));
+            }
+            else Assert.True(Result(across) >= 1);
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()

@@ -334,10 +334,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public const int D3DQUERYTYPE_EVENT = 8, D3DQUERYTYPE_OCCLUSION = 9, D3DQUERYTYPE_TIMESTAMP = 10, D3DQUERYTYPE_TIMESTAMPDISJOINT = 11, D3DQUERYTYPE_TIMESTAMPFREQ = 12;
         public readonly int Type;
         private bool _issued;
+        private readonly OcclusionQuery _samples = new();
 
         public Direct3DQuery9(Direct3DDevice9 device, int type) : base(device, s_vt) => Type = type;
 
-        public static bool Supported(int type) => type is D3DQUERYTYPE_EVENT or D3DQUERYTYPE_TIMESTAMP or D3DQUERYTYPE_TIMESTAMPDISJOINT or D3DQUERYTYPE_TIMESTAMPFREQ;
+        public static bool Supported(int type) => type is D3DQUERYTYPE_EVENT or D3DQUERYTYPE_OCCLUSION or D3DQUERYTYPE_TIMESTAMP or D3DQUERYTYPE_TIMESTAMPDISJOINT or D3DQUERYTYPE_TIMESTAMPFREQ;
 
         private static Vtable Build()
         {
@@ -353,13 +354,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static Direct3DQuery9? Self(IntPtr p) => From<Direct3DQuery9>(p);
 
         [UnmanagedCallersOnly] private static int GetType(IntPtr self) => Self(self)?.Type ?? 0;
-        [UnmanagedCallersOnly] private static uint GetDataSize(IntPtr self) => Self(self)?.Type switch { D3DQUERYTYPE_EVENT or D3DQUERYTYPE_TIMESTAMPDISJOINT => 4u, _ => 8u };
+        [UnmanagedCallersOnly] private static uint GetDataSize(IntPtr self) => Self(self)?.Type switch { D3DQUERYTYPE_EVENT or D3DQUERYTYPE_TIMESTAMPDISJOINT or D3DQUERYTYPE_OCCLUSION => 4u, _ => 8u };
 
         [UnmanagedCallersOnly]
         private static int Issue(IntPtr self, uint flags)
         {
             var q = Self(self);
             if (q == null) return D3D9Const.D3DERR_INVALIDCALL;
+            if (q.Type == D3DQUERYTYPE_OCCLUSION)
+            {
+                // D3DISSUE_BEGIN (2) starts counting, D3DISSUE_END (1) stops
+                if ((flags & 2) != 0) { q._issued = false; q.Device.BeginOcclusion(q._samples); }
+                if ((flags & 1) != 0) { q.Device.EndOcclusion(q._samples); q._issued = true; }
+                return HResult.S_OK;
+            }
             if ((flags & 1) != 0) { q._issued = true; q.Device.FlushDraws(); }     // D3DISSUE_END: what came before is sent
             return HResult.S_OK;
         }
@@ -372,6 +380,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var q = Self(self);
             if (q == null) return D3D9Const.D3DERR_INVALIDCALL;
             if (!q._issued && q.Type == D3DQUERYTYPE_EVENT) return HResult.S_FALSE;
+            if (q.Type == D3DQUERYTYPE_OCCLUSION)
+            {
+                if (!q._issued) return D3D9Const.D3DERR_INVALIDCALL;
+                // the samples: in work still recording, submitted first (D3DGETDATA_FLUSH or not: it is cheap here)
+                var t = q.Device.Occlusion;
+                if (t != null && q._samples.InCurrentBatch(t)) q.Device.FlushDraws();
+                uint samples = t == null ? 0 : (uint)Math.Min(t.Result(q._samples), uint.MaxValue);
+                if (data != null && size >= 4) *(uint*)data = samples;
+                return HResult.S_OK;
+            }
             if (data == null || size == 0) return HResult.S_OK;
             switch (q.Type)
             {

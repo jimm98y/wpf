@@ -568,6 +568,7 @@ namespace Microsoft.Wpf.Interop.WebGpu
                 w.WriteBoolean("stencilReadOnly", dsa->stencilReadOnly != 0);
                 w.WriteEndObject();
             }
+            if (descriptor->occlusionQuerySet != IntPtr.Zero) w.WriteNumber("occlusion", (int)descriptor->occlusionQuerySet);
             w.WriteEndObject();
             FlushPassCommands();
             return (IntPtr)WgpuBrowserJs.BeginRenderPass((int)commandEncoder, FinishJson(w, buffer));
@@ -595,7 +596,8 @@ namespace Microsoft.Wpf.Interop.WebGpu
                           OpDraw = 10, OpDrawIndirect = 11, OpDrawIndexedIndirect = 12, OpBlendConstant = 13,
                           OpStencilReference = 14, OpDynamicOffsets = 15, OpDispatch = 16, OpDispatchIndirect = 17,
                           OpCopyBufferToBuffer = 18, OpCopyTextureToTexture = 19, OpCopyBufferToTexture = 20,
-                          OpCopyTextureToBuffer = 21, OpClearBuffer = 22;
+                          OpCopyTextureToBuffer = 21, OpClearBuffer = 22, OpBeginOcclusionQuery = 23, OpEndOcclusionQuery = 24,
+                          OpResolveQuerySet = 25;
         [ThreadStatic] private static double[]? t_passCommands;
         [ThreadStatic] private static int t_passCount;
 
@@ -668,6 +670,20 @@ namespace Microsoft.Wpf.Interop.WebGpu
 
         internal static void wgpuRenderPassEncoderSetStencilReference(IntPtr pass, uint reference)
             => Record(OpStencilReference, (int)pass, reference, count: 2);
+
+        internal static IntPtr wgpuDeviceCreateQuerySet(IntPtr device, WGPUQuerySetDescriptor* descriptor)
+            => (IntPtr)WgpuBrowserJs.CreateQuerySet((int)device, (int)descriptor->type, (int)descriptor->count);
+
+        internal static void wgpuQuerySetRelease(IntPtr querySet) => Record(OpRelease, (int)querySet, count: 1);
+
+        internal static void wgpuRenderPassEncoderBeginOcclusionQuery(IntPtr pass, uint queryIndex)
+            => Record(OpBeginOcclusionQuery, (int)pass, queryIndex, count: 2);
+
+        internal static void wgpuRenderPassEncoderEndOcclusionQuery(IntPtr pass)
+            => Record(OpEndOcclusionQuery, (int)pass, count: 1);
+
+        internal static void wgpuCommandEncoderResolveQuerySet(IntPtr encoder, IntPtr querySet, uint firstQuery, uint queryCount, IntPtr destination, ulong destinationOffset)
+            => Record(OpResolveQuerySet, (int)encoder, (int)querySet, firstQuery, queryCount, (int)destination, destinationOffset, count: 6);
 
         internal static void wgpuRenderPassEncoderSetScissorRect(IntPtr renderPassEncoder, uint x, uint y, uint width, uint height)
             => Record(OpSetScissorRect, (int)renderPassEncoder, x, y, width, height, count: 5);

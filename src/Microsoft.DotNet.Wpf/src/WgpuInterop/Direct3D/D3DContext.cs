@@ -82,6 +82,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             try { FlushToGpu(wait: true); } catch (Exception e) { D3DLog.Error("final flush", e); }
             ClearStateImpl();
             ReleaseGpuCaches();
+            Occlusion?.Dispose();
+            Occlusion = null;
         }
 
         protected override void OnFinalRelease()
@@ -361,9 +363,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return _encoder;
         }
 
+        /// <summary>The occlusion queries' segments (OcclusionQueries.cs), once the context has one.</summary>
+        internal OcclusionTracker? Occlusion;
+        internal OcclusionTracker OcclusionOrNew => Occlusion ??= new OcclusionTracker(Device.Gpu);
+
         private void EndPass()
         {
             if (_pass == IntPtr.Zero) return;
+            Occlusion?.PassEnding();
             wgpuRenderPassEncoderEnd(_pass);
             wgpuRenderPassEncoderRelease(_pass);
             _pass = IntPtr.Zero;
@@ -467,6 +474,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 if (Device.Gpu.IsOpenGL) Device.Gpu.GlUnpackSuspect = true;     // for the device's other uploaders: not every path that binds a storage buffer is known
                 ResetGlUnpackBinding();
+                Occlusion?.BeforeFinish(_encoder);
                 IntPtr cmd = wgpuCommandEncoderFinish(_encoder, IntPtr.Zero);
                 wgpuCommandEncoderRelease(_encoder);
                 _encoder = IntPtr.Zero;

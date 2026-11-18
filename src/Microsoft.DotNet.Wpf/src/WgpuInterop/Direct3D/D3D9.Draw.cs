@@ -92,9 +92,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return _encoder;
         }
 
+        /// <summary>The occlusion queries' segments (OcclusionQueries.cs), once a query was begun.</summary>
+        internal OcclusionTracker? Occlusion;
+        internal OcclusionTracker OcclusionOrNew => Occlusion ??= new OcclusionTracker(Device11.Gpu);
+
+        /// <summary>D3DISSUE_BEGIN of an occlusion query.</summary>
+        internal void BeginOcclusion(OcclusionQuery q)
+        {
+            lock (DrawLock) { if (OcclusionOrNew.Begin(q)) EndPass(); }
+        }
+
+        internal void EndOcclusion(OcclusionQuery q)
+        {
+            lock (DrawLock) { if (q.Open) OcclusionOrNew.End(q); }
+        }
+
         private void EndPass()
         {
             if (_pass == IntPtr.Zero) return;
+            Occlusion?.PassEnding();
             wgpuRenderPassEncoderEnd(_pass);
             wgpuRenderPassEncoderRelease(_pass);
             _pass = IntPtr.Zero;
@@ -115,6 +131,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         fixed (byte* p = _uniformCpu) wgpuQueueWriteBuffer(gpu.Queue, _uniformGpu, 0, p, (nuint)_uniformAt);
                     if (_vertexAt > 0)
                         fixed (byte* p = _vertexCpu) wgpuQueueWriteBuffer(gpu.Queue, _vertexGpu, 0, p, (nuint)((_vertexAt + 3) & ~3));
+                    Occlusion?.BeforeFinish(_encoder);
                     IntPtr cmd = wgpuCommandEncoderFinish(_encoder, IntPtr.Zero);
                     wgpuCommandEncoderRelease(_encoder);
                     _encoder = IntPtr.Zero;
@@ -268,8 +285,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 colorAttachmentCount = (nuint)count, colorAttachments = atts,
                 depthStencilAttachment = ts.Depth != null ? (IntPtr)(&ds) : IntPtr.Zero,
+                occlusionQuerySet = Occlusion?.QuerySetForPass ?? IntPtr.Zero,
             };
             _pass = wgpuCommandEncoderBeginRenderPass(Encoder(), &desc);
+            if (_pass != IntPtr.Zero) Occlusion?.PassBegun(_pass);
             views.AsSpan().CopyTo(_passColor);
             _passDepth = dv;
             _passW = ts.Width; _passH = ts.Height;

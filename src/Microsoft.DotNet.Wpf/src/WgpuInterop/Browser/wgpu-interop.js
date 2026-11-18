@@ -593,7 +593,13 @@ export function beginRenderPass(encoderId, json) {
         else if (s.stencilLoad) { a.stencilLoadOp = LOAD_OPS[s.stencilLoad]; a.stencilStoreOp = STORE_OPS[s.stencilStore] ?? "store"; a.stencilClearValue = s.stencilClear; }
         desc.depthStencilAttachment = a;
     }
+    if (d.occlusion) desc.occlusionQuerySet = get(d.occlusion);
     return put(get(encoderId).beginRenderPass(desc));
+}
+
+// type 1 occlusion, 2 timestamp (webgpu.h's WGPUQueryType)
+export function createQuerySet(deviceId, type, count) {
+    return put(get(deviceId).createQuerySet({ type: type === 2 ? "timestamp" : "occlusion", count }));
 }
 
 export function beginComputePass(encoderId) {
@@ -646,6 +652,9 @@ export function runPassCommands(view) {
             case 20: o.copyBufferToTexture(copyBuffer(c, a + 1), copyTexture(c, a + 5), extent(c, a + 11)); break;
             case 21: o.copyTextureToBuffer(copyTexture(c, a + 1), copyBuffer(c, a + 7), extent(c, a + 11)); break;
             case 22: if (c[a + 3] < 0) o.clearBuffer(get(c[a + 1]), c[a + 2]); else o.clearBuffer(get(c[a + 1]), c[a + 2], c[a + 3]); break;
+            case 23: o.beginOcclusionQuery(c[a + 1]); break;
+            case 24: o.endOcclusionQuery(); break;
+            case 25: o.resolveQuerySet(get(c[a + 1]), c[a + 2], c[a + 3], get(c[a + 4]), c[a + 5]); break;
         }
     }
 }
