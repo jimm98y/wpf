@@ -98,6 +98,8 @@ namespace MS.Internal.Interop
 {
     public sealed partial class AndroidWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public static event System.Action SystemAppearanceChanged { add { } remove { } }
+        public static bool IsSystemDarkTheme() { throw null; }
         public const int RightPress = 5;
         public const int RightRelease = 6;
         public static event System.Action<int, int> NotificationEvent { add { } remove { } }
@@ -254,6 +256,14 @@ namespace MS.Internal.Interop
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("browser")]
     public sealed partial class BrowserWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public System.Func<int[], int[]> QueryMaximizedRect { get { throw null; } set { } }
+        public event System.Action<bool> ActiveChanged { add { } remove { } }
+        public static event System.Action SystemAppearanceChanged { add { } remove { } }
+        public void Activate() { }
+        public int GetWindowState() { throw null; }
+        public static bool IsForcedColors() { throw null; }
+        public static bool IsSystemDarkTheme() { throw null; }
+        public void SetVisible(bool visible, bool activate) { }
         public void TakeKeyboard() { }
         public BrowserWindow() { }
         public int FrameStyle { get { throw null; } set { } }
@@ -576,6 +586,7 @@ namespace MS.Internal.Interop
     }
     public partial interface IAndroidHost
     {
+        bool IsNightMode { get { throw null; } }
         bool ShowNotification(int tag, string title, string text, int kind) { throw null; }
         double Density { get; }
         double RefreshRateHz { get { throw null; } }
@@ -728,6 +739,8 @@ namespace MS.Internal.Interop
     }
     public sealed partial class UIKitWindow : MS.Internal.Interop.IPlatformWindow
     {
+        public static event System.Action SystemAppearanceChanged { add { } remove { } }
+        public static bool IsSystemDarkTheme() { throw null; }
         public int FrameStyle { get { throw null; } set { } }
         public event System.Action<System.IntPtr> Closed { add { } remove { } }
         public static void SetTitle(System.IntPtr handle, string title) { }
