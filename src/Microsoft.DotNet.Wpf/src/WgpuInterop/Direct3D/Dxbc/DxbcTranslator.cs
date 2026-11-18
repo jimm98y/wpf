@@ -45,6 +45,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public readonly SortedDictionary<int, int> ConstantBuffers = new();
         /// <summary>Sampler slot -> comparison sampler.</summary>
         public readonly SortedDictionary<int, bool> Samplers = new();
+        /// <summary>Samplers paired with a depth texture read without comparison: non-filtering
+        /// (bound as the nearest-filtered twin of the application's sampler).</summary>
+        public readonly SortedSet<int> NonFilteringSamplers = new();
         /// <summary>Resource slot -> (dimension, return kind 'f'/'i'/'u', is depth-compared).</summary>
         public readonly SortedDictionary<int, (int Dim, char Kind, bool Depth)> Resources = new();
         /// <summary>Raw and structured shader resources (read-only storage buffers at 32 + slot).</summary>

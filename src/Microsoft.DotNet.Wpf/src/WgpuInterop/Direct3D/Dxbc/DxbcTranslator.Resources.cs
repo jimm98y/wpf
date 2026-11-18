@@ -18,6 +18,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
 {
@@ -32,13 +33,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             int dim = ResourceDim(slot);
             char kind = _resourceKind.TryGetValue(slot, out char k) ? k : 'f';
             if (depth) _comparisonResources.Add(slot);
-            _bindings.Resources[slot] = (dim, kind, depth || _comparisonResources.Contains(slot));
+            _bindings.Resources[slot] = (dim, kind, depth || _comparisonResources.Contains(slot) || DepthRead(slot));
         }
 
         private void UseSampler(int slot, bool comparison)
         {
             bool cmp = comparison || (_samplerComparison.TryGetValue(slot, out bool c) && c);
             _bindings.Samplers[slot] = cmp;
+        }
+
+        /// <summary>A slot bound with a depth texture (TranslationOptions.DepthTextures).</summary>
+        private bool DepthRead(int slot) => _options.DepthTextures != null && _options.DepthTextures.Contains(slot) && ResourceDim(slot) != DimBuffer;
+
+        /// <summary>A depth texture sampled without comparison: at the nearest texel through a point
+        /// sampler, else the four texels gathered and blended as bilinear filtering blends them.</summary>
+        private string DepthSample(int t, int smp, int dim, string coord, string? layer, string level, string off)
+        {
+            UseSampler(smp, false);
+            _bindings.NonFilteringSamplers.Add(smp);
+            string tex = $"t{t}", s = $"s{smp}";
+            bool point = _options.PointSamplers != null && _options.PointSamplers.Contains(smp);
+            if (point || dim is DimCube or DimCubeArray)
+                return layer == null ? $"textureSampleLevel({tex}, {s}, {coord}, {level}{off})" : $"textureSampleLevel({tex}, {s}, {coord}, {layer}, {level}{off})";
+            string n = $"_dg{_tmp++}";
+            Line($"let {n}c = {coord};");
+            Line($"let {n}f = fract({n}c * vec2<f32>(textureDimensions({tex}, 0)) - vec2<f32>(0.5));");
+            // gather: x (0,1), y (1,1), z (1,0), w (0,0)
+            Line($"let {n}g = {(layer == null ? $"textureGather({tex}, {s}, {n}c{off})" : $"textureGather({tex}, {s}, {n}c, {layer}{off})")};");
+            return $"mix(mix({n}g.w, {n}g.z, {n}f.x), mix({n}g.x, {n}g.y, {n}f.x), {n}f.y)";
         }
 
         private static void RequireTextureDim(int dim, string what)
@@ -133,6 +155,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         private string AsRegister(string call, int slot, bool depth)
         {
             if (depth) return $"vec4<f32>({call})";
+            // a depth texture's value, read: the depth in red, as an R32_FLOAT (R24_UNORM_X8) view gives it
+            if (_bindings.Resources.TryGetValue(slot, out var r) && r.Depth && r.Dim != DimBuffer) return $"vec4<f32>({call}, 0.0f, 0.0f, 1.0f)";
             return _bindings.Resources[slot].Kind == 'f' ? call : $"bitcast<vec4<f32>>({call})";
         }
 
@@ -155,6 +179,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             string tex = $"t{t}", s = $"s{smp}";
             string args = layer == null ? $"{tex}, {s}, {coord}" : $"{tex}, {s}, {coord}, {layer}";
             string off = Offset(ins, dim);
+            if (!cmp && DepthRead(t))
+            {
+                // a depth texture read: the level the instruction names (its own, or 0)
+                string level = ins.Op == Opcode.SampleL ? $"i32(round(({Source(o[4])}).x))" : "0";
+                Store(o[0], $"({AsRegister(DepthSample(t, smp, dim, rawCoord, layer, level, off), t, false)}){Swz(o[2])}", ins.Saturate);
+                return;
+            }
             string call = ins.Op switch
             {
                 Opcode.Sample => $"textureSample({args}{off})",
@@ -241,6 +272,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 string reference = $"({Source(o[si + 1])}).x";
                 call = layer == null ? $"textureGatherCompare(t{t}, s{smp}, {coord}, {reference}{off})" : $"textureGatherCompare(t{t}, s{smp}, {coord}, {layer}, {reference}{off})";
                 call = $"vec4<f32>({call})";
+            }
+            else if (DepthRead(t))
+            {
+                // a depth texture's four texels (one channel only)
+                _bindings.NonFilteringSamplers.Add(smp);
+                call = layer == null ? $"textureGather(t{t}, s{smp}, {coord}{off})" : $"textureGather(t{t}, s{smp}, {coord}, {layer}{off})";
             }
             else
             {

@@ -105,6 +105,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>The WebGPU sampler (made once).</summary>
         public IntPtr Sampler(bool comparison) => SamplerFor(Device, Desc, comparison, ref _sampler);
 
+        private IntPtr _nearest;
+
+        /// <summary>Its nearest-filtered twin, for a depth texture read (a non-filtering binding).</summary>
+        public IntPtr NearestSampler()
+        {
+            var d = Desc;
+            d.Filter &= ~0x55u;
+            return SamplerFor(Device, d, false, ref _nearest);
+        }
+
         internal static IntPtr SamplerFor(D3DDevice device, in D3D11_SAMPLER_DESC desc, bool comparison, ref IntPtr cache)
         {
             if (cache != IntPtr.Zero) return cache;
@@ -131,7 +141,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         protected override void OnFinalRelease()
         {
             if (_sampler != IntPtr.Zero) wgpuSamplerRelease(_sampler);
-            _sampler = IntPtr.Zero;
+            if (_nearest != IntPtr.Zero) wgpuSamplerRelease(_nearest);
+            _sampler = _nearest = IntPtr.Zero;
             base.OnFinalRelease();
         }
     }

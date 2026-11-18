@@ -64,6 +64,30 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return r;
         }
 
+        /// <summary>A stage's t# slots bound with a depth texture, and its point-filtered sampler slots.</summary>
+        private static (SortedSet<int>? Depth, SortedSet<int>? Point) DepthReads(StageState st)
+        {
+            SortedSet<int>? depth = null, point = null;
+            for (int i = 0; i < st.Resources.Length; i++)
+                if (st.Resources[i]?.Resource is D3DTexture2D t && Formats.IsDepth(t.Format)) (depth ??= new()).Add(i);
+            if (depth == null) return (null, null);
+            for (int i = 0; i < st.Samplers.Length; i++)
+                if ((st.Samplers[i]?.Desc.Filter ?? 0u) is var f && (f & 0x55) == 0) (point ??= new()).Add(i);
+            return (depth, point);
+        }
+
+        private static TranslationOptions? Options(TranslationOptions? o, (SortedSet<int>? Depth, SortedSet<int>? Point) d)
+        {
+            if (d.Depth == null) return o;
+            o ??= new TranslationOptions();
+            o.DepthTextures = d.Depth;
+            o.PointSamplers = d.Point;
+            return o;
+        }
+
+        private static string Key((SortedSet<int>? Depth, SortedSet<int>? Point) d) =>
+            d.Depth == null ? "" : "d" + string.Join(",", d.Depth) + "p" + string.Join(",", d.Point ?? new SortedSet<int>());
+
         private Translation Translate(D3DShader vs, D3DShader? ps)
         {
             // the input registers the layout feeds from B8G8R8A8 elements (swapped in the shader)
@@ -75,20 +99,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var vsAddr = SamplerAddress(_vs);
             var psAddr = SamplerAddress(_ps);
             string addrKey = (vsAddr == null ? "" : string.Join(";", vsAddr.Select(kv => $"{kv.Key}:{kv.Value}"))) + "/" + (psAddr == null ? "" : string.Join(";", psAddr.Select(kv => $"{kv.Key}:{kv.Value}")));
-            var key = (vs.Code.Hash, ps?.Code.Hash ?? 0, string.Join(",", bgra) + "|" + addrKey);
+            var vsDepth = DepthReads(_vs);
+            var psDepth = DepthReads(_ps);
+            var key = (vs.Code.Hash, ps?.Code.Hash ?? 0, string.Join(",", bgra) + "|" + addrKey + "|" + Key(vsDepth) + "/" + Key(psDepth));
             if (_translations.TryGetValue(key, out var t)) return t;
             t = new Translation();
             _translations[key] = t;
             try
             {
                 var link = DxbcTranslator.LinkageOf(ps?.Code, vs.Code);
-                var v = DxbcTranslator.Translate(vs.Code, 0, link, bgra.Count > 0 || vsAddr != null ? new TranslationOptions { BgraInputs = bgra.Count > 0 ? bgra : null, SamplerAddress = vsAddr } : null);
+                var v = DxbcTranslator.Translate(vs.Code, 0, link, Options(bgra.Count > 0 || vsAddr != null ? new TranslationOptions { BgraInputs = bgra.Count > 0 ? bgra : null, SamplerAddress = vsAddr } : null, vsDepth));
                 t.VsBindings = v.Bindings;
                 t.Vs = CreateModule(v.Wgsl, "vs", out string? verr);
                 if (t.Vs == IntPtr.Zero) { t.Error = "vertex shader: " + verr; Dump(vs.Code, v.Wgsl, t.Error); return t; }
                 if (ps != null)
                 {
-                    var p = DxbcTranslator.Translate(ps.Code, 1, link, psAddr != null ? new TranslationOptions { SamplerAddress = psAddr } : null);
+                    var p = DxbcTranslator.Translate(ps.Code, 1, link, Options(psAddr != null ? new TranslationOptions { SamplerAddress = psAddr } : null, psDepth));
                     t.PsBindings = p.Bindings;
                     t.Ps = CreateModule(p.Wgsl, "ps", out string? perr);
                     if (t.Ps == IntPtr.Zero) { t.Error = "pixel shader: " + perr; Dump(ps.Code, p.Wgsl, t.Error); return t; }
@@ -234,7 +260,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 entries.Add(new WGPUBindGroupLayoutEntry
                 {
                     binding = (uint)(DxbcTranslator.SamplerBase + slot), visibility = stage,
-                    sampler = new WGPUSamplerBindingLayout { type = cmp ? WGPUSamplerBindingType.Comparison : WGPUSamplerBindingType.Filtering },
+                    sampler = new WGPUSamplerBindingLayout { type = cmp ? WGPUSamplerBindingType.Comparison : b.NonFilteringSamplers.Contains(slot) ? WGPUSamplerBindingType.NonFiltering : WGPUSamplerBindingType.Filtering },
                 });
             foreach (var (slot, r) in b.Resources)
                 entries.Add(r.Dim == 1 ? new WGPUBindGroupLayoutEntry
@@ -538,7 +564,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private int _arenaIndex;
         private ulong _arenaOffset;
         private const ulong ArenaSize = 4 << 20;
-        private IntPtr _defaultSampler, _defaultComparisonSampler;
+        private IntPtr _defaultSampler, _defaultComparisonSampler, _defaultNearestSampler;
         private readonly Dictionary<int, IntPtr> _dummyViews = new();
 
         private ulong ArenaWrite(D3DBuffer? cb, int vec4s)
@@ -605,7 +631,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             bool ms = t.SampleCount > 1 && !t.MsShadowed;
             char kind = Formats.IsDepth(t.Format) ? 'f' : KindOf(view);
             bool fits = ms == Multisampled(r) && r.Depth == Formats.IsDepth(t.Format) && (kind == r.Kind || (r.Kind is not ('i' or 'u') && kind == 'f'));
-            if (!fits) D3DLog.Once($"srvfit:{r.Dim}:{r.Kind}:{r.Depth}:{ms}:{kind}", $"a shader resource view of a {(ms ? "multisampled " : "")}{view} texture bound where the shader declares {(Multisampled(r) ? "a multisampled" : "a single-sampled")} {(r.Depth ? "depth texture it compares" : Formats.IsDepth(t.Format) ? "texture it samples (a depth texture read without comparison is not supported yet)" : r.Kind is 'i' or 'u' ? (r.Kind == 'i' ? "sint texture" : "uint texture") : "float texture")}: undefined in Direct3D, read as zero");
+            if (!fits) D3DLog.Once($"srvfit:{r.Dim}:{r.Kind}:{r.Depth}:{ms}:{kind}", $"a shader resource view of a {(ms ? "multisampled " : "")}{view} texture bound where the shader declares {(Multisampled(r) ? "a multisampled" : "a single-sampled")} {(r.Depth ? "depth texture" : Formats.IsDepth(t.Format) ? "texture it samples" : r.Kind is 'i' or 'u' ? (r.Kind == 'i' ? "sint texture" : "uint texture") : "float texture")}: undefined in Direct3D, read as zero");
             return fits;
         }
 
@@ -700,13 +726,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             foreach (var (slot, cmp) in b.Samplers)
             {
                 var smp = s.Samplers[slot];
+                bool nearest = !cmp && b.NonFilteringSamplers.Contains(slot);
                 IntPtr sampler;
-                if (smp != null) sampler = smp.Sampler(cmp);
+                if (smp != null) sampler = nearest ? smp.NearestSampler() : smp.Sampler(cmp);
                 else
                 {
                     var def = D3D11_SAMPLER_DESC.Default();
                     if (cmp) def.Filter |= 0x80;
-                    sampler = cmp ? D3DSamplerState.SamplerFor(Device, def, true, ref _defaultComparisonSampler) : D3DSamplerState.SamplerFor(Device, def, false, ref _defaultSampler);
+                    if (nearest) { def.Filter &= ~0x55u; sampler = D3DSamplerState.SamplerFor(Device, def, false, ref _defaultNearestSampler); }
+                    else sampler = cmp ? D3DSamplerState.SamplerFor(Device, def, true, ref _defaultComparisonSampler) : D3DSamplerState.SamplerFor(Device, def, false, ref _defaultSampler);
                 }
                 entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.SamplerBase + slot), sampler = sampler });
             }

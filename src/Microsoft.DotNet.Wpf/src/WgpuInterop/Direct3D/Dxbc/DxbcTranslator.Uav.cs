@@ -48,6 +48,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         /// <summary>The sampler slots whose address modes WebGPU lacks (the sampler clamps them): per axis
         /// (U bits 0-1, V 2-3, W 4-5) 1 MIRROR_ONCE, 2 BORDER, and the border colour.</summary>
         public IReadOnlyDictionary<int, (int Fix, float R, float G, float B, float A)>? SamplerAddress;
+        /// <summary>The t# slots bound with a depth texture: read without comparison, a slot is a
+        /// texture_depth_* (WebGPU reads depth no other way), its value (d, 0, 0, 1) as D3D's.</summary>
+        public IReadOnlyCollection<int>? DepthTextures;
+        /// <summary>The sampler slots bound with point filtering: a depth texture sampled through one is
+        /// read at the nearest texel, through any other filtered by hand (WebGPU filters no depth texture).</summary>
+        public IReadOnlyCollection<int>? PointSamplers;
         /// <summary>A geometry shader fed by an indexed strip: its primitives come from a table the
         /// ia_scan kernel builds, honouring strip-cut indices (all ones).</summary>
         public bool StripCut;
