@@ -552,17 +552,37 @@ internal sealed class WpfInputConnection : BaseInputConnection
 /// Node data arrives from WindowsBase as one JSON string per node rather than a dozen property
 /// calls, because each of those would be a separate JNI transition and TalkBack walks whole
 /// subtrees at a time.
+///
+/// Each node is filled in as the matching android.widget class fills in its own: a text field as
+/// TextView does (text, selection, granularities, input type), a list or grid as ListView and
+/// GridView do (CollectionInfo, and CollectionItemInfo on the items), a scrolling node as
+/// ScrollView does (scrollable, and only the scroll actions that can still move it).
 /// </summary>
 internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility.AccessibilityNodeProvider
 {
     private readonly View _view;
     private readonly IntPtr _handle;
 
+    // The Act* bits of AndroidAccessibility's node JSON.
+    private const int ActClick = 1, ActExpand = 2, ActCollapse = 4, ActScrollForward = 8, ActScrollBackward = 16,
+        ActScrollUp = 32, ActScrollDown = 64, ActScrollLeft = 128, ActScrollRight = 256, ActShowOnScreen = 512,
+        ActSetSelection = 1024, ActTraverse = 2048, ActSetText = 4096, ActDismiss = 8192;
+
+    // The Bundle keys of the action arguments: the values of AccessibilityNodeInfo's
+    // ACTION_ARGUMENT_* constants, which are part of the platform's stable contract.
+    private const string ArgSelectionStart = "ACTION_ARGUMENT_SELECTION_START_INT";
+    private const string ArgSelectionEnd = "ACTION_ARGUMENT_SELECTION_END_INT";
+    private const string ArgGranularity = "ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT";
+    private const string ArgExtendSelection = "ACTION_ARGUMENT_EXTEND_SELECTION_BOOLEAN";
+    private const string ArgSetText = "ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE";
+
     public WpfAccessibilityNodeProvider(View view, IntPtr handle)
     {
         _view = view;
         _handle = handle;
     }
+
+    private static bool AtLeast(BuildVersionCodes level) => Build.VERSION.SdkInt >= level;
 
     public override Android.Views.Accessibility.AccessibilityNodeInfo? CreateAccessibilityNodeInfo(int virtualViewId)
     {
@@ -582,7 +602,7 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
         if (string.IsNullOrEmpty(json)) return null;   // the node is gone; Android expects null
 
         Android.Views.Accessibility.AccessibilityNodeInfo info = Android.Views.Accessibility.AccessibilityNodeInfo.Obtain(_view, virtualViewId)!;
-        var n = new NodeJson(json);
+        var n = new AccessibilityJson(json);
 
         info.PackageName = _view.Context?.PackageName;
         info.ClassName = n.Str("cls");
@@ -597,14 +617,78 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
         string text = n.Str("text");
         if (text.Length != 0) info.Text = text;
 
+        // A text field, as TextView describes one: TalkBack reads "edit box", offers the editing
+        // and reading-granularity menus, and says "password" from these.
+        bool editable = n.Int("ed") != 0;
+        bool password = n.Int("pw") != 0;
+        bool multiLine = n.Int("ml") != 0;
+        if (editable) info.Editable = true;
+        if (password) info.Password = true;
+        if (multiLine) info.MultiLine = true;
+        if (editable || password)
+        {
+            info.InputType = Android.Text.InputTypes.ClassText
+                | (password ? Android.Text.InputTypes.TextVariationPassword : 0)
+                | (multiLine ? Android.Text.InputTypes.TextFlagMultiLine : 0);
+        }
+        if (n.Has("ss")) info.SetTextSelection(n.Int("ss"), n.Int("se"));
+        int granularities = n.Int("gran");
+        if (granularities != 0) info.MovementGranularities = (Android.Views.Accessibility.MovementGranularity)granularities;
+
+        // "List, 12 items" and "item 3 of 12" / "row 2, column 4": TalkBack works them out from
+        // these two, not from the children.
+        if (n.Int("coll") != 0)
+        {
+            var mode = n.Int("csm") switch
+            {
+                2 => Android.Views.Accessibility.SelectionMode.Multiple,
+                1 => Android.Views.Accessibility.SelectionMode.Single,
+                _ => Android.Views.Accessibility.SelectionMode.None,
+            };
+            info.SetCollectionInfo(Android.Views.Accessibility.AccessibilityNodeInfo.CollectionInfo.Obtain(
+                n.Int("cr"), n.Int("cc"), n.Int("chi") != 0, mode));
+        }
+        if (n.Int("item") != 0)
+        {
+            info.SetCollectionItemInfo(Android.Views.Accessibility.AccessibilityNodeInfo.CollectionItemInfo.Obtain(
+                n.Int("ir"), Math.Max(n.Int("irs"), 1), n.Int("ic"), Math.Max(n.Int("ics"), 1), n.Int("ih") != 0, info.Selected));
+        }
+
+        if (n.Int("scr") != 0) info.Scrollable = true;
+
+        // A window's title as its pane's: TalkBack announces a pane by it as it appears.
+        string pane = n.Str("pane");
+        if (pane.Length != 0 && AtLeast(BuildVersionCodes.P)) info.PaneTitle = pane;
+
         var bounds = new Android.Graphics.Rect(n.Int("x"), n.Int("y"),
                                                n.Int("x") + n.Int("w"), n.Int("y") + n.Int("h"));
         info.SetBoundsInScreen(bounds);
 
         int actions = n.Int("act");
-        if ((actions & 1) != 0) { info.Clickable = true; info.AddAction(Android.Views.Accessibility.Action.Click); }
-        if ((actions & 2) != 0) info.AddAction(Android.Views.Accessibility.Action.Expand);
-        if ((actions & 4) != 0) info.AddAction(Android.Views.Accessibility.Action.Collapse);
+        if ((actions & ActClick) != 0) { info.Clickable = true; info.AddAction(Android.Views.Accessibility.Action.Click); }
+        if ((actions & ActExpand) != 0) info.AddAction(Android.Views.Accessibility.Action.Expand);
+        if ((actions & ActCollapse) != 0) info.AddAction(Android.Views.Accessibility.Action.Collapse);
+        if ((actions & ActScrollForward) != 0) info.AddAction(Android.Views.Accessibility.Action.ScrollForward);
+        if ((actions & ActScrollBackward) != 0) info.AddAction(Android.Views.Accessibility.Action.ScrollBackward);
+        if ((actions & ActSetSelection) != 0) info.AddAction(Android.Views.Accessibility.Action.SetSelection);
+        if ((actions & ActTraverse) != 0)
+        {
+            info.AddAction(Android.Views.Accessibility.Action.NextAtMovementGranularity);
+            info.AddAction(Android.Views.Accessibility.Action.PreviousAtMovementGranularity);
+        }
+        if ((actions & ActSetText) != 0) info.AddAction(Android.Views.Accessibility.Action.SetText);
+        if ((actions & ActDismiss) != 0) { info.Dismissable = true; info.AddAction(Android.Views.Accessibility.Action.Dismiss); }
+
+        // The directional scrolls and show-on-screen exist from API 23 only as action objects; the
+        // older integer actions have no ids for them.
+        if (AtLeast(BuildVersionCodes.M))
+        {
+            if ((actions & ActScrollUp) != 0) info.AddAction(Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollUp!);
+            if ((actions & ActScrollDown) != 0) info.AddAction(Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollDown!);
+            if ((actions & ActScrollLeft) != 0) info.AddAction(Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollLeft!);
+            if ((actions & ActScrollRight) != 0) info.AddAction(Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollRight!);
+            if ((actions & ActShowOnScreen) != 0) info.AddAction(Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionShowOnScreen!);
+        }
         info.AddAction(Android.Views.Accessibility.Action.AccessibilityFocus);
 
         int parent = AndroidWindow.InvokeOnUi(() => AndroidAccessibility.GetParentId(virtualViewId));
@@ -621,6 +705,13 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
 
     public override bool PerformAction(int virtualViewId, [GeneratedEnum] Android.Views.Accessibility.Action action, Bundle? arguments)
     {
+        if (action == Android.Views.Accessibility.Action.NextAtMovementGranularity ||
+            action == Android.Views.Accessibility.Action.PreviousAtMovementGranularity)
+        {
+            return Traverse(virtualViewId, action, arguments);
+        }
+
+        string? argument = null;
         int kind = action switch
         {
             Android.Views.Accessibility.Action.Click => 0,
@@ -628,52 +719,130 @@ internal sealed class WpfAccessibilityNodeProvider : Android.Views.Accessibility
             Android.Views.Accessibility.Action.Focus => 1,
             Android.Views.Accessibility.Action.Expand => 2,
             Android.Views.Accessibility.Action.Collapse => 3,
-            _ => -1,
+            Android.Views.Accessibility.Action.SetText => 4,
+            Android.Views.Accessibility.Action.SetSelection => 5,
+            Android.Views.Accessibility.Action.ScrollForward => 6,
+            Android.Views.Accessibility.Action.ScrollBackward => 7,
+            Android.Views.Accessibility.Action.Dismiss => 13,
+            _ => ActionObjectKind((int)action),
         };
 
-        return kind >= 0 && AndroidWindow.InvokeOnUi(() => AndroidAccessibility.PerformAction(virtualViewId, kind, null));
+        if (kind == 4)
+        {
+            argument = arguments?.GetCharSequence(ArgSetText) ?? string.Empty;
+        }
+        else if (kind == 5)
+        {
+            // Both absent is TextView's "clear the selection"; WindowsBase reads -1 as absent.
+            int start = arguments?.GetInt(ArgSelectionStart, -1) ?? -1;
+            int end = arguments?.GetInt(ArgSelectionEnd, -1) ?? -1;
+            argument = start.ToString(System.Globalization.CultureInfo.InvariantCulture) + "," +
+                       end.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return kind >= 0 && AndroidWindow.InvokeOnUi(() => AndroidAccessibility.PerformAction(virtualViewId, kind, argument));
+    }
+
+    // The actions that are only action objects (API 23+), by their resource ids.
+    private static int ActionObjectKind(int id)
+    {
+        if (!AtLeast(BuildVersionCodes.M)) return -1;
+        if (id == Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollUp!.Id) return 8;
+        if (id == Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollDown!.Id) return 9;
+        if (id == Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollLeft!.Id) return 10;
+        if (id == Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionScrollRight!.Id) return 11;
+        if (id == Android.Views.Accessibility.AccessibilityNodeInfo.AccessibilityAction.ActionShowOnScreen!.Id) return 12;
+        return -1;
     }
 
     /// <summary>
-    /// A minimal reader for the flat, machine-generated JSON WindowsBase sends. Deliberately not
-    /// System.Text.Json: this runs on the Android head where the linker is aggressive, the shape is
-    /// fixed and known, and the dependency would have to survive trimming for no benefit.
+    /// Reading by character, word, line or paragraph. Moves the accessibility cursor in WindowsBase,
+    /// then sends what View.traverseAtGranularity sends: TalkBack speaks the segment between the
+    /// event's from and to indices out of its text, and nothing is spoken without the event.
     /// </summary>
-    private readonly struct NodeJson
+    private bool Traverse(int virtualViewId, Android.Views.Accessibility.Action action, Bundle? arguments)
     {
-        private readonly string _json;
-        public NodeJson(string json) { _json = json; }
+        int granularity = arguments?.GetInt(ArgGranularity, 0) ?? 0;
+        bool extend = arguments?.GetBoolean(ArgExtendSelection, false) ?? false;
+        bool forward = action == Android.Views.Accessibility.Action.NextAtMovementGranularity;
 
-        public string Str(string key)
+        (bool moved, int from, int to, string json) = AndroidWindow.InvokeOnUi(() =>
         {
-            int i = _json.IndexOf("\"" + key + "\":\"", StringComparison.Ordinal);
-            if (i < 0) return string.Empty;
-            i += key.Length + 4;
+            bool ok = AndroidAccessibility.MoveAtGranularity(virtualViewId, granularity, forward, extend, out int s, out int e);
+            return (ok, s, e, ok ? AndroidAccessibility.GetNodeJson(virtualViewId) : string.Empty);
+        });
+        if (!moved) return false;
 
-            var sb = new System.Text.StringBuilder();
-            for (; i < _json.Length && _json[i] != '"'; i++)
+        if (_view.Context?.GetSystemService(Context.AccessibilityService) is Android.Views.Accessibility.AccessibilityManager { IsEnabled: true })
+        {
+            var n = new AccessibilityJson(json);
+            var e = Android.Views.Accessibility.AccessibilityEvent.Obtain(Android.Views.Accessibility.EventTypes.ViewTextTraversedAtMovementGranularity)!;
+            e.PackageName = _view.Context?.PackageName;
+            e.ClassName = n.Str("cls");
+            e.SetSource(_view, virtualViewId);
+            e.Text?.Add(new Java.Lang.String(n.Str("text")));
+            e.FromIndex = from;
+            e.ToIndex = to;
+            e.Action = (Android.AccessibilityServices.GlobalAction)(int)action;   // the binding types the int as a global action
+            e.MovementGranularity = (Android.Views.Accessibility.MovementGranularity)granularity;
+            _view.Parent?.RequestSendAccessibilityEvent(_view, e);
+        }
+        return true;
+    }
+}
+
+/// <summary>
+/// A minimal reader for the flat, machine-generated JSON WindowsBase sends (a node, an event).
+/// Deliberately not System.Text.Json: this runs on the Android head where the linker is aggressive,
+/// the shape is fixed and known, and the dependency would have to survive trimming for no benefit.
+/// </summary>
+internal readonly struct AccessibilityJson
+{
+    private readonly string _json;
+    public AccessibilityJson(string json) { _json = json ?? string.Empty; }
+
+    public bool Has(string key) => _json.IndexOf("\"" + key + "\":", StringComparison.Ordinal) >= 0;
+
+    public string Str(string key)
+    {
+        int i = _json.IndexOf("\"" + key + "\":\"", StringComparison.Ordinal);
+        if (i < 0) return string.Empty;
+        i += key.Length + 4;
+
+        var sb = new System.Text.StringBuilder();
+        for (; i < _json.Length && _json[i] != '"'; i++)
+        {
+            if (_json[i] == '\\' && i + 1 < _json.Length)
             {
-                if (_json[i] == '\\' && i + 1 < _json.Length)
+                i++;
+                char c = _json[i];
+                // A control character other than these three comes as a four-digit escape, kept
+                // so that the offsets into a text still count it.
+                if (c == 'u' && i + 4 < _json.Length
+                    && int.TryParse(_json.AsSpan(i + 1, 4), System.Globalization.NumberStyles.HexNumber,
+                                    System.Globalization.CultureInfo.InvariantCulture, out int code))
                 {
-                    i++;
-                    sb.Append(_json[i] switch { 'n' => '\n', 'r' => '\r', 't' => '\t', var c => c });
+                    sb.Append((char)code);
+                    i += 4;
+                    continue;
                 }
-                else sb.Append(_json[i]);
+                sb.Append(c switch { 'n' => '\n', 'r' => '\r', 't' => '\t', _ => c });
             }
-            return sb.ToString();
+            else sb.Append(_json[i]);
         }
+        return sb.ToString();
+    }
 
-        public int Int(string key)
-        {
-            int i = _json.IndexOf("\"" + key + "\":", StringComparison.Ordinal);
-            if (i < 0) return 0;
-            i += key.Length + 3;
+    public int Int(string key)
+    {
+        int i = _json.IndexOf("\"" + key + "\":", StringComparison.Ordinal);
+        if (i < 0) return 0;
+        i += key.Length + 3;
 
-            int end = i;
-            while (end < _json.Length && (char.IsDigit(_json[end]) || _json[end] == '-' || _json[end] == '.')) end++;
-            return double.TryParse(_json.AsSpan(i, end - i), System.Globalization.NumberStyles.Float,
-                                   System.Globalization.CultureInfo.InvariantCulture, out double d) ? (int)d : 0;
-        }
+        int end = i;
+        while (end < _json.Length && (char.IsDigit(_json[end]) || _json[end] == '-' || _json[end] == '.')) end++;
+        return double.TryParse(_json.AsSpan(i, end - i), System.Globalization.NumberStyles.Float,
+                               System.Globalization.CultureInfo.InvariantCulture, out double d) ? (int)d : 0;
     }
 }
 
@@ -900,7 +1069,7 @@ internal sealed class WpfDragShadow : View.DragShadowBuilder
     }
 }
 
-internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidPrintHost, IAndroidClipboardHost, IAndroidDialogHost, IAndroidDragDropHost
+internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAndroidAccessibilityEventHost, IAndroidPrintHost, IAndroidClipboardHost, IAndroidDialogHost, IAndroidDragDropHost
 {
     private readonly Activity _activity;
     private readonly FrameLayout _root;
@@ -1102,6 +1271,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         for (int i = 0; i < _root.ChildCount; i++)
             if (_root.GetChildAt(i) is WpfPopupView popup && !_parents.ContainsKey(popup.Handle)) popups.Add(popup);
         foreach (View popup in popups) popup.BringToFront();
+        UpdateModalAccessibility();
     });
 
     public void SetViewTranslucent(IntPtr handle) => OnMain(() =>
@@ -1262,6 +1432,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // and a hidden WPF window must not intercept touches meant for what is behind it.
         view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
         PlaceFrame(handle);
+        UpdateModalAccessibility();
     }
 
     public void InvalidateAccessibilityNode(IntPtr handle, int nodeId) => OnMain(() => InvalidateAccessibilityNodeCore(handle, nodeId));
@@ -1270,6 +1441,133 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     {
         if (!_views.TryGetValue(handle, out View? view) || view is null) return;
         view.SendAccessibilityEvent(Android.Views.Accessibility.EventTypes.WindowContentChanged);
+    }
+
+    public void SendAccessibilityEvent(IntPtr handle, int nodeId, string eventJson) => OnMain(() => SendAccessibilityEventCore(handle, nodeId, eventJson));
+
+    /// <summary>
+    /// One event of AndroidAccessibility's vocabulary, sent from a virtual node as the matching
+    /// widget sends it: through the parent's requestSendAccessibilityEvent, which is how an
+    /// AccessibilityNodeProvider's events reach the service with the virtual node as their source.
+    /// </summary>
+    private void SendAccessibilityEventCore(IntPtr handle, int nodeId, string eventJson)
+    {
+        if (!_views.TryGetValue(handle, out View? view) || view is null) return;
+        var n = new AccessibilityJson(eventJson);
+        int kind = n.Int("ev");
+
+        if (kind == 5)
+        {
+            WindowPaneChanged(handle, view, n.Str("pane"), n.Int("modal") != 0);
+            return;
+        }
+
+        Android.Views.Accessibility.EventTypes type = kind switch
+        {
+            1 => Android.Views.Accessibility.EventTypes.ViewTextChanged,
+            2 => Android.Views.Accessibility.EventTypes.ViewTextSelectionChanged,
+            3 => Android.Views.Accessibility.EventTypes.ViewScrolled,
+            4 => Android.Views.Accessibility.EventTypes.ViewSelected,
+            _ => 0,
+        };
+        if (type == 0) return;
+        if (_activity.GetSystemService(Context.AccessibilityService) is not Android.Views.Accessibility.AccessibilityManager { IsEnabled: true })
+            return;
+
+        var e = Android.Views.Accessibility.AccessibilityEvent.Obtain(type)!;
+        e.PackageName = _activity.PackageName;
+        e.ClassName = n.Str("cls");
+        e.SetSource(view, nodeId);
+        switch (kind)
+        {
+            case 1:
+                e.FromIndex = n.Int("from");
+                e.AddedCount = n.Int("add");
+                e.RemovedCount = n.Int("rem");
+                e.BeforeText = n.Str("before");
+                e.Text?.Add(new Java.Lang.String(n.Str("text")));
+                e.Password = n.Int("pw") != 0;
+                break;
+            case 2:
+                e.FromIndex = n.Int("from");
+                e.ToIndex = n.Int("to");
+                e.ItemCount = n.Int("count");
+                e.Text?.Add(new Java.Lang.String(n.Str("text")));
+                e.Password = n.Int("pw") != 0;
+                break;
+            case 3:
+                e.ScrollX = n.Int("sx");
+                e.ScrollY = n.Int("sy");
+                e.MaxScrollX = n.Int("mx");
+                e.MaxScrollY = n.Int("my");
+                if (Build.VERSION.SdkInt >= BuildVersionCodes.P)
+                {
+                    e.ScrollDeltaX = n.Int("dx");
+                    e.ScrollDeltaY = n.Int("dy");
+                }
+                break;
+            case 4:
+                e.Text?.Add(new Java.Lang.String(n.Str("text")));
+                break;
+        }
+        view.Parent?.RequestSendAccessibilityEvent(view, e);
+    }
+
+    // ---- modal windows ----------------------------------------------------------
+    //
+    // Every WPF window is a view of its own in the one activity, so to TalkBack a modal dialog's
+    // view is just one more beside the window it blocks, and swiping walks straight out of it into
+    // controls that cannot be used. An AlertDialog does not have that problem because it is a
+    // window of its own; the nearest Android has for views is importantForAccessibility: the views
+    // under the topmost modal window are hidden with their descendants, as the dialog's own window
+    // hides the activity, and given back when it closes.
+
+    private readonly HashSet<IntPtr> _modal = new();
+    private readonly HashSet<View> _hiddenByModal = new();
+
+    private void WindowPaneChanged(IntPtr handle, View view, string pane, bool modal)
+    {
+        // A floating window's title is its pane's, which TalkBack announces as it appears; the app's
+        // own window fills the activity, whose label already says it.
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.P && view is WpfSurfaceView { FillsScreen: false })
+        {
+            string? title = pane.Length != 0 ? pane : null;
+            if (view.AccessibilityPaneTitle != title) view.AccessibilityPaneTitle = title;
+        }
+
+        if (modal) _modal.Add(handle);
+        else _modal.Remove(handle);
+        UpdateModalAccessibility();
+    }
+
+    private void UpdateModalAccessibility()
+    {
+        if (_modal.Count == 0 && _hiddenByModal.Count == 0) return;
+
+        View? top = null;
+        int topIndex = -1;
+        foreach (IntPtr handle in _modal)
+        {
+            if (!_views.TryGetValue(handle, out View? view) || view is null || view.Visibility != ViewStates.Visible) continue;
+            int index = _root.IndexOfChild(view);
+            if (index > topIndex) { topIndex = index; top = view; }
+        }
+
+        // Only what is UNDER it: a popup the dialog opens (a combo box's list) is above it, and
+        // must stay readable.
+        foreach (View? view in _views.Values)
+        {
+            if (view is null) continue;
+            bool hide = top != null && view != top && _root.IndexOfChild(view) < topIndex;
+            if (hide)
+            {
+                if (_hiddenByModal.Add(view)) view.ImportantForAccessibility = ImportantForAccessibility.NoHideDescendants;
+            }
+            else if (_hiddenByModal.Remove(view))
+            {
+                view.ImportantForAccessibility = ImportantForAccessibility.Auto;
+            }
+        }
     }
 
     public void ShowSoftKeyboard(IntPtr handle, bool multiline, bool password) => OnMain(() => ShowSoftKeyboardCore(handle, multiline, password));
@@ -1321,6 +1619,10 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     {
         if (!_views.Remove(handle, out View? view)) return;
         if (view is WpfSurfaceView surfaceView) surfaceView.Detached = true;
+        // a modal window closing gives the windows under it back to TalkBack
+        _modal.Remove(handle);
+        _hiddenByModal.Remove(view);
+        UpdateModalAccessibility();
         if (_frames.Remove(handle, out View? frame)) { _root.RemoveView(frame); frame.Dispose(); }
         _parents.Remove(handle);
         foreach (IntPtr child in ChildrenOf(handle)) _parents.Remove(child);

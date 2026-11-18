@@ -449,6 +449,11 @@ namespace MS.Internal.Interop
     }
     public static partial class AndroidAccessibility
     {
+        public const int GranularityCharacter = 1;
+        public const int GranularityLine = 4;
+        public const int GranularityPage = 16;
+        public const int GranularityParagraph = 8;
+        public const int GranularityWord = 2;
         public const int HostViewId = -1;
         public const int InvalidNode = -1;
         public static MS.Internal.Interop.IAndroidAccessibilityHost Host { get { throw null; } set { } }
@@ -459,6 +464,7 @@ namespace MS.Internal.Interop
         public static int GetParentId(int nodeId) { throw null; }
         public static int GetRootId(System.IntPtr handle) { throw null; }
         public static int HitTest(System.IntPtr handle, int screenX, int screenY) { throw null; }
+        public static bool MoveAtGranularity(int nodeId, int granularity, bool forward, bool extendSelection, out int segmentStart, out int segmentEnd) { throw null; }
         public static bool PerformAction(int nodeId, int kind, string argument) { throw null; }
     }
     public static partial class AndroidPrint
@@ -529,6 +535,10 @@ namespace MS.Internal.Interop
     public partial interface IAndroidAccessibilityHost
     {
         void InvalidateAccessibilityNode(System.IntPtr handle, int nodeId);
+    }
+    public partial interface IAndroidAccessibilityEventHost
+    {
+        void SendAccessibilityEvent(System.IntPtr handle, int nodeId, string eventJson);
     }
     public partial interface IAndroidPrintHost
     {
