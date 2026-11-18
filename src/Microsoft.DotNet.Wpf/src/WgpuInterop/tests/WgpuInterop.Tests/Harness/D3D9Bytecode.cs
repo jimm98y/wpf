@@ -192,7 +192,7 @@ namespace WgpuInterop.Tests.Harness
             return this;
         }
 
-        private const int RegConstInt = 4, RegConstBool = 6;
+        private const int RegConstInt = 7, RegConstBool = 14;   // d3d9types.h: D3DSPR_CONSTINT, D3DSPR_CONSTBOOL
 
         /// <summary>
         /// A register token of an arbitrary type. The type is split across bits [30:28] and [12:11]

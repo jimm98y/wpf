@@ -106,7 +106,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         // D3DSHADER_PARAM_REGISTER_TYPE
         private const int RegTemp = 0, RegInput = 1, RegConst = 2, RegTexture = 3;
         private const int RegColorOut = 8, RegSampler = 10;
-        private const int RegConstInt = 4, RegConstBool = 6;
+        private const int RegConstInt = 7, RegConstBool = 14;   // d3d9types.h: D3DSPR_CONSTINT, D3DSPR_CONSTBOOL
 
         // D3DSHADER_COMPARISON, in the opcode-specific control bits [23:16].
         private static readonly string[] Comparisons = { "", ">", "==", ">=", "<", "!=", "<=", "" };

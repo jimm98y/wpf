@@ -13,8 +13,9 @@
 // shim's D3D11 textures (D3DTexture2D, so a shared handle names the same texture on both sides),
 // system-memory ones over CPU memory -- with the copies between them (GetRenderTargetData,
 // UpdateSurface, UpdateTexture, StretchRect, ColorFill) and LockRect. That is also exactly what
-// PresentationCore's managed D3DImage (ManagedInteropBitmap) calls. Drawing through D3D9 itself
-// (DrawPrimitive and the fixed-function pipeline) is not here: it logs once and answers E_NOTIMPL.
+// PresentationCore's managed D3DImage (ManagedInteropBitmap) calls. Drawing through D3D9 itself --
+// shaders, the fixed-function pipeline, the device's state -- is in D3D9.State.cs and D3D9.Draw.cs,
+// with the bytecode translator (D3D9Shaders.cs) and the WGSL programs (D3D9Programs.cs).
 //
 // All shim devices share one WebGPU device (D3DDevice.SharedGpu), as all of a machine's Direct3D
 // devices share its GPU: a texture shared between them is one WebGPU texture.
@@ -32,6 +33,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public const int D3DERR_INVALIDCALL = unchecked((int)0x8876086C);
         public const int D3DERR_NOTAVAILABLE = unchecked((int)0x8876086A);
         public const int D3DERR_WASSTILLDRAWING = unchecked((int)0x8876021C);
+        public const int D3DERR_NOTFOUND = unchecked((int)0x88760866);
         public const int D3DFMT_A8R8G8B8 = 21, D3DFMT_X8R8G8B8 = 22, D3DFMT_A8B8G8R8 = 32, D3DFMT_X8B8G8R8 = 33,
             D3DFMT_A8 = 28, D3DFMT_L8 = 50, D3DFMT_D16 = 80, D3DFMT_D24S8 = 75, D3DFMT_D24X8 = 77, D3DFMT_D32 = 71,
             D3DFMT_R32F = 114, D3DFMT_A16B16G16R16F = 113, D3DFMT_A32B32G32R32F = 116, D3DFMT_A2R10G10B10 = 35, D3DFMT_A2B10G10R10 = 31,
@@ -203,19 +205,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             new Span<byte>(c, 304).Clear();
             c[0] = (uint)(type == 0 ? 1 : type);    // DeviceType
             c[3] = 0x80000000u | 0x20000000u | 0x40000000u;   // Caps2: CANSHARERESOURCE | DYNAMICTEXTURES | CANAUTOGENMIPMAP
+            c[4] = 0x20 | 0x100 | 0x200;              // Caps3: ALPHA_FULLSCREEN_FLIP_OR_DISCARD | COPY_TO_VIDMEM | COPY_TO_SYSTEMMEM
             c[5] = 0x80000000u | 0x1u;               // PresentationIntervals: IMMEDIATE | ONE
-            c[7] = 0x10000u | 0x80000u | 0x2000u;    // DevCaps: HWTRANSFORMANDLIGHT | HWRASTERIZATION | DRAWPRIMITIVES2EX
+            c[7] = 0x9BEF0;                           // DevCaps: execute/TL vertex memory, DRAWPRIMITIVES2(EX), HWTRANSFORMANDLIGHT, HWRASTERIZATION
+            c[8] = 0xBCAF2;                           // PrimitiveMiscCaps: MASKZ, CULL*, COLORWRITEENABLE, CLIPTLVERTS, BLENDOP, INDEPENDENTWRITEMASKS, PERSTAGECONSTANT, FOGANDSPECULARALPHA, SEPARATEALPHABLEND, MRTPOSTPIXELSHADERBLENDING
+            c[9] = 0x7732191;                         // RasterCaps: DITHER, ZTEST, FOGVERTEX, FOGTABLE, MIPMAPLODBIAS, FOGRANGE, ANISOTROPY, WFOG, ZFOG, COLORPERSPECTIVE, SCISSORTEST, SLOPESCALEDEPTHBIAS, DEPTHBIAS
+            c[10] = 0xFF; c[13] = 0xFF;               // ZCmpCaps, AlphaCmpCaps: all
+            c[11] = 0x3FFF; c[12] = 0x3FFF;           // Src/DestBlendCaps: all, BLENDFACTOR included
+            c[14] = 0x84208;                          // ShadeCaps: GOURAUD colour, specular, alpha, fog
+            c[15] = 0x4445;                           // TextureCaps: PERSPECTIVE, ALPHA, TEXREPEATNOTSCALEDBYSIZE, PROJECTED, MIPMAP
+            c[16] = 0x7030700;                        // TextureFilterCaps: MIN/MAG point, linear, anisotropic; MIP point, linear
+            c[19] = 0x17;                             // TextureAddressCaps: WRAP, MIRROR, CLAMP, INDEPENDENTUV
+            c[21] = 0x1F;                             // LineCaps
             c[22] = 8192; c[23] = 8192;               // MaxTextureWidth, MaxTextureHeight
             c[24] = 2048;                             // MaxVolumeExtent
             c[25] = 8192; c[26] = 8192; c[27] = 16;   // MaxTextureRepeat, AspectRatio, Anisotropy
+            ((float*)c)[28] = 1e10f;                  // MaxVertexW
+            ((float*)c)[29] = -32768; ((float*)c)[30] = -32768; ((float*)c)[31] = 32768; ((float*)c)[32] = 32768;   // guard band
+            c[34] = 0x1FF;                            // StencilCaps: every operation, TWOSIDED
+            c[35] = 0x8;                              // FVFCaps: 8 texture coordinate sets
+            c[36] = 0x3FFFFFF;                        // TextureOpCaps: every D3DTEXTUREOP
             c[37] = 8; c[38] = 8;                     // MaxTextureBlendStages, MaxSimultaneousTextures
+            c[39] = 0x13B;                            // VertexProcessingCaps: TEXGEN, MATERIALSOURCE7, DIRECTIONAL/POSITIONAL lights, LOCALVIEWER, TEXGEN_SPHEREMAP
+            c[40] = 8;                                // MaxActiveLights
+            ((float*)c)[44] = 1f;                     // MaxPointSize
             c[45] = 0xFFFFFF; c[46] = 0xFFFFFF;       // MaxPrimitiveCount, MaxVertexIndex
             c[47] = 16; c[48] = 255;                  // MaxStreams, MaxStreamStride
             c[49] = 0xFFFE0300;                       // VertexShaderVersion 3.0
             c[50] = 256;                              // MaxVertexShaderConst
             c[51] = 0xFFFF0300;                       // PixelShaderVersion 3.0
+            c[53] = 0x51;                             // DevCaps2: STREAMOFFSET, CAN_STRETCHRECT_FROM_TEXTURES, VERTEXELEMENTSCANSHARESTREAMOFFSET
             c[56] = 0; c[57] = 0; c[58] = 1;          // master ordinal, ordinal in group, adapters in group
+            c[59] = 0x3FF;                            // DeclTypes: every D3DDTCAPS
             c[60] = 4;                                // NumSimultaneousRTs
+            c[61] = 0x3000300;                        // StretchRectFilterCaps
+            c[62] = 1; c[63] = 24; c[64] = 32; c[65] = 4;            // VS20Caps: PREDICATION, dynamic depth, temps, static depth
+            c[66] = 0x1F; c[67] = 24; c[68] = 32; c[69] = 4; c[70] = 512;   // PS20Caps
+            c[71] = 0x3030300;                        // VertexTextureFilterCaps
+            c[72] = 65535; c[73] = 65535;             // MaxV/PShaderInstructionsExecuted
+            c[74] = 32768; c[75] = 32768;             // MaxVertex/PixelShader30InstructionSlots
             return HResult.S_OK;
         }
 
@@ -281,14 +309,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
     // ---- IDirect3DDevice9Ex ---------------------------------------------------------------------
 
-    internal sealed unsafe class Direct3DDevice9 : ComObject
+    internal sealed unsafe partial class Direct3DDevice9 : ComObject
     {
         private static readonly Vtable s_vt = Build();
         public readonly Direct3D9 Parent;
         /// <summary>The D3D11 device whose textures this device makes (and whose WebGPU device,
         /// shared by every shim device, it copies with).</summary>
         public readonly D3DDevice Device11;
-        public Direct3DSurface9? RenderTarget;
+        public Direct3DSurface9? RenderTarget => Targets[0];
 
         public Direct3DDevice9(Direct3D9 parent) : base(s_vt)
         {
@@ -299,8 +327,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         protected override void OnFinalRelease()
         {
-            RenderTarget?.InternalRelease();
-            RenderTarget = null;
+            ReleaseDrawResources();
             Device11.Release();
             Parent.Release();
         }
@@ -330,7 +357,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetRenderTarget, (delegate* unmanaged<IntPtr, uint, IntPtr*, int>)&GetRenderTarget);
             vt.Set(Vtbl.IDirect3DDevice9Ex.BeginScene, (delegate* unmanaged<IntPtr, int>)&Ok0);
             vt.Set(Vtbl.IDirect3DDevice9Ex.EndScene, (delegate* unmanaged<IntPtr, int>)&Ok0);
-            vt.Set(Vtbl.IDirect3DDevice9Ex.Clear, (delegate* unmanaged<IntPtr, uint, D3DRECT9*, uint, uint, float, uint, int>)&Clear);
             vt.Set(Vtbl.IDirect3DDevice9Ex.CheckDeviceState, (delegate* unmanaged<IntPtr, IntPtr, int>)&CheckDeviceState);
             vt.Set(Vtbl.IDirect3DDevice9Ex.PresentEx, (delegate* unmanaged<IntPtr, void*, void*, IntPtr, void*, uint, int>)&PresentEx);
             vt.Set(Vtbl.IDirect3DDevice9Ex.SetGPUThreadPriority, (delegate* unmanaged<IntPtr, int, int>)&Ok1);
@@ -342,6 +368,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateOffscreenPlainSurfaceEx, (delegate* unmanaged<IntPtr, uint, uint, int, int, IntPtr*, IntPtr*, uint, int>)&CreateOffscreenPlainSurfaceEx);
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurfaceEx, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, uint, int>)&CreateDepthStencilSurfaceEx, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, uint, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8, p9) => CreateDepthStencilSurfaceExImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8, p9))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetDisplayModeEx, (delegate* unmanaged<IntPtr, uint, D3DDISPLAYMODEEX*, int*, int>)&GetDisplayModeEx);
+            BuildState(vt);
+            BuildDraw(vt);
             return vt;
         }
 
@@ -361,11 +389,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         // A D3D9Ex device whose GPU was reset is removed (D3DERR_DEVICEREMOVED), as Windows reports it after a TDR:
         // its app makes a new device and its resources again
         private const int D3DERR_DEVICEREMOVED = unchecked((int)0x88760870);
-        private static int State(IntPtr self) => From<Direct3DDevice9>(self) is { } d && d.Device11.RemovedReason != HResult.S_OK ? D3DERR_DEVICEREMOVED : HResult.S_OK;
-        [UnmanagedCallersOnly] private static int TestCooperativeLevel(IntPtr self) => State(self);
-        [UnmanagedCallersOnly] private static int Present(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty) => State(self);
-        [UnmanagedCallersOnly] private static int PresentEx(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty, uint flags) => State(self);
-        [UnmanagedCallersOnly] private static int CheckDeviceState(IntPtr self, IntPtr wnd) => State(self);
+        private static int DeviceStatus(IntPtr self) => From<Direct3DDevice9>(self) is { } d && d.Device11.RemovedReason != HResult.S_OK ? D3DERR_DEVICEREMOVED : HResult.S_OK;
+        [UnmanagedCallersOnly] private static int TestCooperativeLevel(IntPtr self) => DeviceStatus(self);
+        [UnmanagedCallersOnly] private static int Present(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty) => DeviceStatus(self);
+        [UnmanagedCallersOnly] private static int PresentEx(IntPtr self, void* src, void* dst, IntPtr wnd, void* dirty, uint flags) => DeviceStatus(self);
+        [UnmanagedCallersOnly] private static int CheckDeviceState(IntPtr self, IntPtr wnd) => DeviceStatus(self);
 
         [UnmanagedCallersOnly]
         private static int GetDirect3D(IntPtr self, IntPtr* d3d)
@@ -603,40 +631,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static int SetRenderTarget(IntPtr self, uint index, IntPtr surface)
         {
             var d = Self(self);
-            if (d == null || index != 0) return index < 4 ? HResult.S_OK : D3D9Const.D3DERR_INVALIDCALL;
+            if (d == null) return D3D9Const.D3DERR_INVALIDCALL;
             var s = From<Direct3DSurface9>(surface);
-            s?.InternalAddRef();
-            d.RenderTarget?.InternalRelease();
-            d.RenderTarget = s;
-            return HResult.S_OK;
+            if (surface != IntPtr.Zero && s == null) return D3D9Const.D3DERR_INVALIDCALL;
+            lock (d.DrawLock) return d.SetTarget(index, s);
         }
 
         [UnmanagedCallersOnly]
         private static int GetRenderTarget(IntPtr self, uint index, IntPtr* surface)
         {
             var d = Self(self);
-            if (d == null || surface == null) return D3D9Const.D3DERR_INVALIDCALL;
+            if (d == null || surface == null || index >= 4) return D3D9Const.D3DERR_INVALIDCALL;
             *surface = IntPtr.Zero;
-            if (index != 0 || d.RenderTarget == null) return D3D9Const.D3DERR_NOTAVAILABLE;
-            *surface = d.RenderTarget.AddRefPointer();
+            if (d.Targets[index] == null) return D3D9Const.D3DERR_NOTFOUND;
+            *surface = d.Targets[index]!.AddRefPointer();
             return HResult.S_OK;
-        }
-
-        /// <summary>Clear: D3DCLEAR_TARGET (1) fills the render target; depth and stencil have
-        /// nothing here to clear.</summary>
-        [UnmanagedCallersOnly]
-        private static int Clear(IntPtr self, uint count, D3DRECT9* rects, uint flags, uint color, float z, uint stencil)
-        {
-            var d = Self(self);
-            if (d == null) return D3D9Const.D3DERR_INVALIDCALL;
-            if ((flags & 1) == 0 || d.RenderTarget == null) return HResult.S_OK;
-            Direct3DSurface9 rt = d.RenderTarget;
-            return Guard("Clear", () =>
-            {
-                if (count == 0 || rects == null) return rt.Fill(new D3DRECT9 { right = (int)rt.Width, bottom = (int)rt.Height }, color);
-                for (uint i = 0; i < count; i++) { int hr = rt.Fill(rects[i], color); if (hr < 0) return hr; }
-                return HResult.S_OK;
-            });
         }
     }
 
@@ -980,6 +989,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// mappable buffer, waited for: GetRenderTargetData is synchronous in D3D9).</summary>
         private void ReadGpu(byte* dst, int pitch)
         {
+            Device.FlushDraws();
             WgpuContext gpu = Gpu!.Device.Gpu;
             uint rowBytes = Width * Bpp;
             uint aligned = (rowBytes + 255) & ~255u;
@@ -1008,6 +1018,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <paramref name="pitch"/>, whole-surface coordinates) into the GPU level at (dx, dy).</summary>
         private void WriteGpu(byte* mem, int pitch, D3DRECT9 src, int dx, int dy)
         {
+            Device.FlushDraws();
             WgpuContext gpu = Gpu!.Device.Gpu;
             uint w = (uint)(src.right - src.left), h = (uint)(src.bottom - src.top);
             byte* first = mem + (long)src.top * pitch + src.left * Bpp;
@@ -1076,6 +1087,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             int sw = a.right - a.left, sh = a.bottom - a.top, dw = b.right - b.left, dh = b.bottom - b.top;
             if (src.Gpu != null && Gpu != null && sw == dw && sh == dh)
             {
+                Device.FlushDraws();
                 WgpuContext gpu = Gpu.Device.Gpu;
                 IntPtr enc = wgpuDeviceCreateCommandEncoder(gpu.Device, IntPtr.Zero);
                 var from = new WGPUTexelCopyTextureInfo { texture = src.Gpu.Gpu, mipLevel = src.Level, origin = new WGPUOrigin3D { x = (uint)a.left, y = (uint)a.top }, aspect = WGPUTextureAspect.All };
