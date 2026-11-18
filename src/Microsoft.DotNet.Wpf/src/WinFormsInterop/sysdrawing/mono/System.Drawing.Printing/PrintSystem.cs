@@ -76,6 +76,11 @@ namespace System.Drawing.Printing
 					s_platformResolved = true;
 					if (OperatingSystem.IsMacOS () && !OperatingSystem.IsIOS () && !OperatingSystem.IsMacCatalyst ())
 						s_platform = new CocoaPrintSystem ();
+					else if (!OperatingSystem.IsWindows ())
+						// a standalone WinForms app on Linux, a phone or in the browser: the process's print system is
+						// WindowsBase's, which its windows are (the stack's hosts are WPF windows); asked by name, as
+						// nothing installed a bridge to it
+						s_platform = PlatformPrintSystem.Create ();
 				}
 				return s_platform;
 			}
@@ -101,6 +106,55 @@ namespace System.Drawing.Printing
 					return p;
 			return null;
 		}
+	}
+
+	/// <summary>WindowsBase's print system (MS.Internal.Interop.PlatformPrint: CUPS on Linux, UIKit's, Android's, the
+	/// browser's), reached by name -- this assembly does not reference WindowsBase.</summary>
+	internal sealed class PlatformPrintSystem : IPrintSystem
+	{
+		const float WpfToHundredths = 100f / 96f;
+		readonly System.Reflection.MethodInfo enumerate, submit;
+
+		PlatformPrintSystem (System.Reflection.MethodInfo enumerate, System.Reflection.MethodInfo submit)
+		{
+			this.enumerate = enumerate;
+			this.submit = submit;
+		}
+
+		internal static PlatformPrintSystem Create ()
+		{
+			Type t = Type.GetType ("MS.Internal.Interop.PlatformPrint, WindowsBase", throwOnError: false);
+			const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+			System.Reflection.MethodInfo e = t?.GetMethod ("EnumeratePrinters", F, Type.EmptyTypes);
+			System.Reflection.MethodInfo s = null;
+			if (t != null)
+				foreach (System.Reflection.MethodInfo m in t.GetMethods (F))
+					if (m.Name == "Submit" && m.GetParameters ().Length == 10) s = m;
+			return e != null && s != null ? new PlatformPrintSystem (e, s) : null;
+		}
+
+		static T Get<T> (object o, string name) => o.GetType ().GetProperty (name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)?.GetValue (o) is T v ? v : default;
+
+		public PrintSystemPrinter [] EnumeratePrinters ()
+		{
+			var list = new List<PrintSystemPrinter> ();
+			if (enumerate.Invoke (null, null) is Array printers)
+				foreach (object p in printers)
+					list.Add (new PrintSystemPrinter {
+						Name = Get<string> (p, "Name"),
+						DisplayName = Get<string> (p, "DisplayName") ?? Get<string> (p, "Name"),
+						IsDefault = Get<bool> (p, "IsDefault"),
+						PaperWidth = (float) Get<double> (p, "PageWidth") * WpfToHundredths,
+						PaperHeight = (float) Get<double> (p, "PageHeight") * WpfToHundredths,
+						Imageable = new RectangleF ((float) Get<double> (p, "ImageableOriginX") * WpfToHundredths, (float) Get<double> (p, "ImageableOriginY") * WpfToHundredths,
+							(float) Get<double> (p, "ImageableWidth") * WpfToHundredths, (float) Get<double> (p, "ImageableHeight") * WpfToHundredths),
+					});
+			return list.ToArray ();
+		}
+
+		public bool Submit (string jobName, Stream pdf, PrintSystemJob job) =>
+			submit.Invoke (null, new object [] { jobName, pdf, job.PrinterName, job.Copies, job.FirstPage, job.LastPage, job.Landscape,
+				(double) (job.PaperWidth / WpfToHundredths), (double) (job.PaperHeight / WpfToHundredths), job.OutputFile }) is true;
 	}
 
 	/// <summary>The macOS print system for a standalone WinForms app: CocoaPrint (shared with WPF,
