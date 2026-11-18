@@ -5,6 +5,7 @@
   <PropertyGroup>
     <AssemblyName>WpfWebGpu.Detours</AssemblyName>
     <RootNamespace>WpfWebGpu.Detours</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
