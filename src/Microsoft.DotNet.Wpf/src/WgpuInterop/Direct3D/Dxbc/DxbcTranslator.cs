@@ -229,7 +229,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             if (!DeclareTessellation(ins))
             switch (ins.Op)
             {
-                case Opcode.DclTemps: _temps = (int)ins.Extra[0]; break;
+                case Opcode.DclTemps: _temps = Math.Max(_temps, (int)ins.Extra[0]); break;      // a hull shader declares them per phase
                 case Opcode.DclIndexableTemp: _indexable[(int)ins.Extra[0]] = ((int)ins.Extra[1], (int)ins.Extra[2]); break;
                 case Opcode.DclConstantBuffer:
                 {
