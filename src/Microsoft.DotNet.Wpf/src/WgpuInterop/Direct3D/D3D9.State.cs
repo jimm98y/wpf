@@ -748,7 +748,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             int s = SamplerIndex(sampler);
             if (d == null || s < 0) return sampler == 256 ? HResult.S_OK : Invalid;
             var t = From(texture);
-            if (texture != IntPtr.Zero && t is not Direct3DTexture9) return Invalid;
+            if (texture != IntPtr.Zero && t is not (Direct3DTexture9 or Direct3DVolumeTexture9)) return Invalid;
             D3D9State.SetObject(ref d.State.Tex[s], t);
             d.State.Record(D3D9State.CTex, s);
             return HResult.S_OK;

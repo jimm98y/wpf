@@ -169,7 +169,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (_views.TryGetValue((t.Gpu, 0, 2), out IntPtr v)) return v;
             bool cube = (t.Desc.MiscFlags & D3D11_RESOURCE_MISC.TEXTURECUBE) != 0;
-            v = D3DView.CreateTextureView(t.Gpu, t.Format, cube ? WGPUTextureViewDimension.Cube : WGPUTextureViewDimension._2D, 0, t.MipLevels, 0, cube ? 6u : 1u);
+            var dim = t.Kind == 3 ? WGPUTextureViewDimension._3D : cube ? WGPUTextureViewDimension.Cube : WGPUTextureViewDimension._2D;
+            v = D3DView.CreateTextureView(t.Gpu, t.Format, dim, 0, t.MipLevels, 0, cube ? 6u : 1u);
             _views[(t.Gpu, 0, 2)] = v;
             _batchViews.Add(v);
             return v;
@@ -871,6 +872,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private (D3DTexture2D? Tex, int Fixup, int Type) Sampled(int sampler, int type, bool shader, TargetSet ts)
         {
             int none = shader ? 7 : 8;
+            if (State.Tex[sampler] is Direct3DVolumeTexture9 vt)
+            {
+                if (vt.Gpu == null) return (null, none, type);
+                if (!shader) type = 4;
+                if (type != 4) { D3DLog.Once("d3d9textype", $"a sampler declared as type {type} has a texture of type 4 bound: it reads nothing"); return (null, none, type); }
+                return (vt.Gpu, D3D9Programs.FixupOf(vt.Format), 4);
+            }
             if (State.Tex[sampler] is not Direct3DTexture9 t || t.Gpu == null) return (null, none, type);
             if (ts.Color.Any(s => s?.Gpu == t.Gpu) || ts.Depth?.Gpu == t.Gpu)
             {
@@ -901,9 +909,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     ColorOp = op, ColorArg1 = State.Tss[i, 2], ColorArg2 = State.Tss[i, 3], ColorArg0 = State.Tss[i, 26],
                     AlphaOp = State.Tss[i, 4], AlphaArg1 = State.Tss[i, 5], AlphaArg2 = State.Tss[i, 6], AlphaArg0 = State.Tss[i, 27],
                     ResultArg = State.Tss[i, 28], Transform = State.Tss[i, 24],
-                    TexType = State.Tex[i] is Direct3DTexture9 { IsCube: true } ? 3 : 2,
+                    TexType = State.Tex[i] switch { Direct3DTexture9 { IsCube: true } => 3, Direct3DVolumeTexture9 => 4, _ => 2 },
                 };
-                s.Fixup = State.Tex[i] is Direct3DTexture9 { Gpu: not null } t && !Formats.IsDepth(t.Gpu.Format) ? D3D9Programs.FixupOf(t.Format) : 8;
+                s.Fixup = State.Tex[i] switch
+                {
+                    Direct3DTexture9 { Gpu: not null } t when !Formats.IsDepth(t.Gpu.Format) => D3D9Programs.FixupOf(t.Format),
+                    Direct3DVolumeTexture9 { Gpu: not null } v => D3D9Programs.FixupOf(v.Format),
+                    _ => 8,
+                };
                 k.Stages.Add(s);
             }
             return k;

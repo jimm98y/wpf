@@ -227,9 +227,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             c[10] = 0xFF; c[13] = 0xFF;               // ZCmpCaps, AlphaCmpCaps: all
             c[11] = 0x3FFF; c[12] = 0x3FFF;           // Src/DestBlendCaps: all, BLENDFACTOR included
             c[14] = 0x84208;                          // ShadeCaps: GOURAUD colour, specular, alpha, fog
-            c[15] = 0x4445;                           // TextureCaps: PERSPECTIVE, ALPHA, TEXREPEATNOTSCALEDBYSIZE, PROJECTED, MIPMAP
+            c[15] = 0x1EC45;                          // TextureCaps: PERSPECTIVE, ALPHA, TEXREPEATNOTSCALEDBYSIZE, PROJECTED, CUBEMAP, VOLUMEMAP, MIPMAP, MIPVOLUMEMAP, MIPCUBEMAP
             c[16] = 0x7030700;                        // TextureFilterCaps: MIN/MAG point, linear, anisotropic; MIP point, linear
+            c[17] = c[18] = 0x3030300;                // Cube/VolumeTextureFilterCaps: point, linear
             c[19] = 0x17;                             // TextureAddressCaps: WRAP, MIRROR, CLAMP, INDEPENDENTUV
+            c[20] = 0x17;                             // VolumeTextureAddressCaps
             c[21] = 0x1F;                             // LineCaps
             c[22] = 8192; c[23] = 8192;               // MaxTextureWidth, MaxTextureHeight
             c[24] = 2048;                             // MaxVolumeExtent
@@ -377,6 +379,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateTexture, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateTexture, (Func<IntPtr, uint, uint, uint, uint, int, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateTextureImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateRenderTarget, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateRenderTarget, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateRenderTargetImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurface, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateDepthStencilSurface, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateDepthStencilSurfaceImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateVolumeTexture, (delegate* unmanaged<IntPtr, uint, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateVolumeTexture);
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateCubeTexture, (delegate* unmanaged<IntPtr, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateCubeTexture);
             vt.Set(Vtbl.IDirect3DDevice9Ex.UpdateSurface, (delegate* unmanaged<IntPtr, IntPtr, D3DRECT9*, IntPtr, int*, int>)&UpdateSurface);
             vt.Set(Vtbl.IDirect3DDevice9Ex.UpdateTexture, (delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)&UpdateTexture);
@@ -535,6 +538,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             });
         }
 
+        [UnmanagedCallersOnly]
+        private static int CreateVolumeTexture(IntPtr self, uint w, uint h, uint depth, uint levels, uint usage, int format, int pool, IntPtr* texture, IntPtr* shared)
+        {
+            var d = Self(self);
+            if (d == null || texture == null || w == 0 || h == 0 || depth == 0 || (shared != null && *shared != IntPtr.Zero)) return D3D9Const.D3DERR_INVALIDCALL;
+            if ((usage & (D3D9Const.D3DUSAGE_RENDERTARGET | D3D9Const.D3DUSAGE_DEPTHSTENCIL)) != 0) return D3D9Const.D3DERR_INVALIDCALL;
+            *texture = IntPtr.Zero;
+            return Guard("CreateVolumeTexture", () =>
+            {
+                *texture = new Direct3DVolumeTexture9(d, w, h, depth, levels, format, pool, usage).Pointer;
+                return HResult.S_OK;
+            });
+        }
+
         private int MakeSurface(uint w, uint h, int format, int pool, uint usage, bool renderTarget, IntPtr* surface, IntPtr* shared)
         {
             if (surface == null || w == 0 || h == 0) return D3D9Const.D3DERR_INVALIDCALL;
@@ -635,6 +652,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static int UpdateTexture(IntPtr self, IntPtr src, IntPtr dst)
         {
+            if (From<Direct3DVolumeTexture9>(src) is { } sv)
+                return From<Direct3DVolumeTexture9>(dst) is { } tv ? Guard("UpdateTexture", () => tv.UpdateFrom(sv)) : D3D9Const.D3DERR_INVALIDCALL;
             var s = From<Direct3DTexture9>(src);
             var t = From<Direct3DTexture9>(dst);
             if (s == null || t == null) return D3D9Const.D3DERR_INVALIDCALL;

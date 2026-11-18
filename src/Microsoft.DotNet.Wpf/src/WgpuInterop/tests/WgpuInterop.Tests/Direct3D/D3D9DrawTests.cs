@@ -797,6 +797,59 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.Equal(0, s.Skipped);
         }
 
+        /// <summary>A volume texture of two slices, filled through LockBox (one directly, one through a
+        /// system-memory texture and UpdateTexture), sampled by depth.</summary>
+        [Fact]
+        public void VolumeTextures_AreSampledByDepth()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr Volume(int pool)
+            {
+                IntPtr v;
+                Check(((delegate* unmanaged<IntPtr, uint, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.CreateVolumeTexture))(s.Dev, 2, 2, 2, 1, 0, D3DFMT_A8R8G8B8, pool, &v, null), "CreateVolumeTexture");
+                return s.Own(v);
+            }
+            void Fill(IntPtr v, uint front, uint back)
+            {
+                D3DLOCKED_BOX lb;
+                Check(((delegate* unmanaged<IntPtr, uint, D3DLOCKED_BOX*, D3DBOX*, uint, int>)Fn(v, Vtbl.IDirect3DVolumeTexture9.LockBox))(v, 0, &lb, null, 0), "LockBox");
+                for (int z = 0; z < 2; z++)
+                    for (int y = 0; y < 2; y++)
+                        new Span<uint>((byte*)lb.pBits + z * lb.SlicePitch + y * lb.RowPitch, 2).Fill(z == 0 ? front : back);
+                Check(((delegate* unmanaged<IntPtr, uint, int>)Fn(v, Vtbl.IDirect3DVolumeTexture9.UnlockBox))(v, 0), "UnlockBox");
+            }
+            IntPtr direct = Volume(1), staged = Volume(2), updated = Volume(0);
+            Fill(direct, 0xFFFF0000, 0xFF00FF00);
+            Fill(staged, 0xFF0000FF, 0xFFFFFF00);
+            Check(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.UpdateTexture))(s.Dev, staged, updated), "UpdateTexture");
+            D3DVOLUME_DESC desc;
+            Check(((delegate* unmanaged<IntPtr, uint, D3DVOLUME_DESC*, int>)Fn(direct, Vtbl.IDirect3DVolumeTexture9.GetLevelDesc))(direct, 0, &desc), "GetLevelDesc");
+            Assert.Equal((2u, 2u, 2u), (desc.Width, desc.Height, desc.Depth));
+            Assert.Equal(4, ((delegate* unmanaged<IntPtr, int>)Fn(direct, Vtbl.IDirect3DVolumeTexture9.GetType))(direct));
+
+            s.Fvf(FVF_XYZRHW | FVF_TEX1 | 0x10000);          // one set of three coordinates
+            s.Clear(1, 0xFF000000);
+            RhwDir[] Quad(float x0, float x1, float y0, float y1, float w) => new[]
+            {
+                new RhwDir { X = x0, Y = y0, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = w }, new RhwDir { X = x1, Y = y0, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = w },
+                new RhwDir { X = x0, Y = y1, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = w }, new RhwDir { X = x1, Y = y1, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = w },
+            };
+            s.Texture(0, direct);
+            s.DrawUp(5, 2, Quad(0, 32, 0, 32, 0.25f));
+            s.DrawUp(5, 2, Quad(32, 64, 0, 32, 0.75f));
+            s.Texture(0, updated);
+            s.DrawUp(5, 2, Quad(0, 32, 32, 64, 0.25f));
+            s.DrawUp(5, 2, Quad(32, 64, 32, 64, 0.75f));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFFFF0000u, px[16 * W + 16]);
+            Assert.Equal(0xFF00FF00u, px[16 * W + 48]);
+            Assert.Equal(0xFF0000FFu, px[48 * W + 16]);
+            Assert.Equal(0xFFFFFF00u, px[48 * W + 48]);
+            Assert.Equal(0, s.Skipped);
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()
