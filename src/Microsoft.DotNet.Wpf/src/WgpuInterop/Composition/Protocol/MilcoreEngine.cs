@@ -2947,9 +2947,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // Stretch=Fill, Viewport covering the shape) over a RectangleGeometry samples the source rendered
             // to a GPU texture -- no CPU render+readback, no per-tile crop+upload. This is the dominant case
             // (a puzzle chops one animated visual into rectangular tiles, each a Viewbox sub-rect).
-            if (s_gpuVisualBrush && isContent && ib.Tile == TileMode.None && ib.Stretch == 1 /*Fill*/
-                && g is RectangleGeometry
-                && TryBuildGpuSourceBrush(hBrush, ib, bounds, (float)ib.Opacity, out fill))
+            // Any Stretch and Viewport too, wherever the picture they place is a rectangle the shape's own bounds or a
+            // rectangle shape holds (the renderer maps the texture across the drawn shape's bounds); a tiled one is read back.
+            if (s_gpuVisualBrush && isContent && ib.Tile == TileMode.None
+                && TryBuildGpuSourceBrush(hBrush, ib, bounds, (float)ib.Opacity, ref g, out fill))
             {
                 _brushesGpuLive.Add(hBrush);
                 return true;
@@ -3068,15 +3069,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // each frame, deduped across tiles), with the Viewbox carried as a UV sub-rect. Fails (-> CPU pixel
         // path) if the Viewport doesn't cover the shape (a sub-tile/offset needs the dest-clip path) or the
         // source has no bounds.
-        private bool TryBuildGpuSourceBrush(uint hBrush, MilImageBrush ib, Rect bounds, float opacity, out Brush? fill)
+        private bool TryBuildGpuSourceBrush(uint hBrush, MilImageBrush ib, Rect bounds, float opacity, ref Geometry g, out Brush? fill)
         {
             fill = null;
             if (!_contentBrushes.TryGetValue(hBrush, out (uint Source, bool IsDrawing) cb)) return false;
 
             Rect vp = ViewportRect(ib, bounds);
-            if (Math.Abs(vp.X - bounds.X) > 0.01 || Math.Abs(vp.Y - bounds.Y) > 0.01 ||
-                Math.Abs(vp.Width - bounds.Width) > 0.01 || Math.Abs(vp.Height - bounds.Height) > 0.01)
-                return false;
 
             SceneVisual? source = cb.IsDrawing
                 ? BuildDrawingVisual(cb.Source)
@@ -3114,6 +3112,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
 
             (float u0, float v0, float u1, float v1) = ViewboxUv(ib, b);
 
+            // Where the Stretch and alignment put the Viewbox's picture in the Viewport (beyond it for UniformToFill and a
+            // large None), and the part of it inside the Viewport: what is drawn, and the texture's part that maps onto it
+            float sw = b.Width * (u1 - u0), sh = b.Height * (v1 - v0);
+            if (sw <= 0f || sh <= 0f || vp.Width <= 0f || vp.Height <= 0f) return false;
+            float dw, dh;
+            switch (ib.Stretch)
+            {
+                case 1: dw = vp.Width; dh = vp.Height; break;                                                       // Fill
+                case 2: { float k = MathF.Min(vp.Width / sw, vp.Height / sh); dw = sw * k; dh = sh * k; break; }    // Uniform
+                case 3: { float k = MathF.Max(vp.Width / sw, vp.Height / sh); dw = sw * k; dh = sh * k; break; }    // UniformToFill
+                default: dw = sw; dh = sh; break;                                                                   // None
+            }
+            float dx = vp.X + (vp.Width - dw) * ib.AlignX, dy = vp.Y + (vp.Height - dh) * ib.AlignY;
+            float cx0 = MathF.Max(dx, vp.X), cy0 = MathF.Max(dy, vp.Y);
+            float cx1 = MathF.Min(dx + dw, vp.X + vp.Width), cy1 = MathF.Min(dy + dh, vp.Y + vp.Height);
+            if (cx1 <= cx0 || cy1 <= cy0) return false;
+            var drawn = new Rect(cx0, cy0, cx1 - cx0, cy1 - cy0);
+            float du = u1 - u0, dv = v1 - v0;
+            (u0, u1) = (u0 + (cx0 - dx) / dw * du, u0 + (cx1 - dx) / dw * du);
+            (v0, v1) = (v0 + (cy0 - dy) / dh * dv, v0 + (cy1 - dy) / dh * dv);
+            static bool Near(float a, float c) => MathF.Abs(a - c) <= 0.01f;
+            bool wholeShape = Near(drawn.X, bounds.X) && Near(drawn.Y, bounds.Y) && Near(drawn.Width, bounds.Width) && Near(drawn.Height, bounds.Height);
+            if (!wholeShape)
+            {
+                // the picture covers part of the shape: drawn as that rectangle, which a rectangle shape holding it is
+                if (g is not RectangleGeometry rg || drawn.X < rg.Rect.X - 0.01f || drawn.Y < rg.Rect.Y - 0.01f
+                    || drawn.X + drawn.Width > rg.Rect.X + rg.Rect.Width + 0.01f || drawn.Y + drawn.Height > rg.Rect.Y + rg.Rect.Height + 0.01f)
+                    return false;
+            }
+
             // The texture is the source rendered through THIS wrapper: one id per source and framing.
             // Keyed by the source alone, two brushes of one visual with different absolute Viewboxes
             // shared whichever texture was rendered first in the frame (and the cache kept it).
@@ -3121,6 +3149,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // of the same full picture -- still share one.
             uint textureId = (uint)HashCode.Combine(cb.Source, wrapper.Transform, pw, ph) | 0x80000000u;
             fill = new ImageBrush(wrapper, textureId, pw, ph, u0, v0, u1, v1, 0f, 0f, opacity);
+            if (!wholeShape) g = new RectangleGeometry(drawn);
             return true;
         }
 
