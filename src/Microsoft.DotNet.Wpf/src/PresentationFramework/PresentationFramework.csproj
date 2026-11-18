@@ -281,6 +281,7 @@
     <Compile Include="MS\Internal\Ink\DrawingAttributesDefaultValueFactory.cs" />
     <Compile Include="MS\Internal\Ink\EditBehavior.cs" />
     <Compile Include="MS\Internal\Ink\EditingCoordinator.cs" />
+    <Compile Include="MS\Internal\Ink\PlatformPenPoints.cs" />
     <Compile Include="MS\Internal\Ink\ElementsClipboardData.cs" />
     <Compile Include="MS\Internal\Ink\EraserBehavior.cs" />
     <Compile Include="MS\Internal\Ink\HighContrastHelper.cs" />

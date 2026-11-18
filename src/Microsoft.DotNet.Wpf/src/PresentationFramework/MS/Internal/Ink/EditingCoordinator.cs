@@ -798,49 +798,7 @@ namespace MS.Internal.Ink
                             return;
                         }
                         
-                        // A StylusPointCollection built from bare Points takes the DEFAULT pressure
-                        // for every sample. On Windows that is harmless, because a pen has its own
-                        // StylusDevice and never reaches this branch; off Windows there is no
-                        // StylusDevice at all, so every head fell back to the mouse here and a
-                        // pressure-sensitive Pencil or S-Pen drew a uniform line.
-                        //
-                        // The contact's real pressure is known -- the platform touch seam has it --
-                        // so it is applied when the device actually measured one. A finger reports
-                        // none, and then this behaves exactly as it did.
-                        Point position = _capturedMouse.GetPosition(_inkCanvas);
-                        MS.Internal.Interop.PenState pen = PlatformTouchSink.CurrentPen;
-
-                        if (pen.HasTilt)
-                        {
-                            // A StylusPoint can only carry properties its DESCRIPTION names, so tilt
-                            // needs one that declares the two axes beside the required X/Y/pressure.
-                            var description = new StylusPointDescription(new[]
-                            {
-                                new StylusPointPropertyInfo(StylusPointProperties.X),
-                                new StylusPointPropertyInfo(StylusPointProperties.Y),
-                                new StylusPointPropertyInfo(StylusPointProperties.NormalPressure),
-                                new StylusPointPropertyInfo(StylusPointProperties.XTiltOrientation),
-                                new StylusPointPropertyInfo(StylusPointProperties.YTiltOrientation),
-                            });
-
-                            var point = new StylusPoint(position.X, position.Y,
-                                                        pen.HasPressure ? (float)pen.Pressure : 0.5f,
-                                                        description,
-                                                        new[] { (int)Math.Round(pen.TiltX), (int)Math.Round(pen.TiltY) });
-
-                            // The (description, int) overload takes a CAPACITY, not the points.
-                            stylusPoints = new StylusPointCollection(description, 1);
-                            stylusPoints.Add(point);
-                        }
-                        else if (pen.HasPressure)
-                        {
-                            stylusPoints = new StylusPointCollection(
-                                new StylusPoint[] { new StylusPoint(position.X, position.Y, (float)pen.Pressure) });
-                        }
-                        else
-                        {
-                            stylusPoints = new StylusPointCollection(new Point[] { position });
-                        }
+                        stylusPoints = MousePoints(begin: false);
                     }
 
                     bool fSucceeded = false;
@@ -1024,8 +982,7 @@ namespace MS.Internal.Ink
 
                 _commonDescription = null;
 
-                Point[] points = new Point[] { _capturedMouse.GetPosition(_inkCanvas) };
-                stylusPoints = new StylusPointCollection(points);
+                stylusPoints = MousePoints(begin: true);
                 stylusEditingBehavior.AddStylusPoints(stylusPoints, userInitiated);
 
                 // 
@@ -1048,6 +1005,67 @@ namespace MS.Internal.Ink
                     _capturedMouse = null;
                 }
             }
+        }
+
+        /// <summary>
+        /// The points a MOUSE event contributes to the stroke, with whatever the platform pen
+        /// driving that mouse measured.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A StylusPointCollection built from bare Points takes the DEFAULT pressure for every
+        /// sample. On Windows that is harmless, because a pen has its own StylusDevice and never
+        /// reaches the mouse branch; off Windows there is no StylusDevice at all, so every head falls
+        /// back to the mouse, and the pen's measurements come from the platform touch seam instead
+        /// (PlatformTouchSink.CurrentPen). A finger or a real mouse measures nothing, and then this
+        /// is exactly the bare-Point collection it always was.
+        /// </para>
+        /// <para>
+        /// The DESCRIPTION is the stroke's, decided at the down and kept to the up, because a
+        /// stroke's points must all share one: StylusPointCollection.Add rejects a collection whose
+        /// description differs, so a point carrying tilt added to a stroke begun without it threw,
+        /// and the stroke was abandoned. Windows fixes it the same way and at the same moment --
+        /// the common description of InkCanvas.DefaultStylusPointDescription and the device's --
+        /// so an InkCanvas keeps tilt, twist, size or the barrel only when the application asked
+        /// for them there, on every platform alike.
+        /// </para>
+        /// <para>
+        /// A move also brings the samples the platform coalesced into it, oldest first, ahead of
+        /// its own point: on Windows the StylusDevice's packets carry every sample the digitizer
+        /// took, and without these a fast curve drawn at 240Hz is recorded as the 60Hz polygon the
+        /// events alone describe.
+        /// </para>
+        /// </remarks>
+        private StylusPointCollection MousePoints(bool begin)
+        {
+            Point position = _capturedMouse.GetPosition(_inkCanvas);
+            MS.Internal.Interop.PenState pen = PlatformTouchSink.CurrentPen;
+
+            if (begin || _mousePenDescription == null)
+            {
+                _mousePenDescription = StylusPointDescription.GetCommonDescription(
+                    _inkCanvas.DefaultStylusPointDescription, PlatformPenPoints.DescriptionFor(pen));
+            }
+            StylusPointDescription description = _mousePenDescription;
+
+            _coalesced.Clear();
+            if (!begin)
+            {
+                // Not at the down: a press that a head held back (for a possible right-click) is
+                // released by the move that finally went past the slop, so the samples pending then
+                // lie between the press point and that move's -- they belong to the move that is
+                // about to follow, not ahead of the press.
+                PlatformTouchSink.TakeCoalescedSamples(_inkCanvas, _coalesced);
+            }
+
+            var stylusPoints = new StylusPointCollection(description, _coalesced.Count + 1);
+            foreach ((Point samplePosition, MS.Internal.Interop.PenState samplePen) in _coalesced)
+            {
+                stylusPoints.Add(PlatformPenPoints.PointFor(samplePosition, samplePen, description));
+            }
+            stylusPoints.Add(PlatformPenPoints.PointFor(position, pen, description));
+            _coalesced.Clear();
+            return stylusPoints;
         }
 
         /// <summary>
@@ -1078,6 +1096,7 @@ namespace MS.Internal.Ink
             else if ( _capturedMouse != null )
             {
                 // The Mouse was captured. Remove the mouse listeners.
+                _mousePenDescription = null;
                 _inkCanvas.RemoveHandler(Mouse.MouseMoveEvent, new MouseEventHandler(OnInkCanvasDeviceMove<MouseEventArgs>));
                 _inkCanvas.RemoveHandler(UIElement.LostMouseCaptureEvent, new MouseEventHandler(OnInkCanvasLostDeviceCapture<MouseEventArgs>));
 
@@ -1445,6 +1464,10 @@ namespace MS.Internal.Ink
         private bool _stylusIsInverted = false;
 
         private StylusPointDescription  _commonDescription;
+        // The stroke's description when the MOUSE drew it (MousePoints), with what a platform pen
+        // measured; null outside a mouse stroke.
+        private StylusPointDescription  _mousePenDescription;
+        private readonly System.Collections.Generic.List<(Point Position, MS.Internal.Interop.PenState Pen)> _coalesced = new();
         private StylusDevice            _capturedStylus;
         private MouseDevice             _capturedMouse;
 
