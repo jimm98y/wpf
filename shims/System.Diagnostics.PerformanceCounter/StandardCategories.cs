@@ -268,7 +268,8 @@ namespace System.Diagnostics
                 "Packets/sec" => Sample(packetsIn + packetsOut, type),
                 "Packets Received/sec" => Sample(packetsIn, type),
                 "Packets Sent/sec" => Sample(packetsOut, type),
-                _ => Sample(Safe(() => Math.Max(0, match.Adapter.Speed)), type),
+                // an adapter with no speed (a virtual one's -1) reads as an unsigned wrap-around: none
+                _ => Sample(Safe(() => match.Adapter.Speed is long bps and > 0 and < 1_000_000_000_000 ? bps : 0), type),
             };
         }
 
