@@ -156,6 +156,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     Interpolation = modes.TryGetValue(e.Register, out int m) ? m : (e.ComponentType == 3 ? 2 : 1),
                 });
             }
+            // SV_PrimitiveID after a geometry shader is the one it writes (D3D: the pixel shader reads the
+            // geometry shader's output): a value like any other, constant over the primitive -- no
+            // primitive-index feature needed
+            if (rasterized != null && PrimitiveIdOutput(rasterized, stream) != null
+                && pixelShader.Inputs.Any(e => e.SystemValue == SvPrimitiveId || e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase)))
+                list.Add(new LinkedElement { Semantic = PrimitiveIdSemantic, Index = 0, Location = list.Count, ComponentType = 1, ComponentCount = 4, Interpolation = 1 });
             // SV_CullDistance: WGSL has no cull distances. D3D culls a primitive when, for some
             // distance, every vertex's is negative. Each vertex sends, per distance, 0 when its own is
             // negative and 1 when not; interpolated over the primitive that is exactly 0 everywhere
@@ -182,6 +188,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     list.Add(new LinkedElement { Semantic = ClipSemantic, Index = k, Location = list.Count, ComponentType = 3, ComponentCount = 4, Interpolation = 2 });
             return list;
         }
+
+        /// <summary>The linked SV_PrimitiveID a geometry shader writes.</summary>
+        internal const string PrimitiveIdSemantic = "SV_PRIMITIVEID";
+
+        /// <summary>The stage's SV_PrimitiveID output on the stream, if it writes one.</summary>
+        internal static SignatureElement? PrimitiveIdOutput(DxbcShader s, int stream) =>
+            s.Outputs.FirstOrDefault(e => e.Stream == stream && (e.SystemValue == SvPrimitiveId || e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase)));
 
         /// <summary>The stage's clip-distance components of <paramref name="stream"/>, in register order (register, component).</summary>
         internal static List<(int Register, int Component)> ClipComponents(DxbcShader s, int stream = 0)

@@ -186,7 +186,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         private void AssemblePixel(StringBuilder w)
         {
             bool sampleIndex = _s.Inputs.Any(e => e.SystemValue == SvSampleIndex || e.SemanticName.Equals("SV_SampleIndex", StringComparison.OrdinalIgnoreCase));
-            bool primitive = _s.Inputs.Any(e => (e.SystemValue == SvPrimitiveId || e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase)) && _inputRegs.Contains(e.Register)) || _builtins.Contains("vPrim");
+            // a primitive ID the geometry shader wrote is linked (LinkageOf); otherwise the rasterizer's
+            var primLink = _link.FirstOrDefault(l => l.Semantic == PrimitiveIdSemantic);
+            bool primitive = primLink == null && (_s.Inputs.Any(e => (e.SystemValue == SvPrimitiveId || e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase)) && _inputRegs.Contains(e.Register)) || _builtins.Contains("vPrim"));
             if (primitive)
             {
                 if (!HasFeature(D3DDevice.FeaturePrimitiveIndex))
@@ -219,7 +221,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             w.Append("    return out;\n}\n\n");
 
             w.Append("@fragment\nfn main(input: PsIn) -> PsOut {\n");
-            if (_builtins.Contains("vPrim")) w.Append("    vPrim = bitcast<vec4<f32>>(vec4<u32>(input.prim, 0u, 0u, 0u));\n");
+            if (_builtins.Contains("vPrim")) w.Append(primLink != null ? $"    vPrim = bitcast<vec4<f32>>(vec4<u32>(input.l{primLink.Location}.x, 0u, 0u, 0u));\n" : "    vPrim = bitcast<vec4<f32>>(vec4<u32>(input.prim, 0u, 0u, 0u));\n");
             if (_builtins.Contains("vCoverage")) w.Append("    vCoverage = bitcast<vec4<f32>>(vec4<u32>(input.coverage, 0u, 0u, 0u));\n");
             foreach (int reg in _inputRegs.OrderBy(r => r))
             {
@@ -236,7 +238,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                     else if (e.SystemValue == SvSampleIndex || e.SemanticName.Equals("SV_SampleIndex", StringComparison.OrdinalIgnoreCase))
                         src = "bitcast<vec4<f32>>(vec4<u32>(input.sample))";
                     else if (e.SystemValue == SvPrimitiveId || e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase))
-                        src = "bitcast<vec4<f32>>(vec4<u32>(input.prim))";
+                        src = primLink != null ? $"bitcast<vec4<f32>>(vec4<u32>(input.l{primLink.Location}.x))" : "bitcast<vec4<f32>>(vec4<u32>(input.prim))";
                     else
                     {
                         system = false;

@@ -76,8 +76,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 t.VsBindings = v.Bindings;
                 t.GsBindings = g.Bindings;
                 foreach (var e in fetch) t.Slots.Add(e.Slot);
-                if (ps?.Code.Inputs.Any(e => e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase)) == true)
-                    D3DLog.Once("gsprim", "SV_PrimitiveID in a pixel shader after a geometry shader: the index of the primitive in the expanded draw, not the geometry shader's");
+                // a primitive ID the geometry shader writes is linked to the pixel shader (LinkageOf);
+                // one it does not write is the rasterizer's, the primitive's index in the expanded draw
+                if (ps?.Code.Inputs.Any(e => e.SemanticName.Equals("SV_PrimitiveID", StringComparison.OrdinalIgnoreCase)) == true && DxbcTranslator.PrimitiveIdOutput(gs.Code, rs) == null)
+                    D3DLog.Once("gsprim", "SV_PrimitiveID in a pixel shader after a geometry shader that does not write it: the index of the primitive in the expanded draw");
 
                 // 1. the vertex shader as compute
                 t.VsLayout = BindGroupLayout(v.Bindings, WGPUShaderStage_Compute);
