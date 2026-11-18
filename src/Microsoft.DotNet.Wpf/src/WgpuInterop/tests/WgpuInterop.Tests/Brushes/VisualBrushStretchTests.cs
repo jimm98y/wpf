@@ -23,7 +23,7 @@ namespace WgpuInterop.Tests.Brushes
         private const int W = 60, H = 20;
         private const uint HRoot = 1, HContent = 2, HSrc = 10, HSrcContent = 11, HRed = 12, HBlue = 13, HBrush = 14;
 
-        private (Image Pixels, MilcoreEngine Engine) Draw(uint stretch)
+        private (Image Pixels, MilcoreEngine Engine) Draw(uint stretch, uint tileMode = 0, double vpW = 1)
         {
             var e = new MilcoreEngine();
             e.CreateOrAddRef(HRoot, MilResourceTypeId.Visual);
@@ -35,7 +35,7 @@ namespace WgpuInterop.Tests.Brushes
             src.AddRange(MilCmd.DrawRectangleRecord(HRed, 0, 0, 0, 10, 20));
             src.AddRange(MilCmd.DrawRectangleRecord(HBlue, 0, 10, 0, 10, 20));
             Realize(e, src.ToArray(), HSrc, HSrcContent);
-            byte[] brush = MilCmd.ImageBrush(HBrush, HSrc, stretch);
+            byte[] brush = MilCmd.ImageBrush(HBrush, HSrc, stretch, tileMode: tileMode, vpW: vpW);
             brush[0] = 0x83;   // MILCMD_VISUALBRUSH: the TileBrush layout, the source visual where the image would be
             e.SubmitCommand(brush);
             SceneVisual root = Realize(e, MilCmd.DrawRectangleRecord(HBrush, 0, 0, 0, W, H), HRoot, HContent);
@@ -66,6 +66,27 @@ namespace WgpuInterop.Tests.Brushes
             // a 60-wide shape: the 20 x 20 source scaled 3x, its middle third of rows shown -- red left half, blue right
             Assert.True(img[10, 10].R > 200 && img[10, 10].B < 60, "red across the left half");
             Assert.True(img[50, 10].B > 200 && img[50, 10].R < 60, "blue across the right half");
+        }
+
+        [Fact]
+        public void Tiled_lays_the_source_every_viewport_from_the_GPU()
+        {
+            // a viewport a sixth of the 60-wide shape: six 10 x 20 tiles, each the square squeezed -- red, then blue
+            var (img, e) = Draw(1, tileMode: 4 /* Tile */, vpW: 1.0 / 6);
+            Assert.True(Count(e, "_brushesGpuLive") > 0 && Count(e, "_contentBrushes2D") == 0, "drawn from the GPU, not read back");
+            for (int t = 0; t < 6; t++)
+            {
+                Assert.True(img[t * 10 + 2, 10].R > 200 && img[t * 10 + 2, 10].B < 60, $"tile {t}: red on its left");
+                Assert.True(img[t * 10 + 7, 10].B > 200 && img[t * 10 + 7, 10].R < 60, $"tile {t}: blue on its right");
+            }
+        }
+
+        [Fact]
+        public void FlipX_mirrors_every_other_tile()
+        {
+            var (img, _) = Draw(1, tileMode: 1 /* FlipX */, vpW: 1.0 / 6);
+            Assert.True(img[2, 10].R > 200 && img[7, 10].B > 200, "tile 0 as it is: red, blue");
+            Assert.True(img[12, 10].B > 200 && img[17, 10].R > 200, "tile 1 mirrored: blue, red");
         }
     }
 }

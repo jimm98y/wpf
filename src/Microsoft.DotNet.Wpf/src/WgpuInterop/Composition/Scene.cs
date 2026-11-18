@@ -462,12 +462,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         }
 
         public ImageBrush(SceneVisual sourceVisual, uint sourceId, int srcTexW, int srcTexH,
-            float u0, float v0, float u1, float v1, float tileWidth, float tileHeight, float opacity)
+            float u0, float v0, float u1, float v1, float tileWidth, float tileHeight, float opacity, TileMode tileMode = TileMode.None)
         {
             PixelsRgba = System.Array.Empty<byte>(); PixelWidth = 0; PixelHeight = 0;
             SourceVisual = sourceVisual; SourceId = sourceId; SourceTexW = srcTexW; SourceTexH = srcTexH;
             U0 = u0; V0 = v0; U1 = u1; V1 = v1;
-            TileMode = TileMode.None; TileWidth = tileWidth; TileHeight = tileHeight; Opacity = opacity;
+            // tiled: the texture is one tile (the source rendered over its Viewbox), tileWidth x tileHeight each
+            TileMode = tileMode; TileWidth = tileWidth; TileHeight = tileHeight; Opacity = opacity;
         }
     }
 

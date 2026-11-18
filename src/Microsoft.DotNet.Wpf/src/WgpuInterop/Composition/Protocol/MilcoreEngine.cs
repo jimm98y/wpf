@@ -2949,7 +2949,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // (a puzzle chops one animated visual into rectangular tiles, each a Viewbox sub-rect).
             // Any Stretch and Viewport too, wherever the picture they place is a rectangle the shape's own bounds or a
             // rectangle shape holds (the renderer maps the texture across the drawn shape's bounds); a tiled one is read back.
-            if (s_gpuVisualBrush && isContent && ib.Tile == TileMode.None
+            if (s_gpuVisualBrush && isContent && (ib.Tile == TileMode.None || ib.Stretch == 1 /*Fill*/)
                 && TryBuildGpuSourceBrush(hBrush, ib, bounds, (float)ib.Opacity, ref g, out fill))
             {
                 _brushesGpuLive.Add(hBrush);
@@ -3111,6 +3111,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             wrapper.Children.Add(source);
 
             (float u0, float v0, float u1, float v1) = ViewboxUv(ib, b);
+
+            if (ib.Tile != TileMode.None)
+            {
+                // tiled (Stretch Fill): the texture is one tile -- the source rendered over exactly its Viewbox -- laid
+                // every Viewport across the shape, flipped as the TileMode says
+                var vb = new Rect(b.X + u0 * b.Width, b.Y + v0 * b.Height, (u1 - u0) * b.Width, (v1 - v0) * b.Height);
+                if (vb.Width <= 0.01f || vb.Height <= 0.01f || vp.Width <= 0f || vp.Height <= 0f) return false;
+                int tw = Math.Clamp((int)MathF.Ceiling(vb.Width * 2), 1, 1024), th = Math.Clamp((int)MathF.Ceiling(vb.Height * 2), 1, 1024);
+                var tile = new SceneVisual { Transform = Matrix3x2.CreateTranslation(-vb.X, -vb.Y) * Matrix3x2.CreateScale(tw / vb.Width, th / vb.Height) };
+                tile.Children.Add(source);
+                uint tileId = (uint)HashCode.Combine(cb.Source, tile.Transform, tw, th, 0x711E) | 0x80000000u;
+                fill = new ImageBrush(tile, tileId, tw, th, 0f, 0f, 1f, 1f, vp.Width, vp.Height, opacity, ib.Tile);
+                return true;
+            }
 
             // Where the Stretch and alignment put the Viewbox's picture in the Viewport (beyond it for UniformToFill and a
             // large None), and the part of it inside the Viewport: what is drawn, and the texture's part that maps onto it

@@ -8789,12 +8789,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         private bool EmitGpuImageMask(PathGeometry localGeom, ImageBrush img, Matrix3x2 world, double opacity,
             Scissor clip, int width, int height, WGPUTextureFormat format, DrawData data)
         {
-            if (img.PixelWidth <= 0 || img.PixelHeight <= 0)
+            // a tiled content brush's tile is its source rendered on the GPU this frame (EnsureContentSourceTexture)
+            IntPtr sourceView = IntPtr.Zero;
+            if (img.SourceVisual != null && (!_contentTexFrame.TryGetValue(img.SourceId, out sourceView) || sourceView == IntPtr.Zero))
+                return false;
+            if (img.SourceVisual == null && (img.PixelWidth <= 0 || img.PixelHeight <= 0))
                 return false;
             if (!GetOrRasterizeLocalCoverage(localGeom, world, out IntPtr covView, out float ox, out float oy, out float w, out float h))
                 return false;
 
-            IntPtr imgView = ExternalView(img.External) ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
+            IntPtr imgView = img.SourceVisual != null ? sourceView
+                : ExternalView(img.External) ?? GetOrCreateImageView(img.PixelsRgba, img.PixelWidth, img.PixelHeight);
 
             byte[] uni = BuildImageBrushParams(img, ox, oy, w, h, (float)Math.Clamp(opacity * img.Opacity, 0.0, 1.0));
             IntPtr ubuf = GetOrCreateUniform(uni);
