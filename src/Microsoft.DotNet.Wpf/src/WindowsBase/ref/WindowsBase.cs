@@ -14,6 +14,8 @@ namespace MS.Internal.Interop
     {
         None = 0, Enabled = 1, Focusable = 2, Focused = 4, Offscreen = 8, Password = 16, ReadOnly = 32, Checked = 64,
         Indeterminate = 128, Expanded = 256, Collapsed = 512, Selected = 1024, Selectable = 2048, HasValue = 4096, HasRange = 8192,
+        HasText = 16384, SelectionContainer = 32768, Grid = 65536, Table = 131072, GridItem = 262144, Scrollable = 524288, ScrollItem = 1048576,
+        Window = 2097152, MultiSelectable = 4194304, Modal = 8388608,
     }
     public interface IAutomationTreeSource
     {
@@ -35,6 +37,26 @@ namespace MS.Internal.Interop
         bool DoAction(int id, MS.Internal.Interop.AccessibleAction action);
         bool SetValue(int id, string value);
         bool SetFocus(int id);
+        bool TryGetText(int id, out string text) { throw null; }
+        bool TryGetTextSelection(int id, out int start, out int length) { throw null; }
+        bool SetTextSelection(int id, int start, int length) { throw null; }
+        bool TryGetTextRangeBounds(int id, int start, int length, out double x, out double y, out double width, out double height) { throw null; }
+        bool TryGetTextLine(int id, int offset, out int lineStart, out int lineLength, out int lineNumber) { throw null; }
+        int GetTextOffsetAtPoint(int id, double screenX, double screenY) { throw null; }
+        bool TryGetVisibleTextRange(int id, out int start, out int length) { throw null; }
+        int[] GetSelectedIds(int id) { throw null; }
+        bool TryGetGrid(int id, out int rows, out int columns) { throw null; }
+        int GetGridCell(int id, int row, int column) { throw null; }
+        bool TryGetGridItem(int id, out int row, out int column, out int rowSpan, out int columnSpan, out int gridId) { throw null; }
+        int[] GetColumnHeaderIds(int id) { throw null; }
+        int[] GetRowHeaderIds(int id) { throw null; }
+        bool TryGetScroll(int id, out double horizontalPercent, out double verticalPercent, out double horizontalViewSize, out double verticalViewSize, out bool horizontallyScrollable, out bool verticallyScrollable) { throw null; }
+        bool Scroll(int id, int horizontalAmount, int verticalAmount) { throw null; }
+        bool SetScrollPercent(int id, double horizontalPercent, double verticalPercent) { throw null; }
+        bool ScrollIntoView(int id) { throw null; }
+        bool TryGetWindow(int id, out int visualState, out bool canMinimize, out bool canMaximize, out bool isTopmost) { throw null; }
+        bool SetWindowVisualState(int id, int visualState) { throw null; }
+        bool CloseWindow(int id) { throw null; }
     }
     public static partial class AutomationTree
     {
@@ -62,7 +84,7 @@ namespace MS.Internal.Interop
     {
         FocusChanged = 0, ChildrenChanged = 1, PropertyChanged = 2, ValueChanged = 3, SelectionChanged = 4, NameChanged = 5,
         DescriptionChanged = 6, ExpandedChanged = 7, CheckedChanged = 8, EnabledChanged = 9, OffscreenChanged = 10,
-        ChildAdded = 11, ChildRemoved = 12,
+        ChildAdded = 11, ChildRemoved = 12, TextChanged = 13, TextSelectionChanged = 14, ScrollChanged = 15, SelectionContainerChanged = 16,
     }
     [System.Runtime.Versioning.SupportedOSPlatformAttribute("macos")]
     public static partial class CocoaAccessibility

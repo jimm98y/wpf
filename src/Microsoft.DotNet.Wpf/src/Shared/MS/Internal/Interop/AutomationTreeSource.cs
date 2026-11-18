@@ -67,6 +67,26 @@ namespace MS.Internal.Interop
         HasValue = 1 << 12,
         /// <summary>The node has a RangeValue pattern, so TryGetRange will answer.</summary>
         HasRange = 1 << 13,
+        /// <summary>The node has a Text pattern: its text, selection and character geometry (TryGetText and the rest).</summary>
+        HasText = 1 << 14,
+        /// <summary>The node holds selectable items (a Selection pattern): GetSelectedIds answers.</summary>
+        SelectionContainer = 1 << 15,
+        /// <summary>The node is a grid of cells (a Grid pattern): TryGetGrid and GetGridCell answer.</summary>
+        Grid = 1 << 16,
+        /// <summary>The grid has row and column headers (a Table pattern).</summary>
+        Table = 1 << 17,
+        /// <summary>The node is a cell of a grid (a GridItem pattern): TryGetGridItem answers.</summary>
+        GridItem = 1 << 18,
+        /// <summary>The node scrolls its content (a Scroll pattern): TryGetScroll and Scroll answer.</summary>
+        Scrollable = 1 << 19,
+        /// <summary>The node can be scrolled into view (a ScrollItem pattern).</summary>
+        ScrollItem = 1 << 20,
+        /// <summary>The node is a window (a Window pattern): TryGetWindow and its commands answer.</summary>
+        Window = 1 << 21,
+        /// <summary>A selection container that allows more than one item selected.</summary>
+        MultiSelectable = 1 << 22,
+        /// <summary>A window that blocks the others until it closes.</summary>
+        Modal = 1 << 23,
     }
 
     /// <summary>
@@ -133,6 +153,91 @@ namespace MS.Internal.Interop
 
         /// <summary>Gives the node keyboard focus.</summary>
         bool SetFocus(int id);
+
+        // ---- text (a Text pattern). Offsets are UTF-16 code units from the start of the text. ----------
+
+        /// <summary>The whole text. False without a Text pattern.</summary>
+        bool TryGetText(int id, out string text) { text = string.Empty; return false; }
+
+        /// <summary>The selection, or the caret as an empty one at <paramref name="start"/>.</summary>
+        bool TryGetTextSelection(int id, out int start, out int length) { start = length = 0; return false; }
+
+        /// <summary>Selects a range (an empty one puts the caret there).</summary>
+        bool SetTextSelection(int id, int start, int length) => false;
+
+        /// <summary>The screen rectangle (device pixels) around a range's characters.</summary>
+        bool TryGetTextRangeBounds(int id, int start, int length, out double x, out double y, out double width, out double height)
+        { x = y = width = height = 0; return false; }
+
+        /// <summary>The line holding the character at <paramref name="offset"/>: its first offset, its length, and its number.</summary>
+        bool TryGetTextLine(int id, int offset, out int lineStart, out int lineLength, out int lineNumber)
+        { lineStart = lineLength = lineNumber = 0; return false; }
+
+        /// <summary>The offset of the character at a screen point, or -1.</summary>
+        int GetTextOffsetAtPoint(int id, double screenX, double screenY) => -1;
+
+        /// <summary>The part of the text on screen.</summary>
+        bool TryGetVisibleTextRange(int id, out int start, out int length) { start = length = 0; return false; }
+
+        // ---- selection (a Selection pattern) ----------------------------------------------------------
+
+        /// <summary>The selected items of a selection container. Never null.</summary>
+        int[] GetSelectedIds(int id) => Array.Empty<int>();
+
+        // ---- grids and tables (Grid, GridItem, Table patterns) -----------------------------------------
+
+        /// <summary>A grid's rows and columns.</summary>
+        bool TryGetGrid(int id, out int rows, out int columns) { rows = columns = 0; return false; }
+
+        /// <summary>The cell at a row and column, or <see cref="InvalidNode"/>.</summary>
+        int GetGridCell(int id, int row, int column) => InvalidNode;
+
+        /// <summary>A cell's place: row, column, spans, and the grid it is in.</summary>
+        bool TryGetGridItem(int id, out int row, out int column, out int rowSpan, out int columnSpan, out int gridId)
+        { row = column = rowSpan = columnSpan = 0; gridId = InvalidNode; return false; }
+
+        /// <summary>A table's column headers. Never null.</summary>
+        int[] GetColumnHeaderIds(int id) => Array.Empty<int>();
+
+        /// <summary>A table's row headers. Never null.</summary>
+        int[] GetRowHeaderIds(int id) => Array.Empty<int>();
+
+        // ---- scrolling (Scroll, ScrollItem patterns) --------------------------------------------------
+
+        /// <summary>
+        /// Where a scrolling node is: each direction's position and view size as percentages (0-100;
+        /// -1 for a direction that does not scroll), and whether it scrolls.
+        /// </summary>
+        bool TryGetScroll(int id, out double horizontalPercent, out double verticalPercent, out double horizontalViewSize,
+            out double verticalViewSize, out bool horizontallyScrollable, out bool verticallyScrollable)
+        {
+            horizontalPercent = verticalPercent = -1; horizontalViewSize = verticalViewSize = 100;
+            horizontallyScrollable = verticallyScrollable = false;
+            return false;
+        }
+
+        /// <summary>Scrolls by amounts (System.Windows.Automation.ScrollAmount: 0 large decrement, 1 small
+        /// decrement, 2 none, 3 large increment, 4 small increment).</summary>
+        bool Scroll(int id, int horizontalAmount, int verticalAmount) => false;
+
+        /// <summary>Scrolls to percentages (-1 leaves a direction where it is).</summary>
+        bool SetScrollPercent(int id, double horizontalPercent, double verticalPercent) => false;
+
+        /// <summary>Scrolls the node's container until the node is in view.</summary>
+        bool ScrollIntoView(int id) => false;
+
+        // ---- windows (a Window pattern) ---------------------------------------------------------------
+
+        /// <summary>A window's visual state (System.Windows.Automation.WindowVisualState: 0 normal, 1
+        /// maximized, 2 minimized), and whether it can be minimized, maximized, and is topmost.</summary>
+        bool TryGetWindow(int id, out int visualState, out bool canMinimize, out bool canMaximize, out bool isTopmost)
+        { visualState = 0; canMinimize = canMaximize = isTopmost = false; return false; }
+
+        /// <summary>Minimizes, maximizes or restores the window.</summary>
+        bool SetWindowVisualState(int id, int visualState) => false;
+
+        /// <summary>Closes the window.</summary>
+        bool CloseWindow(int id) => false;
 
         /// <summary>
         /// The reply to any question about a node that does not exist, or never did. Chosen as -1
@@ -225,6 +330,48 @@ namespace MS.Internal.Interop
             public bool DoAction(int id, AccessibleAction action) => ForId(id)?.DoAction(id, action) ?? false;
             public bool SetValue(int id, string value) => ForId(id)?.SetValue(id, value) ?? false;
             public bool SetFocus(int id) => ForId(id)?.SetFocus(id) ?? false;
+
+            public bool TryGetText(int id, out string text) { text = string.Empty; return ForId(id)?.TryGetText(id, out text) ?? false; }
+            public bool TryGetTextSelection(int id, out int start, out int length) { start = length = 0; return ForId(id)?.TryGetTextSelection(id, out start, out length) ?? false; }
+            public bool SetTextSelection(int id, int start, int length) => ForId(id)?.SetTextSelection(id, start, length) ?? false;
+            public bool TryGetTextRangeBounds(int id, int start, int length, out double x, out double y, out double width, out double height)
+            {
+                x = y = width = height = 0;
+                return ForId(id)?.TryGetTextRangeBounds(id, start, length, out x, out y, out width, out height) ?? false;
+            }
+            public bool TryGetTextLine(int id, int offset, out int lineStart, out int lineLength, out int lineNumber)
+            {
+                lineStart = lineLength = lineNumber = 0;
+                return ForId(id)?.TryGetTextLine(id, offset, out lineStart, out lineLength, out lineNumber) ?? false;
+            }
+            public int GetTextOffsetAtPoint(int id, double screenX, double screenY) => ForId(id)?.GetTextOffsetAtPoint(id, screenX, screenY) ?? -1;
+            public bool TryGetVisibleTextRange(int id, out int start, out int length) { start = length = 0; return ForId(id)?.TryGetVisibleTextRange(id, out start, out length) ?? false; }
+            public int[] GetSelectedIds(int id) => ForId(id)?.GetSelectedIds(id) ?? Array.Empty<int>();
+            public bool TryGetGrid(int id, out int rows, out int columns) { rows = columns = 0; return ForId(id)?.TryGetGrid(id, out rows, out columns) ?? false; }
+            public int GetGridCell(int id, int row, int column) => ForId(id)?.GetGridCell(id, row, column) ?? IAutomationTreeSource.InvalidNode;
+            public bool TryGetGridItem(int id, out int row, out int column, out int rowSpan, out int columnSpan, out int gridId)
+            {
+                row = column = rowSpan = columnSpan = 0; gridId = IAutomationTreeSource.InvalidNode;
+                return ForId(id)?.TryGetGridItem(id, out row, out column, out rowSpan, out columnSpan, out gridId) ?? false;
+            }
+            public int[] GetColumnHeaderIds(int id) => ForId(id)?.GetColumnHeaderIds(id) ?? Array.Empty<int>();
+            public int[] GetRowHeaderIds(int id) => ForId(id)?.GetRowHeaderIds(id) ?? Array.Empty<int>();
+            public bool TryGetScroll(int id, out double horizontalPercent, out double verticalPercent, out double horizontalViewSize,
+                out double verticalViewSize, out bool horizontallyScrollable, out bool verticallyScrollable)
+            {
+                horizontalPercent = verticalPercent = -1; horizontalViewSize = verticalViewSize = 100; horizontallyScrollable = verticallyScrollable = false;
+                return ForId(id)?.TryGetScroll(id, out horizontalPercent, out verticalPercent, out horizontalViewSize, out verticalViewSize, out horizontallyScrollable, out verticallyScrollable) ?? false;
+            }
+            public bool Scroll(int id, int horizontalAmount, int verticalAmount) => ForId(id)?.Scroll(id, horizontalAmount, verticalAmount) ?? false;
+            public bool SetScrollPercent(int id, double horizontalPercent, double verticalPercent) => ForId(id)?.SetScrollPercent(id, horizontalPercent, verticalPercent) ?? false;
+            public bool ScrollIntoView(int id) => ForId(id)?.ScrollIntoView(id) ?? false;
+            public bool TryGetWindow(int id, out int visualState, out bool canMinimize, out bool canMaximize, out bool isTopmost)
+            {
+                visualState = 0; canMinimize = canMaximize = isTopmost = false;
+                return ForId(id)?.TryGetWindow(id, out visualState, out canMinimize, out canMaximize, out isTopmost) ?? false;
+            }
+            public bool SetWindowVisualState(int id, int visualState) => ForId(id)?.SetWindowVisualState(id, visualState) ?? false;
+            public bool CloseWindow(int id) => ForId(id)?.CloseWindow(id) ?? false;
         }
 
         /// <summary>True when there is a tree to ask. Backends check this before every batch.</summary>
@@ -339,5 +486,13 @@ namespace MS.Internal.Interop
         ChildAdded,
         /// <summary>ChildId was removed from NodeId.</summary>
         ChildRemoved,
+        /// <summary>NodeId's text (a Text pattern's) changed.</summary>
+        TextChanged,
+        /// <summary>NodeId's text selection or caret moved.</summary>
+        TextSelectionChanged,
+        /// <summary>NodeId scrolled.</summary>
+        ScrollChanged,
+        /// <summary>The set of selected items in the container NodeId changed.</summary>
+        SelectionContainerChanged,
     }
 }

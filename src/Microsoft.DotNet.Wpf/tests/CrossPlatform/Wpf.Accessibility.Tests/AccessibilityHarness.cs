@@ -114,6 +114,23 @@ namespace Wpf.Accessibility.Tests
         }
 
         // Big enough that nothing is clipped out of the tree.
+        /// <summary>
+        /// As <see cref="Probe"/>, with the peer as the root of a window's tree (HwndTarget's, for a
+        /// handle no window has): what the platform bridges read, where a pattern's providers -- a
+        /// selection's items, a grid's cells -- are connected to the tree and come back.
+        /// </summary>
+        public static T ProbeRooted<T>(Func<UIElement> build, Func<AutomationPeer, T> read)
+            => Sta(() =>
+            {
+                UIElement element = build();
+                Layout(element);
+                var ensure = typeof(UIElement).Assembly.GetType("System.Windows.Interop.HwndTarget", throwOnError: true)!
+                    .GetMethod("EnsureAutomationPeer", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+                var peer = (AutomationPeer?)ensure.Invoke(null, new object[] { element, (IntPtr)0x7A11 });
+                if (peer is null) throw new InvalidOperationException("no automation peer was created for the element");
+                return read(peer);
+            });
+
         private static void Layout(UIElement element)
         {
             element.Measure(new Size(1000, 1000));

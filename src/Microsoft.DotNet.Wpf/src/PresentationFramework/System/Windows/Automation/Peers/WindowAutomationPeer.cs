@@ -100,6 +100,50 @@ namespace System.Windows.Automation.Peers
             return bounds;
         }
 
+        /// <summary>
+        /// The Window pattern, from the Window itself. On Windows UI Automation also reads it from the
+        /// window handle; the platforms' accessibility bridges have only the peer to ask.
+        /// </summary>
+        public override object GetPattern(PatternInterface patternInterface)
+        {
+            if (patternInterface == PatternInterface.Window) return _windowProvider ??= new WindowPatternProvider((Window)Owner);
+            return base.GetPattern(patternInterface);
+        }
+
+        private WindowPatternProvider _windowProvider;
+
+        private sealed class WindowPatternProvider : System.Windows.Automation.Provider.IWindowProvider
+        {
+            private readonly Window _window;
+            public WindowPatternProvider(Window window) => _window = window;
+
+            public void SetVisualState(WindowVisualState state)
+            {
+                if ((state == WindowVisualState.Maximized && !Maximizable) || (state == WindowVisualState.Minimized && !Minimizable))
+                    throw new InvalidOperationException();      // as UI Automation answers a state the window does not allow
+                _window.WindowState = state switch
+                {
+                    WindowVisualState.Maximized => WindowState.Maximized,
+                    WindowVisualState.Minimized => WindowState.Minimized,
+                    _ => WindowState.Normal,
+                };
+            }
+
+            public void Close() => _window.Close();
+            public bool WaitForInputIdle(int milliseconds) => true;
+            public bool Maximizable => _window.ResizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip && _window.WindowStyle != WindowStyle.ToolWindow;
+            public bool Minimizable => _window.ResizeMode != ResizeMode.NoResize && _window.WindowStyle != WindowStyle.ToolWindow;
+            public bool IsModal => _window.IsShowingAsDialog;
+            public WindowVisualState VisualState => _window.WindowState switch
+            {
+                WindowState.Maximized => WindowVisualState.Maximized,
+                WindowState.Minimized => WindowVisualState.Minimized,
+                _ => WindowVisualState.Normal,
+            };
+            public WindowInteractionState InteractionState => _window.IsEnabled ? WindowInteractionState.ReadyForUserInteraction : WindowInteractionState.BlockedByModalWindow;
+            public bool IsTopmost => _window.Topmost;
+        }
+
         protected override bool IsDialogCore()
         {
             Window window = (Window)Owner;

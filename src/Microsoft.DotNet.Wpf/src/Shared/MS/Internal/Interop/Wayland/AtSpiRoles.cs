@@ -250,6 +250,13 @@ namespace MS.Internal.Interop.Wayland
             // "invalidated" detail; an add at index -1 is how a client is told to re-read.
             AutomationChangeKind.ChildrenChanged => ("ChildrenChanged", "add"),
 
+            // the Text, Selection and scrolling interfaces' signals (object:text-changed:insert,
+            // object:text-caret-moved, object:selection-changed, object:visible-data-changed)
+            AutomationChangeKind.TextChanged => ("TextChanged", "insert"),
+            AutomationChangeKind.TextSelectionChanged => ("TextCaretMoved", "caret"),
+            AutomationChangeKind.SelectionContainerChanged => ("SelectionChanged", "selection"),
+            AutomationChangeKind.ScrollChanged => ("VisibleDataChanged", "scroll"),
+
             _ => (string.Empty, string.Empty),
         };
     }
