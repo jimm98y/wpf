@@ -1,5 +1,6 @@
-// The categories a process can see: the standard ones this machine reports live, and those the app
-// created itself (process-local, as if its installer had registered them).
+// The categories a process can see: the standard ones this machine reports live, and those apps created
+// (machine-wide, SharedCounters.cs: one process writes a counter, any other reads it; the creating process's own
+// where there is nowhere shared to keep them).
 
 using System.Collections.Generic;
 using System.Linq;
@@ -37,13 +38,18 @@ namespace System.Diagnostics
         public Metrics.Meter Meter;
         // (counter, instance) -> raw value; an instance exists once one of its counters was written.
         public readonly Dictionary<(string, string), long> Values = new(new KeyComparer());
+        // its values every process shares, where it is registered machine-wide
+        public SharedValues Shared;
 
         public override bool IsCustom => true;
+
+        private int IndexOf(string counter) => Definitions.FindIndex(d => string.Equals(d.Name, counter, StringComparison.OrdinalIgnoreCase));
 
         public override IEnumerable<(string Name, string Help, PerformanceCounterType Type)> Counters => Definitions;
 
         public override string[] InstanceNames()
         {
+            if (Shared != null) return Shared.InstanceNames();
             lock (Values)
             {
                 return Values.Keys.Select(k => k.Item2).Where(i => i.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -62,14 +68,16 @@ namespace System.Diagnostics
 
         public long Get(string counter, string instance)
         {
+            if (Shared != null) return IndexOf(counter) is int i and >= 0 ? Shared.Get(i, instance) : 0;
             lock (Values)
             {
                 return Values.TryGetValue((counter, instance ?? ""), out long v) ? v : 0;
             }
         }
 
-        public long Update(string counter, string instance, Func<long, long> change)
+        public long Update(string counter, string instance, Func<long, long> change, PerformanceCounterInstanceLifetime lifetime = PerformanceCounterInstanceLifetime.Global)
         {
+            if (Shared != null) return Shared.Update(IndexOf(counter), instance, change, lifetime);
             lock (Values)
             {
                 var key = (counter, instance ?? "");
@@ -80,6 +88,7 @@ namespace System.Diagnostics
 
         public void RemoveInstance(string instance)
         {
+            if (Shared != null) { Shared.RemoveInstance(instance); return; }
             lock (Values)
             {
                 foreach (var key in Values.Keys.Where(k => string.Equals(k.Item2, instance, StringComparison.OrdinalIgnoreCase)).ToList()) Values.Remove(key);
@@ -260,8 +269,16 @@ namespace System.Diagnostics
             if (string.IsNullOrEmpty(name)) return null;
             lock (s_gate)
             {
-                Category c = s_custom.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
-                return c ?? SystemCategory.All.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                Category c = SystemCategory.All.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (c != null) return c;
+                CustomCategory custom = s_custom.FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
+                // one registered machine-wide: as it is now (another process may have deleted it, or made it)
+                if (SharedCategories.Folder != null)
+                {
+                    if (custom?.Shared != null && SharedCategories.Load(name) == null) { Forget(custom); return null; }
+                    if (custom == null && SharedCategories.Load(name) is { } loaded) { s_custom.Add(loaded); loaded.Meter = CounterMetrics.Publish(loaded); return loaded; }
+                }
+                return custom;
             }
         }
 
@@ -269,8 +286,21 @@ namespace System.Diagnostics
         {
             lock (s_gate)
             {
-                return SystemCategory.All.Cast<Category>().Concat(s_custom).ToArray();
+                foreach (CustomCategory shared in SharedCategories.All())
+                {
+                    if (s_custom.Any(x => string.Equals(x.Name, shared.Name, StringComparison.OrdinalIgnoreCase))) { shared.Shared?.Dispose(); continue; }
+                    s_custom.Add(shared);
+                    shared.Meter = CounterMetrics.Publish(shared);
+                }
+                return SystemCategory.All.Cast<Category>().Concat(s_custom.Where(c => c.Shared == null || SharedCategories.Load(c.Name) != null)).ToArray();
             }
+        }
+
+        private static void Forget(CustomCategory c)
+        {
+            s_custom.Remove(c);
+            c.Meter?.Dispose();
+            c.Shared?.Dispose();
         }
 
         public static void Add(CustomCategory c)
@@ -278,6 +308,7 @@ namespace System.Diagnostics
             lock (s_gate)
             {
                 if (Find(c.Name) != null) throw new InvalidOperationException($"Cannot create Performance Category '{c.Name}' because it already exists.");
+                SharedCategories.Register(c);
                 s_custom.Add(c);
                 c.Meter = CounterMetrics.Publish(c);
             }
@@ -292,6 +323,7 @@ namespace System.Diagnostics
                 if (!c.IsCustom) throw new InvalidOperationException("Only categories created with PerformanceCounterCategory.Create can be deleted.");
                 s_custom.Remove((CustomCategory)c);
                 ((CustomCategory)c).Meter?.Dispose();
+                SharedCategories.Delete((CustomCategory)c);
             }
         }
 

@@ -13,6 +13,8 @@ internal static class TestEnvironment
         Directory.CreateDirectory(Root);
         Environment.SetEnvironmentVariable("WPFWEBGPU_REGISTRY_DIR", Path.Combine(Root, "registry"));
         Environment.SetEnvironmentVariable("WPFWEBGPU_DPAPI_DIR", Path.Combine(Root, "dpapi"));
+        // the machine's performance counter categories: the tests' own
+        Environment.SetEnvironmentVariable("WPFWEBGPU_PERFCOUNTERS_DIR", Path.Combine(Root, "perfcounters"));
         // http.sys's registrations and service: the tests' own, started on demand through the launcher built beside
         // them (an HttpListener or UseHttpSys server registers its prefixes with it)
         Environment.SetEnvironmentVariable("WPFWEBGPU_HTTPSYS_DIR", Path.Combine(Root, "httpsys"));

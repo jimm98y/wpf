@@ -211,7 +211,7 @@ namespace System.Diagnostics
                 Initialize();
                 throw new InvalidOperationException("Cannot update Performance Counter, this object has been initialized as ReadOnly.");
             }
-            return Custom().Update(_definition.Name, _instance, change);
+            return Custom().Update(_definition.Name, _instance, change, _lifetime);
         }
 
         private static void VerifyWriteableName(string category, string counter, string instance)
