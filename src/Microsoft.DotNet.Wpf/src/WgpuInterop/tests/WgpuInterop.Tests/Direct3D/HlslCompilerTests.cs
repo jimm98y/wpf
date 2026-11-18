@@ -96,7 +96,8 @@ namespace WgpuInterop.Tests.Direct3D
         };
 
         private static bool Drawable(Entry e) => e.Profile.StartsWith("ps_", StringComparison.Ordinal) || e.Profile.StartsWith("vs_", StringComparison.Ordinal);
-        private static bool Compiled(Entry e) => Drawable(e) || e.Profile.StartsWith("cs_", StringComparison.Ordinal) || e.Profile.StartsWith("gs_", StringComparison.Ordinal);
+        private static bool Compiled(Entry e) => Drawable(e) || e.Profile.StartsWith("cs_", StringComparison.Ordinal) || e.Profile.StartsWith("gs_", StringComparison.Ordinal)
+            || e.Profile.StartsWith("hs_", StringComparison.Ordinal) || e.Profile.StartsWith("ds_", StringComparison.Ordinal);
 
         /// <summary>Compute shaders whose UAVs depend on the order threads run in (DxbcCoverageTests):
         /// run, not compared.</summary>
@@ -336,6 +337,65 @@ namespace WgpuInterop.Tests.Direct3D
                 foreach (IntPtr p in new[] { ctx, dev }) DxbcPixelParity.Release(p);
             }
             string summary = $"{same} draw as fxc's draw, {differ} differ";
+            Console.Error.WriteLine(summary + Environment.NewLine + string.Join(Environment.NewLine, lines));
+            Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
+        }
+
+        /// <summary>Each hull and domain shader pair of the corpus tessellating two patches, fxc's pair and
+        /// ours, with the corpus's constants (a scaling transform, the factors): the targets compared.</summary>
+        [Fact]
+        public void EveryHullAndDomainShaderOfTheCorpus_TessellatesAsFxcsDo()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx;
+            uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            const string vsHlsl = "struct Cp { float3 position : POSITION; float2 uv : TEXCOORD0; };\nCp main(float3 p : POSITION) { Cp c; c.position = p; c.uv = p.xy * 0.5 + 0.5; return c; }\n";
+            const string psHlsl = "float4 main(float4 pos : SV_Position) : SV_Target { return float4(frac(pos.xy / 7), pos.z, 1); }\n";
+            var vs = Compile(vsHlsl, "gen.hlsl", "main", "vs_5_0", Array.Empty<string>(), out string verr) ?? throw new InvalidOperationException(verr);
+            var ps = Compile(psHlsl, "gen.hlsl", "main", "ps_5_0", Array.Empty<string>(), out string perr) ?? throw new InvalidOperationException(perr);
+            // Params: transform (a scale that keeps ds_tri's offset patches -- it adds a control point
+            // and the primitive id -- inside the target and the depth range), tess (the factors), color
+            var constants = new float[24];
+            constants[0] = constants[5] = 0.4f; constants[10] = 0.2f; constants[15] = 1;
+            constants[16] = 3; constants[17] = 2; constants[18] = 4; constants[19] = 2.5f;
+            var cb = new byte[constants.Length * 4];
+            Buffer.BlockCopy(constants, 0, cb, 0, cb.Length);
+            var lines = new List<string>();
+            int same = 0, differ = 0;
+            try
+            {
+                foreach (var (hsName, dsName, points) in new[] { ("hs_tri", "ds_tri", 3), ("hs_quad", "ds_quad", 4), ("hs_line", "ds_line", 2) })
+                {
+                    var hsE = Entries().First(x => x.Name == hsName);
+                    var dsE = Entries().First(x => x.Name == dsName);
+                    var hs = Compile(Source(hsE), hsE.File, hsE.Name, hsE.Profile, hsE.Defines, out string herr);
+                    var ds = Compile(Source(dsE), dsE.File, dsE.Name, dsE.Profile, dsE.Defines, out string derr);
+                    if (hs == null || ds == null) { differ++; lines.Add($"FAIL {hsName}/{dsName}: {herr.Trim()} {derr.Trim()}"); continue; }
+                    if (Environment.GetEnvironmentVariable("HLSL_DUMP") is { Length: > 0 } dump)
+                    {
+                        Directory.CreateDirectory(dump);
+                        File.WriteAllLines(Path.Combine(dump, hsE.Blob + ".ours.txt"), DxbcShader.Parse(hs).Instructions.Select(i => $"{i} ; ctl 0x{(i.Token >> 11) & 0x1FFF:x}"));
+                        File.WriteAllLines(Path.Combine(dump, dsE.Blob + ".ours.txt"), DxbcShader.Parse(ds).Instructions.Select(i => $"{i} ; ctl 0x{(i.Token >> 11) & 0x1FFF:x}"));
+                    }
+                    try
+                    {
+                        var factors = new[] { 3f, 2f, 4f, 2.5f, 2f, 3f };
+                        var a = DxbcTessellationTests.DrawPatches(dev, ctx, vs, Fxc(hsE), Fxc(dsE), ps, points, factors, constants: cb);
+                        var b = DxbcTessellationTests.DrawPatches(dev, ctx, vs, hs, ds, ps, points, factors, constants: cb);
+                        var (count, first) = DxbcPixelParity.Compare(a, b);
+                        if (DxbcPixelParity.Covered(a) == 0) { differ++; lines.Add($"FAIL {hsName}/{dsName}: fxc's pair covered nothing"); }
+                        else if (count == 0) { same++; lines.Add($"OK   {hsName}/{dsName} ({DxbcPixelParity.Covered(a)} covered)"); }
+                        else { differ++; lines.Add($"FAIL {hsName}/{dsName}: {count} components differ; {first}"); }
+                    }
+                    catch (Exception x) { differ++; lines.Add($"FAIL {hsName}/{dsName}: {x.GetType().Name}: {x.Message.Split('\n')[0]}"); }
+                }
+            }
+            finally
+            {
+                foreach (IntPtr p in new[] { ctx, dev }) DxbcPixelParity.Release(p);
+            }
+            string summary = $"{same} tessellate as fxc's do, {differ} differ";
             Console.Error.WriteLine(summary + Environment.NewLine + string.Join(Environment.NewLine, lines));
             Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
         }

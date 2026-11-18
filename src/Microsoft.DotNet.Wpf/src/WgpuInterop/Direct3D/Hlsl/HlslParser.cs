@@ -628,7 +628,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     return new LiteralExpr { At = at, IsFloat = true, FloatValue = t.FloatValue, Suffix = t.Suffix };
                 case TokenKind.String:
                     Next();
-                    return new LiteralExpr { At = at, Suffix = 's' };
+                    return new LiteralExpr { At = at, Suffix = 's', Text = t.Text.Length >= 2 && t.Text[0] == '"' ? t.Text[1..^1] : t.Text };
             }
             if (Accept("("))
             {

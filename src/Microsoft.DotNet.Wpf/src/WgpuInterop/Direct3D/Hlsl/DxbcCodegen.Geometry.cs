@@ -118,18 +118,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 ("SV_PRIMITIVEID", ShaderStage.Geometry or ShaderStage.Hull or ShaderStage.Domain) => OperandType.InputPrimitiveId,
                 ("SV_GSINSTANCEID", ShaderStage.Geometry) => OperandType.InputGsInstanceId,
+                ("SV_OUTPUTCONTROLPOINTID", ShaderStage.Hull) => OperandType.OutputControlPointId,
+                ("SV_DOMAINLOCATION", ShaderStage.Domain) => OperandType.InputDomainPoint,
                 _ => (OperandType?)null,
             };
             if (file == null) return null;
-            if (!_specialInputs.Any(x => x.File == file)) _specialInputs.Add((file.Value, 1));
-            var num = new Num { Type = nt.WithScalar(ScalarKind.Uint), File = file.Value, Index = Array.Empty<long>(), Relative = Array.Empty<DxOperand?>(), Comp = new byte[] { 0 } };
+            bool domain = file == OperandType.InputDomainPoint;
+            int n = domain ? Math.Max(1, Math.Min(3, nt.Count)) : 1;
+            if (!_specialInputs.Any(x => x.File == file)) _specialInputs.Add((file.Value, (1 << n) - 1));
+            var num = new Num { Type = domain ? nt.WithScalar(ScalarKind.Float) : nt.WithScalar(ScalarKind.Uint), File = file.Value, Index = Array.Empty<long>(), Relative = Array.Empty<DxOperand?>(), Comp = Enumerable.Range(0, n).Select(c => (byte)c).ToArray() };
             return new NumValue { Type = num.Type, N = num };
         }
 
         private void DeclareSpecialInputs()
         {
             foreach (var (file, mask) in _specialInputs.Concat(_computeInputs))
-                _w.Emit(Opcode.DclInput, 0, file is OperandType.InputPrimitiveId or OperandType.InputGsInstanceId ? DxOperand.Bare(file) : DxOperand.Dest(file, mask));
+                _w.Emit(Opcode.DclInput, 0, file is OperandType.InputPrimitiveId or OperandType.InputGsInstanceId or OperandType.OutputControlPointId ? DxOperand.Bare(file) : DxOperand.Dest(file, mask));
         }
 
         /// <summary>A geometry shader's declarations after its inputs and temps, in fxc's order.</summary>

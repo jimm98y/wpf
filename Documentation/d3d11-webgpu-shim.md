@@ -441,7 +441,7 @@ to write, but it means a native dependency for every head, which the rules here 
   backwards compatibility), and answers fxc's error text in the error blob.
   - Front end: C's preprocessor as fxc runs it, then a parser of HLSL as shader models 2 to 5 write
     it (effect syntax skipped as fxc skips it).
-  - Back end, shader model 4.0 to 5.0 vertex, pixel, geometry and compute shaders: DXBC that the translator and
+  - Back end, shader model 4.0 to 5.0, every stage: DXBC that the translator and
     D3DReflect read as they read fxc's. Functions are inlined; types are checked as the code is
     generated; constant buffers pack as fxc packs them (16-byte registers, matrices column-major by
     default), signatures pack as fxc packs them (first fit, alike interpolation), registers bind to
@@ -450,12 +450,16 @@ to write, but it means a native dependency for every head, which the rules here 
     memory by element and byte offset, raw buffers by byte address; atomics, barriers, counters and
     append/consume, and doubles two components each (the d* instructions). A geometry shader's
     vertices are the two-dimensional input registers, each stream its own output signature (OSG5);
-    [unroll] loops with a constant trip count are unrolled.
+    [unroll] loops with a constant trip count are unrolled. A hull shader is its phases, each with
+    its declarations: the control point phase (the entry point) and a fork phase (the patch
+    constant function), the tessellation factors each a register of its own (PCSG); a domain shader
+    reads vpc#, vDomain and vicp[N][r].
   - Checked against fxc (HlslCompilerTests): every vertex and pixel shader of the corpus compiles
     with fxc's signatures, bindings and constant-buffer layouts, and draws on the shim as fxc's blob
     of the same source draws, pixel for pixel (geometry shaders between generated vertex and pixel
-    shaders); every compute shader writes its UAVs as fxc's does.
-  - Not yet: hull and domain shaders; shader models 2 and 3 (D3D9's token stream
+    shaders, hull and domain shaders tessellating two patches); every compute shader writes its
+    UAVs as fxc's does.
+  - Not yet: shader models 2 and 3 (D3D9's token stream
     with CTAB); class linkage. Those targets answer E_FAIL with the error text saying so.
   `D3DReflect` is managed (D3DShaderReflection): ID3D11ShaderReflection read from the blob's chunks
   (RDEF, signatures, STAT, SFI0, the declarations). It matches d3dcompiler_47 field for field over

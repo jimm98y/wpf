@@ -134,6 +134,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         public ulong IntValue;
         public double FloatValue;
         public char Suffix;
+        /// <summary>A string literal's text (an attribute's argument).</summary>
+        public string? Text;
     }
 
     internal sealed class NameExpr : Expr { public string Name = ""; }

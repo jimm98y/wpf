@@ -370,6 +370,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (semantic == null) throw Err(at, "missing semantic", 4502);
             var (sname, sindex) = SplitSemantic(semantic);
             int sv = SystemValueOf(sname, output);
+            if (sv == 0 && _stage is ShaderStage.Hull or ShaderStage.Domain) sv = TessFactorName(sname, sindex);
             if (_stage == ShaderStage.Compute)
             {
                 if (output) throw Err(at, "a compute shader has no outputs", 4502);
@@ -432,6 +433,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (!_functions.TryGetValue(entry, out var fs) || fs.All(f => f.Body == null))
                 throw new HlslException(default, $"entrypoint not found", 3501);
             var f = fs.First(x => x.Body != null);
+            if (_stage == ShaderStage.Hull) return CompileHull(f);
+            if (_stage == ShaderStage.Domain) TessellationAttributes(f);
             if (_stage == ShaderStage.Compute) ThreadGroup(f);
             if (_stage == ShaderStage.Geometry) GeometryAttributes(f);
             // the first pass learns what is used; the second binds it in declaration order and emits
@@ -455,6 +458,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             _computeInputs.Clear();
             _specialInputs.Clear();
             _streams.Clear();
+            _patchConstants.Clear();
             _tgsmCount = 0;
             foreach (var g in _groupShared.Values) g.Register = -1;
         }
@@ -480,6 +484,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 var type = Resolve(p.Type, p.ArrayDims);
                 if (p.Modifiers.Contains("uniform")) throw Err(p, "uniform entry-point parameters are not supported");
+                if (TessellationParam(p, type) is { } patch) { frame.Locals[p.Name] = patch; continue; }
                 if (_stage == ShaderStage.Geometry && type is ObjectType { IsStream: true } st) { frame.Locals[p.Name] = GeometryStream(p, st); continue; }
                 if (_stage == ShaderStage.Geometry && PrimitiveOf(p.Modifiers) > 0) { frame.Locals[p.Name] = GeometryInput(p, type); continue; }
                 if (p.IsOut)
@@ -876,10 +881,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 ("RDEF", Rdef()),
                 ("ISGN", Signature(_inputs, false)),
+            };
+            if (_stage == ShaderStage.Domain) chunks.Add(("PCSG", Signature(_patchConstants, false)));
+            chunks.AddRange(new List<(string, byte[])>
+            {
                 (Sm5 && _stage == ShaderStage.Geometry ? "OSG5" : "OSGN", Signature(_outputs, true, Sm5 && _stage == ShaderStage.Geometry)),
                 (Sm5 ? "SHEX" : "SHDR", _w.Program()),
                 ("STAT", Stat()),
-            };
+            });
             return DxbcWriter.Container(chunks);
         }
 
@@ -912,6 +921,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private void Declarations(FunctionDecl entry)
         {
+            if (_stage == ShaderStage.Domain)
+            {
+                _w.Declare(Opcode.DclInputControlPointCount, (uint)_inputCps);
+                _w.Declare(Opcode.DclTessDomain, _domain switch { "isoline" => 1u, "tri" => 2u, _ => 3u });
+            }
+            DeclareGlobals();
+            if (_stage == ShaderStage.Domain) DomainDeclarations();
+            else DeclareInputs();
+            if (_readsCoverage) _w.Emit(Opcode.DclInput, 0, DxOperand.Bare(OperandType.InputCoverageMask));
+            if (_stage != ShaderStage.Geometry) DeclareOutputs(_outputs);
+            if (_stage == ShaderStage.Compute) ComputeDeclarations();
+            if (_temps > 0) _w.Declare(Opcode.DclTemps, 0, (uint)_temps);
+            if (_stage == ShaderStage.Geometry) GeometryDeclarations();
+            foreach (var (x, size, comps) in _indexables) _w.Declare(Opcode.DclIndexableTemp, 0, (uint)x, (uint)size, (uint)comps);
+        }
+
+        /// <summary>The shader's declarations ahead of its stage's: flags, constant buffers, resources.</summary>
+        private void DeclareGlobals()
+        {
             _w.Declare(Opcode.DclGlobalFlags, 1);           // refactoringAllowed
             if (_icb.Count > 0) _w.ImmediateConstantBuffer(_icb.ToArray());
             foreach (var cb in _cbuffers.Where(c => c.Slot >= 0 && c.Used && !c.Texture).OrderBy(c => c.Slot))
@@ -932,6 +960,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             // a tbuffer: a buffer of float4s at its t# (read with ld)
             foreach (var cb in _cbuffers.Where(c => c.Texture && c.Used && c.Slot >= 0))
                 _w.EmitWith(Opcode.DclResource, 1u, null, new[] { DxOperand.Bare(OperandType.Resource, cb.Slot) }, new[] { 0x5555u });
+        }
+
+        private void DeclareInputs()
+        {
             foreach (var e in _inputs)
             {
                 int mask = e.Mask;
@@ -948,12 +980,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 else _w.Emit(Opcode.DclInput, 0, o);
             }
             DeclareSpecialInputs();
-            if (_readsCoverage) _w.Emit(Opcode.DclInput, 0, DxOperand.Bare(OperandType.InputCoverageMask));
-            if (_stage != ShaderStage.Geometry) DeclareOutputs(_outputs);
-            if (_stage == ShaderStage.Compute) ComputeDeclarations();
-            if (_temps > 0) _w.Declare(Opcode.DclTemps, 0, (uint)_temps);
-            if (_stage == ShaderStage.Geometry) GeometryDeclarations();
-            foreach (var (x, size, comps) in _indexables) _w.Declare(Opcode.DclIndexableTemp, 0, (uint)x, (uint)size, (uint)comps);
         }
 
         private void DeclareOutputs(IEnumerable<SigEntry> outputs)
@@ -977,6 +1003,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         {
             if (_stage == ShaderStage.Vertex && !b.Output) return false;
             if (a.InArray || b.InArray) return false;
+            // a tessellation factor takes a register of its own (what follows may share it)
+            if (IsTessFactor(b.SystemValue)) return false;
             if (a.SystemValue is 1 or 9 or 10 || b.SystemValue is 1 or 9 or 10) return false;
             bool distA = a.SystemValue is 2 or 3, distB = b.SystemValue is 2 or 3;
             if (distA != distB) return false;

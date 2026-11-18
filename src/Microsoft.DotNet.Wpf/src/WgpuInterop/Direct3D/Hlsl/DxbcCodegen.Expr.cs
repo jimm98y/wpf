@@ -244,6 +244,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 case AggValue a when a.Type is ArrayType:
                     if (constant) return a.Parts[Math.Clamp((int)k, 0, a.Parts.Length - 1)];
+                    // control points: the element's registers, the vertex index relative
+                    if (a.Parts.Length > 0 && IsVertexArray(a))
+                    {
+                        var vi = Registerize(Convert(EvalValue(ix.Index), NumericType.Int, ix.Index).Component(0));
+                        return RelativeVertex(a.Parts[0], vi.Operand());
+                    }
                     // a local array (an indexable temp): its element's registers, relative to the index
                     return ReadStore(StoreOf(ix));
                 case ArrayRef r:
@@ -273,6 +279,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         }
 
         private static long ImmOffset(long v) => v;
+
+        /// <summary>An array of vertices or control points: every number a two-dimensional input register.</summary>
+        private static bool IsVertexArray(AggValue a)
+        {
+            static bool Leaf(Value v) => v switch
+            {
+                NumValue n => n.N.Imm == null && n.N.Index.Length == 2 && n.N.File is OperandType.Input or OperandType.InputControlPoint or OperandType.OutputControlPoint,
+                AggValue g => g.Parts.All(Leaf),
+                _ => false,
+            };
+            return a.Parts.All(Leaf);
+        }
+
+        /// <summary>Vertex 0's value with its vertex index relative to an index register (v[r0.x + 0][r]).</summary>
+        private static Value RelativeVertex(Value v, DxOperand index)
+        {
+            switch (v)
+            {
+                case NumValue nv:
+                {
+                    var n = nv.N.WithType(nv.N.Type);
+                    n.Index = (long[])nv.N.Index.Clone();
+                    n.Index[0] = 0;
+                    n.Relative = new DxOperand?[] { index, null };
+                    return new NumValue { Type = nv.Type, N = n };
+                }
+                case AggValue a: return new AggValue { Type = a.Type, Parts = a.Parts.Select(p => RelativeVertex(p, index)).ToArray() };
+            }
+            return v;
+        }
 
         private bool TryConstIndex(Expr e, out long k)
         {

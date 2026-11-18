@@ -179,7 +179,7 @@ namespace WgpuInterop.Tests.Direct3D
         private const string Ps = "struct O { float4 pos : SV_Position; float4 c : COLOR0; };\nfloat4 main(O o, bool face : SV_IsFrontFace) : SV_Target { return float4(o.c.xyz, face ? 1 : 0.5); }\n";
 
         /// <summary>Two patches through the shaders on the device, both windings drawn: the target's texels.</summary>
-        private static List<float[]> DrawPatches(IntPtr dev, IntPtr ctx, byte[] vs, byte[] hs, byte[] ds, byte[] ps, int points, float[] factors, byte[]? gsBlob = null, uint layers = 1)
+        internal static List<float[]> DrawPatches(IntPtr dev, IntPtr ctx, byte[] vs, byte[] hs, byte[] ds, byte[] ps, int points, float[] factors, byte[]? gsBlob = null, uint layers = 1, byte[]? constants = null)
         {
             var made = new List<IntPtr>();
             IntPtr Keep(IntPtr p) { made.Add(p); return p; }
@@ -215,7 +215,9 @@ namespace WgpuInterop.Tests.Direct3D
                 fixed (float* p = va) vb = Buffer(dev, p, va.Length * 4, D3D11_BIND.VERTEX_BUFFER, Keep);
                 var f = new float[8];
                 Array.Copy(factors, f, Math.Min(6, factors.Length));
-                fixed (float* p = f) cb = Buffer(dev, p, 32, D3D11_BIND.CONSTANT_BUFFER, Keep);
+                // the factors, or the caller's constants (for the hull and the domain shader both)
+                if (constants != null) fixed (byte* p = constants) cb = Buffer(dev, p, constants.Length, D3D11_BIND.CONSTANT_BUFFER, Keep);
+                else fixed (float* p = f) cb = Buffer(dev, p, 32, D3D11_BIND.CONSTANT_BUFFER, Keep);
                 var td = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = layers, Format = DXGI_FORMAT.R16G16B16A16_FLOAT, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET };
                 Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &td, null, &tex), "CreateTexture2D");
                 Keep(tex);
@@ -236,6 +238,7 @@ namespace WgpuInterop.Tests.Direct3D
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.HSSetShader))(ctx, h, null, 0);
                 ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.HSSetConstantBuffers))(ctx, 0, 1, &cb);
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DSSetShader))(ctx, d, null, 0);
+                if (constants != null) ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DSSetConstantBuffers))(ctx, 0, 1, &cb);
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, psh, null, 0);
                 if (gsBlob != null)
                 {
