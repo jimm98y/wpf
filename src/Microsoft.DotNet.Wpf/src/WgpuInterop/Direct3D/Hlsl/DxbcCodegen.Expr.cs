@@ -112,7 +112,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 {
                     var num = new Num { Type = n, File = OperandType.ConstantBuffer, Index = new[] { slot, (long)reg }, Relative = new DxOperand?[2], Comp = Enumerable.Range(comp, Math.Max(1, n.Components)).Select(i => (byte)i).ToArray() };
                     // a bool in a constant buffer is 0 or 1: as a bool register it is 0 or ~0
-                    if (n.Scalar == ScalarKind.Bool) return Wrap(Compute(Opcode.INe, n, num.WithType(n.WithScalar(ScalarKind.Uint)), ImmUint(0)));
+                    if (n.Scalar == ScalarKind.Bool && !_legacy) return Wrap(Compute(Opcode.INe, n, num.WithType(n.WithScalar(ScalarKind.Uint)), ImmUint(0)));
                     return Wrap(num);
                 }
                 case ArrayType a:
@@ -261,7 +261,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                         return ArrayElement(r, at.Element, ImmOffset(r.Base + k * r.Stride), null);
                     }
                     var idx = Convert(EvalValue(ix.Index), NumericType.Int, ix.Index).Component(0);
-                    if (r.Stride != 1) idx = Compute(Opcode.IMul, NumericType.Int, idx, ImmInt(r.Stride));
+                    if (r.Stride != 1) idx = Compute(_legacy ? Opcode.Mul : Opcode.IMul, NumericType.Int, idx, ImmInt(r.Stride));
                     idx = Registerize(idx);
                     if (r.Tag is CBuffer c2) c2.DynamicallyIndexed = true;
                     return ArrayElement(r, at.Element, r.Base, idx.Operand());
@@ -460,12 +460,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     MemWrite(m.Loc, m.Type, v, at);
                     return;
                 case NumStore n:
-                    Op(Opcode.Mov, n, false, Convert(v, (NumericType)n.Type, at));
+                    Op(Opcode.Mov, n, false, Predicated(Convert(v, (NumericType)n.Type, at), n));
                     return;
                 case AggStore a when a.Type is NumericType { IsMatrix: true } mt:
                 {
                     var mv = v as MatValue ?? throw Err(at, $"cannot convert from '{v.Type}' to '{mt}'", 3017);
-                    for (int i = 0; i < a.Parts.Length; i++) Op(Opcode.Mov, (NumStore)a.Parts[i], false, Convert(Wrap(Row(mv, i)), ((NumericType)a.Parts[i].Type), at));
+                    for (int i = 0; i < a.Parts.Length; i++)
+                    {
+                        var part = (NumStore)a.Parts[i];
+                        Op(Opcode.Mov, part, false, Predicated(Convert(Wrap(Row(mv, i)), (NumericType)part.Type, at), part));
+                    }
                     return;
                 }
                 case AggStore a:
@@ -523,8 +527,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 case "+": return Wrap(n);
                 case "-": return Wrap(Negate(n));
-                case "!": return Wrap(Compute(Opcode.Not, n.Type.WithScalar(ScalarKind.Bool), Convert(Wrap(n), n.Type.WithScalar(ScalarKind.Bool), u)));
+                case "!":
+                {
+                    var bt = n.Type.WithScalar(ScalarKind.Bool);
+                    var b = Convert(Wrap(n), bt, u);
+                    // a legacy bool is 0 or 1: 1 - b
+                    if (_legacy) return Wrap(Compute(Opcode.Add, bt, ImmFloat(1), Negate(LegacyConvert(b, n.Type.WithScalar(ScalarKind.Float)))));
+                    return Wrap(Compute(Opcode.Not, bt, b));
+                }
                 case "~":
+                    if (_legacy) throw Err(u, "'~' needs shader model 4", 3082);
                     if (!n.Type.IsIntLike) throw Err(u, "'~' needs an integer operand", 3082);
                     return Wrap(Compute(Opcode.Not, n.Type.Scalar == ScalarKind.Bool ? n.Type.WithScalar(ScalarKind.Int) : n.Type, n));
             }
@@ -533,7 +545,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private Num Negate(Num n)
         {
-            if (n.Type.IsFloatLike)
+            if (n.Type.IsFloatLike || (_legacy && n.Imm == null))
             {
                 // a double's sign is in its high word
                 if (n.Imm != null) return new Num { Type = n.Type, Imm = n.Imm.Select((x, i) => IsDouble(n.Type) && i % 2 == 0 ? x : x ^ 0x80000000).ToArray() };
@@ -589,12 +601,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var s = Promote(l.Type.Scalar, r.Type.Scalar);
             if (op is "<<" or ">>") s = l.Type.Scalar == ScalarKind.Bool ? ScalarKind.Int : l.Type.Scalar;
             if (bits && s is ScalarKind.Float or ScalarKind.Double) throw Err(at, $"'{op}' needs integer operands", 3082);
+            if (_legacy && bits && op != "%") throw Err(at, $"'{op}' needs shader model 4 (there are no integers before it)", 3082);
             var t = Common(l.Type, r.Type, s);
             var a = Convert(lv, t, at); var c = Convert(rv, t, at);
             if (compare)
             {
                 var bt = t.WithScalar(ScalarKind.Bool);
-                bool f = s is ScalarKind.Float or ScalarKind.Double, u = s == ScalarKind.Uint;
+                bool f = s is ScalarKind.Float or ScalarKind.Double || _legacy, u = s == ScalarKind.Uint;
                 return op switch
                 {
                     "==" => Wrap(Compute(f ? Opcode.Eq : Opcode.IEq, bt, a, c)),
@@ -606,6 +619,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 };
             }
             bool fl = s is ScalarKind.Float or ScalarKind.Double;
+            if (_legacy && !fl)
+            {
+                // an integer is a float: + - * as they are, / and % truncated
+                var ft = t.WithScalar(ScalarKind.Float);
+                Num r2 = op switch
+                {
+                    "+" => Compute(Opcode.Add, ft, a, c),
+                    "-" => Compute(Opcode.Add, ft, a, Negate(c)),
+                    "*" => Compute(Opcode.Mul, ft, a, c),
+                    "/" => Compute(Opcode.RoundZ, ft, Compute(Opcode.Div, ft, a, c)),
+                    "%" => Compute(Opcode.RoundZ, ft, FloatMod(ft, LegacyConvert(a, ft), LegacyConvert(c, ft))),
+                    _ => throw Err(at, $"unsupported operator {op}"),
+                };
+                return Wrap(r2.WithType(t));
+            }
             switch (op)
             {
                 case "+": return Wrap(Compute(fl ? Opcode.Add : Opcode.IAdd, t, a, c));
@@ -695,6 +723,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 // a struct or matrix: the condition is a scalar, chosen with if
                 if (!cond.Type.IsScalar) throw Err(c, "a vector condition on non-numeric operands");
                 var store = AllocLocal(a.Type);
+                if (_flatten)
+                {
+                    // both, the condition's under its predicate
+                    Assign(store, Convert(b, a.Type, c), c);
+                    var saved = _pred;
+                    var cf = Convert(Wrap(cond), NumericType.Bool, c).WithType(NumericType.Float);
+                    _pred = saved == null ? cf : And01(saved, cf);
+                    Assign(store, a, c);
+                    _pred = saved;
+                    return ReadStore(store);
+                }
                 _w.Emit(Opcode.If, 1u << 7, Convert(Wrap(cond), NumericType.Bool, c).Operand());
                 Assign(store, a, c);
                 _w.Emit(Opcode.Else, 0);
@@ -806,6 +845,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var from = n.Type.Scalar;
             if (from == to.Scalar) return n.WithType(to.IsMatrix ? to.Row : to);
             var t = to.IsMatrix ? to.Row : to;
+            if (_legacy) return LegacyConvert(n, t);
             if (DoubleConvert(n, t) is { } dc) return dc;
             if (n.Imm != null) return new Num { Type = t, Imm = n.Imm.Select(x => ConvertBits(x, from, to.Scalar)).ToArray() };
             return (from, to.Scalar) switch
@@ -939,7 +979,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var rt = Resolve(f.ReturnType);
             if (rt is not VoidType) frame.Result = AllocLocal(rt);
             // a return before the end: the body in a loop it breaks out of
-            bool early = HasEarlyReturn(f.Body!);
+            bool early = HasEarlyReturn(f.Body!) && !_flatten;
+            var callPred = _pred;
             if (early)
             {
                 frame.Returned = TempStore(NumericType.Bool);
@@ -953,6 +994,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             Block(f.Body!);
             _frames.RemoveAt(_frames.Count - 1);
             _scopes.AddRange(savedScopes);
+            // flattened: the function's returns are its own
+            _pred = callPred;
+            _terminated = false;
             if (early)
             {
                 _w.Emit(Opcode.Break, 0);

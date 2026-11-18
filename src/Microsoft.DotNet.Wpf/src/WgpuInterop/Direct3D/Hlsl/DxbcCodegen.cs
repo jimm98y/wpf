@@ -46,9 +46,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 if (Type.Scalar == ScalarKind.Double) return DoubleOperand(this);
                 if (Imm != null)
                 {
+                    var w = ImmWords(this);
                     var v = new uint[4];
-                    for (int i = 0; i < 4; i++) v[i] = Imm[Math.Min(i, Imm.Length - 1)];
-                    return Imm.Length == 1 || Imm.All(x => x == Imm[0]) ? DxOperand.Imm(Imm[0]) : DxOperand.Imm(v);
+                    for (int i = 0; i < 4; i++) v[i] = w[Math.Min(i, w.Length - 1)];
+                    return w.Length == 1 || w.All(x => x == w[0]) ? DxOperand.Imm(w[0]) : DxOperand.Imm(v);
                 }
                 var sw = new byte[4];
                 for (int i = 0; i < 4; i++) sw[i] = Comp[Math.Min(i, Comp.Length - 1)];
@@ -142,6 +143,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         public DxbcCodegen(TranslationUnit unit, ShaderStage stage, int major, int minor, uint flags)
         {
             _unit = unit; _stage = stage; _major = major; _minor = minor; _flags = flags;
+            _legacy = major < 4;
+            _flatten = major == 2;
             _w.Stage = stage; _w.Major = major; _w.Minor = minor;
         }
 
@@ -274,8 +277,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         {
             if (v.Imm != null)
             {
+                var w = ImmWords(v);
                 var vals = new uint[4];
-                for (int i = 0; i < dest.Comp.Length; i++) vals[dest.Comp[i]] = v.Imm[Math.Min(i, v.Imm.Length - 1)];
+                for (int i = 0; i < dest.Comp.Length; i++) vals[dest.Comp[i]] = w[Math.Min(i, w.Length - 1)];
                 return DxOperand.Imm(vals);
             }
             var sw = new byte[4];

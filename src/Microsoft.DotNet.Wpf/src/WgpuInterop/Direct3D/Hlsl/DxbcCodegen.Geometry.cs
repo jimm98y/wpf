@@ -156,7 +156,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         private bool Unrollable(ForStmt f, out string counter, out List<long> values, out bool unsigned)
         {
             counter = ""; values = new(); unsigned = false;
-            if (!f.Attributes.Any(a => a.Name.Equals("unroll", StringComparison.OrdinalIgnoreCase))) return false;
+            // shader model 2 unrolls every loop it can (it has no others)
+            if (!_flatten && !f.Attributes.Any(a => a.Name.Equals("unroll", StringComparison.OrdinalIgnoreCase))) return false;
             if (f.Init is not DeclStmt { Vars.Count: 1 } d || d.Vars[0].Init == null) return false;
             var v = d.Vars[0];
             counter = v.Name;

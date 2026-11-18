@@ -10,6 +10,8 @@
 //
 
 using System;
+using System.Linq;
+using System.Text;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Wpf.Interop.WebGpu.Direct3D;
@@ -1232,6 +1234,179 @@ namespace WgpuInterop.Tests.Direct3D
             int done = 0;
             Assert.Equal(0, ((delegate* unmanaged<IntPtr, void*, uint, uint, int>)Fn(q, Vtbl.IDirect3DQuery9.GetData))(q, &done, 4, 1));
             Assert.Equal(1, done);
+        }
+
+        // ---- HLSL for shader models 2 and 3 (the shim's compiler) ----------------------------------------
+
+        private static uint[] Hlsl(string src, string profile)
+        {
+            var blob = HlslCompilerTests.Compile(src, "sm.hlsl", "main", profile, Array.Empty<string>(), out string err);
+            Assert.True(blob != null, $"{profile}: {err}");
+            var t = new uint[blob!.Length / 4];
+            Buffer.BlockCopy(blob, 0, t, 0, blob.Length);
+            return t;
+        }
+
+        private const string LegacyVs = "void main(float4 p : POSITION, float4 c : COLOR0, out float4 op : POSITION, out float4 oc : COLOR0, out float4 ot : TEXCOORD0) { op = p; oc = c; ot = c; }\n";
+        private const string LegacyUniforms = "float4 a : register(c0); float4 b : register(c1);\n";
+
+        private static readonly float[] s_a = { 0.7f, 0.25f, 0.4f, 0.9f }, s_a2 = { 0.2f, 0.25f, 0.4f, 0.9f }, s_b = { 0.3f, 0.6f, 0.15f, 0.5f };
+        private static readonly float[] s_c = { 0x33 / 255f, 0x66 / 255f, 0x99 / 255f, 1 };
+
+        private static float[] V(Func<int, float> f) => Enumerable.Range(0, 4).Select(f).ToArray();
+        private static float Sat(float x) => Math.Clamp(x, 0, 1);
+
+        /// <summary>Pixel shader bodies (over a and b in c0, c1; c the interpolated COLOR0, t TEXCOORD0, the
+        /// same everywhere), with what each pixel must be -- null where the pixel is discarded.</summary>
+        public static IEnumerable<object[]> LegacyCases()
+        {
+            float[] a = s_a, b = s_b, c = s_c;
+            yield return new object[] { "arithmetic", s_a, "return saturate(a * b + c * 0.5 - a.yzwx / (b + 1));", V(i => Sat(a[i] * b[i] + c[i] * 0.5f - a[(i + 1) % 4] / (b[i] + 1))) };
+            yield return new object[] { "early return taken", s_a, "if (a.x > 0.5) return b; if (c.y > 0.3) return a * 0.5; return c;", b };
+            yield return new object[] { "early return not taken", s_a2, "if (a.x > 0.5) return b; if (c.y > 0.3) return a * 0.5; return c;", V(i => s_a2[i] * 0.5f) };
+            yield return new object[] { "loop", s_a, "float4 s = 0; for (int i = 0; i < 4; i++) s += a * (i + 1) * 0.05; return s;", V(i => a[i] * 0.5f) };
+            yield return new object[] { "functions", s_a, "return float4(f(a.x), frac(a.y * 3.7), lerp(a.z, b.z, 0.25), abs(sin(b.w * 3)));",
+                new[] { MathF.Sqrt(a[0]), a[1] * 3.7f - MathF.Floor(a[1] * 3.7f), a[2] + (b[2] - a[2]) * 0.25f, MathF.Abs(MathF.Sin(b[3] * 3)) } };
+            yield return new object[] { "integers", s_a, "int k = (int)(a.x * 10); return float4(k / 3 / 10.0, (k % 4) / 4.0, step(0.5, b.y), 1);", new[] { 0.2f, 0.75f, 1f, 1f } };
+            yield return new object[] { "clip kept", s_a, "clip(a.x - 0.5); return b;", b };
+            yield return new object[] { "clip discarded", s_a2, "clip(a.x - 0.5); return b;", null! };
+            yield return new object[] { "comparisons", s_a, "return float4(a.x > b.x ? 1 : 0, a.y == 0.25 ? 1 : 0, a.z != b.z ? 0.5 : 0, any(a < b) ? 1 : 0);", new[] { 1f, 1f, 0.5f, 1f } };
+            yield return new object[] { "nested if", s_a, "float4 r = c; if (a.y < 0.5) { r.x = 1; if (b.x > 0.5) r.y = 1; else r.y = 0.5; } else r.z = 0; return r;", new[] { 1f, 0.5f, c[2], 1f } };
+        }
+
+        [Theory]
+        [MemberData(nameof(LegacyCases))]
+        public void HlslShaderModels2And3_ComputeWhatTheSourceSays(string what, float[] a, string body, float[]? expected)
+        {
+            RequireGpu();
+            foreach (int sm in new[] { 2, 3 })
+            {
+                string ps = LegacyUniforms + "float f(float x) { if (x > 0.5) return sqrt(x); return x * x; }\n"
+                    + $"float4 main(float4 c : COLOR0, float4 t : TEXCOORD0) : COLOR0 {{ {body} }}\n";
+                using var s = new Scene();
+                s.Declaration(
+                    new D3DVERTEXELEMENT9 { Stream = 0, Offset = 0, Type = 2, Usage = 0 },
+                    new D3DVERTEXELEMENT9 { Stream = 0, Offset = 12, Type = 4, Usage = 10 });
+                s.VertexShader(Hlsl(LegacyVs, $"vs_{sm}_0"));
+                s.PixelShader(Hlsl(ps, $"ps_{sm}_0"));
+                s.PsConst(0, a.Concat(s_b).ToArray());
+                s.RS(D3DRS.CULLMODE, 1);
+                s.Clear(1, 0xFF000000);
+                s.BeginScene();
+                uint col = 0xFF336699;
+                s.DrawUp(4, 2, new[]
+                {
+                    new PosColor { X = -1, Y = 1, Z = 0.5f, Color = col }, new PosColor { X = 1, Y = 1, Z = 0.5f, Color = col }, new PosColor { X = -1, Y = -1, Z = 0.5f, Color = col },
+                    new PosColor { X = 1, Y = 1, Z = 0.5f, Color = col }, new PosColor { X = 1, Y = -1, Z = 0.5f, Color = col }, new PosColor { X = -1, Y = -1, Z = 0.5f, Color = col },
+                });
+                s.EndScene();
+                uint px = s.Pixels()[32 * W + 32];
+                if (expected == null) { Assert.True(px == 0xFF000000u, $"{what}, shader model {sm}: 0x{px:x8}, expected the pixel discarded"); continue; }
+                uint want = (uint)Math.Round(Sat(expected[3]) * 255) << 24 | (uint)Math.Round(Sat(expected[0]) * 255) << 16 | (uint)Math.Round(Sat(expected[1]) * 255) << 8 | (uint)Math.Round(Sat(expected[2]) * 255);
+                Near(want, px, 2, $"{what}, shader model {sm}");
+            }
+        }
+
+        /// <summary>A ps_2_0 matrix uniform and a texture: mul by the columns c2-c5, tex2D at the colour.</summary>
+        [Fact]
+        public void HlslShaderModel2_MultipliesByAMatrixAndSamples()
+        {
+            RequireGpu();
+            const string ps = "float4x4 m : register(c2); sampler2D s0 : register(s0);\n"
+                + "float4 main(float4 c : COLOR0, float4 t : TEXCOORD0) : COLOR0 { return mul(c, m) * 0.5 + tex2D(s0, t.xy) * 0.5; }\n";
+            using var s = new Scene();
+            s.Declaration(
+                new D3DVERTEXELEMENT9 { Stream = 0, Offset = 0, Type = 2, Usage = 0 },
+                new D3DVERTEXELEMENT9 { Stream = 0, Offset = 12, Type = 4, Usage = 10 });
+            s.VertexShader(Hlsl(LegacyVs, "vs_2_0"));
+            s.PixelShader(Hlsl(ps, "ps_2_0"));
+            // column-major: c2 + j is column j
+            var cols = new[] { new[] { 0.5f, 0, 0, 0 }, new[] { 0, 0.25f, 0.25f, 0 }, new[] { 0.1f, 0.1f, 0.1f, 0.1f }, new[] { 0, 0, 0, 1f } };
+            s.PsConst(2, cols.SelectMany(x => x).ToArray());
+            IntPtr tex = s.Texture(2, 2, new uint[] { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF });
+            s.Texture(0, tex);
+            s.RS(D3DRS.CULLMODE, 1);
+            s.Clear(1, 0xFF000000);
+            s.BeginScene();
+            uint col = 0xFF336699;
+            s.DrawUp(4, 2, new[]
+            {
+                new PosColor { X = -1, Y = 1, Z = 0.5f, Color = col }, new PosColor { X = 1, Y = 1, Z = 0.5f, Color = col }, new PosColor { X = -1, Y = -1, Z = 0.5f, Color = col },
+                new PosColor { X = 1, Y = 1, Z = 0.5f, Color = col }, new PosColor { X = 1, Y = -1, Z = 0.5f, Color = col }, new PosColor { X = -1, Y = -1, Z = 0.5f, Color = col },
+            });
+            s.EndScene();
+            var c = s_c;
+            var r = Enumerable.Range(0, 4).Select(j => (c[0] * cols[j][0] + c[1] * cols[j][1] + c[2] * cols[j][2] + c[3] * cols[j][3]) * 0.5f).ToArray();
+            // t = (0.2, 0.4): the top left texel, red
+            var tx = new[] { 1f, 0, 0, 1f };
+            float[] e = Enumerable.Range(0, 4).Select(i => r[i] + tx[i] * 0.5f).ToArray();
+            uint want = (uint)Math.Round(Sat(e[3]) * 255) << 24 | (uint)Math.Round(Sat(e[0]) * 255) << 16 | (uint)Math.Round(Sat(e[1]) * 255) << 8 | (uint)Math.Round(Sat(e[2]) * 255);
+            Near(want, s.Pixels()[32 * W + 32], 2, "mul and tex2D");
+        }
+
+        /// <summary>A vertex shader that transforms by a matrix uniform and picks its colour from a uniform
+        /// array by an index it computes (mova and a relative constant), for shader models 2 and 3.</summary>
+        [Fact]
+        public void HlslVertexShaders_TransformAndIndexTheirConstants()
+        {
+            RequireGpu();
+            const string vs = "float4x4 wvp : register(c0); float4 colors[4] : register(c4); float4 pick : register(c8);\n"
+                + "void main(float4 p : POSITION, out float4 op : POSITION, out float4 oc : COLOR0) { op = mul(p, wvp); int i = (int)(pick.x * 3.99); oc = colors[i] * pick.y; }\n";
+            const string ps = "float4 main(float4 c : COLOR0) : COLOR0 { return c; }\n";
+            foreach (int sm in new[] { 2, 3 })
+            {
+                using var s = new Scene();
+                s.Declaration(new D3DVERTEXELEMENT9 { Stream = 0, Offset = 0, Type = 2, Usage = 0 });
+                s.VertexShader(Hlsl(vs, $"vs_{sm}_0"));
+                s.PixelShader(Hlsl(ps, $"ps_{sm}_0"));
+                // column-major: c0-c3 are columns; x scaled by 0.5 (the quad in the middle half)
+                s.VsConst(0, 0.5f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+                s.VsConst(4, 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 1);
+                s.VsConst(8, 0.6f, 0.5f, 0, 0);                      // colors[2] (blue) halved
+                s.RS(D3DRS.CULLMODE, 1);
+                s.Clear(1, 0xFF000000);
+                s.BeginScene();
+                s.DrawUp(4, 2, new[]
+                {
+                    new Pos { X = -1, Y = 1, Z = 0.5f }, new Pos { X = 1, Y = 1, Z = 0.5f }, new Pos { X = -1, Y = -1, Z = 0.5f },
+                    new Pos { X = 1, Y = 1, Z = 0.5f }, new Pos { X = 1, Y = -1, Z = 0.5f }, new Pos { X = -1, Y = -1, Z = 0.5f },
+                });
+                s.EndScene();
+                var px = s.Pixels();
+                Near(0x80000080u, px[32 * W + 32], 2, $"shader model {sm}: inside");
+                Assert.True(px[32 * W + 4] == 0xFF000000u, $"shader model {sm}: outside the scaled quad 0x{px[32 * W + 4]:x8}");
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)] private struct Pos { public float X, Y, Z; }
+
+        /// <summary>The constant table: each uniform's register and count, the sampler's, as D3DX reads them.</summary>
+        [Fact]
+        public void HlslShaderModel2_WritesItsConstantTable()
+        {
+            const string ps = "float4 a : register(c0); float4x4 m : register(c2); sampler2D tex : register(s1); float unused;\n"
+                + "float4 main(float4 c : COLOR0) : COLOR0 { return mul(c, m) + a + tex2D(tex, c.xy); }\n";
+            var t = Hlsl(ps, "ps_2_0");
+            Assert.Equal(0xFFFF0200u, t[0]);
+            Assert.Equal(0xFFFEu, t[1] & 0xFFFF);
+            int dwords = (int)(t[1] >> 16);
+            var ctab = new byte[dwords * 4];
+            Buffer.BlockCopy(t, 8, ctab, 0, ctab.Length);
+            Assert.Equal("CTAB", Encoding.ASCII.GetString(ctab, 0, 4));
+            var d = ctab.AsSpan(4).ToArray();
+            int count = BitConverter.ToInt32(d, 12), info = BitConverter.ToInt32(d, 16);
+            string Str(int o) { int e = o; while (d[e] != 0) e++; return Encoding.ASCII.GetString(d, o, e - o); }
+            var found = new Dictionary<string, (int Set, int Index, int Count)>();
+            for (int i = 0; i < count; i++)
+            {
+                var c = d.AsSpan(info + i * 20);
+                found[Str(BitConverter.ToInt32(c))] = (BitConverter.ToUInt16(c[4..]), BitConverter.ToUInt16(c[6..]), BitConverter.ToUInt16(c[8..]));
+            }
+            Assert.Equal((2, 0, 1), found["a"]);
+            Assert.Equal((2, 2, 4), found["m"]);
+            Assert.Equal((3, 1, 1), found["tex"]);
+            Assert.False(found.ContainsKey("unused"));
+            Assert.Equal("ps_2_0", Str(BitConverter.ToInt32(d, 24)));
         }
     }
 }

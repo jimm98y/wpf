@@ -143,8 +143,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var type = Resolve(v.Type, v.ArrayDims);
             int offset;
             if (v.PackOffset is { } po) offset = po.Index * 16 + po.Component * 4;
-            else offset = Place(cb.SizeBytes, type);
-            var m = new CbMember { Name = v.Name, Type = type, Offset = offset, Size = SizeOf(type), Buffer = cb };
+            else if (_legacy && v.Registers.FirstOrDefault(r => r.Kind == 'c' && (r.Profile == null || ProfileMatches(r.Profile))) is { } cr) offset = cr.Index * 16;
+            else offset = _legacy ? (cb.SizeBytes + 15) & ~15 : Place(cb.SizeBytes, type);
+            // the legacy models give each uniform registers of its own
+            var m = new CbMember { Name = v.Name, Type = type, Offset = offset, Size = _legacy ? Math.Max(1, Registers(type)) * 16 : SizeOf(type), Buffer = cb };
             if (v.Init != null && TryConstant(v, type) is NumValue nv && nv.N.Imm != null)
             {
                 m.Default = new byte[Math.Max(m.Size, nv.N.Imm.Length * 4)];
@@ -318,7 +320,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         private int SystemValueOf(string name, bool output)
         {
             string u = name.ToUpperInvariant();
-            bool compat = (_flags & HlslCompiler.EnableBackwardsCompatibility) != 0;
+            bool compat = (_flags & HlslCompiler.EnableBackwardsCompatibility) != 0 || _legacy;
+            if (_legacy && !output && _stage == ShaderStage.Pixel && name.ToUpperInvariant() is "VPOS") return 1;
+            if (_legacy && !output && _stage == ShaderStage.Pixel && name.ToUpperInvariant() is "VFACE") return 9;
             return u switch
             {
                 "SV_POSITION" => 1,
@@ -420,7 +424,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 return new NumValue { Type = nt, N = Read(s) };
             }
             // an input: v#; a pixel shader's SV_IsFrontFace is a bool (0 / ~0) in the register
-            var n = new Num { Type = sv == 9 ? NumericType.Bool : nt, File = OperandType.Input, Index = new long[] { e.Register }, Relative = new DxOperand?[1], Comp = comps };
+            var n = new Num { Type = sv == 9 && !_legacy ? NumericType.Bool : nt, File = OperandType.Input, Index = new long[] { e.Register }, Relative = new DxOperand?[1], Comp = comps };
             return new NumValue { Type = n.Type, N = n };
         }
 
@@ -433,6 +437,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (!_functions.TryGetValue(entry, out var fs) || fs.All(f => f.Body == null))
                 throw new HlslException(default, $"entrypoint not found", 3501);
             var f = fs.First(x => x.Body != null);
+            if (_legacy) return CompileLegacy(f);
             if (_stage == ShaderStage.Hull) return CompileHull(f);
             if (_stage == ShaderStage.Domain) TessellationAttributes(f);
             if (_stage == ShaderStage.Compute) ThreadGroup(f);
@@ -459,6 +464,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             _specialInputs.Clear();
             _streams.Clear();
             _patchConstants.Clear();
+            _pred = null;
+            _terminated = false;
             _tgsmCount = 0;
             foreach (var g in _groupShared.Values) g.Register = -1;
         }
@@ -515,9 +522,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 _entryReturn = stores[0];
             }
             else _entryReturn = null;
+            // the legacy models: the outputs written through temps (a predicated assignment reads
+            // what it keeps, and output registers cannot be read), copied out at the end
+            var shadows = new List<(Store Shadow, Store Output)>();
+            if (_legacy)
+            {
+                Store Shadow(Store o) { var sh = AllocLocal(o.Type); ZeroInit(sh); shadows.Add((sh, o)); return sh; }
+                foreach (var p in f.Params.Where(p => p.IsOut)) if (frame.Locals[p.Name] is Store os) frame.Locals[p.Name] = Shadow(os);
+                if (_entryReturn != null) _entryReturn = Shadow(_entryReturn);
+            }
+            // shader model 3: a return before the end is a branch out of a loop around the body
+            bool wrap = _legacy && !_flatten && HasEarlyReturn(f.Body!);
+            if (wrap)
+            {
+                frame.Returned = TempStore(NumericType.Bool);
+                Op(Opcode.Mov, frame.Returned, false, ImmUint(0));
+                _w.Emit(Opcode.Loop, 0);
+                _loops.Add((f.Body!, null, null, false));
+            }
             _frames.Add(frame);
             Block(f.Body!, newScope: false);
             _frames.RemoveAt(_frames.Count - 1);
+            if (wrap)
+            {
+                _w.Emit(Opcode.Break, 0);
+                _w.Emit(Opcode.EndLoop, 0);
+                _loops.RemoveAt(_loops.Count - 1);
+            }
+            _pred = null;
+            foreach (var (sh, o) in shadows) Assign(o, ReadStore(sh), f);
             _w.Emit(Opcode.Ret, 0);
         }
 
@@ -561,6 +594,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             /// <summary>An inlined function's result, and whether it returned (a return before its end).</summary>
             public Store? Result;
             public NumStore? Returned;
+            /// <summary>Flattened (shader model 2): the lanes that returned, 0 or 1.</summary>
+            public NumStore? RetAcc;
             /// <summary>The loops and switches open in the function (a return from inside them breaks out).</summary>
             public int Nesting;
         }
@@ -590,6 +625,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 }
                 case NumericType n: return TempStore(n);
                 case StructType s: return new AggStore { Type = s, Parts = s.Fields.Select(f => AllocLocal(f.Type)).ToArray() };
+                case ArrayType a when _legacy:
+                    // no indexable temps before shader model 4: an element is temps of its own
+                    return new AggStore { Type = a, Parts = Enumerable.Range(0, Math.Max(1, a.Length)).Select(_ => AllocLocal(a.Element)).ToArray() };
                 case ArrayType a:
                 {
                     // x#[n * per element]: an element's registers in a row
@@ -702,7 +740,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         private void Block(BlockStmt b, bool newScope = true)
         {
             if (newScope) _scopes.Add(new Dictionary<string, object>());
-            foreach (var s in b.Body) Statement(s);
+            foreach (var s in b.Body)
+            {
+                Statement(s);
+                if (_terminated) break;                // flattened: what follows a return is not reached
+            }
             if (newScope) _scopes.RemoveAt(_scopes.Count - 1);
         }
 
@@ -744,6 +786,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     }
                     return;
                 case ExprStmt e: if (e.Expr != null) EvalValue(e.Expr, discard: true); return;
+                case IfStmt i when _flatten:
+                    FlatIf(i);
+                    return;
                 case IfStmt i:
                 {
                     var c = Condition(i.Cond);
@@ -756,6 +801,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 case ForStmt f when Unrollable(f, out string counter, out var values, out bool unsigned):
                     Unrolled(f, counter, values, unsigned);
                     return;
+                case ForStmt f when _flatten:
+                    throw Err(f, "a loop without a constant trip count (or with break or continue) needs shader model 3", 3511);
+                case WhileStmt w when _flatten:
+                    throw Err(w, "a while loop needs shader model 3", 3511);
+                case SwitchStmt sw when _legacy:
+                    throw Err(sw, "switch needs shader model 4", 3511);
                 case ForStmt f:
                 {
                     _scopes.Add(new Dictionary<string, object>());
@@ -818,7 +869,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (_frames.Count == 0) return;
             var f = Current;
             f.Nesting--;
-            if (f.Returned != null && !f.IsEntry && f.Nesting >= 0 && _loops.Count > 0)
+            if (f.Returned != null && (!f.IsEntry || _legacy) && f.Nesting >= 0 && _loops.Count > 0)
                 _w.Emit(Opcode.Breakc, 1u << 7, Read(f.Returned).Operand());      // breakc_nz returned
         }
 
@@ -826,6 +877,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         {
             switch (j.Kind)
             {
+                case "break" or "continue" when _flatten: throw Err(j, $"{j.Kind} needs shader model 3", 3511);
+                case "continue" when _legacy: throw Err(j, "continue needs shader model 4", 3511);
                 case "break": _w.Emit(Opcode.Break, 0); return;
                 case "continue":
                 {
@@ -838,7 +891,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 }
                 case "discard":
                     if (_stage != ShaderStage.Pixel) throw Err(j, "discard is only valid in a pixel shader");
-                    _w.Emit(Opcode.Discard, 1u << 7, DxOperand.Imm(0xFFFFFFFF));
+                    if (_legacy) _w.Emit(Opcode.Discard, 1u << 7, (_pred?.Component(0) ?? ImmFloat(1)).Operand());
+                    else _w.Emit(Opcode.Discard, 1u << 7, DxOperand.Imm(0xFFFFFFFF));
+                    return;
+                case "return" when _flatten:
+                    FlatReturn(j);
                     return;
                 case "return":
                 {
@@ -846,7 +903,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     if (f.IsEntry)
                     {
                         if (j.Value != null && _entryReturn != null) Assign(_entryReturn, Convert(Eval(j.Value, _entryReturn.Type), _entryReturn.Type, j.Value), j);
-                        _w.Emit(Opcode.Ret, 0);
+                        if (f.Returned != null)
+                        {
+                            // shader model 3: out of the loop around the body (the outputs are copied after it)
+                            Op(Opcode.Mov, f.Returned, false, ImmUint(0xFFFFFFFF));
+                            _w.Emit(Opcode.Break, 0);
+                        }
+                        else _w.Emit(Opcode.Ret, 0);
                         return;
                     }
                     if (j.Value != null && f.Result != null) Assign(f.Result, Convert(Eval(j.Value, f.Result.Type), f.Result.Type, j.Value), j);
@@ -1002,6 +1065,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         private bool Packs(SigEntry a, SigEntry b)
         {
             if (_stage == ShaderStage.Vertex && !b.Output) return false;
+            if (_legacy) return false;               // never packed before shader model 4
             if (a.InArray || b.InArray) return false;
             // a tessellation factor takes a register of its own (what follows may share it)
             if (IsTessFactor(b.SystemValue)) return false;

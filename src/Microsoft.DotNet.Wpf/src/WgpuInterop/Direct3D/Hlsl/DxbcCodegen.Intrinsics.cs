@@ -35,14 +35,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (args.Count != count) throw Err(at, $"wrong number of arguments: {args.Count} (expected {count})", 3013);
             var vals = args.Select(a => ToNum(EvalValue(a), a)).ToArray();
             var s = vals.Select(v => v.Type.Scalar).Aggregate(Promote);
+            // no integers before shader model 4
+            if (_legacy && s != ScalarKind.Double) s = ScalarKind.Float;
             int n = vals.Max(v => v.Count);
             t = n == 1 ? NumericType.Of(s) : NumericType.Vector(s, n);
             var tt = t;
             return vals.Select(v => ConvertNum(v, tt, at)).ToArray();
         }
 
+        private static readonly HashSet<string> s_sm4Only = new()
+        {
+            "countbits", "reversebits", "firstbitlow", "firstbithigh", "f32tof16", "f16tof32", "asint", "asuint", "msad4", "fma",
+            "ddx_coarse", "ddy_coarse", "ddx_fine", "ddy_fine", "EvaluateAttributeAtSample", "EvaluateAttributeCentroid", "EvaluateAttributeSnapped",
+        };
+
         private Value Intrinsic(string name, List<Expr> args, Node at)
         {
+            if (_legacy && (s_sm4Only.Contains(name) || name.StartsWith("Interlocked", StringComparison.Ordinal) || name.Contains("MemoryBarrier", StringComparison.Ordinal)))
+                throw Err(at, $"{name} needs shader model 4", 3004);
             if (InterlockedIntrinsic(name, args, at) is { } atomic) return atomic;
             if (Barrier(name, at) is { } barrier) return barrier;
             switch (name)
@@ -195,6 +205,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     Num pos, neg;
                     if (t.IsFloatLike) { pos = Compute(Opcode.Lt, bt, ImmFloat(0), a[0]); neg = Compute(Opcode.Lt, bt, a[0], ImmFloat(0)); }
                     else { pos = Compute(Opcode.ILt, bt, ImmInt(0), a[0]); neg = Compute(Opcode.ILt, bt, a[0], ImmInt(0)); }
+                    // the legacy models' true is 1: pos - neg
+                    if (_legacy) return Wrap(Compute(Opcode.Add, t, pos.WithType(t), Negate(neg.WithType(t))).WithType(it));
                     // true is -1: neg - pos is the sign
                     return Wrap(Compute(Opcode.IAdd, it, neg.WithType(it), Negate(pos.WithType(it))));
                 }

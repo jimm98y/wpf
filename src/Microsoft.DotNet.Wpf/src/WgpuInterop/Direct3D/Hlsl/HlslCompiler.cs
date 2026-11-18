@@ -39,7 +39,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 "hs" => ShaderStage.Hull, "ds" => ShaderStage.Domain, "cs" => ShaderStage.Compute, _ => null,
             };
             if (stage == null) return null;
-            int minor = p[2] == "x" ? 0 : int.TryParse(p[2], out int m) ? m : -1;
+            // ps_2_a / ps_2_b / vs_2_a: shader model 2.x, version 2.1 in the bytecode
+            int minor = p[2] == "x" ? 0 : p[2] is "a" or "b" && major == 2 ? 1 : int.TryParse(p[2], out int m) ? m : -1;
             if (minor < 0) return null;
             return (stage.Value, major, minor);
         }
@@ -50,8 +51,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var prof = ParseProfile(profile);
             if (prof == null) return new Result(null, $"error X3501: invalid target '{profile}'\n");
             var (stage, major, minor) = prof.Value;
-            if (major < 4)
-                return new Result(null, $"{fileName}: error X3501: target '{profile}': shader model 2 and 3 are not supported by this compiler yet\n");
+            if (major < 4 && (stage is not (ShaderStage.Vertex or ShaderStage.Pixel) || major < 2))
+                return new Result(null, $"{fileName}: error X3501: target '{profile}': shader model {major} has vertex and pixel shaders from 2_0\n");
             try
             {
                 var tokens = new HlslPreprocessor(defines, include).Run(source, fileName);

@@ -459,8 +459,18 @@ to write, but it means a native dependency for every head, which the rules here 
     of the same source draws, pixel for pixel (geometry shaders between generated vertex and pixel
     shaders, hull and domain shaders tessellating two patches); every compute shader writes its
     UAVs as fxc's does.
-  - Not yet: shader models 2 and 3 (D3D9's token stream
-    with CTAB); class linkage. Those targets answer E_FAIL with the error text saying so.
+  - Shader models 2 and 3 (vs_2_0, ps_2_0, ps_2_a/b, vs_3_0, ps_3_0): the same front end and code,
+    generated under the older rules -- integers and bools are floats (a bool 0 or 1), uniforms a
+    register each, signatures unpacked -- then lowered to Direct3D 9 bytecode: comparisons as
+    slt/sge or cmp, selections as lrp or cmp, the scalar instructions per component, division as
+    rcp and mul, immediates as def constants, relative constants through mova, sincos with its
+    range reduced. Shader model 2 has no flow control a value decides: an if is both branches
+    under a predicate (a return marks its lanes done), loops are unrolled; shader model 3 branches
+    (ifc) and loops (rep, break). In front, the constant table (CTAB) D3DX reads. Checked by
+    drawing on the shim's Direct3D 9 device (D3D9DrawTests): arithmetic, early returns, loops,
+    functions, integers, clip, comparisons, nested ifs, matrices, textures, a vertex shader's
+    indexed constants -- each the value the source computes, for both models.
+  - Not yet: class linkage (interfaces and classes); it answers E_FAIL with the error text saying so.
   `D3DReflect` is managed (D3DShaderReflection): ID3D11ShaderReflection read from the blob's chunks
   (RDEF, signatures, STAT, SFI0, the declarations). It matches d3dcompiler_47 field for field over
   the corpus and DXEngine's shaders (D3DReflectTests): descriptions and instruction counts, constant
