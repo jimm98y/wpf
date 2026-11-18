@@ -27,13 +27,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
     {
         public const int MiscBinding = 2, PsTextureBase = 16, VsTextureBase = 48;
         public const int FogKey = D3D9Usage.Fog * 16, FogDepthKey = D3D9Usage.Depth * 16;
+        /// <summary>The distances to user clip planes 0-3 and 4-5 (no D3D9 semantic has these keys).</summary>
+        public const int ClipKeyA = 15 * 16, ClipKeyB = 15 * 16 + 1;
 
         // ---- the device state block (Misc) ---------------------------------------------------------
 
         public const int OffPx = 0, OffVp = 16, OffAlpha = 32, OffFog = 48, OffFogColor = 64, OffTFactor = 80, OffAmbient = 96,
             OffMatDiffuse = 112, OffMatAmbient = 128, OffMatSpecular = 144, OffMatEmissive = 160, OffMatPower = 176,
             OffWv = 192, OffProj = 256, OffWvp = 320, OffNrm = 384, OffTex = 448, OffStageConst = 960, OffBump = 1088, OffBumpL = 1216,
-            OffLights = 1344, LightStride = 112, OffAdj = 2240, MiscSize = 2256;
+            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, MiscSize = 2352;
 
         public const string MiscWgsl =
             "struct Light { diffuse : vec4<f32>, specular : vec4<f32>, ambient : vec4<f32>, pos : vec4<f32>, dir : vec4<f32>, att : vec4<f32>, spot : vec4<f32> };\n" +
@@ -42,7 +44,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             "    matDiffuse : vec4<f32>, matAmbient : vec4<f32>, matSpecular : vec4<f32>, matEmissive : vec4<f32>, matPower : vec4<f32>,\n" +
             "    wv : mat4x4<f32>, proj : mat4x4<f32>, wvp : mat4x4<f32>, nrm : mat4x4<f32>, tex : array<mat4x4<f32>, 8>,\n" +
             "    stageConst : array<vec4<f32>, 8>, bump : array<vec4<f32>, 8>, bumpL : array<vec4<f32>, 8>, lights : array<Light, 8>,\n" +
-            "    adj : vec4<f32>,\n" +
+            "    adj : vec4<f32>, clip : array<vec4<f32>, 6>,\n" +
             "};\n" +
             "@group(0) @binding(2) var<uniform> M : Misc;\n";
 
@@ -138,9 +140,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>The vertex entry's tail: the varyings from the provided expressions, the clip position
         /// with D3D9's half-pixel offset (pixel centres on integer coordinates).</summary>
-        private static void VertexTail(StringBuilder w, Linkage l, Dictionary<int, string> provided, string pos, bool halfPixel)
+        private static void VertexTail(StringBuilder w, Linkage l, Dictionary<int, string> provided, string pos, bool halfPixel, string? clipFrom = null)
         {
             w.Append("    var o : VOut;\n    var p = ").Append(pos).Append(";\n");
+            // user clip planes: the distance to each, from the position in the planes' space (none: 1, never clipped)
+            string cp = clipFrom ?? "p";
+            if (clipFrom != "") { provided[ClipKeyA] = $"vec4<f32>(dot(M.clip[0], {cp}), dot(M.clip[1], {cp}), dot(M.clip[2], {cp}), dot(M.clip[3], {cp}))"; provided[ClipKeyB] = $"vec4<f32>(dot(M.clip[4], {cp}), dot(M.clip[5], {cp}), 1.0, 1.0)"; }
+            else { provided[ClipKeyA] = "vec4<f32>(1.0)"; provided[ClipKeyB] = "vec4<f32>(1.0)"; }
             for (int i = 0; i < l.Keys.Count; i++)
             {
                 int key = l.Keys[i];
@@ -164,10 +170,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             public int Fog;
             /// <summary>Table fog by the eye distance (w) rather than the depth.</summary>
             public bool WFog;
-            public string Id => $"a{AlphaFunc}f{Fog}{(WFog ? "w" : "")}";
+            /// <summary>D3DRS_CLIPPLANEENABLE: the user clip planes that discard.</summary>
+            public int ClipMask;
+            public string Id => $"a{AlphaFunc}f{Fog}{(WFog ? "w" : "")}c{ClipMask}";
         }
 
         private static readonly string[] AlphaCompare = { "false", "false", "<", "==", "<=", ">", "!=", ">=", "true" };
+
+        /// <summary>The user clip planes, before the shader: a pixel on the negative side of one is not drawn.</summary>
+        private static void ApplyClip(StringBuilder w, Linkage l, PixelTail t)
+        {
+            if (t.ClipMask == 0) return;
+            var conds = new List<string>();
+            for (int i = 0; i < 6; i++)
+                if ((t.ClipMask & (1 << i)) != 0) conds.Add($"in.l{l.LocationOf(i < 4 ? ClipKeyA : ClipKeyB)}.{"xyzw"[i & 3]} < 0.0");
+            w.Append("    if (").Append(string.Join(" || ", conds)).Append(") { discard; }\n");
+        }
 
         private static void ApplyTail(StringBuilder w, Linkage l, PixelTail t, string c)
         {
@@ -201,6 +219,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>The keys the epilogue reads.</summary>
         private static void TailKeys(Linkage l, PixelTail t)
         {
+            if ((t.ClipMask & 0xF) != 0 && !l.Keys.Contains(ClipKeyA)) l.Keys.Add(ClipKeyA);
+            if ((t.ClipMask & 0x30) != 0 && !l.Keys.Contains(ClipKeyB)) l.Keys.Add(ClipKeyB);
             if (t.Fog == 1 && !l.Keys.Contains(FogKey)) l.Keys.Add(FogKey);
             if (t.Fog >= 2 && !l.Keys.Contains(FogDepthKey)) l.Keys.Add(FogDepthKey);
         }
@@ -254,7 +274,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (io.Usage == D3D9Usage.Fog) e = $"vec4<f32>(({reg}).x)";
                 provided[io.Key] = e;
             }
-            VertexTail(w, l, provided, pos, halfPixel: true);
+            VertexTail(w, l, provided, pos, halfPixel: true, clipFrom: "p");
             return w.ToString();
         }
 
@@ -294,6 +314,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 for (int i = 0; i < 4; i++)
                     if ((io.Mask & (1 << i)) != 0) w.Append("    ").Append(reg).Append('.').Append("xyzw"[i]).Append(" = in.l").Append(at).Append('.').Append("xyzw"[j++]).Append(";\n");
             }
+            ApplyClip(w, l, tail);
             if (ps.UsesVPos) w.Append("    vPos = vec4<f32>(in.pos.xy - vec2<f32>(0.5), 0.0, 0.0);\n");
             if (ps.UsesVFace) w.Append("    vFace = vec4<f32>(select(-1.0, 1.0, frontFacing));\n");
             w.Append("    d3dMain();\n    var f : FOut;\n");
@@ -484,7 +505,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 uint count = k.TexTransform[i] & 0xFF;
                 provided[key] = count != 0 && !k.Transformed ? $"(M.tex[{i}] * {b})" : b;
             }
-            VertexTail(w, l, provided, pos, halfPixel: !k.Transformed);
+            VertexTail(w, l, provided, pos, halfPixel: !k.Transformed, clipFrom: k.Transformed ? "" : "pin");
             return w.ToString();
         }
 
@@ -542,6 +563,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             VaryingStruct(w, l);
             FragmentOut(w, targets, false);
             w.Append("@fragment\nfn main(in : VOut) -> FOut {\n");
+            ApplyClip(w, l, tail);
             w.Append("    let diffuse = in.l0;\n    let specular = in.l1;\n");
             w.Append("    var cur = diffuse;\n    var temp = vec4<f32>(0.0);\n    var bumpUv = vec2<f32>(0.0);\n    var bumpL = 1.0;\n");
             for (int i = 0; i < k.Stages.Count; i++)

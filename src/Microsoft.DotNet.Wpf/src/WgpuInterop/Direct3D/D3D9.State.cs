@@ -248,7 +248,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 case CMaterial: Material = (D3DMATERIAL9)v!; MiscVersion++; break;
                 case CLight: if (v is D3DLIGHT9 l) Lights[(uint)i] = l; else Lights.Remove((uint)i); MiscVersion++; break;
                 case CLightOn: if ((bool)v!) LightsOn.Add((uint)i); else LightsOn.Remove((uint)i); MiscVersion++; break;
-                case CClip: ((float[])v!).CopyTo(ClipPlanes, i * 4); break;
+                case CClip: ((float[])v!).CopyTo(ClipPlanes, i * 4); MiscVersion++; break;
                 case CVsF: ((float[])v!).CopyTo(VsF, i * 4); VsConstVersion++; break;
                 case CPsF: ((float[])v!).CopyTo(PsF, i * 4); PsConstVersion++; break;
                 case CVsI: ((int[])v!).CopyTo(VsI, i * 4); VsConstVersion++; break;
@@ -266,7 +266,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 case CIndices: SetObject(ref Indices, (Direct3DBuffer9?)v); break;
                 case CDecl: SetObject(ref Decl, (Direct3DVertexDeclaration9?)v); break;
                 case CFvf: Fvf = (uint)v!; break;
-                case CVs: SetObject(ref Vs, (Direct3DShader9?)v); break;
+                case CVs: SetObject(ref Vs, (Direct3DShader9?)v); MiscVersion++; break;
                 case CPs: SetObject(ref Ps, (Direct3DShader9?)v); break;
             }
         }
@@ -328,6 +328,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetCreationParameters, (delegate* unmanaged<IntPtr, uint*, int>)&GetCreationParameters);
             vt.Set(Vtbl.IDirect3DDevice9Ex.Reset, (delegate* unmanaged<IntPtr, void*, int>)&Reset);
+            vt.Set(Vtbl.IDirect3DDevice9Ex.GetBackBuffer, (delegate* unmanaged<IntPtr, uint, uint, int, IntPtr*, int>)&GetBackBuffer);
+            vt.Set(Vtbl.IDirect3DDevice9Ex.GetNumberOfSwapChains, (delegate* unmanaged<IntPtr, uint>)&GetNumberOfSwapChains);
             vt.Set(Vtbl.IDirect3DDevice9Ex.ResetEx, (delegate* unmanaged<IntPtr, void*, void*, int>)&ResetEx);
             vt.Set(Vtbl.IDirect3DDevice9Ex.SetDepthStencilSurface, (delegate* unmanaged<IntPtr, IntPtr, int>)&SetDepthStencilSurface);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetDepthStencilSurface, (delegate* unmanaged<IntPtr, IntPtr*, int>)&GetDepthStencilSurface);
@@ -422,17 +424,83 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         /// <summary>Reset: the device's state goes back to its defaults (D3D9Ex keeps its resources).</summary>
-        [UnmanagedCallersOnly] private static int Reset(IntPtr self, void* pp) => ResetCore(self);
-        [UnmanagedCallersOnly] private static int ResetEx(IntPtr self, void* pp, void* mode) => ResetCore(self);
+        [UnmanagedCallersOnly] private static int Reset(IntPtr self, void* pp) => ResetCore(self, (D3DPRESENT_PARAMETERS*)pp);
+        [UnmanagedCallersOnly] private static int ResetEx(IntPtr self, void* pp, void* mode) => ResetCore(self, (D3DPRESENT_PARAMETERS*)pp);
 
-        private static int ResetCore(IntPtr self)
+        private static int ResetCore(IntPtr self, D3DPRESENT_PARAMETERS* pp)
         {
             var d = Dev(self);
             if (d == null) return Invalid;
             d.FlushDraws();
             d.State.Reset();
+            return pp != null ? d.MakeSwapChain(*pp) : HResult.S_OK;
+        }
+
+        // ---- the implicit swap chain: its back buffers and the automatic depth-stencil surface ----------
+
+        private Direct3DSurface9?[] _backBuffers = Array.Empty<Direct3DSurface9?>();
+        public D3DPRESENT_PARAMETERS Presentation;
+
+        /// <summary>The device's back buffers (render target 0 to begin with) and, with
+        /// EnableAutoDepthStencil, its depth-stencil surface (and D3DRS_ZENABLE on), from the present
+        /// parameters. A back buffer of size 0 is the focus window's client area -- a size the shim has
+        /// no window for, so 1x1, as a window-less D3DImage device asks.</summary>
+        public int MakeSwapChain(D3DPRESENT_PARAMETERS pp)
+        {
+            foreach (var b in _backBuffers) b?.InternalRelease();
+            _backBuffers = Array.Empty<Direct3DSurface9?>();
+            uint w = Math.Max(1, pp.BackBufferWidth), h = Math.Max(1, pp.BackBufferHeight);
+            int format = pp.BackBufferFormat == 0 ? D3D9Const.D3DFMT_X8R8G8B8 : pp.BackBufferFormat;
+            if (D3D9Const.ToDxgi(format) == 0) return D3D9Const.D3DERR_NOTAVAILABLE;
+            int count = (int)Math.Clamp(pp.BackBufferCount, 1u, 3u);
+            pp.BackBufferWidth = w; pp.BackBufferHeight = h; pp.BackBufferFormat = format; pp.BackBufferCount = (uint)count;
+            Presentation = pp;
+            _backBuffers = new Direct3DSurface9?[count];
+            for (int i = 0; i < count; i++)
+            {
+                IntPtr p;
+                int hr = MakeSurface(w, h, format, D3D9Const.D3DPOOL_DEFAULT, D3D9Const.D3DUSAGE_RENDERTARGET, true, &p, null);
+                if (hr < 0) return hr;
+                var s = From<Direct3DSurface9>(p)!;
+                s.InternalAddRef();
+                s.Release();
+                _backBuffers[i] = s;
+            }
+            lock (DrawLock)
+            {
+                for (int i = 1; i < 4; i++) D3D9State.SetObject(ref Targets[i], null);
+                SetTarget(0, _backBuffers[0]);
+                D3D9State.SetObject(ref DepthStencil, null);
+                if (pp.EnableAutoDepthStencil != 0)
+                {
+                    IntPtr p;
+                    int hr = MakeSurface(w, h, pp.AutoDepthStencilFormat, D3D9Const.D3DPOOL_DEFAULT, D3D9Const.D3DUSAGE_DEPTHSTENCIL, false, &p, null);
+                    if (hr < 0) return hr;
+                    var ds = From<Direct3DSurface9>(p)!;
+                    D3D9State.SetObject(ref DepthStencil, ds);
+                    ds.Release();
+                    State.RS[D3DRS.ZENABLE] = 1;
+                }
+            }
             return HResult.S_OK;
         }
+
+        private void ReleaseSwapChain()
+        {
+            foreach (var b in _backBuffers) b?.InternalRelease();
+            _backBuffers = Array.Empty<Direct3DSurface9?>();
+        }
+
+        [UnmanagedCallersOnly]
+        private static int GetBackBuffer(IntPtr self, uint swapChain, uint index, int type, IntPtr* surface)
+        {
+            var d = Dev(self);
+            if (d == null || surface == null || swapChain != 0 || index >= d._backBuffers.Length) return Invalid;
+            *surface = d._backBuffers[index]!.AddRefPointer();
+            return HResult.S_OK;
+        }
+
+        [UnmanagedCallersOnly] private static uint GetNumberOfSwapChains(IntPtr self) => 1;
 
         // ---- render targets ----------------------------------------------------------------------------
 
@@ -584,6 +652,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var d = Dev(self);
             if (d == null || plane == null || index >= 6) return Invalid;
             new ReadOnlySpan<float>(plane, 4).CopyTo(d.State.ClipPlanes.AsSpan((int)index * 4));
+            d.State.MiscVersion++;
             d.State.Record(D3D9State.CClip, (int)index);
             return HResult.S_OK;
         }
@@ -948,6 +1017,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var s = From<Direct3DShader9>(shader);
             if (d == null || (shader != IntPtr.Zero && (s == null || s.Code.Pixel))) return Invalid;
             D3D9State.SetObject(ref d.State.Vs, s);
+            d.State.MiscVersion++;      // the clip planes' space follows it
             d.State.Record(D3D9State.CVs, 0);
             return HResult.S_OK;
         }

@@ -70,6 +70,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct D3DPRESENT_PARAMETERS
+    {
+        public uint BackBufferWidth, BackBufferHeight;
+        public int BackBufferFormat;
+        public uint BackBufferCount;
+        public int MultiSampleType;
+        public uint MultiSampleQuality;
+        public int SwapEffect;
+        public IntPtr hDeviceWindow;
+        public int Windowed, EnableAutoDepthStencil, AutoDepthStencilFormat;
+        public uint Flags, FullScreen_RefreshRateInHz, PresentationInterval;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct D3DSURFACE_DESC { public int Format, Type; public uint Usage; public int Pool, MultiSampleType; public uint MultiSampleQuality, Width, Height; }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -251,7 +265,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         [UnmanagedCallersOnly]
         private static int CreateDevice(IntPtr self, uint adapter, int type, IntPtr focus, uint flags, void* pp, IntPtr* device)
-            => CreateDeviceCore(self, adapter, device);
+            => CreateDeviceCore(self, adapter, focus, flags, (D3DPRESENT_PARAMETERS*)pp, device);
 
         [UnmanagedCallersOnly] private static uint GetAdapterModeCountEx(IntPtr self, uint adapter, void* filter) => 1;
 
@@ -280,9 +294,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         [UnmanagedCallersOnly]
         private static int CreateDeviceEx(IntPtr self, uint adapter, int type, IntPtr focus, uint flags, void* pp, void* mode, IntPtr* device)
-            => CreateDeviceCore(self, adapter, device);
+            => CreateDeviceCore(self, adapter, focus, flags, (D3DPRESENT_PARAMETERS*)pp, device);
 
-        private static int CreateDeviceCore(IntPtr self, uint adapter, IntPtr* device)
+        private static int CreateDeviceCore(IntPtr self, uint adapter, IntPtr focus, uint flags, D3DPRESENT_PARAMETERS* pp, IntPtr* device)
         {
             if (device == null) return D3D9Const.D3DERR_INVALIDCALL;
             *device = IntPtr.Zero;
@@ -290,7 +304,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (d3d == null || adapter != 0) return D3D9Const.D3DERR_INVALIDCALL;
             try
             {
-                var dev = new Direct3DDevice9(d3d);
+                var dev = new Direct3DDevice9(d3d) { FocusWindow = focus, BehaviorFlags = flags };
+                if (pp != null)
+                {
+                    int hr = dev.MakeSwapChain(*pp);
+                    if (hr < 0) { dev.Release(); return hr; }
+                }
                 D3DLog.Once("d3d9created", "Direct3D 9Ex device over the shared WebGPU device");
                 *device = dev.Pointer;
                 return HResult.S_OK;
@@ -325,6 +344,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Device11 = new D3DDevice(Composition.ProcessGpu.Acquire(), ownsGpu: true, D3D_FEATURE_LEVEL.L11_0, 0, null);
         }
 
+        /// <summary>The application let go of the device: it lets go of what it holds (bound state, targets,
+        /// its swap chain), so the objects that hold it in turn can go, and it with them.</summary>
+        protected override bool OnNoReferences()
+        {
+            ReleaseDrawResources();
+            return false;
+        }
+
         protected override void OnFinalRelease()
         {
             ReleaseDrawResources();
@@ -347,6 +374,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateTexture, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateTexture, (Func<IntPtr, uint, uint, uint, uint, int, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateTextureImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateRenderTarget, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateRenderTarget, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateRenderTargetImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
             vt.Set(Vtbl.IDirect3DDevice9Ex.CreateDepthStencilSurface, NativeTwins.Register((IntPtr)(delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)&CreateDepthStencilSurface, (Func<IntPtr, uint, uint, int, int, uint, int, IntPtr, IntPtr, int>)((p0, p1, p2, p3, p4, p5, p6, p7, p8) => CreateDepthStencilSurfaceImpl(p0, p1, p2, p3, p4, p5, p6, (IntPtr*)p7, (IntPtr*)p8))));
+            vt.Set(Vtbl.IDirect3DDevice9Ex.CreateCubeTexture, (delegate* unmanaged<IntPtr, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)&CreateCubeTexture);
             vt.Set(Vtbl.IDirect3DDevice9Ex.UpdateSurface, (delegate* unmanaged<IntPtr, IntPtr, D3DRECT9*, IntPtr, int*, int>)&UpdateSurface);
             vt.Set(Vtbl.IDirect3DDevice9Ex.UpdateTexture, (delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)&UpdateTexture);
             vt.Set(Vtbl.IDirect3DDevice9Ex.GetRenderTargetData, (delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)&GetRenderTargetData);
@@ -423,7 +451,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         /// <summary>A GPU texture of this device, or the shared one <paramref name="shared"/> names.</summary>
-        private D3DTexture2D TextureFor(uint w, uint h, uint levels, uint usage, int format, IntPtr* shared, bool renderTarget)
+        private D3DTexture2D TextureFor(uint w, uint h, uint levels, uint usage, int format, IntPtr* shared, bool renderTarget, bool cube = false)
         {
             if (shared != null && *shared != IntPtr.Zero)
             {
@@ -440,11 +468,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             bool depth = (usage & D3D9Const.D3DUSAGE_DEPTHSTENCIL) != 0;
             var desc = new D3D11_TEXTURE2D_DESC
             {
-                Width = w, Height = h, MipLevels = levels, ArraySize = 1, Format = f,
+                Width = w, Height = h, MipLevels = levels, ArraySize = cube ? 6u : 1u, Format = f,
                 SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 },
                 Usage = D3D11_USAGE.DEFAULT,
                 BindFlags = depth ? D3D11_BIND.DEPTH_STENCIL : D3D11_BIND.SHADER_RESOURCE | (renderTarget ? D3D11_BIND.RENDER_TARGET : 0),
-                MiscFlags = (shared != null ? D3D11_RESOURCE_MISC.SHARED : 0) | ((usage & D3D9Const.D3DUSAGE_AUTOGENMIPMAP) != 0 ? D3D11_RESOURCE_MISC.GENERATE_MIPS : 0),
+                MiscFlags = (shared != null ? D3D11_RESOURCE_MISC.SHARED : 0) | ((usage & D3D9Const.D3DUSAGE_AUTOGENMIPMAP) != 0 ? D3D11_RESOURCE_MISC.GENERATE_MIPS : 0)
+                    | (cube ? D3D11_RESOURCE_MISC.TEXTURECUBE : 0),
             };
             var tex = new D3DTexture2D(Device11, desc, null);
             if (shared != null) *shared = tex.SharedHandle = SharedHandles.Add(tex);
@@ -476,6 +505,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     D3DTexture2D tex = d.TextureFor(w, h, levels, usage, format, shared, (usage & D3D9Const.D3DUSAGE_RENDERTARGET) != 0);
                     t = new Direct3DTexture9(d, tex, format, pool, usage);
                     tex.Release();      // the texture object holds it
+                }
+                *texture = t.Pointer;
+                return HResult.S_OK;
+            });
+        }
+
+        [UnmanagedCallersOnly]
+        private static int CreateCubeTexture(IntPtr self, uint edge, uint levels, uint usage, int format, int pool, IntPtr* texture, IntPtr* shared)
+        {
+            var d = Self(self);
+            if (d == null || texture == null || edge == 0 || (shared != null && *shared != IntPtr.Zero)) return D3D9Const.D3DERR_INVALIDCALL;
+            *texture = IntPtr.Zero;
+            return Guard("CreateCubeTexture", () =>
+            {
+                Direct3DTexture9 t;
+                if (pool is D3D9Const.D3DPOOL_SYSTEMMEM or D3D9Const.D3DPOOL_SCRATCH) t = Direct3DTexture9.OnCpu(d, edge, edge, levels, format, pool, usage, 6);
+                else
+                {
+                    D3DTexture2D tex = d.TextureFor(edge, edge, levels, usage, format, null, (usage & D3D9Const.D3DUSAGE_RENDERTARGET) != 0, cube: true);
+                    t = new Direct3DTexture9(d, tex, format, pool, usage, 6);
+                    tex.Release();
                 }
                 *texture = t.Pointer;
                 return HResult.S_OK;
@@ -587,13 +637,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (s == null || t == null) return D3D9Const.D3DERR_INVALIDCALL;
             return Guard("UpdateTexture", () =>
             {
+                if (s.Faces != t.Faces) return D3D9Const.D3DERR_INVALIDCALL;
                 int n = (int)Math.Min(s.Levels, t.Levels);
-                for (int i = 0; i < n; i++)
-                {
-                    Direct3DSurface9 a = s.Level(i), b = t.Level(i);
-                    int hr = b.WriteFrom(a, new D3DRECT9 { right = (int)a.Width, bottom = (int)a.Height }, 0, 0);
-                    if (hr < 0) return hr;
-                }
+                for (uint f = 0; f < s.Faces; f++)
+                    for (int i = 0; i < n; i++)
+                    {
+                        Direct3DSurface9 a = s.Level(i, f), b = t.Level(i, f);
+                        int hr = b.WriteFrom(a, new D3DRECT9 { right = (int)a.Width, bottom = (int)a.Height }, 0, 0);
+                        if (hr < 0) return hr;
+                    }
                 return HResult.S_OK;
             });
         }
@@ -654,46 +706,54 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
     internal sealed unsafe class Direct3DTexture9 : ComObject
     {
         private static readonly Vtable s_vt = Build();
+        private static readonly Vtable s_cube = BuildCube();
         public readonly Direct3DDevice9 Device;
         public readonly D3DTexture2D? Gpu;
         public readonly int Format, Pool;
         public readonly uint Usage, Width, Height, Levels;
-        private readonly Direct3DSurface9[] _levels;
+        /// <summary>A cube texture's six faces (D3DCUBEMAP_FACES order: +x, -x, +y, -y, +z, -z), or one.</summary>
+        public readonly uint Faces;
+        public bool IsCube => Faces == 6;
+        private readonly Direct3DSurface9[] _levels;     // face * Levels + level
         public readonly PrivateData Data = new();
         private uint _priority, _lod;
 
-        public Direct3DTexture9(Direct3DDevice9 device, D3DTexture2D tex, int format, int pool, uint usage) : base(s_vt)
+        public Direct3DTexture9(Direct3DDevice9 device, D3DTexture2D tex, int format, int pool, uint usage, uint faces = 1) : base(faces == 6 ? s_cube : s_vt)
         {
             Device = device; device.InternalAddRef();
             Gpu = tex; tex.AddRef();
-            Format = format; Pool = pool; Usage = usage;
+            Format = format; Pool = pool; Usage = usage; Faces = faces;
             Width = tex.Desc.Width; Height = tex.Desc.Height; Levels = tex.MipLevels;
-            _levels = new Direct3DSurface9[Levels];
-            for (int i = 0; i < Levels; i++)
-            {
-                _levels[i] = new Direct3DSurface9(device, this, tex, (uint)i, format, pool, usage);
-                _levels[i].MakeInternal();
-            }
+            _levels = new Direct3DSurface9[Levels * faces];
+            for (uint f = 0; f < faces; f++)
+                for (int i = 0; i < Levels; i++)
+                {
+                    var s = new Direct3DSurface9(device, this, tex, (uint)i, format, pool, usage, f);
+                    s.MakeInternal();
+                    _levels[f * Levels + i] = s;
+                }
         }
 
-        private Direct3DTexture9(Direct3DDevice9 device, uint w, uint h, uint levels, int format, int pool, uint usage) : base(s_vt)
+        private Direct3DTexture9(Direct3DDevice9 device, uint w, uint h, uint levels, int format, int pool, uint usage, uint faces) : base(faces == 6 ? s_cube : s_vt)
         {
             Device = device; device.InternalAddRef();
-            Format = format; Pool = pool; Usage = usage; Width = w; Height = h;
+            Format = format; Pool = pool; Usage = usage; Width = w; Height = h; Faces = faces;
             uint max = 1 + (uint)Math.Floor(Math.Log2(Math.Max(w, h)));
             Levels = levels == 0 ? max : Math.Min(levels, max);
-            _levels = new Direct3DSurface9[Levels];
-            for (int i = 0; i < Levels; i++)
-            {
-                _levels[i] = Direct3DSurface9.OnCpu(device, this, Math.Max(1, w >> i), Math.Max(1, h >> i), format, pool, usage);
-                _levels[i].MakeInternal();
-            }
+            _levels = new Direct3DSurface9[Levels * faces];
+            for (uint f = 0; f < faces; f++)
+                for (int i = 0; i < Levels; i++)
+                {
+                    var s = Direct3DSurface9.OnCpu(device, this, Math.Max(1, w >> i), Math.Max(1, h >> i), format, pool, usage);
+                    s.MakeInternal();
+                    _levels[f * Levels + i] = s;
+                }
         }
 
-        public static Direct3DTexture9 OnCpu(Direct3DDevice9 device, uint w, uint h, uint levels, int format, int pool, uint usage)
-            => new(device, w, h, levels, format, pool, usage);
+        public static Direct3DTexture9 OnCpu(Direct3DDevice9 device, uint w, uint h, uint levels, int format, int pool, uint usage, uint faces = 1)
+            => new(device, w, h, levels, format, pool, usage, faces);
 
-        public Direct3DSurface9 Level(int i) => _levels[i];
+        public Direct3DSurface9 Level(int i, uint face = 0) => _levels[face * Levels + i];
 
         protected override void OnFinalRelease()
         {
@@ -787,6 +847,49 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         [UnmanagedCallersOnly] private static int AddDirtyRect(IntPtr self, D3DRECT9* rect) => HResult.S_OK;
+
+        // ---- IDirect3DCubeTexture9: the same, by face ---------------------------------------------
+
+        private static Vtable BuildCube()
+        {
+            var vt = new Vtable("IDirect3DCubeTexture9", Vtbl.IDirect3DCubeTexture9.SlotCount, Vtbl.IDirect3DCubeTexture9.IID, Vtbl.IDirect3DBaseTexture9.IID, Vtbl.IDirect3DResource9.IID);
+            for (int i = 3; i <= Vtbl.IDirect3DCubeTexture9.GetLevelDesc; i++) vt.Slots[i] = s_vt.Slots[i];
+            vt.Set(Vtbl.IDirect3DCubeTexture9.GetType, (delegate* unmanaged<IntPtr, int>)&GetCubeType);
+            vt.Set(Vtbl.IDirect3DCubeTexture9.GetCubeMapSurface, (delegate* unmanaged<IntPtr, int, uint, IntPtr*, int>)&GetCubeMapSurface);
+            vt.Set(Vtbl.IDirect3DCubeTexture9.LockRect, (delegate* unmanaged<IntPtr, int, uint, D3DLOCKED_RECT*, D3DRECT9*, uint, int>)&LockFace);
+            vt.Set(Vtbl.IDirect3DCubeTexture9.UnlockRect, (delegate* unmanaged<IntPtr, int, uint, int>)&UnlockFace);
+            vt.Set(Vtbl.IDirect3DCubeTexture9.AddDirtyRect, (delegate* unmanaged<IntPtr, int, D3DRECT9*, int>)&AddDirtyFace);
+            return vt;
+        }
+
+        [UnmanagedCallersOnly] private static int GetCubeType(IntPtr self) => 5;      // D3DRTYPE_CUBETEXTURE
+
+        [UnmanagedCallersOnly]
+        private static int GetCubeMapSurface(IntPtr self, int face, uint level, IntPtr* surface)
+        {
+            var t = Self(self);
+            if (t == null || surface == null || level >= t.Levels || face is < 0 or > 5) return D3D9Const.D3DERR_INVALIDCALL;
+            *surface = t.Level((int)level, (uint)face).AddRefPointer();
+            return HResult.S_OK;
+        }
+
+        [UnmanagedCallersOnly]
+        private static int LockFace(IntPtr self, int face, uint level, D3DLOCKED_RECT* locked, D3DRECT9* rect, uint flags)
+        {
+            var t = Self(self);
+            if (t == null || level >= t.Levels || face is < 0 or > 5) return D3D9Const.D3DERR_INVALIDCALL;
+            return t.Level((int)level, (uint)face).Lock(locked, rect, flags);
+        }
+
+        [UnmanagedCallersOnly]
+        private static int UnlockFace(IntPtr self, int face, uint level)
+        {
+            var t = Self(self);
+            if (t == null || level >= t.Levels || face is < 0 or > 5) return D3D9Const.D3DERR_INVALIDCALL;
+            return t.Level((int)level, (uint)face).Unlock();
+        }
+
+        [UnmanagedCallersOnly] private static int AddDirtyFace(IntPtr self, int face, D3DRECT9* rect) => HResult.S_OK;
     }
 
     // ---- IDirect3DSurface9 ----------------------------------------------------------------------
@@ -803,6 +906,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public readonly Direct3DTexture9? Container;
         public readonly D3DTexture2D? Gpu;
         public readonly uint Level;
+        /// <summary>The array layer of the texture it is (a cube texture's face).</summary>
+        public readonly uint Layer;
         public readonly D3DSURFACE_DESC Desc;
         public readonly uint Bpp;
         private byte* _cpu;                 // CPU pools: the surface; GPU: the lock's copy
@@ -817,12 +922,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public uint Height => Desc.Height;
         public bool OnCpuSide => Gpu == null;
 
-        public Direct3DSurface9(Direct3DDevice9 device, Direct3DTexture9? container, D3DTexture2D tex, uint level, int format, int pool, uint usage) : base(s_vt)
+        public Direct3DSurface9(Direct3DDevice9 device, Direct3DTexture9? container, D3DTexture2D tex, uint level, int format, int pool, uint usage, uint layer = 0) : base(s_vt)
         {
             Device = device; device.InternalAddRef();
             Container = container;
             Gpu = tex; tex.AddRef();
             Level = level;
+            Layer = layer;
             Desc = new D3DSURFACE_DESC
             {
                 Format = format, Type = D3D9Const.D3DRTYPE_SURFACE, Usage = usage, Pool = pool,
@@ -998,7 +1104,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             try
             {
                 IntPtr enc = wgpuDeviceCreateCommandEncoder(gpu.Device, IntPtr.Zero);
-                var from = new WGPUTexelCopyTextureInfo { texture = Gpu.Gpu, mipLevel = Level, aspect = WGPUTextureAspect.All };
+                var from = new WGPUTexelCopyTextureInfo { texture = Gpu.Gpu, mipLevel = Level, origin = new WGPUOrigin3D { z = Layer }, aspect = WGPUTextureAspect.All };
                 var to = new WGPUTexelCopyBufferInfo { buffer = buf, layout = new WGPUTexelCopyBufferLayout { bytesPerRow = aligned, rowsPerImage = Height } };
                 var extent = new WGPUExtent3D { width = Width, height = Height, depthOrArrayLayers = 1 };
                 wgpuCommandEncoderCopyTextureToBuffer(enc, &from, &to, &extent);
@@ -1022,7 +1128,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             WgpuContext gpu = Gpu!.Device.Gpu;
             uint w = (uint)(src.right - src.left), h = (uint)(src.bottom - src.top);
             byte* first = mem + (long)src.top * pitch + src.left * Bpp;
-            D3DTexture2D.Upload(gpu, Gpu.Gpu, Level, new WGPUOrigin3D { x = (uint)dx, y = (uint)dy }, first, (uint)pitch, h, w * (uint)Bpp, 0,
+            D3DTexture2D.Upload(gpu, Gpu.Gpu, Level, new WGPUOrigin3D { x = (uint)dx, y = (uint)dy, z = Layer }, first, (uint)pitch, h, w * (uint)Bpp, 0,
                                 new WGPUExtent3D { width = w, height = h, depthOrArrayLayers = 1 });
             System.Threading.Interlocked.Increment(ref Gpu.Version);
         }
@@ -1090,8 +1196,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 Device.FlushDraws();
                 WgpuContext gpu = Gpu.Device.Gpu;
                 IntPtr enc = wgpuDeviceCreateCommandEncoder(gpu.Device, IntPtr.Zero);
-                var from = new WGPUTexelCopyTextureInfo { texture = src.Gpu.Gpu, mipLevel = src.Level, origin = new WGPUOrigin3D { x = (uint)a.left, y = (uint)a.top }, aspect = WGPUTextureAspect.All };
-                var to = new WGPUTexelCopyTextureInfo { texture = Gpu.Gpu, mipLevel = Level, origin = new WGPUOrigin3D { x = (uint)b.left, y = (uint)b.top }, aspect = WGPUTextureAspect.All };
+                var from = new WGPUTexelCopyTextureInfo { texture = src.Gpu.Gpu, mipLevel = src.Level, origin = new WGPUOrigin3D { x = (uint)a.left, y = (uint)a.top, z = src.Layer }, aspect = WGPUTextureAspect.All };
+                var to = new WGPUTexelCopyTextureInfo { texture = Gpu.Gpu, mipLevel = Level, origin = new WGPUOrigin3D { x = (uint)b.left, y = (uint)b.top, z = Layer }, aspect = WGPUTextureAspect.All };
                 var extent = new WGPUExtent3D { width = (uint)sw, height = (uint)sh, depthOrArrayLayers = 1 };
                 wgpuCommandEncoderCopyTextureToTexture(enc, &from, &to, &extent);
                 IntPtr cmd = wgpuCommandEncoderFinish(enc, IntPtr.Zero);

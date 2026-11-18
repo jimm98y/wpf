@@ -151,14 +151,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             State.Reset();
             for (int i = 0; i < 4; i++) D3D9State.SetObject(ref Targets[i], null);
             D3D9State.SetObject(ref DepthStencil, null);
+            ReleaseSwapChain();
         }
 
         /// <summary>A view of a surface's level (a render target or depth attachment), held for the batch.</summary>
-        private IntPtr TargetView(D3DTexture2D t, uint level)
+        private IntPtr TargetView(D3DTexture2D t, uint level, uint layer)
         {
-            if (_views.TryGetValue((t.Gpu, level, 1), out IntPtr v)) return v;
-            v = D3DView.CreateTextureView(t.Gpu, t.Format, WGPUTextureViewDimension._2D, level, 1, 0, 1);
-            _views[(t.Gpu, level, 1)] = v;
+            if (_views.TryGetValue((t.Gpu, level | layer << 16, 1), out IntPtr v)) return v;
+            v = D3DView.CreateTextureView(t.Gpu, t.Format, WGPUTextureViewDimension._2D, level, 1, layer, 1);
+            _views[(t.Gpu, level | layer << 16, 1)] = v;
             _batchViews.Add(v);
             return v;
         }
@@ -167,7 +168,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private IntPtr SampleView(D3DTexture2D t)
         {
             if (_views.TryGetValue((t.Gpu, 0, 2), out IntPtr v)) return v;
-            v = D3DView.CreateTextureView(t.Gpu, t.Format, WGPUTextureViewDimension._2D, 0, t.MipLevels, 0, 1);
+            bool cube = (t.Desc.MiscFlags & D3D11_RESOURCE_MISC.TEXTURECUBE) != 0;
+            v = D3DView.CreateTextureView(t.Gpu, t.Format, cube ? WGPUTextureViewDimension.Cube : WGPUTextureViewDimension._2D, 0, t.MipLevels, 0, cube ? 6u : 1u);
             _views[(t.Gpu, 0, 2)] = v;
             _batchViews.Add(v);
             return v;
@@ -231,8 +233,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private bool EnsurePass(TargetSet ts, WGPUColor? clearColor = null, float? clearDepth = null, uint? clearStencil = null)
         {
             var views = new IntPtr[4];
-            for (int i = 0; i < 4; i++) if (ts.Color[i] is { } s) views[i] = TargetView(s.Gpu!, s.Level);
-            IntPtr dv = ts.Depth != null ? TargetView(ts.Depth.Gpu!, ts.Depth.Level) : IntPtr.Zero;
+            for (int i = 0; i < 4; i++) if (ts.Color[i] is { } s) views[i] = TargetView(s.Gpu!, s.Level, s.Layer);
+            IntPtr dv = ts.Depth != null ? TargetView(ts.Depth.Gpu!, ts.Depth.Level, ts.Depth.Layer) : IntPtr.Zero;
             bool clearing = clearColor != null || clearDepth != null || clearStencil != null;
             if (_pass != IntPtr.Zero && !clearing && dv == _passDepth && views.AsSpan().SequenceEqual(_passColor)) return true;
             EndPass();
@@ -519,7 +521,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 D3D9Shader? vs = transformed ? null : State.Vs?.Code;
                 D3D9Shader? ps = State.Ps?.Code;
                 if (vs?.Error != null || ps?.Error != null) { DrawsSkipped++; return HResult.S_OK; }
-                if (State.RS[D3DRS.CLIPPLANEENABLE] != 0) D3DLog.Once("d3d9clip", "D3D9 user clip planes are not applied");
                 if (State.RS[D3DRS.VERTEXBLEND] != 0 && vs == null) D3DLog.Once("d3d9blend", "D3D9 fixed-function vertex blending is not applied");
 
                 // the epilogue and the linkage
@@ -528,6 +529,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     AlphaFunc = State.RS[D3DRS.ALPHATESTENABLE] != 0 ? (int)State.RS[D3DRS.ALPHAFUNC] : 8,
                     Fog = State.RS[D3DRS.FOGENABLE] == 0 ? 0 : State.RS[D3DRS.FOGTABLEMODE] is uint t and >= 1 and <= 3 ? (int)t + 1 : 1,
                     WFog = !transformed && State.Transform(3)[11] != 0,
+                    ClipMask = transformed ? 0 : (int)(State.RS[D3DRS.CLIPPLANEENABLE] & 0x3F),
                 };
                 bool flat = State.RS[D3DRS.SHADEMODE] == 1;
                 D3D9Programs.FixedPixel? ffp = ps == null ? FixedPixelKey() : null;
@@ -540,7 +542,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 var vsTex = new SortedDictionary<int, (D3DTexture2D? Tex, int Fixup, int Type)>();
                 if (ps != null) foreach (var (s, st) in ps.Samplers) psTex[s] = Sampled(s, st, shader: true, ts);
                 else for (int i = 0; i < ffp!.Stages.Count; i++)
-                        if (D3D9Programs.FixedPixel.ReadsTexture(ffp.Stages[i]) && ffp.Stages[i].Fixup != 8) psTex[i] = Sampled(i, 2, shader: false, ts);
+                        if (D3D9Programs.FixedPixel.ReadsTexture(ffp.Stages[i]) && ffp.Stages[i].Fixup != 8) psTex[i] = Sampled(i, ffp.Stages[i].TexType, shader: false, ts);
                 if (vs != null) foreach (var (s, st) in vs.Samplers) vsTex[s] = Sampled(16 + s, st, shader: true, ts);
 
                 // the vertex inputs
@@ -799,7 +801,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 return (null, none, type);
             }
             if (Formats.IsDepth(t.Gpu.Format)) { D3DLog.Once("d3d9depthtex", "sampling a depth texture is not supported"); return (null, none, type); }
-            if (type != 2) { D3DLog.Once("d3d9cube", "cube and volume textures are not supported"); return (null, none, type); }
+            // the texture's type, which must be the one the shader declares (a fixed-function stage takes the texture's)
+            int has = t.IsCube ? 3 : 2;
+            if (!shader) type = has;
+            if (type != has) { D3DLog.Once("d3d9textype", $"a sampler declared as type {type} has a texture of type {has} bound: it reads nothing"); return (null, none, type); }
             return (t.Gpu, D3D9Programs.FixupOf(t.Format), type);
         }
 
@@ -818,7 +823,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 {
                     ColorOp = op, ColorArg1 = State.Tss[i, 2], ColorArg2 = State.Tss[i, 3], ColorArg0 = State.Tss[i, 26],
                     AlphaOp = State.Tss[i, 4], AlphaArg1 = State.Tss[i, 5], AlphaArg2 = State.Tss[i, 6], AlphaArg0 = State.Tss[i, 27],
-                    ResultArg = State.Tss[i, 28], Transform = State.Tss[i, 24], TexType = 2,
+                    ResultArg = State.Tss[i, 28], Transform = State.Tss[i, 24],
+                    TexType = State.Tex[i] is Direct3DTexture9 { IsCube: true } ? 3 : 2,
                 };
                 s.Fixup = State.Tex[i] is Direct3DTexture9 { Gpu: not null } t && !Formats.IsDepth(t.Gpu.Format) ? D3D9Programs.FixupOf(t.Format) : 8;
                 k.Stages.Add(s);
@@ -961,6 +967,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 Put(b, at + 80, L.Attenuation0, L.Attenuation1, L.Attenuation2, L.Type);
                 Put(b, at + 96, MathF.Cos(L.Theta / 2), MathF.Cos(L.Phi / 2), 0, 0);
                 li++;
+            }
+            // the user clip planes: with a vertex shader in clip space, as given; without, in world space,
+            // here in object space (the plane through the world matrix: dist = (p * World) . plane)
+            bool shaderVs = State.Vs != null;
+            for (int i = 0; i < 6; i++)
+            {
+                float a = State.ClipPlanes[i * 4], bb = State.ClipPlanes[i * 4 + 1], c = State.ClipPlanes[i * 4 + 2], dd = State.ClipPlanes[i * 4 + 3];
+                if (!shaderVs)
+                {
+                    float[] wm = world;
+                    (a, bb, c, dd) = (wm[0] * a + wm[1] * bb + wm[2] * c + wm[3] * dd, wm[4] * a + wm[5] * bb + wm[6] * c + wm[7] * dd,
+                                      wm[8] * a + wm[9] * bb + wm[10] * c + wm[11] * dd, wm[12] * a + wm[13] * bb + wm[14] * c + wm[15] * dd);
+                }
+                Put(b, D3D9Programs.OffClip + i * 16, a, bb, c, dd);
             }
             // the viewport adjustment: D3D9's viewport mapped into the part of it on the targets
             Viewport(ts, out clamped);

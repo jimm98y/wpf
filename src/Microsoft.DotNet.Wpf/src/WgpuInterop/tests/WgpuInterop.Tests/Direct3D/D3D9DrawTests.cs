@@ -30,7 +30,7 @@ namespace WgpuInterop.Tests.Direct3D
         private const uint FVF_XYZ = 0x2, FVF_XYZRHW = 0x4, FVF_NORMAL = 0x10, FVF_DIFFUSE = 0x40, FVF_TEX1 = 0x100;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct PresentParameters
+        internal struct PresentParameters
         {
             public uint BackBufferWidth, BackBufferHeight;
             public int BackBufferFormat;
@@ -48,6 +48,18 @@ namespace WgpuInterop.Tests.Direct3D
         {
             public IntPtr D3D, Dev, Rt, Ds;
             private readonly List<IntPtr> _owned = new();
+
+            /// <summary>A device whose back buffer (and automatic depth-stencil surface) is what it draws to.</summary>
+            public Scene(PresentParameters pp)
+            {
+                IntPtr d3d, dev;
+                Check(Exports.Create9ExPointer(32, &d3d), "Direct3DCreate9Ex");
+                Check(((delegate* unmanaged<IntPtr, uint, int, IntPtr, uint, PresentParameters*, void*, IntPtr*, int>)Fn(d3d, Vtbl.IDirect3D9Ex.CreateDeviceEx))(d3d, 0, 1, IntPtr.Zero, 0x40 | 0x4 | 0x2, &pp, null, &dev), "CreateDeviceEx");
+                D3D = d3d; Dev = dev;
+                IntPtr bb;
+                Check(((delegate* unmanaged<IntPtr, uint, uint, int, IntPtr*, int>)Fn(dev, Vtbl.IDirect3DDevice9.GetBackBuffer))(dev, 0, 0, 0, &bb), "GetBackBuffer");
+                Rt = bb;
+            }
 
             public Scene(bool depth = false, int format = D3DFMT_A8R8G8B8)
             {
@@ -549,6 +561,94 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.Equal(0xFF123456u, v);
             Check(((delegate* unmanaged<IntPtr, int, uint*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.GetRenderState))(s.Dev, D3DRS.ZFUNC, &v), "GetRenderState");
             Assert.Equal(8u, v);     // not in the block
+        }
+
+        /// <summary>The device's back buffer, render target 0 from the start, with the depth-stencil surface
+        /// EnableAutoDepthStencil makes (and the depth test on): the SlimDX D3DImage sample's set-up.</summary>
+        [Fact]
+        public void TheBackBuffer_AndTheAutomaticDepthSurface_AreDrawnTo()
+        {
+            RequireGpu();
+            using var s = new Scene(new PresentParameters
+            {
+                BackBufferWidth = W, BackBufferHeight = H, BackBufferFormat = D3DFMT_A8R8G8B8, BackBufferCount = 1, SwapEffect = 1, Windowed = 1,
+                EnableAutoDepthStencil = 1, AutoDepthStencilFormat = D3DFMT_D24S8, PresentationInterval = 0x80000000,
+            });
+            IntPtr rt0;
+            Check(((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.GetRenderTarget))(s.Dev, 0, &rt0), "GetRenderTarget");
+            Release(rt0);
+            Assert.Equal(s.Rt, rt0);
+            s.Fvf(FVF_XYZRHW | FVF_DIFFUSE);
+            s.Clear(1 | 2, 0xFF000000, 1);
+            RhwColor[] Quad(float z, uint c) => new[]
+            {
+                new RhwColor { X = 0, Y = 0, Z = z, Rhw = 1, Color = c }, new RhwColor { X = 64, Y = 0, Z = z, Rhw = 1, Color = c },
+                new RhwColor { X = 0, Y = 64, Z = z, Rhw = 1, Color = c }, new RhwColor { X = 64, Y = 64, Z = z, Rhw = 1, Color = c },
+            };
+            s.DrawUp(5, 2, Quad(0.3f, 0xFF00FF00));
+            s.DrawUp(5, 2, Quad(0.6f, 0xFFFF0000));     // behind the first: the depth test (on by default) keeps it out
+            s.EndScene();
+            Check(((delegate* unmanaged<IntPtr, void*, void*, IntPtr, void*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.Present))(s.Dev, null, null, IntPtr.Zero, null), "Present");
+            Assert.Equal(0xFF00FF00u, s.Pixels()[32 * W + 32]);
+        }
+
+        /// <summary>A user clip plane in world space (fixed function) keeps only the side it faces.</summary>
+        [Fact]
+        public void UserClipPlanes_CutTheGeometry()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.Fvf(FVF_XYZ | FVF_DIFFUSE);
+            s.RS(D3DRS.LIGHTING, 0);
+            s.RS(D3DRS.CULLMODE, 1);
+            s.Transform(256, new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.25f, 0, 0, 1 });    // world: moved right by 0.25
+            float* plane = stackalloc float[4] { 1, 0, 0, -0.5f };       // x >= 0.5 in world space
+            Check(((delegate* unmanaged<IntPtr, uint, float*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.SetClipPlane))(s.Dev, 0, plane), "SetClipPlane");
+            s.RS(D3DRS.CLIPPLANEENABLE, 1);
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(4, 1, new[]
+            {
+                new PosColor { X = -2, Y = 1, Z = 0.5f, Color = 0xFFFFFFFF }, new PosColor { X = 2, Y = 1, Z = 0.5f, Color = 0xFFFFFFFF }, new PosColor { X = -2, Y = -3, Z = 0.5f, Color = 0xFFFFFFFF },
+            });
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF000000u, px[4 * W + 44]);      // x 0.39: cut
+            Assert.Equal(0xFFFFFFFFu, px[4 * W + 52]);      // x 0.64: kept
+        }
+
+        [StructLayout(LayoutKind.Sequential)] private struct RhwDir { public float X, Y, Z, Rhw, U, V, W; }
+
+        /// <summary>A cube texture: each face filled through LockRect, sampled by direction.</summary>
+        [Fact]
+        public void CubeTextures_AreSampledByDirection()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr cube;
+            Check(((delegate* unmanaged<IntPtr, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.CreateCubeTexture))(s.Dev, 4, 1, 0, D3DFMT_A8R8G8B8, 1, &cube, null), "CreateCubeTexture");
+            s.Own(cube);
+            uint[] colors = { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF };
+            for (int f = 0; f < 6; f++)
+            {
+                D3DLOCKED_RECT lr;
+                Check(((delegate* unmanaged<IntPtr, int, uint, D3DLOCKED_RECT*, D3DRECT9*, uint, int>)Fn(cube, Vtbl.IDirect3DCubeTexture9.LockRect))(cube, f, 0, &lr, null, 0), "LockRect");
+                for (int y = 0; y < 4; y++) new Span<uint>((byte*)lr.pBits + y * lr.Pitch, 4).Fill(colors[f]);
+                Check(((delegate* unmanaged<IntPtr, int, uint, int>)Fn(cube, Vtbl.IDirect3DCubeTexture9.UnlockRect))(cube, f, 0), "UnlockRect");
+            }
+            s.Texture(0, cube);
+            s.Fvf(FVF_XYZRHW | FVF_TEX1 | 0x10000);          // one set of three coordinates
+            s.Clear(1, 0xFF000000);
+            RhwDir[] Quad(float x0, float x1, float u, float v, float w) => new[]
+            {
+                new RhwDir { X = x0, Y = 0, Z = 0.5f, Rhw = 1, U = u, V = v, W = w }, new RhwDir { X = x1, Y = 0, Z = 0.5f, Rhw = 1, U = u, V = v, W = w },
+                new RhwDir { X = x0, Y = 64, Z = 0.5f, Rhw = 1, U = u, V = v, W = w }, new RhwDir { X = x1, Y = 64, Z = 0.5f, Rhw = 1, U = u, V = v, W = w },
+            };
+            s.DrawUp(5, 2, Quad(0, 32, 1, 0.1f, 0.1f));       // +x
+            s.DrawUp(5, 2, Quad(32, 64, 0.1f, 0.1f, -1));     // -z
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(colors[0], px[32 * W + 16]);
+            Assert.Equal(colors[5], px[32 * W + 48]);
         }
 
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
