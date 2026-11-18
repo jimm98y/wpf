@@ -130,7 +130,13 @@ namespace System.Diagnostics
 
         public override CounterSample Read(string counter, string instance) => _read(Counter(counter).Value.Name, instance);
 
-        public static readonly SystemCategory[] All =
+        public static readonly SystemCategory[] All = Core().Concat(StandardCategories.All).ToArray();
+
+        /// <summary>A standard counter's type.</summary>
+        public static PerformanceCounterType TypeOf(string category, string counter) =>
+            All.First(c => c.Name == category).Counter(counter).Value.Type;
+
+        private static SystemCategory[] Core() => new[]
         {
             new SystemCategory("Processor", "The Processor performance object consists of counters that measure aspects of processor activity.",
                 PerformanceCounterCategoryType.MultiInstance, new[]
