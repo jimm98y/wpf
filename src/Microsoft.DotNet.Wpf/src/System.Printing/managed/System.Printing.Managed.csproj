@@ -43,6 +43,7 @@
     <Compile Include="XpsDocumentWriter.Members.cs" />
     <Compile Include="LibraryAssemblyInfo.cs" />
     <Compile Include="PrintQueue.cs" />
+    <Compile Include="$(WpfSharedDir)MS\Internal\Interop\CupsCapabilities.cs" />
     <Compile Include="PrintQueue.Validation.cs" />
     <Compile Include="SafeMemoryHandle.cs" />
     <Compile Include="XpsDocumentWriter.cs" />

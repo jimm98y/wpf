@@ -57,6 +57,7 @@
          (WindowsFormsHost installs PrintSystem.Bridge), so PlatformPrint itself is not linked:
          there is one per process and it lives in WindowsBase. -->
     <Compile Include="../../Shared/MS/Internal/Interop/PrintBackend.cs" Link="interop/PrintBackend.cs" />
+    <Compile Include="../../Shared/MS/Internal/Interop/CupsCapabilities.cs" Link="interop/CupsCapabilities.cs" />
     <Compile Include="../../Shared/MS/Internal/Interop/CocoaPrint.cs" Link="interop/CocoaPrint.cs" />
     <!-- The two CAS permission classes (they derive from CodeAccessPermission /
          CodeAccessSecurityAttribute, which is what drags in the unresolvable CAS typerefs). Nothing

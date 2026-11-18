@@ -417,9 +417,13 @@ namespace System.Windows.Controls
             }
 
             bool linux = OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();
+            // the browser on the multithreaded runtime can wait in a nested frame: the dialog drawn in WPF
+            bool browserModal = OperatingSystem.IsBrowser() && MS.Internal.Interop.BrowserBlocking.CanBlock;
 
-            if (!linux)
+            if (!linux && !OperatingSystem.IsMacOS() && !browserModal)
             {
+                // iOS and Android ask at print time, in the system's own print UI (UIPrintInteractionController,
+                // PrintManager): the choice is the system's there
                 if (_printQueue == null) _printQueue = AcquireDefaultPrintQueue();
                 return true;
             }
@@ -437,8 +441,35 @@ namespace System.Windows.Controls
             int minPage = Math.Max(1, Math.Min((int)_minPage, (int)_maxPage));
             int maxPage = Math.Max(minPage, (int)_maxPage);
 
+            // macOS's own print panel (NSPrintPanel): the printer, copies, pages and orientation
+            bool macShown = false;
+            if (OperatingSystem.IsMacOS())
+            {
+                string printer = chosen?.Name ?? "";
+                bool all = !(_userPageRangeEnabled && _pageRangeSelection == PageRangeSelection.UserPages);
+                int first = Math.Max(minPage, firstPage), last = Math.Max(first, lastPage > 0 ? lastPage : maxPage);
+                PrintTicket current = this.PrintTicket;
+                bool landscape = current?.PageOrientation is PageOrientation.Landscape or PageOrientation.ReverseLandscape;
+                bool ok;
+                try
+                {
+                    ok = MS.Internal.Interop.CocoaDialogs.ShowPrintPanel(ref printer, ref copies, ref all, ref first, ref last, ref landscape, _userPageRangeEnabled);
+                    macShown = true;
+                }
+                catch (Exception) { ok = false; }
+                if (macShown)
+                {
+                    if (!ok) return false;
+                    foreach (MS.Internal.Interop.PrinterInfo p in printers)
+                        if (string.Equals(p.Name, printer, StringComparison.Ordinal)) { chosen = p; break; }
+                    if (all) { firstPage = 0; lastPage = 0; _pageRangeSelection = PageRangeSelection.AllPages; }
+                    else { firstPage = first; lastPage = last; }
+                    if (current != null) current.PageOrientation = landscape ? PageOrientation.Landscape : PageOrientation.Portrait;
+                }
+            }
+
             // The desktop's own print dialog where the session has the portal; ours where it has not.
-            if (!ShowPortalPrintDialog(printers, ref chosen, ref copies, ref firstPage, ref lastPage, out bool portalShown))
+            if (!macShown && !ShowPortalPrintDialog(printers, ref chosen, ref copies, ref firstPage, ref lastPage, out bool portalShown))
             {
                 if (portalShown) return false;
                 if (!ManagedPrintDialog.Show(printers, ref chosen, ref copies, ref firstPage, ref lastPage,

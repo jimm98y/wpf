@@ -83,7 +83,16 @@ namespace System.Printing
         /// </summary>
         public PrintCapabilities GetPrintCapabilities(PrintTicket printTicket)
         {
-            if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(Name)) return null;
+            if (string.IsNullOrEmpty(Name)) return null;
+            // off Windows: what the print system says of the printer (CUPS on Linux and macOS), in the Print Schema a
+            // driver answers in; nothing where it cannot say
+            if (!OperatingSystem.IsWindows())
+            {
+                PrinterCapabilities caps = CupsCapabilities.Query(Name);
+                if (caps == null) return null;
+                using MemoryStream document = PrintSchemaCapabilities.Write(caps);
+                return new PrintCapabilities(document);
+            }
 
             try
             {
@@ -358,4 +367,148 @@ namespace System.Printing
         DefaultPrintTicket = 19,
     }
 
+
+    /// <summary>A printer's capabilities as a driver writes them (Print Schema PrintCapabilities): paper sizes with
+    /// their imageable areas, duplex, colour, resolutions, copies and orientation.</summary>
+    internal static class PrintSchemaCapabilities
+    {
+        private const string Psf = "http://schemas.microsoft.com/windows/2003/08/printing/printschemaframework";
+        private const string Psk = "http://schemas.microsoft.com/windows/2003/08/printing/printschemakeywords";
+
+        // the PWG names of the sizes the schema has keywords for
+        private static readonly (string Prefix, string Keyword)[] s_sizes =
+        {
+            ("na_letter_", "NorthAmericaLetter"), ("na_legal_", "NorthAmericaLegal"), ("na_executive_", "NorthAmericaExecutive"),
+            ("na_ledger_", "NorthAmericaTabloid"), ("iso_a3_", "ISOA3"), ("iso_a4_", "ISOA4"), ("iso_a5_", "ISOA5"), ("iso_a6_", "ISOA6"),
+            ("jis_b4_", "JISB4"), ("jis_b5_", "JISB5"), ("iso_b5_", "ISOB5Extra"), ("iso_c5_", "ISOC5Envelope"), ("iso_dl_", "ISODLEnvelope"),
+            ("na_number-10_", "NorthAmericaNumber10Envelope"), ("na_monarch_", "NorthAmericaMonarchEnvelope"), ("jpn_hagaki_", "JapanHagakiPostcard"),
+        };
+
+        private static long Microns(double wpf) => (long)Math.Round(wpf / 96.0 * 25400.0);
+
+        internal static MemoryStream Write(PrinterCapabilities caps)
+        {
+            var stream = new MemoryStream();
+            using (var w = System.Xml.XmlWriter.Create(stream, new System.Xml.XmlWriterSettings { Encoding = new System.Text.UTF8Encoding(false), CloseOutput = false }))
+            {
+                w.WriteStartElement("psf", "PrintCapabilities", Psf);
+                w.WriteAttributeString("xmlns", "psk", null, Psk);
+                w.WriteAttributeString("xmlns", "xsi", null, "http://www.w3.org/2001/XMLSchema-instance");
+                w.WriteAttributeString("xmlns", "xsd", null, "http://www.w3.org/2001/XMLSchema");
+                w.WriteAttributeString("version", "1");
+
+                Feature(w, "psk:PageMediaSize", () =>
+                {
+                    foreach (PaperMedia m in caps.Media)
+                    {
+                        string keyword = null;
+                        foreach (var (prefix, k) in s_sizes)
+                            if (m.Name.StartsWith(prefix, StringComparison.Ordinal)) { keyword = k; break; }
+                        w.WriteStartElement("psf", "Option", Psf);
+                        if (keyword != null) w.WriteAttributeString("name", "psk:" + keyword);
+                        Scored(w, "psk:MediaSizeWidth", Microns(m.Width));
+                        Scored(w, "psk:MediaSizeHeight", Microns(m.Height));
+                        w.WriteEndElement();
+                    }
+                });
+
+                Feature(w, "psk:JobDuplexAllDocumentsContiguously", () =>
+                {
+                    Option(w, "psk:OneSided");
+                    if (caps.Duplex) { Option(w, "psk:TwoSidedLongEdge"); Option(w, "psk:TwoSidedShortEdge"); }
+                });
+
+                Feature(w, "psk:PageOutputColor", () =>
+                {
+                    if (caps.Color) Option(w, "psk:Color");
+                    Option(w, "psk:Grayscale");
+                    Option(w, "psk:Monochrome");
+                });
+
+                if (caps.Resolutions.Count > 0)
+                    Feature(w, "psk:PageResolution", () =>
+                    {
+                        foreach (var (x, y) in caps.Resolutions)
+                        {
+                            w.WriteStartElement("psf", "Option", Psf);
+                            Scored(w, "psk:ResolutionX", x);
+                            Scored(w, "psk:ResolutionY", y);
+                            w.WriteEndElement();
+                        }
+                    });
+
+                Feature(w, "psk:PageOrientation", () => { Option(w, "psk:Portrait"); Option(w, "psk:Landscape"); });
+
+                w.WriteStartElement("psf", "ParameterDef", Psf);
+                w.WriteAttributeString("name", "psk:JobCopiesAllDocuments");
+                Property(w, "psf:DataType", "xsd:QName", "xsd:integer");
+                Property(w, "psf:DefaultValue", "xsd:integer", "1");
+                Property(w, "psf:MinValue", "xsd:integer", "1");
+                Property(w, "psf:MaxValue", "xsd:integer", Math.Max(1, caps.MaxCopies).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                Property(w, "psf:Multiple", "xsd:integer", "1");
+                Property(w, "psf:Mandatory", "xsd:QName", "psk:Unconditional");
+                Property(w, "psf:UnitType", "xsd:string", "copies");
+                w.WriteEndElement();
+
+                // the first size's imageable area (the default page's, the margins its printer keeps)
+                if (caps.Media.Count > 0)
+                {
+                    PaperMedia d = caps.Media[0];
+                    w.WriteStartElement("psf", "Property", Psf);
+                    w.WriteAttributeString("name", "psk:PageImageableSize");
+                    Property(w, "psk:ImageableSizeWidth", "xsd:integer", Microns(d.Width).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    Property(w, "psk:ImageableSizeHeight", "xsd:integer", Microns(d.Height).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    w.WriteStartElement("psf", "Property", Psf);
+                    w.WriteAttributeString("name", "psk:ImageableArea");
+                    Property(w, "psk:OriginWidth", "xsd:integer", Microns(d.Left).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    Property(w, "psk:OriginHeight", "xsd:integer", Microns(d.Top).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    Property(w, "psk:ExtentWidth", "xsd:integer", Microns(d.Width - d.Left - d.Right).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    Property(w, "psk:ExtentHeight", "xsd:integer", Microns(d.Height - d.Top - d.Bottom).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    w.WriteEndElement();
+                    w.WriteEndElement();
+                }
+                w.WriteEndElement();
+            }
+            stream.Position = 0;
+            return stream;
+        }
+
+        private static void Feature(System.Xml.XmlWriter w, string name, Action options)
+        {
+            w.WriteStartElement("psf", "Feature", Psf);
+            w.WriteAttributeString("name", name);
+            Property(w, "psf:SelectionType", "xsd:QName", "psk:PickOne");
+            options();
+            w.WriteEndElement();
+        }
+
+        private static void Option(System.Xml.XmlWriter w, string name)
+        {
+            w.WriteStartElement("psf", "Option", Psf);
+            w.WriteAttributeString("name", name);
+            w.WriteEndElement();
+        }
+
+        private static void Scored(System.Xml.XmlWriter w, string name, long value)
+        {
+            w.WriteStartElement("psf", "ScoredProperty", Psf);
+            w.WriteAttributeString("name", name);
+            w.WriteStartElement("psf", "Value", Psf);
+            w.WriteAttributeString("xsi", "type", "http://www.w3.org/2001/XMLSchema-instance", "xsd:integer");
+            w.WriteString(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            w.WriteEndElement();
+            w.WriteEndElement();
+        }
+
+        private static void Property(System.Xml.XmlWriter w, string name, string type, string value)
+        {
+            w.WriteStartElement("psf", "Property", Psf);
+            w.WriteAttributeString("name", name);
+            w.WriteStartElement("psf", "Value", Psf);
+            w.WriteAttributeString("xsi", "type", "http://www.w3.org/2001/XMLSchema-instance", type);
+            w.WriteString(value);
+            w.WriteEndElement();
+            w.WriteEndElement();
+        }
+    }
 }
