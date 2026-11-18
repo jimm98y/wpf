@@ -259,5 +259,91 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.SkipWhen(compared == 0, "the oracle has no video processor for these frames: " + string.Join("; ", report));
             Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures) + Environment.NewLine + "all:" + Environment.NewLine + string.Join(Environment.NewLine, report));
         }
+
+        /// <summary>Two streams in one VideoProcessorBlt: the first (white) over the whole target, the second
+        /// (black) in the right half at planar alpha 0.5 -- composited in order, the right half grey.</summary>
+        [Fact]
+        public void VideoProcessorBlt_CompositesItsStreamsInOrder()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx; uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0x800 | 0x20, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            var made = new List<IntPtr>();
+            IntPtr Keep(IntPtr p) { made.Add(p); return p; }
+            const uint W = 64, H = 48;
+            try
+            {
+                Guid vd = IID_VideoDevice, vc = IID_VideoContext;
+                IntPtr video, vctx;
+                Check(((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)Fn2(dev, 0))(dev, &vd, &video), "QI ID3D11VideoDevice");
+                Keep(video);
+                Check(((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)Fn2(ctx, 0))(ctx, &vc, &vctx), "QI ID3D11VideoContext");
+                Keep(vctx);
+                var content = new D3D11_VIDEO_PROCESSOR_CONTENT_DESC { InputWidth = W, InputHeight = H, OutputWidth = W, OutputHeight = H, InputFrameRateNumerator = 30, InputFrameRateDenominator = 1, OutputFrameRateNumerator = 30, OutputFrameRateDenominator = 1 };
+                IntPtr en, proc;
+                Check(((delegate* unmanaged<IntPtr, D3D11_VIDEO_PROCESSOR_CONTENT_DESC*, IntPtr*, int>)Fn2(video, Vtbl.ID3D11VideoDevice.CreateVideoProcessorEnumerator))(video, &content, &en), "CreateVideoProcessorEnumerator");
+                Keep(en);
+                D3D11_VIDEO_PROCESSOR_CAPS caps;
+                Check(((delegate* unmanaged<IntPtr, D3D11_VIDEO_PROCESSOR_CAPS*, int>)Fn2(en, Vtbl.ID3D11VideoProcessorEnumerator.GetVideoProcessorCaps))(en, &caps), "GetVideoProcessorCaps");
+                Assert.True(caps.MaxInputStreams >= 2 && (caps.FeatureCaps & 0x80) != 0, "two streams and stream alpha in the caps");
+                Check(((delegate* unmanaged<IntPtr, IntPtr, uint, IntPtr*, int>)Fn2(video, Vtbl.ID3D11VideoDevice.CreateVideoProcessor))(video, en, 0, &proc), "CreateVideoProcessor");
+                Keep(proc);
+                IntPtr d0 = dev, v0 = video, e0 = en;
+                IntPtr Input(byte y)
+                {
+                    var frame = new byte[W * H * 3 / 2];
+                    Array.Fill(frame, y, 0, (int)(W * H));
+                    Array.Fill(frame, (byte)128, (int)(W * H), (int)(W * H / 2));
+                    IntPtr tex, iv;
+                    fixed (byte* f = frame)
+                    {
+                        var init = new D3D11_SUBRESOURCE_DATA { pSysMem = f, SysMemPitch = W };
+                        var td = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 1, Format = (DXGI_FORMAT)103, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = (D3D11_BIND)InputBind };
+                        Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(d0, Vtbl.ID3D11Device.CreateTexture2D))(d0, &td, &init, &tex), "CreateTexture2D NV12");
+                    }
+                    Keep(tex);
+                    var ivd = new D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC { ViewDimension = 1 };
+                    Check(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC*, IntPtr*, int>)Fn2(v0, Vtbl.ID3D11VideoDevice.CreateVideoProcessorInputView))(v0, tex, e0, &ivd, &iv), "CreateVideoProcessorInputView");
+                    return Keep(iv);
+                }
+                IntPtr white = Input(235), black = Input(16);
+                IntPtr output, ov, staging;
+                var od = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 1, Format = DXGI_FORMAT.B8G8R8A8_UNORM, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET | D3D11_BIND.SHADER_RESOURCE };
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &od, null, &output), "CreateTexture2D out");
+                Keep(output);
+                var ovd = new D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC { ViewDimension = 1 };
+                Check(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC*, IntPtr*, int>)Fn2(video, Vtbl.ID3D11VideoDevice.CreateVideoProcessorOutputView))(video, output, en, &ovd, &ov), "CreateVideoProcessorOutputView");
+                Keep(ov);
+                var right = new D3D11_RECT_V { left = (int)W / 2, top = 0, right = (int)W, bottom = (int)H };
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, int, D3D11_RECT_V*, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorSetStreamDestRect))(vctx, proc, 1, 1, &right);
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, int, float, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorSetStreamAlpha))(vctx, proc, 1, 1, 0.5f);
+                int enabled; D3D11_RECT_V back;
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, int*, D3D11_RECT_V*, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorGetStreamDestRect))(vctx, proc, 0, &enabled, &back);
+                Assert.Equal(0, enabled);          // stream 0's state is its own
+                var streams = stackalloc D3D11_VIDEO_PROCESSOR_STREAM[2];
+                streams[0] = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = 1, pInputSurface = white };
+                streams[1] = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = 1, pInputSurface = black };
+                Check(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, uint, uint, D3D11_VIDEO_PROCESSOR_STREAM*, int>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorBlt))(vctx, proc, ov, 0, 2, streams), "VideoProcessorBlt");
+
+                od.Usage = D3D11_USAGE.STAGING; od.BindFlags = 0; od.CPUAccessFlags = D3D11_CPU_ACCESS.READ;
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &od, null, &staging), "staging");
+                Keep(staging);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, staging, output);
+                D3D11_MAPPED_SUBRESOURCE m;
+                Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, staging, 0, D3D11_MAP.READ, 0, &m), "Map");
+                byte* data = (byte*)m.pData; uint pitch = m.RowPitch;
+                int G(int x, int y) => data[y * pitch + x * 4 + 1];
+                int left = G(10, 20), mixed = G(50, 20);
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, staging, 0);
+                Assert.InRange(left, 251, 255);
+                Assert.InRange(mixed, 124, 131);
+            }
+            finally
+            {
+                ((delegate* unmanaged<IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearState))(ctx);
+                for (int i = made.Count - 1; i >= 0; i--) Release(made[i]);
+                Release(ctx); Release(dev);
+            }
+        }
     }
 }

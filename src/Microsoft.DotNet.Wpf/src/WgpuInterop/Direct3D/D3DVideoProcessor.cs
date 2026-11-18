@@ -17,6 +17,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
@@ -170,8 +171,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static int GetCaps(IntPtr self, D3D11_VIDEO_PROCESSOR_CAPS* c)
         {
             if (c == null) return HResult.E_INVALIDARG;
-            // alpha fill 0x1, rotation 0x400; one stream, one rate conversion, no filters, no stereo
-            *c = new D3D11_VIDEO_PROCESSOR_CAPS { FeatureCaps = 0x1 | 0x400, RateConversionCapsCount = 1, MaxInputStreams = 1, MaxStreamStates = 1 };
+            // alpha fill 0x1, rotation 0x40, stream alpha 0x80; eight streams, one rate conversion, no filters, no stereo
+            *c = new D3D11_VIDEO_PROCESSOR_CAPS { FeatureCaps = 0x1 | 0x40 | 0x80, RateConversionCapsCount = 1, MaxInputStreams = D3DVideoProcessor.MaxStreams, MaxStreamStates = D3DVideoProcessor.MaxStreams };
             return HResult.S_OK;
         }
 
@@ -188,7 +189,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly] private static int GetFilterRange(IntPtr self, uint filter, void* range) => HResult.E_INVALIDARG;
     }
 
-    /// <summary>ID3D11VideoProcessor: its output's and its stream's state, as the video context sets them.</summary>
+    /// <summary>An input stream's state, as the video context sets it.</summary>
+    internal sealed class VideoStream
+    {
+        public bool SourceRectSet, DestRectSet;
+        public D3D11_RECT_V SourceRect, DestRect;
+        public VideoColorSpace StreamColor = VideoColorSpace.Default;
+        public uint StreamColorBits = 1u << 4;
+        public uint FrameFormat, Rotation;
+        public bool RotationSet;
+        public float StreamAlpha = 1f;
+        public bool StreamAlphaSet;
+    }
+
+    /// <summary>ID3D11VideoProcessor: its output's and its streams' state, as the video context sets them.</summary>
     internal sealed unsafe class D3DVideoProcessor : D3DChild
     {
         private static readonly Vtable s_vt = Build();
@@ -202,14 +216,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public uint OutputColorBits;
         public uint AlphaFillMode, AlphaFillStream;
 
-        public bool SourceRectSet, DestRectSet;
-        public D3D11_RECT_V SourceRect, DestRect;
-        public VideoColorSpace StreamColor = VideoColorSpace.Default;
-        public uint StreamColorBits = 1u << 4;
-        public uint FrameFormat, Rotation;
-        public bool RotationSet;
-        public float StreamAlpha = 1f;
-        public bool StreamAlphaSet;
+        /// <summary>The input streams' states (D3D11_VIDEO_PROCESSOR_CAPS.MaxStreamStates of them).</summary>
+        public readonly VideoStream[] Streams = Enumerable.Range(0, MaxStreams).Select(_ => new VideoStream()).ToArray();
+        public const int MaxStreams = 8;
+
+        /// <summary>Stream <paramref name="i"/>'s state, or null past the last.</summary>
+        public VideoStream? S(uint i) => i < MaxStreams ? Streams[i] : null;
 
         public D3DVideoProcessor(D3DDevice device, D3D11_VIDEO_PROCESSOR_CONTENT_DESC content) : base(device, s_vt) { Content = content; }
 
@@ -456,14 +468,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcSetFrameFormat(IntPtr self, IntPtr p, uint stream, uint format)
         {
-            if (Vp(p) is not { } v || stream != 0) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             v.FrameFormat = format;
         }
 
         [UnmanagedCallersOnly]
         private static void VcSetStreamColorSpace(IntPtr self, IntPtr p, uint stream, uint* cs)
         {
-            if (Vp(p) is not { } v || stream != 0 || cs == null) return;
+            if (Vp(p)?.S(stream) is not { } v || cs == null) return;
             v.StreamColorBits = *cs;
             v.StreamColor = VideoColorSpace.FromBits(*cs);
         }
@@ -471,7 +483,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcSetSourceRect(IntPtr self, IntPtr p, uint stream, int enable, D3D11_RECT_V* r)
         {
-            if (Vp(p) is not { } v || stream != 0) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             v.SourceRectSet = enable != 0 && r != null;
             if (v.SourceRectSet) v.SourceRect = *r;
         }
@@ -479,7 +491,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcSetDestRect(IntPtr self, IntPtr p, uint stream, int enable, D3D11_RECT_V* r)
         {
-            if (Vp(p) is not { } v || stream != 0) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             v.DestRectSet = enable != 0 && r != null;
             if (v.DestRectSet) v.DestRect = *r;
         }
@@ -487,21 +499,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcSetStreamAlpha(IntPtr self, IntPtr p, uint stream, int enable, float alpha)
         {
-            if (Vp(p) is not { } v || stream != 0) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             v.StreamAlphaSet = enable != 0;
             v.StreamAlpha = alpha;
         }
 
         [UnmanagedCallersOnly]
-        private static void VcGetFrameFormat(IntPtr self, IntPtr p, uint stream, uint* f) { if (Vp(p) is { } v && f != null) *f = v.FrameFormat; }
+        private static void VcGetFrameFormat(IntPtr self, IntPtr p, uint stream, uint* f) { if (Vp(p)?.S(stream) is { } v && f != null) *f = v.FrameFormat; }
 
         [UnmanagedCallersOnly]
-        private static void VcGetStreamColorSpace(IntPtr self, IntPtr p, uint stream, uint* cs) { if (Vp(p) is { } v && cs != null) *cs = v.StreamColorBits; }
+        private static void VcGetStreamColorSpace(IntPtr self, IntPtr p, uint stream, uint* cs) { if (Vp(p)?.S(stream) is { } v && cs != null) *cs = v.StreamColorBits; }
 
         [UnmanagedCallersOnly]
         private static void VcGetSourceRect(IntPtr self, IntPtr p, uint stream, int* enabled, D3D11_RECT_V* r)
         {
-            if (Vp(p) is not { } v) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             if (enabled != null) *enabled = v.SourceRectSet ? 1 : 0;
             if (r != null) *r = v.SourceRect;
         }
@@ -509,7 +521,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcGetDestRect(IntPtr self, IntPtr p, uint stream, int* enabled, D3D11_RECT_V* r)
         {
-            if (Vp(p) is not { } v) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             if (enabled != null) *enabled = v.DestRectSet ? 1 : 0;
             if (r != null) *r = v.DestRect;
         }
@@ -517,7 +529,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcGetStreamAlpha(IntPtr self, IntPtr p, uint stream, int* enabled, float* alpha)
         {
-            if (Vp(p) is not { } v) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             if (enabled != null) *enabled = v.StreamAlphaSet ? 1 : 0;
             if (alpha != null) *alpha = v.StreamAlpha;
         }
@@ -525,7 +537,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcSetRotation(IntPtr self, IntPtr p, uint stream, int enable, uint rotation)
         {
-            if (Vp(p) is not { } v || stream != 0) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             v.RotationSet = enable != 0;
             v.Rotation = enable != 0 ? rotation & 3 : 0;
         }
@@ -533,7 +545,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         [UnmanagedCallersOnly]
         private static void VcGetRotation(IntPtr self, IntPtr p, uint stream, int* enabled, uint* rotation)
         {
-            if (Vp(p) is not { } v) return;
+            if (Vp(p)?.S(stream) is not { } v) return;
             if (enabled != null) *enabled = v.RotationSet ? 1 : 0;
             if (rotation != null) *rotation = v.Rotation;
         }
@@ -545,31 +557,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var p = Vp(processor);
             var o = From<D3DVideoView>(output);
             if (c == null || p == null || o == null || o.Input) return HResult.E_INVALIDARG;
-            if (count > 1) D3DLog.Once("vpstreams", $"VideoProcessorBlt of {count} streams: the shim's video processor draws the first");
-            D3DVideoView? input = null;
-            if (count > 0 && streams != null && streams[0].Enable != 0)
+            // the enabled streams, in order (each over the ones before)
+            var list = new List<(D3DVideoView Input, VideoStream State, uint Field)>();
+            for (uint k = 0; streams != null && k < count; k++)
             {
-                input = From<D3DVideoView>(streams[0].pInputSurface);
-                if (input == null || !input.Input) return HResult.E_INVALIDARG;
-                if (streams[0].PastFrames != 0 || streams[0].FutureFrames != 0) D3DLog.Once("vpref", "VideoProcessorBlt with reference frames: deinterlaced by bob, from the current frame alone");
-            }
-            // an interlaced frame (bob): the field OutputIndex names -- the first in time, then the second
-            uint field = 0;
-            if (input != null && p.FrameFormat is 1 or 2)
-            {
-                bool second = (streams[0].OutputIndex & 1) != 0;
-                bool topFirst = p.FrameFormat == 1;
-                field = topFirst != second ? 1u : 2u;       // 1 top (even lines), 2 bottom (odd)
+                if (streams[k].Enable == 0) continue;
+                var st = p.S(k);
+                var input = From<D3DVideoView>(streams[k].pInputSurface);
+                if (st == null || input == null || !input.Input) return HResult.E_INVALIDARG;
+                if (streams[k].PastFrames != 0 || streams[k].FutureFrames != 0) D3DLog.Once("vpref", "VideoProcessorBlt with reference frames: deinterlaced by bob, from the current frame alone");
+                // an interlaced frame (bob): the field OutputIndex names -- the first in time, then the second
+                uint field = 0;
+                if (st.FrameFormat is 1 or 2)
+                {
+                    bool second = (streams[k].OutputIndex & 1) != 0;
+                    bool topFirst = st.FrameFormat == 1;
+                    field = topFirst != second ? 1u : 2u;       // 1 top (even lines), 2 bottom (odd)
+                }
+                list.Add((input, st, field));
             }
             int hr = HResult.S_OK;
-            try { c.Run(x => hr = x.VideoBlt(p, o, input, field), p, o, input); }
+            var refs = new List<ComObject?> { p, o };
+            foreach (var x in list) refs.Add(x.Input);
+            try { c.Run(x => hr = x.VideoBlt(p, o, list), refs.ToArray()); }
             catch (Exception e) { D3DLog.Error("VideoProcessorBlt", e); return HResult.E_FAIL; }
             return hr;
         }
 
         // ---- the pass ----------------------------------------------------------------------------------
 
-        private readonly Dictionary<(bool Uint, WGPUTextureFormat Out), (IntPtr Layout, IntPtr Pipeline)> _videoPipelines = new();
+        private readonly Dictionary<(bool Uint, WGPUTextureFormat Out, bool Blend), (IntPtr Layout, IntPtr Pipeline)> _videoPipelines = new();
 
         /// <summary>The matrix of codes to RGB, rows of (Y, Cb, Cr, 1), for a stream of <paramref name="bits"/>-bit codes.</summary>
         internal static float[] VideoMatrix(VideoColorSpace stream, VideoColorSpace output, int bits)
@@ -608,7 +625,7 @@ struct P {
     m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>,   // codes (Y, Cb, Cr, 1) to RGB
     bg: vec4<f32>,       // the background
     info: vec4<u32>,     // luma width, luma height, rotation, 1 to fill the background
-    codes: vec4<f32>,    // x: what one unit of a texel is in codes (255 for NV12; 1/64 for P010, 1 for P016); y: the field (bob) 0 none, 1 top, 2 bottom
+    codes: vec4<f32>,    // x: what one unit of a texel is in codes (255 for NV12; 1/64 for P010, 1 for P016); y: the field (bob) 0 none, 1 top, 2 bottom; z: the output alpha
 };
 @group(0) @binding(0) var tex: texture_2d<TEXEL>;
 @group(0) @binding(1) var<uniform> p: P;
@@ -687,13 +704,15 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let cc = (l - vec2<f32>(0.5, 0.5)) * 0.5;
     let cbcr = chroma(cc);
     let v = vec4<f32>(y, cbcr.x, cbcr.y, 1.0);
-    return vec4<f32>(clamp(vec3<f32>(dot(p.m0, v), dot(p.m1, v), dot(p.m2, v)), vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+    return vec4<f32>(clamp(vec3<f32>(dot(p.m0, v), dot(p.m1, v), dot(p.m2, v)), vec3<f32>(0.0), vec3<f32>(1.0)), p.codes.z);
 }
 ";
 
-        private (IntPtr Layout, IntPtr Pipeline) VideoPipeline(bool uintTexels, WGPUTextureFormat outFormat)
+        /// <summary>The pass's pipeline; <paramref name="blend"/>: a stream of planar alpha, blended over what is
+        /// there by the blend constant (its alpha), the output alpha written as the shader says.</summary>
+        private (IntPtr Layout, IntPtr Pipeline) VideoPipeline(bool uintTexels, WGPUTextureFormat outFormat, bool blend = false)
         {
-            if (_videoPipelines.TryGetValue((uintTexels, outFormat), out var known)) return known;
+            if (_videoPipelines.TryGetValue((uintTexels, outFormat, blend), out var known)) return known;
             IntPtr module = CreateModule(VideoWgsl.Replace("TEXEL", uintTexels ? "u32" : "f32"), "video-processor", out string? err);
             if (module == IntPtr.Zero) throw new InvalidOperationException("video processor shader: " + err);
             var entries = stackalloc WGPUBindGroupLayoutEntry[2];
@@ -712,7 +731,12 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             fixed (byte* vn = vsName)
             fixed (byte* fn = fsName)
             {
-                var target = new WGPUColorTargetState { format = outFormat, writeMask = 0xF };
+                var bs = new WGPUBlendState
+                {
+                    color = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = (WGPUBlendFactor)0xC, dstFactor = (WGPUBlendFactor)0xD },   // constant, 1 - constant
+                    alpha = new WGPUBlendComponent { operation = WGPUBlendOperation.Add, srcFactor = WGPUBlendFactor.One, dstFactor = WGPUBlendFactor.Zero },
+                };
+                var target = new WGPUColorTargetState { format = outFormat, writeMask = 0xF, blend = blend ? &bs : null };
                 var frag = new WGPUFragmentState { module = module, entryPoint = new WGPUStringView { data = fn, length = 2 }, targetCount = 1, targets = &target };
                 var desc = new WGPURenderPipelineDescriptor
                 {
@@ -726,10 +750,10 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                 pipeline = PopScope(Device.Gpu, wgpuDeviceCreateRenderPipeline(Device.Gpu.Device, &desc), out err);
             }
             if (pipeline == IntPtr.Zero) throw new InvalidOperationException("video processor pipeline: " + err);
-            return _videoPipelines[(uintTexels, outFormat)] = (layout, pipeline);
+            return _videoPipelines[(uintTexels, outFormat, blend)] = (layout, pipeline);
         }
 
-        private int VideoBlt(D3DVideoProcessor p, D3DVideoView output, D3DVideoView? input, uint field = 0)
+        private int VideoBlt(D3DVideoProcessor p, D3DVideoView output, List<(D3DVideoView Input, VideoStream State, uint Field)> streams)
         {
             var ot = output.Texture;
             uint ow = Math.Max(1, ot.Desc.Width >> (int)output.Mip), oh = Math.Max(1, ot.Desc.Height >> (int)output.Mip);
@@ -745,17 +769,15 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             var att = new WGPURenderPassColorAttachment { view = view, depthSlice = 0xFFFFFFFF, loadOp = WGPULoadOp.Load, storeOp = WGPUStoreOp.Store };
             var rp = new WGPURenderPassDescriptor { colorAttachmentCount = 1, colorAttachments = &att };
 
-            bool uintTexels = input != null && input.Texture.Format == TexFmt.R16Uint;
-            var (layout, pipeline) = VideoPipeline(uintTexels, ot.Format);
             var groups = new List<IntPtr>();
             var views = new List<IntPtr> { view };
             IntPtr pass = wgpuCommandEncoderBeginRenderPass(Encoder(), &rp);
             try
             {
-                wgpuRenderPassEncoderSetPipeline(pass, pipeline);
-                // the background, where the stream does not cover the target (or everywhere, no stream)
-                var dst = p.DestRectSet ? p.DestRect : target;
-                bool covered = input != null && dst.left <= target.left && dst.top <= target.top && dst.right >= target.right && dst.bottom >= target.bottom;
+                // the background, where the first stream does not cover the target opaquely (or everywhere, no stream)
+                var first = streams.Count > 0 ? streams[0] : default;
+                var firstDst = streams.Count > 0 ? (first.State.DestRectSet ? first.State.DestRect : target) : default;
+                bool covered = streams.Count > 0 && Alpha(first.State) >= 1 && firstDst.left <= target.left && firstDst.top <= target.top && firstDst.right >= target.right && firstDst.bottom >= target.bottom;
                 if (!covered)
                 {
                     float r = p.BgR, g = p.BgG, b = p.BgB;
@@ -766,27 +788,43 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                         float y = p.BgR * 255, cb = p.BgG * 255, cr = p.BgB * 255;
                         r = m[0] * y + m[1] * cb + m[2] * cr + m[3]; g = m[4] * y + m[5] * cb + m[6] * cr + m[7]; b = m[8] * y + m[9] * cb + m[10] * cr + m[11];
                     }
-                    IntPtr g0 = BltGroup(layout, input, ParamsFor(p, input, target, target, new[] { r, g, b, p.AlphaFillMode == 0 ? 1f : p.BgA }, fill: true), views, uintTexels);
+                    bool u0 = streams.Count > 0 && first.Input.Texture.Format == TexFmt.R16Uint;
+                    var (layout0, pipe0) = VideoPipeline(u0, ot.Format);
+                    wgpuRenderPassEncoderSetPipeline(pass, pipe0);
+                    IntPtr g0 = BltGroup(layout0, streams.Count > 0 ? first.Input : null, ParamsFor(p, streams.Count > 0 ? first.State : null, streams.Count > 0 ? first.Input : null, target, new[] { r, g, b, p.AlphaFillMode == 0 ? 1f : p.BgA }, fill: true, 0, 1), views, u0);
                     groups.Add(g0);
                     Scissor(pass, target);
                     wgpuRenderPassEncoderSetBindGroup(pass, 0, g0, 0, null);
                     wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
                 }
-                if (input != null)
+                for (int k = 0; k < streams.Count; k++)
                 {
+                    var (input, st, field) = streams[k];
+                    var dst = st.DestRectSet ? st.DestRect : target;
                     var clip = new D3D11_RECT_V
                     {
                         left = Math.Max(dst.left, target.left), top = Math.Max(dst.top, target.top),
                         right = Math.Min(dst.right, target.right), bottom = Math.Min(dst.bottom, target.bottom),
                     };
-                    if (clip.right > clip.left && clip.bottom > clip.top && dst.right > dst.left && dst.bottom > dst.top)
+                    if (clip.right <= clip.left || clip.bottom <= clip.top || dst.right <= dst.left || dst.bottom <= dst.top) continue;
+                    float alpha = Alpha(st);
+                    if (alpha <= 0) continue;
+                    // the output's alpha: the stream's for the alpha-fill stream in SOURCE_STREAM mode, else opaque
+                    float outAlpha = p.AlphaFillMode == 3 && p.AlphaFillStream == (uint)Array.IndexOf(p.Streams, st) ? alpha : 1f;
+                    bool uintTexels = input.Texture.Format == TexFmt.R16Uint;
+                    bool blend = alpha < 1;
+                    var (layout, pipeline) = VideoPipeline(uintTexels, ot.Format, blend);
+                    wgpuRenderPassEncoderSetPipeline(pass, pipeline);
+                    if (blend)
                     {
-                        IntPtr g1 = BltGroup(layout, input, ParamsFor(p, input, dst, target, null, fill: false, field), views, uintTexels);
-                        groups.Add(g1);
-                        Scissor(pass, clip);
-                        wgpuRenderPassEncoderSetBindGroup(pass, 0, g1, 0, null);
-                        wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
+                        var bc = new WGPUColor { r = alpha, g = alpha, b = alpha, a = alpha };
+                        wgpuRenderPassEncoderSetBlendConstant(pass, &bc);
                     }
+                    IntPtr g1 = BltGroup(layout, input, ParamsFor(p, st, input, dst, null, fill: false, field, outAlpha), views, uintTexels);
+                    groups.Add(g1);
+                    Scissor(pass, clip);
+                    wgpuRenderPassEncoderSetBindGroup(pass, 0, g1, 0, null);
+                    wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0);
                 }
             }
             finally
@@ -800,10 +838,13 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             return HResult.S_OK;
         }
 
+        /// <summary>A stream's planar alpha (1 unless set).</summary>
+        private static float Alpha(VideoStream s) => s.StreamAlphaSet ? Math.Clamp(s.StreamAlpha, 0f, 1f) : 1f;
+
         private static void Scissor(IntPtr pass, D3D11_RECT_V r)
             => wgpuRenderPassEncoderSetScissorRect(pass, (uint)r.left, (uint)r.top, (uint)(r.right - r.left), (uint)(r.bottom - r.top));
 
-        private byte[] ParamsFor(D3DVideoProcessor p, D3DVideoView? input, D3D11_RECT_V dst, D3D11_RECT_V target, float[]? bg, bool fill, uint field = 0)
+        private byte[] ParamsFor(D3DVideoProcessor p, VideoStream? s, D3DVideoView? input, D3D11_RECT_V dst, float[]? bg, bool fill, uint field, float outAlpha)
         {
             var f = new float[40];
             var u = new uint[40];
@@ -819,16 +860,18 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                 // and the same as a 10-bit range in P010's high bits to a part in 1000
                 if (t.Desc.Format is Formats.P010 or Formats.P016) unit = 255f / 65535f;
             }
-            var src = p.SourceRectSet ? p.SourceRect : new D3D11_RECT_V { right = (int)w, bottom = (int)h };
+            s ??= new VideoStream();
+            var src = s.SourceRectSet ? s.SourceRect : new D3D11_RECT_V { right = (int)w, bottom = (int)h };
             f[0] = src.left; f[1] = src.top; f[2] = src.right; f[3] = src.bottom;
             f[4] = dst.left; f[5] = dst.top; f[6] = dst.right; f[7] = dst.bottom;
-            Array.Copy(VideoMatrix(p.StreamColor, p.OutputColor, bits), 0, f, 8, 12);
+            Array.Copy(VideoMatrix(s.StreamColor, p.OutputColor, bits), 0, f, 8, 12);
             if (bg != null) Array.Copy(bg, 0, f, 20, 4);
             f[28] = unit;
             f[29] = field;
+            f[30] = outAlpha;
             var bytes = new byte[160];
             Buffer.BlockCopy(f, 0, bytes, 0, 160);
-            u[0] = w; u[1] = h; u[2] = p.Rotation; u[3] = fill ? 1u : 0u;
+            u[0] = w; u[1] = h; u[2] = s.Rotation; u[3] = fill ? 1u : 0u;
             Buffer.BlockCopy(u, 0, bytes, 96, 16);
             return bytes;
         }
