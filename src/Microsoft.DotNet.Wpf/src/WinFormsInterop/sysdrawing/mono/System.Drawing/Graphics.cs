@@ -657,8 +657,12 @@ namespace System.Drawing
 		// A parallelogram given as three points (upper-left, upper-right, lower-left): an upright
 		// rectangle draws as one; a rotated or sheared one draws the unit rectangle under the affine
 		// map that takes it onto the three points.
+		// what GDI+ refuses of destination points and of a source rectangle's unit, whoever draws (CheckImageUnit, as
+		// the engine checks them): a parallelogram given by four points is not implemented
 		bool RecordImagePoints (Image image, PointF [] dest, RectangleF? src, GraphicsUnit unit, Imaging.ImageAttributes attrs)
 		{
+			if (GpuRecorder != null && dest != null && dest.Length == 4) throw new NotImplementedException (SR.GdiplusNotImplemented);
+			if (GpuRecorder != null) CheckImageUnit (unit);
 			if (GpuRecorder == null || image == null || dest == null || dest.Length < 3) return false;
 			RectangleF source = src ?? new RectangleF (0, 0, image.Width, image.Height);
 			if (dest [0].Y == dest [1].Y && dest [0].X == dest [2].X) {
@@ -682,6 +686,7 @@ namespace System.Drawing
 		// (fall through) when not in GPU-raster mode or the image isn't a Bitmap we can read.
 		bool RecordImage (Image image, RectangleF dest, RectangleF src, GraphicsUnit unit, Imaging.ImageAttributes attrs)
 		{
+			if (GpuRecorder != null) CheckImageUnit (unit);
 			if (GpuRecorder != null && image is Printing.PrintPreviewPageImage page) {
 				// The page's pixels are its hundredths of an inch.
 				if (unit != GraphicsUnit.Pixel) {
@@ -1073,6 +1078,8 @@ namespace System.Drawing
 				// A bitmap's every pixel BECOMES the colour (transparent included) -- a replace, not a
 				// blend. With nothing clipping it that is done to the pixels now, and whatever was
 				// drawn before is gone; under a clip it is recorded as a SourceCopy fill.
+				// a bitmap disposed under it: GDI+ goes on drawing into what the Graphics holds, and nothing is read
+				if (image_target.managed == null) return;
 				if (!rec.HasClip) { image_target.ClearTo (color); return; }
 				const float Big = 1 << 20;
 				rec.SetCompositingMode (true);
@@ -1559,6 +1566,8 @@ namespace System.Drawing
 			if (points != null && points.Length < 1)
 				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawBeziers (pen, ToF (points))) return;
+			// GDI+ draws nothing of fewer than four points (the engine's answer too), where a path refuses them
+			if (points.Length < 4) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -1594,6 +1603,8 @@ namespace System.Drawing
 			if (points != null && points.Length < 1)
 				throw new ArgumentException (SR.GdiplusInvalidParameter);
 			if (EngineDrawBeziers (pen, points)) return;
+			// GDI+ draws nothing of fewer than four points (the engine's answer too), where a path refuses them
+			if (points.Length < 4) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath ()) { gp.AddBeziers (points); DrawPath (pen, gp); } return; }
 			if (pen == null)
 				throw new ArgumentNullException ("pen");
@@ -4068,6 +4079,8 @@ namespace System.Drawing
 			CheckUse (brush);
 			CheckTarget ();
 			if (EngineFillClosedCurve (brush, points, 0.5f, FillMode.Alternate)) return;
+			// two points enclose nothing: GDI+ fills nothing (where a path refuses them)
+			if (points.Length < 3) return;
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath (FillMode.Alternate)) { gp.AddClosedCurve (points); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
@@ -4085,6 +4098,7 @@ namespace System.Drawing
 			CheckUse (brush);
 			CheckTarget ();
 			if (EngineFillClosedCurve (brush, ToF (points), 0.5f, FillMode.Alternate)) return;
+			if (points.Length < 3) return;     // two points enclose nothing: GDI+ fills nothing
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath (FillMode.Alternate)) { gp.AddClosedCurve (points); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
@@ -4125,6 +4139,7 @@ namespace System.Drawing
 			CheckUse (brush);
 			CheckTarget ();
 			if (EngineFillClosedCurve (brush, points, tension, fillmode)) return;
+			if (points.Length < 3) return;     // two points enclose nothing: GDI+ fills nothing
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath (fillmode)) { gp.AddClosedCurve (points, tension); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
@@ -4142,6 +4157,7 @@ namespace System.Drawing
 			CheckUse (brush);
 			CheckTarget ();
 			if (EngineFillClosedCurve (brush, ToF (points), tension, fillmode)) return;
+			if (points.Length < 3) return;     // two points enclose nothing: GDI+ fills nothing
 			if (GpuRecorder != null) { using (var gp = new GraphicsPath (fillmode)) { gp.AddClosedCurve (points, tension); FillPath (brush, gp); } return; }
 			if (brush == null)
 				throw new ArgumentNullException ("brush");
@@ -4798,7 +4814,7 @@ namespace System.Drawing
 				Graphics g = WebGpuBackend.GpuRaster.NewRecording ();
 				g.image_target = bitmap;
 				GdipFrame frame = bitmap.managed.Frame;
-				if (WebGpuBackend.Gdip.GpScan.Supports (frame.Format) && (engine || !Bitmap.DeferDrawing))
+				if (WebGpuBackend.Gdip.GpScan.Supports (frame.Format) && (engine || !Bitmap.Deferring))
 					g.gp = new GpGraphics (frame);
 				bitmap.AttachGraphics (g);
 				return g;
@@ -5776,13 +5792,16 @@ namespace System.Drawing
 		public RectangleF ClipBounds {
 			get {
 				CheckUse ();
-								if (gp != null) {
-					SyncEngine ();
+				// A bitmap's Graphics drawing into a recording (deferred) keeps its clip as the engine does
+				// (RecordingClipState): answered the same, infinite until clipped, not the bitmap's bounds
+				GpGraphics clipEngine = gp ?? (image_target != null && !print_mode ? RecordingClipState () : null);
+				if (clipEngine != null) {
+					if (clipEngine == gp) SyncEngine ();
 					// GpGraphics::GetClipBounds: the app clip's DEVICE region bounds, back in world units.
-					GpRegion app = gp.AppClip;
-					if (app == null) return new Region (gp.GetClip ()).Bounds ();
+					GpRegion app = clipEngine.AppClip;
+					if (app == null) return new Region (clipEngine.GetClip ()).Bounds ();
 					Rectangle d = app.DeviceShared (GpMatrix.CreateIdentity ()).Bounds;
-					if (!gp.DeviceToWorld (out GpMatrix inv)) return RectangleF.Empty;
+					if (!clipEngine.DeviceToWorld (out GpMatrix inv)) return RectangleF.Empty;
 					var pts = new [] { new PointF (d.Left, d.Top), new PointF (d.Right, d.Top), new PointF (d.Left, d.Bottom), new PointF (d.Right, d.Bottom) };
 					inv.Transform (pts);
 					float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;

@@ -195,6 +195,13 @@ namespace System.Drawing
 		/// WF_DEFER_BITMAPS=0 draws with the engine.</summary>
 		internal static readonly bool DeferDrawing = Environment.GetEnvironmentVariable ("WF_DEFER_BITMAPS") != "0";
 
+		/// <summary>This thread's bitmaps are drawn by the engine, deferring or not: what the parity
+		/// batteries hold to gdiplus.dll byte for byte (set by the tests, by name).</summary>
+		[ThreadStatic] internal static bool EngineOnThisThread;
+
+		/// <summary>Whether a Graphics made on this thread now records its bitmap's drawing.</summary>
+		internal static bool Deferring => DeferDrawing && !EngineOnThisThread;
+
 		// Graphics drawing into this bitmap (FromImage), and scenes they finished, not yet rasterized.
 		readonly List<Graphics> drawing = new List<Graphics> ();
 		readonly List<object> pending = new List<object> ();
@@ -279,7 +286,7 @@ namespace System.Drawing
 				}
 				// Without text the CPU rasterizer draws it as GDI+ does, blends and all -- unless drawing
 				// into bitmaps is deferred (DeferDrawing): then the recording is what there is.
-				if (!text && !DeferDrawing) return false;
+				if (!text && !Deferring) return false;
 				scenes = pending.ToArray ();
 				return scenes.Length > 0;
 			}

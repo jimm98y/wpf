@@ -16,8 +16,13 @@ using Xunit;
 
 namespace Wpf.WinFormsInterop.Tests
 {
-    public class DrawImageShrinkTests
+    public class DrawImageShrinkTests : IDisposable
     {
+        // GDI+'s engine draws this test's bitmaps: the averaging is the engine's (EngineDrawing)
+        private readonly EngineDrawing _engine = EngineDrawing.Scope();
+
+        public void Dispose() => _engine.Dispose();
+
         static Bitmap Column (int w, int h, int col)
         {
             var s = new Bitmap (w, h, PixelFormat.Format32bppArgb);

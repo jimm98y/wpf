@@ -20,8 +20,13 @@ using Xunit;
 
 namespace Wpf.WinFormsInterop.Tests
 {
-    public sealed class ImageAttributesTests
+    public sealed class ImageAttributesTests : IDisposable
     {
+        // GDI+'s engine draws this test's bitmaps, as gdiplus.dll does: the parity is the engine's (EngineDrawing)
+        private readonly EngineDrawing _engine = EngineDrawing.Scope();
+
+        public void Dispose() => _engine.Dispose();
+
         // case -> digest, as gdiplus.dll produced them.
         private static readonly Dictionary<string, string> GdiPlus = new()
         {

@@ -146,8 +146,13 @@ namespace Wpf.WinFormsInterop.Tests
         public void Flush(FlushIntention f) => g.Flush(f);
     }
 
-    public sealed class MetafileTests
+    public sealed class MetafileTests : IDisposable
     {
+        // GDI+'s engine draws this test's bitmaps, as gdiplus.dll does: the parity is the engine's (EngineDrawing)
+        private readonly EngineDrawing _engine = EngineDrawing.Scope();
+
+        public void Dispose() => _engine.Dispose();
+
         private static readonly string Dir = Path.Combine(AppContext.BaseDirectory, "Fixtures", "Metafiles");
 
         public static TheoryData<string> Scenarios()
