@@ -567,6 +567,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     ffv = FixedVertexKey(inputs, transformed, link);
                 }
 
+                // points with a size (D3DRS_POINTSIZE, the vertex's PSIZE, scaling) or sprites: squares
+                int pointMode = 0;
+                if (c.Type == 1)
+                {
+                    float F(int rs) => BitConverter.UInt32BitsToSingle(State.RS[rs]);
+                    bool vertexSize = vs != null ? vs.Outputs.Any(o => o.Usage == D3D9Usage.PSize) : inputs.ByLocation.ContainsKey(2);
+                    bool scale = vs == null && !transformed && State.RS[D3DRS.POINTSCALEENABLE] != 0;
+                    float size = Math.Clamp(F(D3DRS.POINTSIZE), F(D3DRS.POINTSIZE_MIN), Math.Min(F(D3DRS.POINTSIZE_MAX), MaxPointSize));
+                    if (State.RS[D3DRS.POINTSPRITEENABLE] != 0) pointMode = 2;
+                    else if (vertexSize || scale || size != 1f) pointMode = 1;
+                    if (ffv != null)
+                    {
+                        ffv.PointMode = pointMode;
+                        ffv.PSize = inputs.ByLocation.ContainsKey(2);
+                        ffv.PointScale = scale;
+                    }
+                }
+                var pts = new D3D9Programs.Points { Mode = pointMode };
+
                 // the modules
                 var psFix = psTex.ToDictionary(kv => kv.Key, kv => kv.Value.Fixup);
                 var vsFix = vsTex.ToDictionary(kv => kv.Key, kv => kv.Value.Fixup);
@@ -575,8 +594,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (vs != null)
                 {
                     var types = inputs.ByLocation.ToDictionary(kv => kv.Key, kv => kv.Value.Type);
-                    vsId = $"vs{vs.Hash:x16}|{string.Join(",", types.Select(kv => $"{kv.Key}:{kv.Value}"))}|{string.Join(",", vsFix.Select(kv => $"{kv.Key}:{kv.Value}"))}|{link.Id}";
-                    vsModule = Module(vsId, () => D3D9Programs.VertexShaderModule(vs, link, types, vsFix));
+                    vsId = $"vs{vs.Hash:x16}|{string.Join(",", types.Select(kv => $"{kv.Key}:{kv.Value}"))}|{string.Join(",", vsFix.Select(kv => $"{kv.Key}:{kv.Value}"))}|{link.Id}{pts.Id}";
+                    vsModule = Module(vsId, () => D3D9Programs.VertexShaderModule(vs, link, types, vsFix, pts));
                 }
                 else
                 {
@@ -606,9 +625,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     1 => WGPUPrimitiveTopology.PointList, 2 => WGPUPrimitiveTopology.LineList, 3 => WGPUPrimitiveTopology.LineStrip,
                     5 => WGPUPrimitiveTopology.TriangleStrip, _ => WGPUPrimitiveTopology.TriangleList,
                 };
+                if (pointMode != 0) topology = WGPUPrimitiveTopology.TriangleList;
                 if (regenerate) topology = triangles && fill == 1 ? WGPUPrimitiveTopology.PointList : triangles && fill == 2 ? WGPUPrimitiveTopology.LineList : WGPUPrimitiveTopology.TriangleList;
                 bool index32 = c.UpIndices != null ? c.UpIndex32 : State.Indices?.Index32 == true;
-                var stripFormat = !regenerate && c.Indexed && topology is WGPUPrimitiveTopology.TriangleStrip or WGPUPrimitiveTopology.LineStrip
+                var stripFormat = !regenerate && pointMode == 0 && c.Indexed && topology is WGPUPrimitiveTopology.TriangleStrip or WGPUPrimitiveTopology.LineStrip
                     ? (index32 ? WGPUIndexFormat.Uint32 : WGPUIndexFormat.Uint16) : WGPUIndexFormat.Undefined;
                 if (c.Indexed && c.UpIndices == null && State.Indices == null) return Invalid;
 
@@ -621,7 +641,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 bool up = c.UpVertices != null;
                 uint instances = 1;
-                if (c.Indexed && (State.StreamFreq[0] & 0x40000000) != 0) instances = Math.Max(1, State.StreamFreq[0] & 0x3FFFFFFF);
+                if (c.Indexed && pointMode == 0 && (State.StreamFreq[0] & 0x40000000) != 0) instances = Math.Max(1, State.StreamFreq[0] & 0x3FFFFFFF);
                 var layoutKey = new StringBuilder();
                 var strides = new Dictionary<int, uint>();
                 foreach (var (stream, list) in streams)
@@ -636,13 +656,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         return HResult.S_OK;
                     }
                     strides[stream] = stride;
-                    bool perInstance = instances > 1 && (State.StreamFreq[stream] & 0x80000000) != 0;
+                    bool perInstance = pointMode != 0 || (instances > 1 && (State.StreamFreq[stream] & 0x80000000) != 0);
                     layoutKey.Append(stream).Append(':').Append(stride).Append(perInstance ? 'i' : 'v');
                     foreach (var (loc, e) in list) layoutKey.Append(',').Append(loc).Append('.').Append(e.Type).Append('.').Append(e.Offset);
                     layoutKey.Append(';');
                 }
 
-                IntPtr pipeline = DrawPipeline(vsId, psId, vsModule, psModule, ts, topology, stripFormat, layoutKey.ToString(), streams, strides, instances, vs, ps, psTex, vsTex);
+                IntPtr pipeline = DrawPipeline(vsId, psId, vsModule, psModule, ts, topology, stripFormat, layoutKey.ToString(), streams, strides, instances, vs, ps, psTex, vsTex, pointMode != 0);
                 if (pipeline == IntPtr.Zero) { DrawsSkipped++; return HResult.S_OK; }
 
                 // the UP and regenerated data, before the uniforms (a full arena submits first)
@@ -652,12 +672,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     generated = Regenerate(c, type, fill, index32);
                     if (generated == null) { DrawsSkipped++; return HResult.S_OK; }
                 }
-                int needVertex = (int)(up ? c.UpVertexBytes : 0) + 4 + (c.UpIndices != null ? (int)(vertexCount * (c.UpIndex32 ? 4 : 2)) + 4 : 0) + (generated != null ? generated.Length * 4 + 4 : 0);
+                // an indexed point list as squares: each stream's vertices in index order (a point is an instance)
+                List<byte[]>? gathered = null;
+                if (pointMode != 0 && c.Indexed)
+                {
+                    gathered = GatherPoints(c, streams, strides, index32);
+                    if (gathered == null) { D3DLog.Once("d3d9ptrange", "an indexed point list past its buffers is not drawn"); DrawsSkipped++; return HResult.S_OK; }
+                }
+                int needVertex = (gathered?.Sum(g => g.Length + 4) ?? 0) + (int)(up ? c.UpVertexBytes : 0) + 4 + (c.UpIndices != null ? (int)(vertexCount * (c.UpIndex32 ? 4 : 2)) + 4 : 0) + (generated != null ? generated.Length * 4 + 4 : 0);
                 if (_uniformAt + 3 * (D3D9Programs.ConstsSize + 256) + D3D9Programs.MiscSize + 512 > ArenaSize || (needVertex <= ArenaSize && _vertexAt + needVertex > ArenaSize))
                     FlushDraws();
                 (IntPtr Buf, ulong Off) upVb = default, upIb = default, genIb = default;
-                if (up) upVb = Place(new ReadOnlySpan<byte>(c.UpVertices, (int)c.UpVertexBytes));
-                if (c.UpIndices != null) upIb = Place(new ReadOnlySpan<byte>(c.UpIndices, (int)(vertexCount * (c.UpIndex32 ? 4 : 2))));
+                var gatheredVb = gathered?.Select(g => Place(g)).ToList();
+                if (up && gathered == null) upVb = Place(new ReadOnlySpan<byte>(c.UpVertices, (int)c.UpVertexBytes));
+                if (c.UpIndices != null && gathered == null) upIb = Place(new ReadOnlySpan<byte>(c.UpIndices, (int)(vertexCount * (c.UpIndex32 ? 4 : 2))));
                 if (generated != null) genIb = Place(MemoryMarshal.AsBytes(generated.AsSpan()));
 
                 // the uniforms
@@ -677,8 +705,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
                 // vertex buffers' GPU copies, before the pass records them
                 var vbs = new List<(IntPtr Buf, ulong Off, ulong Size)>();
+                int si = 0;
                 foreach (var (stream, _) in streams)
                 {
+                    if (gatheredVb != null) { vbs.Add((gatheredVb[si].Buf, gatheredVb[si].Off, (ulong)gathered![si].Length)); si++; continue; }
                     if (up) { vbs.Add((upVb.Buf, upVb.Off, c.UpVertexBytes)); continue; }
                     var b = State.Streams[stream]!;
                     IntPtr g = b.EnsureGpu(Batch);
@@ -689,7 +719,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 ulong ibOff = 0, ibSize = 0;
                 if (generated != null) { ibBuf = genIb.Buf; ibOff = genIb.Off; ibSize = (ulong)generated.Length * 4; }
                 else if (c.UpIndices != null) { ibBuf = upIb.Buf; ibOff = upIb.Off; ibSize = vertexCount * (c.UpIndex32 ? 4u : 2u); }
-                else if (c.Indexed)
+                else if (c.Indexed && gathered == null)
                 {
                     var ib = State.Indices!;
                     ulong bytes = index32 ? 4u : 2u;
@@ -720,7 +750,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 wgpuRenderPassEncoderSetBlendConstant(_pass, &bf);
                 wgpuRenderPassEncoderSetStencilReference(_pass, State.RS[D3DRS.STENCILREF] & 0xFF);
 
-                if (generated != null)
+                if (pointMode != 0)
+                    wgpuRenderPassEncoderDraw(_pass, 6, vertexCount, 0, gathered != null || up ? 0 : c.StartVertex);
+                else if (generated != null)
                 {
                     wgpuRenderPassEncoderSetIndexBuffer(_pass, ibBuf, WGPUIndexFormat.Uint32, ibOff, ibSize);
                     wgpuRenderPassEncoderDrawIndexed(_pass, (uint)generated.Length, instances, 0, c.Indexed ? c.BaseVertex : (int)c.StartVertex, 0);
@@ -742,6 +774,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (data.Length + 4 > ArenaSize) return (OwnBuffer(data), 0);
             int at = VertexAlloc(data);
             return (_vertexGpu, (ulong)at);
+        }
+
+        /// <summary>D3DCAPS9.MaxPointSize.</summary>
+        internal const float MaxPointSize = 256f;
+
+        /// <summary>The vertices an indexed point list reads, per stream in index order (null: past a buffer).</summary>
+        private List<byte[]>? GatherPoints(DrawCall c, SortedDictionary<int, List<(int Loc, D3DVERTEXELEMENT9 E)>> streams, Dictionary<int, uint> strides, bool index32)
+        {
+            uint n = c.PrimCount;
+            byte* ip;
+            if (c.UpIndices != null) ip = c.UpIndices;
+            else
+            {
+                var ib = State.Indices!;
+                ulong bytes = index32 ? 4u : 2u;
+                if ((c.StartIndex + (ulong)n) * bytes > ib.Size) return null;
+                ip = ib.Cpu + c.StartIndex * bytes;
+            }
+            var result = new List<byte[]>();
+            foreach (var (stream, list) in streams)
+            {
+                uint stride = strides[stream];
+                uint used = (uint)list.Max(x => x.E.Offset + Direct3DVertexDeclaration9.TypeBytes(x.E.Type));
+                byte* src;
+                ulong size;
+                if (c.UpVertices != null) { src = c.UpVertices; size = c.UpVertexBytes; }
+                else
+                {
+                    var b = State.Streams[stream]!;
+                    ulong off = State.StreamOffset[stream];
+                    if (off > b.Size) return null;
+                    src = b.Cpu + off;
+                    size = b.Size - off;
+                }
+                var dst = new byte[n * stride];
+                for (uint i = 0; i < n; i++)
+                {
+                    long v = (long)(index32 ? ((uint*)ip)[i] : ((ushort*)ip)[i]) + (c.UpVertices != null ? 0 : c.BaseVertex);
+                    if (v < 0 || (ulong)v * stride + used > size) return null;
+                    new ReadOnlySpan<byte>(src + v * stride, (int)Math.Min(stride, size - (ulong)v * stride)).CopyTo(dst.AsSpan((int)(i * stride)));
+                }
+                result.Add(dst);
+            }
+            return result;
         }
 
         /// <summary>The indices of a fan as a list, or of triangles as their edges (wireframe) or corners
@@ -982,6 +1058,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 Put(b, D3D9Programs.OffClip + i * 16, a, bb, c, dd);
             }
+            // points: the size and its clamp, the scale factors
+            float Fr(int rs) => BitConverter.UInt32BitsToSingle(State.RS[rs]);
+            Put(b, D3D9Programs.OffPoint, Fr(D3DRS.POINTSIZE), Math.Max(0, Fr(D3DRS.POINTSIZE_MIN)), Math.Min(Fr(D3DRS.POINTSIZE_MAX), MaxPointSize), 0);
+            Put(b, D3D9Programs.OffPointScale, Fr(D3DRS.POINTSCALE_A), Fr(D3DRS.POINTSCALE_B), Fr(D3DRS.POINTSCALE_C), 0);
             // the viewport adjustment: D3D9's viewport mapped into the part of it on the targets
             Viewport(ts, out clamped);
             float cw = Math.Max(clamped.Width, 1e-6f), ch = Math.Max(clamped.Height, 1e-6f);
@@ -1171,11 +1251,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private IntPtr DrawPipeline(string vsId, string psId, IntPtr vsModule, IntPtr psModule, TargetSet ts, WGPUPrimitiveTopology topology, WGPUIndexFormat stripFormat,
             string layoutKey, SortedDictionary<int, List<(int Loc, D3DVERTEXELEMENT9 E)>> streams, Dictionary<int, uint> strides, uint instances,
-            D3D9Shader? vs, D3D9Shader? ps, SortedDictionary<int, (D3DTexture2D? Tex, int Fixup, int Type)> psTex, SortedDictionary<int, (D3DTexture2D? Tex, int Fixup, int Type)> vsTex)
+            D3D9Shader? vs, D3D9Shader? ps, SortedDictionary<int, (D3DTexture2D? Tex, int Fixup, int Type)> psTex, SortedDictionary<int, (D3DTexture2D? Tex, int Fixup, int Type)> vsTex,
+            bool points)
         {
             uint[] rs = State.RS;
             var key = new StringBuilder(512);
-            key.Append(vsId).Append('#').Append(psId).Append('#').Append(layoutKey).Append('#').Append((int)topology).Append((int)stripFormat).Append('#').Append(LayoutKey(vs, ps, psTex, vsTex));
+            key.Append(vsId).Append('#').Append(psId).Append('#').Append(layoutKey).Append('#').Append((int)topology).Append((int)stripFormat).Append('#').Append(LayoutKey(vs, ps, psTex, vsTex)).Append(points ? "#pt" : "");
             for (int i = 0; i < 4; i++) key.Append('|').Append(ts.Color[i] == null ? 0 : (int)ts.Color[i]!.Gpu!.Format).Append(ts.Color[i] != null && ts.Color[i]!.Desc.Format is D3D9Const.D3DFMT_X8R8G8B8 or D3D9Const.D3DFMT_X8B8G8R8 ? "x" : "");
             key.Append("|d").Append(ts.Depth == null ? 0 : (int)ts.Depth.Gpu!.Format);
             foreach (int s in new[] { D3DRS.CULLMODE, D3DRS.ALPHABLENDENABLE, D3DRS.SRCBLEND, D3DRS.DESTBLEND, D3DRS.BLENDOP, D3DRS.SEPARATEALPHABLENDENABLE, D3DRS.SRCBLENDALPHA, D3DRS.DESTBLENDALPHA, D3DRS.BLENDOPALPHA,
@@ -1198,7 +1279,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     var attrs = list.Select(x => new WGPUVertexAttribute { format = D3D9Programs.Attribute(x.E.Type, "").Format, offset = x.E.Offset, shaderLocation = (uint)x.Loc }).ToArray();
                     var h = GCHandle.Alloc(attrs, GCHandleType.Pinned);
                     handles.Add(h);
-                    bool perInstance = instances > 1 && (State.StreamFreq[stream] & 0x80000000) != 0;
+                    bool perInstance = points || (instances > 1 && (State.StreamFreq[stream] & 0x80000000) != 0);
                     buffers.Add(new WGPUVertexBufferLayout
                     {
                         stepMode = perInstance ? WGPUVertexStepMode.Instance : WGPUVertexStepMode.Vertex,
@@ -1265,7 +1346,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         primitive = new WGPUPrimitiveState
                         {
                             topology = topology, stripIndexFormat = stripFormat, frontFace = WGPUFrontFace.CW,
-                            cullMode = topology is WGPUPrimitiveTopology.TriangleList or WGPUPrimitiveTopology.TriangleStrip
+                            cullMode = !points && topology is WGPUPrimitiveTopology.TriangleList or WGPUPrimitiveTopology.TriangleStrip
                                 ? cull switch { 2 => WGPUCullMode.Front, 3 => WGPUCullMode.Back, _ => WGPUCullMode.None } : WGPUCullMode.None,
                         },
                         depthStencil = ts.Depth != null ? (IntPtr)(&ds) : IntPtr.Zero,

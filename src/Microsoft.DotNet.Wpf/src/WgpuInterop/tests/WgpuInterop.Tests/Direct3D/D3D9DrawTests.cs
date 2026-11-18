@@ -651,6 +651,81 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.Equal(colors[5], px[32 * W + 48]);
         }
 
+        [StructLayout(LayoutKind.Sequential)] private struct RhwSizeColor { public float X, Y, Z, Rhw, Size; public uint Color; }
+
+        /// <summary>Points with D3DRS_POINTSIZE: a square of that many pixels around each, in the vertex's colour.</summary>
+        [Fact]
+        public void PointSize_DrawsSquares()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.Fvf(FVF_XYZRHW | FVF_DIFFUSE);
+            s.Clear(1, 0xFF000000);
+            s.RS(D3DRS.POINTSIZE, Asm.F(8));
+            s.DrawUp(1, 2, new[]
+            {
+                new RhwColor { X = 16, Y = 16, Z = 0.5f, Rhw = 1, Color = 0xFFFF0000 }, new RhwColor { X = 48, Y = 40, Z = 0.5f, Rhw = 1, Color = 0xFF00FF00 },
+            });
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFFFF0000u, px[13 * W + 13]);
+            Assert.Equal(0xFFFF0000u, px[18 * W + 18]);
+            Assert.Equal(0xFF000000u, px[16 * W + 10]);
+            Assert.Equal(0xFF000000u, px[22 * W + 16]);
+            Assert.Equal(0xFF00FF00u, px[40 * W + 48]);
+            Assert.Equal(0xFF000000u, px[40 * W + 54]);
+            Assert.Equal(0, s.Skipped);
+        }
+
+        /// <summary>A point sprite: the texture across the square, v down, whatever coordinates the vertex has.</summary>
+        [Fact]
+        public void PointSprites_SpanTheTexture()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr tex = s.Texture(2, 2, new uint[] { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF });
+            s.Texture(0, tex);
+            s.Fvf(FVF_XYZRHW | FVF_TEX1);
+            s.Clear(1, 0xFF000000);
+            s.RS(D3DRS.POINTSPRITEENABLE, 1);
+            s.RS(D3DRS.POINTSIZE, Asm.F(32));
+            s.DrawUp(1, 1, new[] { new RhwTex { X = 32, Y = 32, Z = 0.5f, Rhw = 1, U = 0.9f, V = 0.9f } });
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFFFF0000u, px[20 * W + 20]);
+            Assert.Equal(0xFF00FF00u, px[20 * W + 44]);
+            Assert.Equal(0xFF0000FFu, px[44 * W + 20]);
+            Assert.Equal(0xFFFFFFFFu, px[44 * W + 44]);
+            Assert.Equal(0xFF000000u, px[10 * W + 10]);
+        }
+
+        /// <summary>An indexed point list whose vertices carry their size (FVF PSIZE), clamped by POINTSIZE_MAX.</summary>
+        [Fact]
+        public void IndexedPoints_TakeTheVertexSize()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.Fvf(FVF_XYZRHW | 0x20 | FVF_DIFFUSE);
+            s.Clear(1, 0xFF000000);
+            s.RS(D3DRS.POINTSIZE_MAX, Asm.F(10));
+            var v = new[]
+            {
+                new RhwSizeColor { X = 16, Y = 16, Z = 0.5f, Rhw = 1, Size = 4, Color = 0xFFFF0000 },
+                new RhwSizeColor { X = 48, Y = 48, Z = 0.5f, Rhw = 1, Size = 40, Color = 0xFF0000FF },
+            };
+            ushort[] idx = { 1, 0 };
+            fixed (RhwSizeColor* pv = v)
+            fixed (ushort* pi = idx)
+                Check(((delegate* unmanaged<IntPtr, int, uint, uint, uint, void*, int, void*, uint, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.DrawIndexedPrimitiveUP))(s.Dev, 1, 0, 2, 2, pi, 101, pv, (uint)sizeof(RhwSizeColor)), "DrawIndexedPrimitiveUP");
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFFFF0000u, px[16 * W + 17]);
+            Assert.Equal(0xFF000000u, px[16 * W + 20]);
+            Assert.Equal(0xFF0000FFu, px[48 * W + 52]);
+            Assert.Equal(0xFF000000u, px[48 * W + 55]);        // 10, not 40
+            Assert.Equal(0, s.Skipped);
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()

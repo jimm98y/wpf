@@ -35,7 +35,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public const int OffPx = 0, OffVp = 16, OffAlpha = 32, OffFog = 48, OffFogColor = 64, OffTFactor = 80, OffAmbient = 96,
             OffMatDiffuse = 112, OffMatAmbient = 128, OffMatSpecular = 144, OffMatEmissive = 160, OffMatPower = 176,
             OffWv = 192, OffProj = 256, OffWvp = 320, OffNrm = 384, OffTex = 448, OffStageConst = 960, OffBump = 1088, OffBumpL = 1216,
-            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, MiscSize = 2352;
+            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, OffPoint = 2352, OffPointScale = 2368, MiscSize = 2384;
 
         public const string MiscWgsl =
             "struct Light { diffuse : vec4<f32>, specular : vec4<f32>, ambient : vec4<f32>, pos : vec4<f32>, dir : vec4<f32>, att : vec4<f32>, spot : vec4<f32> };\n" +
@@ -44,7 +44,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             "    matDiffuse : vec4<f32>, matAmbient : vec4<f32>, matSpecular : vec4<f32>, matEmissive : vec4<f32>, matPower : vec4<f32>,\n" +
             "    wv : mat4x4<f32>, proj : mat4x4<f32>, wvp : mat4x4<f32>, nrm : mat4x4<f32>, tex : array<mat4x4<f32>, 8>,\n" +
             "    stageConst : array<vec4<f32>, 8>, bump : array<vec4<f32>, 8>, bumpL : array<vec4<f32>, 8>, lights : array<Light, 8>,\n" +
-            "    adj : vec4<f32>, clip : array<vec4<f32>, 6>,\n" +
+            "    adj : vec4<f32>, clip : array<vec4<f32>, 6>, pt : vec4<f32>, ptScale : vec4<f32>,\n" +
             "};\n" +
             "@group(0) @binding(2) var<uniform> M : Misc;\n";
 
@@ -140,7 +140,41 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>The vertex entry's tail: the varyings from the provided expressions, the clip position
         /// with D3D9's half-pixel offset (pixel centres on integer coordinates).</summary>
-        private static void VertexTail(StringBuilder w, Linkage l, Dictionary<int, string> provided, string pos, bool halfPixel, string? clipFrom = null)
+        /// <summary>A point list drawn as squares (D3D9's point size), six vertices per point, the point's
+        /// vertex an instance: 1 a square of the vertex's coordinates, 2 a sprite (POINTSPRITEENABLE: every
+        /// texture coordinate runs 0-1 across it, v down).</summary>
+        public struct Points
+        {
+            public int Mode;
+            /// <summary>The point's size as the vertex gives it (an f32 expression; null: D3DRS_POINTSIZE).</summary>
+            public string? Size;
+            /// <summary>D3DRS_POINTSCALEENABLE applies (fixed-function untransformed vertices), from the eye distance of this.</summary>
+            public string? ScaleFrom;
+            public string Id => Mode == 0 ? "" : $"|pt{Mode}{(Size != null ? "s" : "")}{(ScaleFrom != null ? "z" : "")}";
+        }
+
+        /// <summary>The vertex entry's parameter the corners of a point's square come from.</summary>
+        private const string CornerParam = "@builtin(vertex_index) corner : u32";
+
+        private static void PointSquare(StringBuilder w, Linkage l, Points pts)
+        {
+            w.Append("    var sz = ").Append(pts.Size ?? "M.pt.x").Append(";\n");
+            if (pts.ScaleFrom != null)
+            {
+                // D3D9: Ss = Vh * Si * sqrt(1 / (A + B * De + C * De^2)), De the distance to the eye
+                w.Append("    let de = length((").Append(pts.ScaleFrom).Append(").xyz);\n");
+                w.Append("    sz = M.vp.y * sz * sqrt(1.0 / max(M.ptScale.x + M.ptScale.y * de + M.ptScale.z * de * de, 1e-20));\n");
+            }
+            w.Append("    sz = clamp(sz, M.pt.y, M.pt.z);\n");
+            w.Append("    var corners = array<vec2<f32>, 6>(vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0));\n");
+            w.Append("    let uv = corners[corner % 6u];\n");
+            w.Append("    p = vec4<f32>(p.x + (uv.x * 2.0 - 1.0) * sz / M.vp.x * p.w, p.y - (uv.y * 2.0 - 1.0) * sz / M.vp.y * p.w, p.z, p.w);\n");
+            if (pts.Mode == 2)
+                for (int i = 0; i < l.Keys.Count; i++)
+                    if (l.Keys[i] / 16 == D3D9Usage.TexCoord) w.Append("    o.l").Append(i).Append(" = vec4<f32>(uv, 0.0, 1.0);\n");
+        }
+
+        private static void VertexTail(StringBuilder w, Linkage l, Dictionary<int, string> provided, string pos, bool halfPixel, string? clipFrom = null, Points pts = default)
         {
             w.Append("    var o : VOut;\n    var p = ").Append(pos).Append(";\n");
             // user clip planes: the distance to each, from the position in the planes' space (none: 1, never clipped)
@@ -154,6 +188,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     : provided.TryGetValue(key, out string? x) ? x : "vec4<f32>(0.0)";
                 w.Append("    o.l").Append(i).Append(" = ").Append(e).Append(";\n");
             }
+            if (pts.Mode != 0) PointSquare(w, l, pts);
             if (halfPixel) w.Append("    p.x = p.x + p.w * M.px.x;\n    p.y = p.y - p.w * M.px.y;\n");
             // D3D9's viewport into the part of it on the targets (WebGPU's viewport lies within them)
             w.Append("    p = vec4<f32>(p.x * M.adj.x + M.adj.z * p.w, p.y * M.adj.y + M.adj.w * p.w, p.z, p.w);\n");
@@ -239,7 +274,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>The vertex module of a translated vertex shader: its attributes at their input
         /// registers' locations (<paramref name="inputs"/>: register, the element's type).</summary>
-        public static string VertexShaderModule(D3D9Shader vs, Linkage l, IReadOnlyDictionary<int, byte> inputs, IReadOnlyDictionary<int, int> fixups)
+        public static string VertexShaderModule(D3D9Shader vs, Linkage l, IReadOnlyDictionary<int, byte> inputs, IReadOnlyDictionary<int, int> fixups, Points pts = default)
         {
             var w = new StringBuilder();
             w.Append("diagnostic(off, derivative_uniformity);\n").Append(ConstsWgsl).Append("@group(0) @binding(0) var<uniform> K : Consts;\n").Append(MiscWgsl);
@@ -260,6 +295,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 first = false;
                 w.Append("@location(").Append(reg).Append(") a").Append(reg).Append(" : ").Append(a.Type);
             }
+            if (pts.Mode != 0) w.Append(first ? "" : ", ").Append(CornerParam);
             w.Append(") -> VOut {\n");
             foreach (var (reg, type) in inputs) w.Append("    v").Append(reg).Append(" = ").Append(Attribute(type, $"a{reg}").Expr).Append(";\n");
             w.Append("    d3dMain();\n");
@@ -274,7 +310,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (io.Usage == D3D9Usage.Fog) e = $"vec4<f32>(({reg}).x)";
                 provided[io.Key] = e;
             }
-            VertexTail(w, l, provided, pos, halfPixel: true, clipFrom: "p");
+            if (pts.Mode != 0) pts.Size = provided.TryGetValue(D3D9Usage.Key(D3D9Usage.PSize, 0), out string? ps) ? $"({ps}).x" : null;
+            VertexTail(w, l, provided, pos, halfPixel: true, clipFrom: "p", pts: pts);
             return w.ToString();
         }
 
@@ -339,7 +376,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         public sealed class FixedVertex
         {
-            public bool Transformed, Normal, Diffuse, Specular;
+            public bool Transformed, Normal, Diffuse, Specular, PSize;
+            /// <summary>0: points as points, else Points.Mode.</summary>
+            public int PointMode;
+            public bool PointScale;
             /// <summary>Components of each texture coordinate set the vertex has (0: none).</summary>
             public readonly int[] TexDims = new int[8];
             public readonly byte[] TexTypes = new byte[8];
@@ -360,7 +400,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 get
                 {
                     var sb = new StringBuilder("ff:");
-                    sb.Append(Transformed ? 'T' : 't').Append(PosType).Append(Normal ? 'N' : 'n').Append(NormalType).Append(Diffuse ? 'D' : 'd').Append(DiffuseType).Append(Specular ? 'S' : 's').Append(SpecularType);
+                    sb.Append(Transformed ? 'T' : 't').Append(PosType).Append(Normal ? 'N' : 'n').Append(NormalType).Append(Diffuse ? 'D' : 'd').Append(DiffuseType).Append(Specular ? 'S' : 's').Append(SpecularType).Append(PSize ? 'Z' : 'z').Append(PointMode).Append(PointScale ? 'C' : 'c');
                     for (int i = 0; i < 8; i++) sb.Append(TexDims[i]).Append(TexTypes[i]).Append('.').Append(TexIndex[i]).Append('.').Append(TexTransform[i]).Append(';');
                     sb.Append(Lighting ? 'L' : 'l').Append(LocalViewer ? 'V' : 'v').Append(NormalizeNormals ? 'Z' : 'z').Append(SpecularEnable ? 'P' : 'p');
                     sb.Append(DiffuseSrc).Append(SpecularSrc).Append(AmbientSrc).Append(EmissiveSrc).Append('|').Append(string.Join(",", Lights)).Append("|f").Append(FogMode).Append(RangeFog ? 'r' : '-');
@@ -379,6 +419,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (k.Diffuse) w.Append(", @location(3) aDiffuse : ").Append(Attribute(k.DiffuseType, "").Type);
             if (k.Specular) w.Append(", @location(4) aSpecular : ").Append(Attribute(k.SpecularType, "").Type);
             for (int i = 0; i < 8; i++) if (k.TexDims[i] > 0) w.Append(", @location(").Append(5 + i).Append(") aTex").Append(i).Append(" : ").Append(Attribute(k.TexTypes[i], "").Type);
+            if (k.PointMode != 0 && k.PSize) w.Append(", @location(2) aPSize : vec4<f32>");
+            if (k.PointMode != 0) w.Append(", ").Append(CornerParam);
             w.Append(") -> VOut {\n");
             w.Append("    let pin = ").Append(Attribute(k.PosType, "aPos").Expr).Append(";\n");
             w.Append("    let diffuseIn = ").Append(k.Diffuse ? Attribute(k.DiffuseType, "aDiffuse").Expr : "vec4<f32>(1.0)").Append(";\n");
@@ -505,7 +547,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 uint count = k.TexTransform[i] & 0xFF;
                 provided[key] = count != 0 && !k.Transformed ? $"(M.tex[{i}] * {b})" : b;
             }
-            VertexTail(w, l, provided, pos, halfPixel: !k.Transformed, clipFrom: k.Transformed ? "" : "pin");
+            var pts = new Points
+            {
+                Mode = k.PointMode,
+                Size = k.PSize ? "aPSize.x" : null,
+                ScaleFrom = k.PointScale && !k.Transformed ? "vpos" : null,
+            };
+            VertexTail(w, l, provided, pos, halfPixel: !k.Transformed, clipFrom: k.Transformed ? "" : "pin", pts: pts);
             return w.ToString();
         }
 
