@@ -50,6 +50,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         private readonly Dictionary<(ulong, ulong, string), Translation> _translations = new();
 
+        /// <summary>A stage's bound samplers with BORDER (4) or MIRROR_ONCE (5) addressing, for its translation.</summary>
+        private static SortedDictionary<int, (int Fix, float R, float G, float B, float A)>? SamplerAddress(StageState st)
+        {
+            SortedDictionary<int, (int, float, float, float, float)>? r = null;
+            for (int i = 0; i < st.Samplers.Length; i++)
+            {
+                if (st.Samplers[i] is not { } smp) continue;
+                var d = smp.Desc;
+                int fix = D3D9Programs.AddressFix(d.AddressU, d.AddressV, d.AddressW);
+                if (fix != 0) (r ??= new())[i] = (fix, d.Border0, d.Border1, d.Border2, d.Border3);
+            }
+            return r;
+        }
+
         private Translation Translate(D3DShader vs, D3DShader? ps)
         {
             // the input registers the layout feeds from B8G8R8A8 elements (swapped in the shader)
@@ -57,20 +71,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (_layout != null)
                 foreach (var e in _layout.Elements.Where(e => e.Format == DXGI_FORMAT.B8G8R8A8_UNORM))
                     if (vs.Code.Inputs.FirstOrDefault(i => i.SystemValue == 0 && i.SemanticName.Equals(e.Semantic, StringComparison.OrdinalIgnoreCase) && i.SemanticIndex == e.Index) is { } sig) bgra.Add(sig.Register);
-            var key = (vs.Code.Hash, ps?.Code.Hash ?? 0, string.Join(",", bgra));
+            // samplers with the address modes WebGPU lacks: each stage's shader is translated for them
+            var vsAddr = SamplerAddress(_vs);
+            var psAddr = SamplerAddress(_ps);
+            string addrKey = (vsAddr == null ? "" : string.Join(";", vsAddr.Select(kv => $"{kv.Key}:{kv.Value}"))) + "/" + (psAddr == null ? "" : string.Join(";", psAddr.Select(kv => $"{kv.Key}:{kv.Value}")));
+            var key = (vs.Code.Hash, ps?.Code.Hash ?? 0, string.Join(",", bgra) + "|" + addrKey);
             if (_translations.TryGetValue(key, out var t)) return t;
             t = new Translation();
             _translations[key] = t;
             try
             {
                 var link = DxbcTranslator.LinkageOf(ps?.Code, vs.Code);
-                var v = DxbcTranslator.Translate(vs.Code, 0, link, bgra.Count > 0 ? new TranslationOptions { BgraInputs = bgra } : null);
+                var v = DxbcTranslator.Translate(vs.Code, 0, link, bgra.Count > 0 || vsAddr != null ? new TranslationOptions { BgraInputs = bgra.Count > 0 ? bgra : null, SamplerAddress = vsAddr } : null);
                 t.VsBindings = v.Bindings;
                 t.Vs = CreateModule(v.Wgsl, "vs", out string? verr);
                 if (t.Vs == IntPtr.Zero) { t.Error = "vertex shader: " + verr; Dump(vs.Code, v.Wgsl, t.Error); return t; }
                 if (ps != null)
                 {
-                    var p = DxbcTranslator.Translate(ps.Code, 1, link);
+                    var p = DxbcTranslator.Translate(ps.Code, 1, link, psAddr != null ? new TranslationOptions { SamplerAddress = psAddr } : null);
                     t.PsBindings = p.Bindings;
                     t.Ps = CreateModule(p.Wgsl, "ps", out string? perr);
                     if (t.Ps == IntPtr.Zero) { t.Error = "pixel shader: " + perr; Dump(ps.Code, p.Wgsl, t.Error); return t; }

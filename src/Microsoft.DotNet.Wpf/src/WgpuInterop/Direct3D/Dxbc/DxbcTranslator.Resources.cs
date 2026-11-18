@@ -147,6 +147,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
             RequireTextureDim(dim, ins.Op.ToString());
             if (dim == Dim2DMS) throw new NotSupportedException("sampling a multisampled texture (D3D does not allow it either)");
             string coord = SampleCoord(dim, Source(o[1]), out string? layer);
+            // MIRROR_ONCE and BORDER (no WebGPU address modes): the coordinate mirrored about 0, the border colour outside 0-1
+            var fixes = dim is Dim2D or Dim2DArray or Dim3D or Dim1D or Dim1DArray && _options.SamplerAddress != null && _options.SamplerAddress.TryGetValue(smp, out var fx) ? fx : default;
+            int dims = dim == Dim3D ? 3 : 2;
+            string rawCoord = coord;
+            coord = D3D9Programs.Addressed(coord, fixes.Fix, dims);
             string tex = $"t{t}", s = $"s{smp}";
             string args = layer == null ? $"{tex}, {s}, {coord}" : $"{tex}, {s}, {coord}, {layer}";
             string off = Offset(ins, dim);
@@ -159,7 +164,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
                 Opcode.SampleC => $"textureSampleCompare({args}, ({Source(o[4])}).x{off})",
                 _ => $"textureSampleCompareLevel({args}, ({Source(o[4])}).x{off})",
             };
-            Store(o[0], $"({AsRegister(call, t, cmp)}){Swz(o[2])}", ins.Saturate);
+            string value = AsRegister(call, t, cmp);
+            if ((fixes.Fix & 0x2A) != 0)
+            {
+                string border = cmp ? $"vec4<f32>({F(fixes.R)})"
+                    : _bindings.Resources[t].Kind == 'f' ? $"vec4<f32>({F(fixes.R)}, {F(fixes.G)}, {F(fixes.B)}, {F(fixes.A)})"
+                    : $"bitcast<vec4<f32>>(vec4<{(_bindings.Resources[t].Kind == 'i' ? "i32" : "u32")}>({(int)fixes.R}, {(int)fixes.G}, {(int)fixes.B}, {(int)fixes.A}))";
+                var outside = new List<string>();
+                for (int i = 0; i < dims; i++)
+                    if (((fixes.Fix >> (2 * i)) & 3) == 2) outside.Add($"({rawCoord}).{"xyz"[i]} < 0.0 || ({rawCoord}).{"xyz"[i]} > 1.0");
+                value = $"select({value}, {border}, {string.Join(" || ", outside)})";
+            }
+            Store(o[0], $"({value}){Swz(o[2])}", ins.Saturate);
         }
 
         private void EmitLoad(Instruction ins)

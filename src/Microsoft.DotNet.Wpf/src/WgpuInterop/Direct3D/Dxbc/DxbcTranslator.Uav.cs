@@ -45,6 +45,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Dxbc
         public IReadOnlyCollection<int>? BgraInputs;
         /// <summary>A geometry shader's stream-output declaration (CreateGeometryShaderWithStreamOutput).</summary>
         public StreamOutputDesc? StreamOutput;
+        /// <summary>The sampler slots whose address modes WebGPU lacks (the sampler clamps them): per axis
+        /// (U bits 0-1, V 2-3, W 4-5) 1 MIRROR_ONCE, 2 BORDER, and the border colour.</summary>
+        public IReadOnlyDictionary<int, (int Fix, float R, float G, float B, float A)>? SamplerAddress;
         /// <summary>A geometry shader fed by an indexed strip: its primitives come from a table the
         /// ia_scan kernel builds, honouring strip-cut indices (all ones).</summary>
         public bool StripCut;

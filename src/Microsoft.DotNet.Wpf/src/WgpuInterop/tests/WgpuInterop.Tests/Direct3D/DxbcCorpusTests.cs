@@ -83,6 +83,35 @@ namespace WgpuInterop.Tests.Direct3D
             finally { device.Release(); }
         }
 
+        /// <summary>BORDER and MIRROR_ONCE addressing (which WebGPU lacks) translate into the sampling code: the
+        /// coordinates mirrored about 0, the border colour outside 0-1 -- and still compile.</summary>
+        [Fact]
+        public void SamplersWithBorderAndMirrorOnce_TranslateAndCompile()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            string dir = Path.Combine(AppContext.BaseDirectory, "DxbcCorpus");
+            var device = new D3DDevice(D3DDevice.SharedGpu, ownsGpu: false, D3D_FEATURE_LEVEL.L11_0, 0, null);
+            try
+            {
+                var files = Directory.GetFiles(dir, "texture.ps_sample.*.dxbc").Concat(Directory.GetFiles(dir, "texture.ps_compare.*.dxbc")).ToList();
+                Assert.NotEmpty(files);
+                // U border, V mirror once, W border, on every slot a shader could name
+                var addr = new Dictionary<int, (int, float, float, float, float)>();
+                for (int i = 0; i < 16; i++) addr[i] = (2 | 1 << 2 | 2 << 4, 0.25f, 0.5f, 0.75f, 1f);
+                foreach (string f in files)
+                {
+                    var s = DxbcShader.Parse(File.ReadAllBytes(f));
+                    var t = DxbcTranslator.Translate(s, 1, DxbcTranslator.LinkageOf(s), new TranslationOptions { SamplerAddress = addr });
+                    Assert.Contains("abs(", t.Wgsl);
+                    Assert.Contains("select(", t.Wgsl);
+                    IntPtr module = device.Immediate.CreateModule(t.Wgsl, Path.GetFileName(f), out string? error);
+                    Assert.True(module != IntPtr.Zero, $"{Path.GetFileName(f)}: {error}");
+                    Microsoft.Wpf.Interop.WebGpu.Wgpu.wgpuShaderModuleRelease(module);
+                }
+            }
+            finally { device.Release(); }
+        }
+
         [System.Runtime.InteropServices.DllImport("d3d11.dll", EntryPoint = "D3D11CreateDevice")]
         private static extern unsafe int RealCreateDevice(IntPtr adapter, uint driverType, IntPtr software, uint flags, uint* levels, uint count, uint sdk, IntPtr* device, uint* level, IntPtr* context);
 

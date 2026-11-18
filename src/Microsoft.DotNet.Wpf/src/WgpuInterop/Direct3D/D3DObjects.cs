@@ -96,8 +96,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 case 1: return WGPUAddressMode.Repeat;
                 case 2: return WGPUAddressMode.MirrorRepeat;
-                case 4: D3DLog.Once("border", "border address mode is clamped to the edge"); return WGPUAddressMode.ClampToEdge;
-                case 5: return WGPUAddressMode.MirrorRepeat;
+                case 4: return WGPUAddressMode.ClampToEdge;     // BORDER: the shader answers the colour outside
+                case 5: return WGPUAddressMode.ClampToEdge;     // MIRROR_ONCE: the shader mirrors about 0
                 default: return WGPUAddressMode.ClampToEdge;
             }
         }
