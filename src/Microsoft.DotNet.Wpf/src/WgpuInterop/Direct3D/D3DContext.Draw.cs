@@ -270,7 +270,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var blend = _blend?.Desc ?? D3D11_BLEND_DESC.Default();
             var depth = _depth?.Desc ?? D3D11_DEPTH_STENCIL_DESC.Default();
             var topo = _topology;
+            bool wire = Wireframe(raster, gd);
             var key = new StringBuilder(256);
+            if (wire) key.Append("wire|");
             if (gd != null) key.Append("gs:").Append(gd.Key).Append('|').Append((int)gd.Topology).Append('|');
             else key.Append(vs.Code.Hash).Append('|').Append(ps?.Code.Hash ?? 0).Append('|').Append(_layout?.Id ?? 0).Append('|').Append((int)topo).Append('|');
             if (_layout != null && gd == null)
@@ -322,7 +324,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                             if (attrs.Any(a => a.shaderLocation == sig.Register)) continue;
                             attrs.Add(new WGPUVertexAttribute { format = Formats.Vertex(e.Format), offset = e.Offset, shaderLocation = (uint)sig.Register });
                             instance |= e.PerInstance;
-                            if (e.PerInstance && e.StepRate > 1) D3DLog.Once("steprate", "instance data step rates above 1 are not supported");
                         }
                         if (attrs.Count == 0) continue;
                         var arr = attrs.ToArray();
@@ -395,7 +396,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         vertex = new WGPUVertexState { module = t.Vs, entryPoint = new WGPUStringView { data = m, length = 4 }, bufferCount = (nuint)bufArr.Length, buffers = vb },
                         primitive = new WGPUPrimitiveState
                         {
-                            topology = gd != null ? gd.Topology : topo switch
+                            topology = gd != null ? gd.Topology : wire ? WGPUPrimitiveTopology.LineList : topo switch
                             {
                                 D3D_PRIMITIVE_TOPOLOGY.POINTLIST => WGPUPrimitiveTopology.PointList,
                                 D3D_PRIMITIVE_TOPOLOGY.LINELIST => WGPUPrimitiveTopology.LineList,
@@ -403,7 +404,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                                 D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP => WGPUPrimitiveTopology.TriangleStrip,
                                 _ => WGPUPrimitiveTopology.TriangleList,
                             },
-                            stripIndexFormat = gd != null
+                            stripIndexFormat = wire ? WGPUIndexFormat.Undefined : gd != null
                                 ? (gd.Topology is WGPUPrimitiveTopology.LineStrip or WGPUPrimitiveTopology.TriangleStrip ? WGPUIndexFormat.Uint32 : WGPUIndexFormat.Undefined)
                                 : topo is D3D_PRIMITIVE_TOPOLOGY.LINESTRIP or D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP && _ib != null
                                 ? (_ibFormat == DXGI_FORMAT.R16_UINT ? WGPUIndexFormat.Uint16 : WGPUIndexFormat.Uint32) : WGPUIndexFormat.Undefined,
@@ -424,8 +425,82 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 foreach (var h in handles) h.Free();
             }
-            if (raster.FillMode == 2) D3DLog.Once("wire", "wireframe fill mode is drawn solid");
+            if (wire && raster.CullMode != 1) D3DLog.Once("wirecull", "wireframe draws the edges of back faces too (a line list is not culled)");
             return entry.Pipeline;
+        }
+
+        /// <summary>D3D11_FILL_WIREFRAME of a triangle list or strip, drawn as its edges (a line list).</summary>
+        private bool Wireframe(D3D11_RASTERIZER_DESC raster, GeometryDraw? gd)
+            => gd == null && raster.FillMode == 2 && _topology is D3D_PRIMITIVE_TOPOLOGY.TRIANGLELIST or D3D_PRIMITIVE_TOPOLOGY.TRIANGLESTRIP;
+
+        /// <summary>The edges of the draw's triangles, as indices (the draw's own: before the base vertex);
+        /// null if the index buffer cannot be read.</summary>
+        private uint[]? WireIndices(DrawArgs a)
+        {
+            uint n = a.Count;
+            uint[] src = new uint[n];
+            if (a.Indexed)
+            {
+                if (_ib == null || _ib.Gpu == IntPtr.Zero) return null;
+                bool wide = _ibFormat != DXGI_FORMAT.R16_UINT;
+                ulong at = _ibOffset + (ulong)a.First * (wide ? 4u : 2u);
+                ulong end = at + (ulong)n * (wide ? 4u : 2u);
+                if (end > _ib.Size) return null;
+                ulong from = at & ~3UL;
+                uint[] words = _ib.Shadow != null ? ShadowWords(_ib, from, end) : ReadWords(_ib.Gpu, from, (int)((end - from + 3) / 4));
+                for (uint i = 0; i < n; i++)
+                {
+                    if (wide) src[i] = words[(at - from) / 4 + i];
+                    else { ulong b = at - from + i * 2u; uint w = words[b / 4]; src[i] = (b & 2) != 0 ? w >> 16 : w & 0xFFFF; }
+                }
+            }
+            else for (uint i = 0; i < n; i++) src[i] = a.First + i;
+            uint restart = _ibFormat == DXGI_FORMAT.R16_UINT ? 0xFFFFu : 0xFFFFFFFFu;
+            var lines = new List<uint>((int)n * 2);
+            void Tri(uint x, uint y, uint z) { lines.Add(x); lines.Add(y); lines.Add(y); lines.Add(z); lines.Add(z); lines.Add(x); }
+            if (_topology == D3D_PRIMITIVE_TOPOLOGY.TRIANGLELIST)
+                for (uint i = 0; i + 2 < n; i += 3) Tri(src[i], src[i + 1], src[i + 2]);
+            else
+            {
+                // a strip, restarted where an indexed one has the cut index
+                int run = 0;
+                for (uint i = 0; i < n; i++)
+                {
+                    if (a.Indexed && src[i] == restart) { run = 0; continue; }
+                    if (++run >= 3) Tri(src[i - 2], src[i - 1], src[i]);
+                }
+            }
+            return lines.ToArray();
+        }
+
+        /// <summary>A slot's per-instance data for a step rate above 1, as WebGPU reads it: element j is the
+        /// D3D element first + (j - first) / rate (D3D11: StartInstanceLocation plus the instance over the rate).</summary>
+        private IntPtr ExpandInstances(D3DBuffer vb, ulong off, uint stride, uint rate, uint first, uint instances)
+        {
+            if (stride == 0) return IntPtr.Zero;
+            uint total = first + instances;
+            uint distinct = first + (instances + rate - 1) / rate;
+            ulong end = Math.Min(vb.Size, off + (ulong)distinct * stride);
+            if (end <= off) return IntPtr.Zero;
+            ulong from = off & ~3UL;
+            uint[] words = vb.Shadow != null ? ShadowWords(vb, from, end) : ReadWords(vb.Gpu, from, (int)((end - from + 3) / 4));
+            var src = System.Runtime.InteropServices.MemoryMarshal.AsBytes(words.AsSpan()).Slice((int)(off - from));
+            int have = (int)((end - off) / stride);
+            var dst = new byte[(ulong)total * stride + 4];
+            for (uint j = 0; j < total; j++)
+            {
+                int k = (int)(j < first ? j : first + (j - first) / rate);
+                if (k >= have) break;
+                src.Slice(k * (int)stride, (int)stride).CopyTo(dst.AsSpan((int)(j * stride)));
+            }
+            return Device.Gpu.CreateBufferMapped(dst.AsSpan(0, (int)((dst.Length - 4 + 3) & ~3)), WGPUBufferUsage.Vertex);
+        }
+
+        private static uint[] ShadowWords(D3DBuffer b, ulong from, ulong end)
+        {
+            var w = new uint[(end - from + 3) / 4];
+            new ReadOnlySpan<byte>(b.Shadow + from, (int)Math.Min((ulong)w.Length * 4, b.Size - from)).CopyTo(System.Runtime.InteropServices.MemoryMarshal.AsBytes(w.AsSpan()));
+            return w;
         }
 
         private int[] _slotOfBuffer = Array.Empty<int>();
@@ -697,6 +772,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             IntPtr pipeline = Pipeline(t, vs, _ps.Shader, out string? why);
             if (pipeline == IntPtr.Zero) { DrawsSkipped++; return; }
 
+            // wireframe: the triangles' edges (an indirect draw's counts were read back above if it needed them)
+            uint[]? wire = null;
+            if (Wireframe(_raster?.Desc ?? D3D11_RASTERIZER_DESC.Default(), null))
+            {
+                if (a.Indirect != null) a = ReadIndirect(a);
+                wire = a.Indirect == null ? WireIndices(a) : null;
+                if (wire == null) { D3DLog.Once("wireib", "a wireframe draw whose indices cannot be read is not drawn"); DrawsSkipped++; return; }
+            }
+
+            // per-instance data with a step rate above 1 (WebGPU steps every instance): each slot's elements
+            // repeated rate times, read before the pass (a read submits)
+            Dictionary<int, IntPtr>? stepped = null;
+            if (_layout != null && a.Indirect == null)
+                foreach (var group in _layout.Elements.GroupBy(e => e.Slot))
+                {
+                    var first = group.First();
+                    if (!first.PerInstance || first.StepRate <= 1 || _vb[group.Key] is not { Gpu: not 0 } svb) continue;
+                    IntPtr ex = ExpandInstances(svb, _vbOffset[group.Key], _vbStride[group.Key], first.StepRate, a.FirstInstance, a.Instances);
+                    if (ex == IntPtr.Zero) { DrawsSkipped++; return; }
+                    (stepped ??= new())[group.Key] = ex;
+                }
+
             // bind groups before the pass: the arena writes are queue writes
             // what WebGPU adds to its indices and D3D does not: indexed, the base vertex; not, the start vertex (WARP)
             _drawBaseVertex = a.Indexed ? a.BaseVertex : (int)a.First;
@@ -731,13 +828,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     var vb = _vb[group.Key];
                     if (vb == null || vb.Gpu == IntPtr.Zero) { D3DLog.Once("novb", $"draw without a vertex buffer in slot {group.Key}"); DrawsSkipped++; return; }
                     ulong off = _vbOffset[group.Key];
+                    if (stepped != null && stepped.TryGetValue(group.Key, out IntPtr expanded))
+                    {
+                        wgpuRenderPassEncoderSetVertexBuffer(_pass, index++, expanded, 0, (ulong)(a.FirstInstance + a.Instances) * _vbStride[group.Key]);
+                        wgpuBufferRelease(expanded);       // the recorded pass keeps it
+                        continue;
+                    }
                     wgpuRenderPassEncoderSetVertexBuffer(_pass, index++, vb.Gpu, off, vb.Size > off ? vb.Size - off : 0);
                 }
             }
 
             if (!ApplyRasterState()) { DrawsSkipped++; return; }
 
-            if (a.Indexed)
+            if (wire != null)
+            {
+                if (wire.Length == 0) { DrawsIssued++; return; }
+                IntPtr lines = Device.Gpu.CreateBufferMapped(System.Runtime.InteropServices.MemoryMarshal.AsBytes(wire.AsSpan()), WGPUBufferUsage.Index);
+                wgpuRenderPassEncoderSetIndexBuffer(_pass, lines, WGPUIndexFormat.Uint32, 0, (ulong)wire.Length * 4);
+                wgpuRenderPassEncoderDrawIndexed(_pass, (uint)wire.Length, a.Instances, 0, a.Indexed ? a.BaseVertex : 0, a.FirstInstance);
+                wgpuBufferRelease(lines);       // the recorded pass keeps it
+            }
+            else if (a.Indexed)
             {
                 if (_ib == null || _ib.Gpu == IntPtr.Zero) { DrawsSkipped++; return; }
                 var fmt = _ibFormat == DXGI_FORMAT.R16_UINT ? WGPUIndexFormat.Uint16 : WGPUIndexFormat.Uint32;

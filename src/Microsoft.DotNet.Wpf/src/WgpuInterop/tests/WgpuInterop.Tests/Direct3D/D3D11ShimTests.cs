@@ -71,7 +71,7 @@ namespace WgpuInterop.Tests.Direct3D
         /// <summary>Clears a 64x64 BGRA target to a dark blue, draws one triangle (vertex colour times a
         /// constant-buffer tint, moved by a constant-buffer offset), and reads the target back through a
         /// staging texture: BGRA rows, tightly packed.</summary>
-        internal static byte[] RenderTriangle(IntPtr dev, IntPtr ctx, ulong[]? samples = null)
+        internal static byte[] RenderTriangle(IntPtr dev, IntPtr ctx, ulong[]? samples = null, bool wireframe = false, uint stepRate = 0)
         {
             var created = new System.Collections.Generic.List<IntPtr>();
             IntPtr Keep(IntPtr p) { created.Add(p); return p; }
@@ -109,7 +109,9 @@ namespace WgpuInterop.Tests.Direct3D
                     {
                         var elements = stackalloc D3D11_INPUT_ELEMENT_DESC[2];
                         elements[0] = new D3D11_INPUT_ELEMENT_DESC { SemanticName = pn, Format = DXGI_FORMAT.R32G32B32_FLOAT, AlignedByteOffset = 0 };
-                        elements[1] = new D3D11_INPUT_ELEMENT_DESC { SemanticName = cn, Format = DXGI_FORMAT.R32G32B32A32_FLOAT, AlignedByteOffset = 12 };
+                        elements[1] = stepRate == 0
+                            ? new D3D11_INPUT_ELEMENT_DESC { SemanticName = cn, Format = DXGI_FORMAT.R32G32B32A32_FLOAT, AlignedByteOffset = 12 }
+                            : new D3D11_INPUT_ELEMENT_DESC { SemanticName = cn, Format = DXGI_FORMAT.R32G32B32A32_FLOAT, InputSlot = 1, InputSlotClass = 1, InstanceDataStepRate = stepRate };
                         Check(((delegate* unmanaged<IntPtr, D3D11_INPUT_ELEMENT_DESC*, uint, byte*, nuint, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateInputLayout))(dev, elements, 2, v, (nuint)TriangleVs.Length, &layout), "CreateInputLayout");
                         Keep(layout);
                     }
@@ -143,11 +145,32 @@ namespace WgpuInterop.Tests.Direct3D
                 ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, ps, null, 0);
                 ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetConstantBuffers))(ctx, 0, 1, &cb);
                 ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 1, &rtv, IntPtr.Zero);
+                if (wireframe)
+                {
+                    IntPtr rs;
+                    var rd = new D3D11_RASTERIZER_DESC { FillMode = 2, CullMode = 1, DepthClipEnable = 1 };
+                    Check(((delegate* unmanaged<IntPtr, D3D11_RASTERIZER_DESC*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRasterizerState))(dev, &rd, &rs), "CreateRasterizerState");
+                    Keep(rs);
+                    ((delegate* unmanaged<IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetState))(ctx, rs);
+                }
                 var vp = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
                 ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
                 float* clear = stackalloc float[] { 0.0f, 0.125f, 0.5f, 1f };
                 ((delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView))(ctx, rtv, clear);
-                if (samples == null) ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, 3, 0);
+                if (stepRate != 0)
+                {
+                    // the colour per instance, four instances over each other: the last one's colour shows
+                    float* colors = stackalloc float[] { 1, 0, 0, 1,  0, 1, 0, 1,  0, 0, 1, 1,  1, 1, 1, 1 };
+                    IntPtr ivb;
+                    var ibd = new D3D11_BUFFER_DESC { ByteWidth = 64, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.VERTEX_BUFFER };
+                    var iinit = new D3D11_SUBRESOURCE_DATA { pSysMem = colors };
+                    Check(((delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateBuffer))(dev, &ibd, &iinit, &ivb), "CreateBuffer instances");
+                    Keep(ivb);
+                    uint istride = 16, ioffset = 0;
+                    ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, uint*, uint*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetVertexBuffers))(ctx, 1, 1, &ivb, &istride, &ioffset);
+                    ((delegate* unmanaged<IntPtr, uint, uint, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DrawInstanced))(ctx, 3, 4, 0, 0);
+                }
+                else if (samples == null) ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, 3, 0);
                 else
                 {
                     // occlusion: one query around the draw; one open across a draw, a clear (a new pass) and the draw again
@@ -213,6 +236,51 @@ namespace WgpuInterop.Tests.Direct3D
                 // and the offset moved it right: the left tip's column is clear
                 var left = At(px, 17, H / 2 + 14);
                 Assert.Equal((128, 32, 0), ((int)left.B, (int)left.G, (int)left.R));
+            }
+            finally
+            {
+                Release(ctx);
+                Release(dev);
+            }
+        }
+
+        /// <summary>Per-instance data with a step rate of 2: instances 2 and 3 read the second element.</summary>
+        [Fact]
+        public void InstanceStepRates_AboveOne_RepeatTheElements()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            var (dev, ctx) = Ours();
+            try
+            {
+                byte[] px = RenderTriangle(dev, ctx, stepRate: 2);
+                // instance 3 is drawn last and reads element 1 (green), tinted by (0.5, 1, 1): G 255, R 0, B 0
+                var centre = At(px, W / 2 + 3, H / 2 + 4);
+                Assert.Equal((0, 255, 0), ((int)centre.B, (int)centre.G, (int)centre.R));
+            }
+            finally
+            {
+                Release(ctx);
+                Release(dev);
+            }
+        }
+
+        /// <summary>WIREFRAME fill: the triangle's edges, its inside the clear colour.</summary>
+        [Fact]
+        public void WireframeFill_DrawsTheTrianglesEdges()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            var (dev, ctx) = Ours();
+            try
+            {
+                byte[] px = RenderTriangle(dev, ctx, wireframe: true);
+                // the inside is the clear colour (B 128, G 32, R 0), where solid fill draws (64, 128, 128)
+                var centre = At(px, W / 2 + 3, H / 2 + 4);
+                Assert.Equal((128, 32, 0), ((int)centre.B, (int)centre.G, (int)centre.R));
+                // the bottom edge (y -0.5 in NDC: row 48) is drawn across the triangle's width
+                int edge = 0;
+                for (int y = 46; y <= 49; y++)
+                    for (int x = 24; x < 44; x++) if (At(px, x, y).R == 128) edge++;
+                Assert.True(edge >= 15, $"the bottom edge: {edge} pixels");
             }
             finally
             {
