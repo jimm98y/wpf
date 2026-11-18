@@ -821,6 +821,7 @@
     <Compile Include="System\Windows\Controls\VisualStates.cs" />
     <Compile Include="System\Windows\Controls\WebBrowser.cs" />
     <Compile Include="System\Windows\Controls\WebBrowser.WebView.cs" />
+    <Compile Include="System\Windows\Controls\WebBrowser.Dom.cs" />
     <Compile Include="System\Windows\Controls\WrapPanel.cs" />
     <Compile Include="System\Windows\ControlTemplate.cs" />
     <Compile Include="System\Windows\CornerRadius.cs" />

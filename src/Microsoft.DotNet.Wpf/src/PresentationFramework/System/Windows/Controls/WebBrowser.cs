@@ -502,17 +502,15 @@ namespace System.Windows.Controls
             {
                 VerifyAccess();
 
-                // This property has always returned the WebOC's COM document object, which callers
-                // cast to an mshtml interface. Nothing outside the IE host can produce one: a modern
-                // engine's DOM is reachable only through script, and handing back some other object
-                // would break every existing cast in a way that looks like a null-reference bug.
-                //
-                // So it throws, and says what to use instead. Applications that genuinely need
-                // mshtml can re-enable the legacy host on Windows with the AppContext switch
-                // documented on ActiveXHost.UseLegacyActiveX.
+                // This property has always returned the WebOC's COM document object, read through
+                // IDispatch (dynamic, VB late binding) or cast to an mshtml interface. A modern engine's
+                // DOM is reachable only through script, so the document comes back as an object whose
+                // members are the DOM's, reached by script (WebBrowser.Dom.cs): late-bound code works,
+                // a cast to an mshtml interface does not. No page yet: null, as the WebOC's was. The
+                // legacy host remains on Windows behind the AppContext switch on ActiveXHost.UseLegacyActiveX.
                 if (!UseLegacyActiveX)
                 {
-                    throw new PlatformNotSupportedException(SR.WebBrowserDocumentNotSupported);
+                    return WebViewBackend is { IsAttached: true } ? new WebViewDomObject(this, "document") : null;
                 }
 
                 return AxIWebBrowser2.Document;
