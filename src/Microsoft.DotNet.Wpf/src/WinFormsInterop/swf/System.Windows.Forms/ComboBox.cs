@@ -2545,6 +2545,16 @@ namespace System.Windows.Forms
 				get { return vscrollbar_ctrl; }
 			}
 
+			// where an item is drawn in the list, in its client coordinates; nothing for one scrolled out of it
+			internal Rectangle UIAItemBounds (int index)
+			{
+				if (index < 0 || index >= owner.Items.Count || index < top_item || index > last_item)
+					return Rectangle.Empty;
+				Rectangle item = GetItemDisplayRectangle (index, top_item);
+				item.Intersect (textarea_drawable);
+				return item;
+			}
+
 			#endregion
 			
 			class VScrollBarLB : VScrollBar

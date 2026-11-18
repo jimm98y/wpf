@@ -440,11 +440,12 @@ namespace WinFormsWebGpu.Accessibility
         // ---- what is picked out of it -------------------------------------------------------------
 
         /// <summary>A control that holds a set of things and keeps one or more of them picked out: a
-        /// list, a details view, a tree, a tab strip. Windows publishes the set through the container
-        /// and the state through each item, so both halves are answered here.</summary>
+        /// list, a details view, a tree, a tab strip, a combo box (whose set is its list's entries).
+        /// Windows publishes the set through the container and the state through each item, so both
+        /// halves are answered here.</summary>
         internal static bool HasSelection(Control c)
         {
-            return c is ListView || c is ListBox || c is TreeView || c is TabControl;
+            return c is ListView || c is ListBox || c is TreeView || c is TabControl || c is ComboBox;
         }
 
         internal static bool CanSelectMultiple(Control c)
@@ -495,6 +496,11 @@ namespace WinFormsWebGpu.Accessibility
                 var tabs = c as TabControl;
                 if (tabs != null && tabs.SelectedTab != null)
                     picked.Add(tabs.SelectedTab);
+                // the entry the box is on, which is the one its list publishes -- named whether or
+                // not the list is open, as Windows' combo box names it
+                var combo = c as ComboBox;
+                if (combo != null && combo.SelectedIndex >= 0 && combo.SelectedIndex < combo.Items.Count)
+                    picked.Add(A11yItems.ComboItemKey(combo, combo.SelectedIndex));
             }
             catch (Exception)
             {

@@ -142,6 +142,9 @@ namespace WinFormsWebGpu.Accessibility
                     }
                 }
 
+                if (key.Owner is ComboBox && key.Kind == "cbitem")
+                    return Key(key.Owner, "cblist", 0);
+
                 var calendar = key.Owner as MonthCalendar;
                 if (calendar != null)
                 {
@@ -250,13 +253,18 @@ namespace WinFormsWebGpu.Accessibility
                 }
 
                 // A combo box reads as the field the value shows in and the button that opens
-                // the list, which is what Windows publishes for one whether or not it is editable.
+                // the list, which is what Windows publishes for one whether or not it is editable,
+                // and, while the list is on the screen, the list with its entries -- the way a
+                // reader gets from the box to what can be picked in it. A simple combo box shows
+                // its list all the time; the others while it is dropped down.
                 var combo = control as ComboBox;
                 if (combo != null)
                 {
                     list.Add(Key(combo, "cbfield", 0));
                     if (combo.DropDownStyle != ComboBoxStyle.Simple)
                         list.Add(Key(combo, "cbopen", 0));
+                    if (ComboListShown(combo))
+                        list.Add(Key(combo, "cblist", 0));
                     return list;
                 }
 
@@ -387,6 +395,16 @@ namespace WinFormsWebGpu.Accessibility
                 var key = element as ItemKey;
                 if (key != null)
                 {
+                    // A combo box's list reads as all its entries, as a list box's does: the ones
+                    // scrolled out of it are there, off the screen.
+                    var combo_box = key.Owner as ComboBox;
+                    if (combo_box != null && key.Kind == "cblist")
+                    {
+                        for (int i = 0; i < combo_box.Items.Count; i++)
+                            list.Add(Key(combo_box, "cbitem", i));
+                        return;
+                    }
+
                     var calendar = key.Owner as MonthCalendar;
                     if (calendar != null)
                     {
@@ -449,6 +467,8 @@ namespace WinFormsWebGpu.Accessibility
                         return A11yRole.Button;
                     case "lvheader": return A11yRole.Pane;
                     case "cbfield": return A11yRole.Text;
+                    case "cblist": return A11yRole.List;
+                    case "cbitem": return A11yRole.ListItem;
                     case "cbopen": case "spin": case "trackpage": return A11yRole.Button;
                     case "trackthumb": return A11yRole.Thumb;
                     case "calpane": case "calrow": return A11yRole.Pane;
@@ -635,6 +655,15 @@ namespace WinFormsWebGpu.Accessibility
                         return A11y.NameOf(key.Owner);
                     if (key.Kind == "cbopen")
                         return "Open";
+                    // the list is the box's, and is called after it; an entry is its text, as the
+                    // box draws it (DisplayMember, FormatString)
+                    if (key.Kind == "cblist")
+                        return A11y.NameOf(key.Owner);
+                    if (key.Kind == "cbitem")
+                    {
+                        var entries = (ComboBox) key.Owner;
+                        return key.Index < entries.Items.Count ? entries.GetItemText(entries.Items[key.Index]) : string.Empty;
+                    }
                     if (key.Kind == "spin")
                         return key.Index == 0 ? "Up" : "Down";
                     if (key.Kind == "trackpage")
@@ -746,6 +775,8 @@ namespace WinFormsWebGpu.Accessibility
                         return Offset(new Rectangle(Point.Empty, key.Owner.ClientSize), origin);
                     if (key.Kind == "cbopen")
                         return Offset(ComboOpenBounds((ComboBox) key.Owner), origin);
+                    if (key.Kind == "cblist" || key.Kind == "cbitem")
+                        return ComboListPartBounds((ComboBox) key.Owner, key);
                     if (key.Kind == "spin")
                     {
                         Rectangle half = new Rectangle(Point.Empty, key.Owner.ClientSize);
@@ -907,6 +938,32 @@ namespace WinFormsWebGpu.Accessibility
 
             row.Intersect(new Rectangle(Point.Empty, list.items_area.Size));
             return row.Width <= 0 || row.Height <= 0 ? Rectangle.Empty : row;
+        }
+
+        /// <summary>Whether a combo box's list is on the screen: always for a simple one, while it is
+        /// dropped down for the others.</summary>
+        private static bool ComboListShown(ComboBox combo)
+        {
+            ComboBox.ComboListBox list = combo.UIAComboListBox;
+            if (list == null || list.IsDisposed)
+                return false;
+            return combo.DropDownStyle == ComboBoxStyle.Simple ? list.Visible : combo.DroppedDown && list.Visible;
+        }
+
+        /// <summary>A combo box's list, or one of its entries, in driver space. The list is a window
+        /// of its own while it is dropped down, below the box rather than inside it, so it is placed
+        /// from where the list itself is; an entry scrolled out of it, or a list that is shut, is
+        /// nowhere.</summary>
+        private static Rectangle ComboListPartBounds(ComboBox combo, ItemKey key)
+        {
+            if (!ComboListShown(combo))
+                return Rectangle.Empty;
+            ComboBox.ComboListBox list = combo.UIAComboListBox;
+            Point origin = A11y.ClientOrigin(list);
+            if (key.Kind == "cblist")
+                return Offset(new Rectangle(Point.Empty, list.ClientSize), origin);
+            Rectangle item = list.UIAItemBounds(key.Index);
+            return item.IsEmpty ? Rectangle.Empty : Offset(item, origin);
         }
 
         /// <summary>The button that drops a combo box's list down, in the box's own coordinates.</summary>
@@ -1147,6 +1204,12 @@ namespace WinFormsWebGpu.Accessibility
             return Key(list, "row", index);
         }
 
+        /// <summary>The stand-in for one of a combo box's entries, the one its list publishes.</summary>
+        internal static object ComboItemKey(ComboBox combo, int index)
+        {
+            return Key(combo, "cbitem", index);
+        }
+
         /// <summary>Whether an item is one of a set its control picks from -- a row in a list, a row
         /// in a details view, a node in a tree. Windows publishes those as selectable, and it is the
         /// only way anything but a pointer can put the selection on a particular row.</summary>
@@ -1155,7 +1218,7 @@ namespace WinFormsWebGpu.Accessibility
             if (element is ListViewItem || element is TreeNode)
                 return true;
             var key = element as ItemKey;
-            return key != null && key.Kind == "row" && key.Owner is ListBox;
+            return key != null && (key.Kind == "row" && key.Owner is ListBox || key.Kind == "cbitem" && key.Owner is ComboBox);
         }
 
         internal static bool IsSelected(object element)
@@ -1169,6 +1232,8 @@ namespace WinFormsWebGpu.Accessibility
                 if (node != null)
                     return node.TreeView != null && ReferenceEquals(node.TreeView.SelectedNode, node);
                 var key = element as ItemKey;
+                if (key != null && key.Kind == "cbitem" && key.Owner is ComboBox combo)
+                    return combo.SelectedIndex == key.Index;
                 var list = key == null ? null : key.Owner as ListBox;
                 return list != null && key.Kind == "row" && list.SelectedIndices.Contains(key.Index);
             }
@@ -1204,6 +1269,16 @@ namespace WinFormsWebGpu.Accessibility
                     return;
                 }
                 var key = element as ItemKey;
+                // A combo box picks one entry, as a single-selection list box does: selecting puts
+                // the box on it, taking it off leaves the box on nothing.
+                if (key != null && key.Kind == "cbitem" && key.Owner is ComboBox combo)
+                {
+                    if (selected && key.Index < combo.Items.Count)
+                        combo.SelectedIndex = key.Index;
+                    else if (!selected && combo.SelectedIndex == key.Index)
+                        combo.SelectedIndex = -1;
+                    return;
+                }
                 var list = key == null ? null : key.Owner as ListBox;
                 if (list == null || key.Kind != "row")
                     return;

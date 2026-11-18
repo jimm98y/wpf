@@ -82,9 +82,6 @@ namespace System.Windows.Forms {
 		private DataGridViewEditMode editMode;
 		private bool enableHeadersVisualStyles = true;
 		private DataGridViewCell firstDisplayedCell;
-		private int firstDisplayedScrollingColumnHiddenWidth;
-		private int firstDisplayedScrollingColumnIndex;
-		private int firstDisplayedScrollingRowIndex;
 		private Color gridColor = ThemeEngine.Current.DataGridViewGridColor;
 		private int horizontalScrollingOffset;
 		private DataGridViewCell hover_cell = null;
@@ -206,7 +203,6 @@ namespace System.Windows.Forms {
 			defaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
 			defaultCellStyle.WrapMode = DataGridViewTriState.False;
 			editMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
-			firstDisplayedScrollingColumnHiddenWidth = 0;
 			isCurrentCellDirty = false;
 			multiSelect = true;
 			readOnly = false;
@@ -887,21 +883,85 @@ namespace System.Windows.Forms {
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		public int FirstDisplayedScrollingColumnHiddenWidth {
-			get { return firstDisplayedScrollingColumnHiddenWidth; }
+			// how much of the first displayed column is scrolled off its left: the offset less the widths of the
+			// columns before it (the same count the horizontal bar's Scroll handler keeps)
+			get {
+				if (FirstDisplayedScrollingColumnIndex < 0)
+					return 0;
+				return Math.Max (0, horizontalScrollingOffset - ColumnsLeftOf (first_col_index));
+			}
 		}
 
+		// The first displayed row and column are the ones the grid lays itself out from (first_row_index,
+		// first_col_index), which its bars move. Setting them scrolls the grid as Windows' does: through its bars,
+		// so the bars, the rows drawn and the Scroll event all follow, as when the user drags a thumb there. A grid
+		// near its end scrolls as far as it goes, and then reads back the row it stopped at.
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public int FirstDisplayedScrollingColumnIndex {
-			get { return firstDisplayedScrollingColumnIndex; }
-			set { firstDisplayedScrollingColumnIndex = value; }
+			get {
+				if (Columns.Count == 0)
+					return -1;
+				return Math.Min (first_col_index, Columns.Count - 1);
+			}
+			set {
+				if (value < 0 || value >= Columns.Count)
+					throw new ArgumentOutOfRangeException ("value");
+				if (!Columns [value].Visible)
+					throw new InvalidOperationException ("The column cannot be the first displayed column because it is not visible.");
+				if (Columns [value].Frozen)
+					throw new InvalidOperationException ("The column cannot be the first displayed column because it is frozen.");
+				ScrollHorizontallyTo (ColumnsLeftOf (value));
+			}
 		}
 
 		[Browsable (false)]
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public int FirstDisplayedScrollingRowIndex {
-			get { return firstDisplayedScrollingRowIndex; }
-			set { firstDisplayedScrollingRowIndex = value; }
+			get {
+				if (Rows.Count == 0)
+					return -1;
+				return Math.Min (first_row_index, Rows.Count - 1);
+			}
+			set {
+				if (value < 0 || value >= Rows.Count)
+					throw new ArgumentOutOfRangeException ("value");
+				if (!Rows [value].Visible)
+					throw new InvalidOperationException ("The row cannot be the first displayed row because it is not visible.");
+				if (Rows [value].Frozen)
+					throw new InvalidOperationException ("The row cannot be the first displayed row because it is frozen.");
+				int top = 0;
+				for (int i = 0; i < value; i++)
+					if (Rows [i].Visible)
+						top += Rows [i].Height;
+				ScrollVerticallyTo (top);
+			}
+		}
+
+		// the width of the columns before a column, counted as the horizontal bar's Scroll handler counts them
+		int ColumnsLeftOf (int index)
+		{
+			int left = 0;
+			for (int i = 0; i < index && i < Columns.Count; i++)
+				left += Columns [i].Width;
+			return left;
+		}
+
+		// A bar put at an offset as dragging its thumb there puts it: the ranges brought up to date first (the grid
+		// recomputes them only before it scrolls), the value kept to what a page of the bar leaves, and the grid then
+		// told through the bar's Scroll, which settles it on a row and raises the grid's own Scroll.
+		void ScrollVerticallyTo (int offset)
+		{
+			RefreshScrollBars ();
+			verticalScrollBar.SafeValueSet (Math.Min (offset, Math.Max (verticalScrollBar.Minimum, verticalScrollBar.MaximumAllowed)));
+			OnVScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, verticalScrollBar.Value, ScrollOrientation.VerticalScroll));
+		}
+
+		void ScrollHorizontallyTo (int offset)
+		{
+			RefreshScrollBars ();
+			horizontalScrollBar.SafeValueSet (Math.Min (offset, Math.Max (horizontalScrollBar.Minimum, horizontalScrollBar.MaximumAllowed)));
+			OnHScrollBarScroll (this, new ScrollEventArgs (ScrollEventType.ThumbPosition, horizontalScrollBar.Value, ScrollOrientation.HorizontalScroll));
 		}
 
 		[Browsable (false)]
@@ -936,7 +996,12 @@ namespace System.Windows.Forms {
 		[DesignerSerializationVisibility (DesignerSerializationVisibility.Hidden)]
 		public int HorizontalScrollingOffset {
 			get { return horizontalScrollingOffset; }
-			set { horizontalScrollingOffset = value; }
+			// scrolls the grid sideways, as Windows' does, by its horizontal bar; past the end it goes as far as it can
+			set {
+				if (value < 0)
+					throw new ArgumentOutOfRangeException ("value");
+				ScrollHorizontallyTo (value);
+			}
 		}
 
 		[Browsable (false)]

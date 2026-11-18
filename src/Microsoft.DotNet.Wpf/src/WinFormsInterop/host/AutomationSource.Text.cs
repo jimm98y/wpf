@@ -3,12 +3,13 @@
 //
 // The answers are read off the box's own layout (its Document), not worked out again from the string, because the
 // lines a reader steps through have to be the ones on the screen: a wrapped paragraph is several lines there, and a
-// line of the text that is wider than the box is one line however long it is. TextBoxBase's public geometry is not
-// usable for this as it stands. Its GetPositionFromCharIndex adds the scroll offset where the box takes it away and
-// leaves out the frame the text is inset by, and GetCharIndexFromPosition expects a point in the document rather
-// than in the box -- so a box scrolled by a line answered for the line below. What is used instead is what the box
-// itself draws the caret and hit-tests the mouse with (Document.SetCaretPos, FindCursor): a character sits at the
-// frame's inset, plus its cell in the line, less the scroll.
+// line of the text that is wider than the box is one line however long it is. TextBoxBase's public geometry answers
+// less than is asked here: GetPositionFromCharIndex gives only where a character starts, where a range's rectangle
+// needs each character's cell, and GetCharIndexFromPosition gives the caret position nearest a point (as
+// EM_CHARFROMPOS does), where the question is which character is under it. So the cells are read from the lines, in
+// the same client coordinates those methods use -- the coordinates the box draws the caret and hit-tests the mouse
+// in (Document.SetCaretPos, FindCursor): a character sits at the frame's inset, plus its cell in the line, less the
+// scroll.
 //
 // A password box has no text to give: its characters are what it hides.
 

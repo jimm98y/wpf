@@ -275,7 +275,7 @@ namespace System.Windows.Forms
 			}
 		}
 
-		int MaximumAllowed {
+		internal int MaximumAllowed {
 			get {
 				return use_manual_thumb_size ? maximum - manual_thumb_size + 1 :
 					maximum - LargeChange + 1;

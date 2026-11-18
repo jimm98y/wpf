@@ -1006,7 +1006,7 @@ namespace System.Windows.Forms
 		internal virtual char GetCharFromPositionInternal (Point p)
 		{
 			int index;
-			LineTag tag = document.FindCursor (p.X, p.Y, out index);
+			LineTag tag = FindCursorAtClient (p, out index);
 			if (tag == null)
 				return (char) 0; // Shouldn't happen
 
@@ -1031,10 +1031,17 @@ namespace System.Windows.Forms
 			return tag.Line.text [index];
 		}
 
+		// The point is in the box's client coordinates, as EM_CHARFROMPOS takes it: the mouse handlers' way into
+		// the layout, the point plus the scroll (FindCursor takes the frame's inset off itself).
+		LineTag FindCursorAtClient (Point pt, out int index)
+		{
+			return document.FindCursor (pt.X + document.ViewPortX, pt.Y + document.ViewPortY, out index);
+		}
+
 		public virtual int GetCharIndexFromPosition (Point pt)
 		{
 			int line_index;
-			LineTag tag = document.FindCursor (pt.X, pt.Y, out line_index);
+			LineTag tag = FindCursorAtClient (pt, out line_index);
 			if (tag == null)
 				return 0;
 
@@ -1070,9 +1077,10 @@ namespace System.Windows.Forms
 			float x = line.widths [pos];
 			if (line.Visual is Line.VisualLayout v)
 				x = pos < v.Left.Length ? v.Left [pos] : line.CaretX (pos);
-			return new Point ((int) (x +
-							  line.X + document.viewport_x),
-					line.Y + document.viewport_y + tag.Shift);
+			// in client coordinates, as EM_POSFROMCHAR answers: where the caret is drawn for it (SetCaretPos), the
+			// frame's inset plus the character's place in the document, less the scroll
+			return new Point ((int) (document.OffsetX + line.X + x - document.ViewPortX),
+					document.OffsetY + line.Y + tag.Shift - document.ViewPortY);
 		}
 
 		public int GetFirstCharIndexFromLine (int lineNumber)
@@ -2787,7 +2795,8 @@ namespace System.Windows.Forms
 			
 			document.CharIndexToLineTag (index, out line_out, out tag_out, out pos);
 
-			return line_out.LineNo;
+			// the document counts its lines from 1; EM_LINEFROMCHAR, and GetFirstCharIndexFromLine, from 0
+			return line_out.LineNo - 1;
 		}
 
 		protected override void OnMouseUp (MouseEventArgs mevent)

@@ -22,9 +22,8 @@ namespace WinFormsWebGpu.Accessibility
     {
         // ---- selection ----------------------------------------------------------------------------------------
 
-        // A list, a details view, a tree and a tab strip (A11y.HasSelection). A combo box is not one here: its list's
-        // entries are not elements of this tree (it publishes the field and the button that opens the list), so there
-        // would be nothing for its selection to point at.
+        // A list, a details view, a tree, a tab strip and a combo box (A11y.HasSelection). A combo box's selection is
+        // the entry of its list it is on, the same node its list publishes while it is open (A11yItems).
         public int[] GetSelectedIds(int id)
         {
             if (ElementOf(id) is not Control c || !A11y.HasSelection(c)) return Array.Empty<int>();
@@ -347,8 +346,9 @@ namespace WinFormsWebGpu.Accessibility
             else if (index >= list.TopIndex + rows) list.TopIndex = index - rows + 1;
         }
 
-        // A grid's row (and a cell's column) into view. The grid's own FirstDisplayedScrollingRowIndex does not move it
-        // in this WinForms, so it is moved by its bars, as it moves itself to show the current cell (MoveCurrentCell).
+        // A grid's row (and a cell's column) into view, as Windows' cell and row accessible objects bring theirs: one
+        // that is not wholly shown is made the first displayed (FirstDisplayedScrollingRowIndex and ColumnIndex, which
+        // scroll the grid, and near its end scroll it as far as it goes).
         private static void GridPartIntoView(DataGridView grid, ItemKey key)
         {
             int row = -1, column = -1;
@@ -363,8 +363,8 @@ namespace WinFormsWebGpu.Accessibility
                     if (grid.Rows[i].Visible) top += grid.Rows[i].Height;
                 int offset = grid.VerticalScrollingOffset;
                 int view = ViewHeight(grid);
-                if (top < offset) MoveBar(grid, grid.verticalScrollBar, top);
-                else if (top + grid.Rows[row].Height > offset + view) MoveBar(grid, grid.verticalScrollBar, top + grid.Rows[row].Height - view);
+                if ((top < offset || top + grid.Rows[row].Height > offset + view) && !grid.Rows[row].Frozen)
+                    grid.FirstDisplayedScrollingRowIndex = row;
             }
             if (column >= 0 && column < grid.Columns.Count && grid.Columns[column].Visible && !grid.Columns[column].Frozen && Scrolls(grid.horizontalScrollBar))
             {
@@ -377,8 +377,8 @@ namespace WinFormsWebGpu.Accessibility
                 int offset = grid.HorizontalScrollingOffset;
                 int view = grid.ClientSize.Width - (grid.RowHeadersVisible ? grid.RowHeadersWidth : 0) - (grid.verticalScrollBar.VisibleInternal ? grid.verticalScrollBar.Width : 0);
                 int width = grid.Columns[column].Width;
-                if (left < offset) MoveBar(grid, grid.horizontalScrollBar, left);
-                else if (left + width > offset + view) MoveBar(grid, grid.horizontalScrollBar, left + width - view);
+                if (left < offset || left + width > offset + view)
+                    grid.FirstDisplayedScrollingColumnIndex = column;
             }
         }
 
@@ -473,6 +473,7 @@ namespace WinFormsWebGpu.Accessibility
                     case ListView view: view.SelectedIndexChanged += (_, _) => Raise(AutomationChangeKind.SelectionContainerChanged, view); break;
                     case TreeView tree: tree.AfterSelect += (_, _) => Raise(AutomationChangeKind.SelectionContainerChanged, tree); break;
                     case TabControl tabs: tabs.SelectedIndexChanged += (_, _) => Raise(AutomationChangeKind.SelectionContainerChanged, tabs); break;
+                    case ComboBox combo: combo.SelectedIndexChanged += (_, _) => Raise(AutomationChangeKind.SelectionContainerChanged, combo); break;
                 }
 
                 if (c is DataGridView grid) grid.Scroll += (_, _) => Raise(AutomationChangeKind.ScrollChanged, grid);

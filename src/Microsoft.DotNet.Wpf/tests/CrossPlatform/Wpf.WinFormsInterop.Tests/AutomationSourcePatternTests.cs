@@ -166,8 +166,8 @@ namespace Wpf.WinFormsInterop.Tests
                     Assert.True(tree.TryGetTextLine(id, words.Length - 1, out int start, out _, out int number));
                     Assert.True(number > 0, "the paragraph wraps");
                     Assert.True(start > 0);
-                    // numbered from 0, as GetFirstCharIndexFromLine numbers them (this WinForms' GetLineFromCharIndex
-                    // answers the layout's own line numbers, from 1)
+                    // numbered from 0, as the box's own GetLineFromCharIndex and GetFirstCharIndexFromLine number them
+                    Assert.Equal(box.GetLineFromCharIndex(words.Length - 1), number);
                     Assert.Equal(box.GetFirstCharIndexFromLine(number), start);
                     // the first line holds the first word and stops before the text does
                     Assert.True(tree.TryGetTextLine(id, 0, out int s0, out int l0, out int n0));
@@ -261,6 +261,88 @@ namespace Wpf.WinFormsInterop.Tests
                     Assert.True(tree.GetState(tc).HasFlag(AccessibleState.SelectionContainer));
                     tabs.SelectedIndex = 1;
                     Assert.Equal(new[] { Find(tree, root, "second") }, tree.GetSelectedIds(tc));
+                });
+            });
+        }
+
+        [Fact]
+        public void ComboBoxSelectionIsAnEntryOfItsList()
+        {
+            OnSta(() =>
+            {
+                var form = new SWF.Form { ClientSize = new Size(300, 250) };
+                var combo = new SWF.ComboBox { Name = "combo", DropDownStyle = SWF.ComboBoxStyle.DropDownList, Bounds = new Rectangle(10, 10, 150, 24) };
+                combo.Items.AddRange(new object[] { "red", "green", "blue" });
+                form.Controls.Add(combo);
+                With(form, (tree, root, site) =>
+                {
+                    int c = Find(tree, root, "combo");
+                    Assert.True(tree.GetState(c).HasFlag(AccessibleState.SelectionContainer));
+                    Assert.False(tree.GetState(c).HasFlag(AccessibleState.MultiSelectable));
+                    Assert.Empty(tree.GetSelectedIds(c));
+
+                    // shut, it is the field and the button that opens the list
+                    Assert.Equal(2, tree.GetChildIds(c).Length);
+
+                    combo.SelectedIndex = 2;
+                    int[] picked = tree.GetSelectedIds(c);
+                    Assert.Single(picked);
+                    Assert.Equal("blue", tree.GetName(picked[0]));
+                    Assert.Equal(7, tree.GetRole(picked[0]));   // ListItem
+                    AccessibleState pickedState = tree.GetState(picked[0]);
+                    Assert.True(pickedState.HasFlag(AccessibleState.Selectable));
+                    Assert.True(pickedState.HasFlag(AccessibleState.Selected));
+
+                    // open, the list is published with its entries, and the selection is one of them
+                    combo.DroppedDown = true;
+                    SWF.Application.DoEvents();
+                    try
+                    {
+                        int list = Array.Find(tree.GetChildIds(c), id => tree.GetRole(id) == 8);   // List
+                        Assert.NotEqual(0, list);
+                        Assert.Equal(c, tree.GetParentId(list));
+                        int[] entries = tree.GetChildIds(list);
+                        Assert.Equal(new[] { "red", "green", "blue" }, Array.ConvertAll(entries, tree.GetName));
+                        Assert.Equal(entries[2], picked[0]);
+                        Assert.Equal(list, tree.GetParentId(entries[0]));
+                        Assert.True(tree.GetState(entries[0]).HasFlag(AccessibleState.Selectable));
+                        Assert.False(tree.GetState(entries[0]).HasFlag(AccessibleState.Selected));
+                        // an entry on the screen is where the list draws it: in the list, which drops out of the
+                        // box -- below it, or above it where the screen has no room below
+                        RectangleF first = Bounds(tree, entries[0]), box = Bounds(tree, c), shown = Bounds(tree, list);
+                        Assert.True(shown.Contains(first), $"{first} in {shown}");
+                        Assert.True(first.Top >= box.Bottom - 1 || first.Bottom <= box.Top + 1, $"{first} outside {box}");
+
+                        // selecting an entry puts the box on it
+                        Assert.True(tree.DoAction(entries[1], AccessibleAction.Select));
+                        Assert.Equal(1, combo.SelectedIndex);
+                        Assert.Equal(new[] { entries[1] }, tree.GetSelectedIds(c));
+                    }
+                    finally { combo.DroppedDown = false; SWF.Application.DoEvents(); }
+
+                    Assert.Equal(2, tree.GetChildIds(c).Length);
+                });
+            });
+        }
+
+        [Fact]
+        public void SimpleComboBoxAlwaysPublishesItsList()
+        {
+            OnSta(() =>
+            {
+                var form = new SWF.Form { ClientSize = new Size(300, 250) };
+                var combo = new SWF.ComboBox { Name = "combo", DropDownStyle = SWF.ComboBoxStyle.Simple, Bounds = new Rectangle(10, 10, 150, 150) };
+                combo.Items.AddRange(new object[] { "one", "two" });
+                form.Controls.Add(combo);
+                With(form, (tree, root, site) =>
+                {
+                    int c = Find(tree, root, "combo");
+                    int list = Array.Find(tree.GetChildIds(c), id => tree.GetRole(id) == 8);
+                    Assert.NotEqual(0, list);
+                    int[] entries = tree.GetChildIds(list);
+                    Assert.Equal(new[] { "one", "two" }, Array.ConvertAll(entries, tree.GetName));
+                    combo.SelectedIndex = 0;
+                    Assert.Equal(new[] { entries[0] }, tree.GetSelectedIds(c));
                 });
             });
         }
