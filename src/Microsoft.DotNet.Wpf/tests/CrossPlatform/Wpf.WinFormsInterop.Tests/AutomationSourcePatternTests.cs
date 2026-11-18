@@ -93,6 +93,8 @@ namespace Wpf.WinFormsInterop.Tests
             form.MainMenuStrip = menu;
             With(form, (tree, root, site) =>
             {
+                Assert.Equal("Open", tree.GetName(Find(tree, root, "open")));           // the mnemonic's ampersand is not read
+                Assert.Equal("Name:", tree.GetName(Find(tree, root, "box")));
                 Assert.Equal("Alt+O", tree.GetAccessKey(Find(tree, root, "open")));
                 Assert.Equal("Alt+N", tree.GetAccessKey(Find(tree, root, "box")));
                 Assert.Equal(string.Empty, tree.GetAccessKey(Find(tree, root, "plain")));

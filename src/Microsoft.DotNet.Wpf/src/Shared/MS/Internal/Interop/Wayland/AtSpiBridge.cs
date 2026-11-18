@@ -1091,7 +1091,11 @@ namespace MS.Internal.Interop.Wayland
         /// </summary>
         internal static string KeyBindingOf(IAutomationTreeSource tree, int node)
         {
-            string mnemonic = KeyName(tree.GetAccessKey(node) ?? string.Empty);
+            // A bare letter is what WPF reports for a control's access key ("O" for "_Open"), and pressed
+            // with Alt; only a menu item's is the letter alone, as GTK writes a menu's mnemonic too.
+            string access = tree.GetAccessKey(node) ?? string.Empty;
+            if (access.Length == 1 && tree.GetRole(node) != 11) access = "Alt+" + access;     // 11: MenuItem
+            string mnemonic = KeyName(access);
             string shortcut = KeyName(tree.GetAcceleratorKey(node) ?? string.Empty);
             if (shortcut.Length == 0) return mnemonic;
             return mnemonic + ";;" + shortcut;

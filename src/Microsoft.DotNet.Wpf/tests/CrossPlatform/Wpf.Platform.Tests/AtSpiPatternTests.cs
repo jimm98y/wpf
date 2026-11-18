@@ -41,11 +41,22 @@ namespace Wpf.Platform.Tests
         public void TheKeyBindingIsMnemonicSequenceAndShortcut()
         {
             var tree = new PatternTree();
-            tree.Keys[1] = ("S", "Ctrl+S");
+            tree.Keys[1] = ("S", "Ctrl+S");     // a drop-down menu item
+            tree.Roles[1] = 11;
             tree.Keys[2] = ("Alt+O", "");
-            Assert.Equal("s;;<Control>s", AtSpiBridge.KeyBindingOf(tree, 1));
+            tree.Keys[4] = ("O", "");           // WPF's button: the letter alone, pressed with Alt
+            Assert.Equal("s;;<Control>s", AtSpiBridge.KeyBindingOf(tree, 1));       // a menu item's letter stays bare
             Assert.Equal("<Alt>o", AtSpiBridge.KeyBindingOf(tree, 2));
             Assert.Equal(string.Empty, AtSpiBridge.KeyBindingOf(tree, 3));
+            Assert.Equal("<Alt>o", AtSpiBridge.KeyBindingOf(tree, 4));
+        }
+
+        [Fact]
+        public void AGridItemIsACell_EvenWhenItsTypeIsARows()
+        {
+            // a WinForms DataGridView cell: DataItem with the grid-item pattern; a WPF DataGrid row: DataItem alone
+            Assert.Equal(AtSpiRoles.RoleNameFor(29, AccessibleState.GridItem), "table cell");
+            Assert.Equal(AtSpiRoles.RoleNameFor(29, AccessibleState.None), "table row");
         }
 
         // ---- UTF-16 and characters ----
@@ -603,7 +614,8 @@ namespace Wpf.Platform.Tests
             public int GetRootId(IntPtr windowHandle) => 0;
             public int[] GetChildIds(int id) => Children.TryGetValue(id, out var c) ? c : Array.Empty<int>();
             public int GetParentId(int id) => IAutomationTreeSource.InvalidNode;
-            public int GetRole(int id) => -1;
+            internal readonly Dictionary<int, int> Roles = new();
+            public int GetRole(int id) => Roles.TryGetValue(id, out int r) ? r : -1;
             public string GetName(int id) => string.Empty;
             public string GetAutomationId(int id) => string.Empty;
             public string GetHelpText(int id) => string.Empty;

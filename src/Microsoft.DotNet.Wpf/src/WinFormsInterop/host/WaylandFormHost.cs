@@ -607,8 +607,8 @@ namespace System.Windows.Forms
 			_window.Closed += OnCloseRequested;
 			_window.ActiveChanged += OnActiveChanged;
 			EmbeddedScenes.PublishHostWindow (_window.Handle, (float)_scale, _form);
-			// the form's tree for AT-SPI, which knows the window by its surface (WaylandWindow attaches the bridge)
-			_a11yHandle = _window.Surface;
+			// the form's tree for AT-SPI, which knows the window by its handle (WaylandWindow attaches the bridge with it)
+			_a11yHandle = _window.Handle;
 			WinFormsWebGpu.Accessibility.AutomationSource.Register (this);
 			bool active = _window.IsActive;
 			_ready = true;

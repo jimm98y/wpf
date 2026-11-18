@@ -130,6 +130,10 @@ namespace MS.Internal.Interop.Wayland
                 else if ((state & AccessibleState.Scrollable) != 0) return ScrollPane;
             }
 
+            // a grid item is a cell whatever its type says: WinForms' DataGridView cells are DataItems,
+            // which for a row is right (WPF's DataGrid rows), but a row is never a grid item itself
+            if (role == TableRow && (state & AccessibleState.GridItem) != 0) return TableCell;
+
             if (role == Frame && (state & AccessibleState.Modal) != 0) return Dialog;
             return role;
         }

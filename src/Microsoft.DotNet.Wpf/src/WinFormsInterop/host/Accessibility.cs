@@ -284,7 +284,7 @@ namespace WinFormsWebGpu.Accessibility
                     return string.Empty;
 
                 if (c.GetStyle(ControlStyles.UseTextForAccessibility) && !string.IsNullOrEmpty(c.Text))
-                    return c.Text;
+                    return UsesMnemonic(c) ? WithoutMnemonics(c.Text) : c.Text;
 
                 // The parts of a property grid. Windows names the button row and the grid itself
                 // after the grid -- they are the grid, as far as anything reading the screen is
@@ -316,7 +316,7 @@ namespace WinFormsWebGpu.Accessibility
                 // that way is anonymous.
                 Label label = PrecedingLabel(c);
                 if (label != null && !string.IsNullOrEmpty(label.Text))
-                    return label.Text;
+                    return label.UseMnemonic ? WithoutMnemonics(label.Text) : label.Text;
 
                 return string.Empty;
             }
@@ -330,6 +330,33 @@ namespace WinFormsWebGpu.Accessibility
         /// <para>Walks backwards through the peers: a Label answers, and any visible tab stop stops the
         /// search -- a control that can be tabbed to is named by its own label, not by one further
         /// back. Windows walks tab order here where the old MSAA layer walked z-order.</para></summary>
+        /// <summary>A text as Windows names a control after it: the mnemonic's ampersand gone, "&amp;&amp;" one
+        /// ampersand (WindowsFormsUtils.TextWithoutMnemonics).</summary>
+        internal static string WithoutMnemonics(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.IndexOf('&') < 0)
+                return text;
+            var sb = new System.Text.StringBuilder(text.Length);
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '&')
+                {
+                    if (i + 1 < text.Length && text[i + 1] == '&') { sb.Append('&'); i++; }
+                    continue;
+                }
+                sb.Append(text[i]);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>Whether the control's text carries a mnemonic (a label or button can turn it off).</summary>
+        private static bool UsesMnemonic(Control c) => c switch
+        {
+            Label l => l.UseMnemonic,
+            ButtonBase b => b.UseMnemonic,
+            _ => true,
+        };
+
         internal static Label PrecedingLabel(Control c)
         {
             Control parent = c.Parent;
