@@ -683,7 +683,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     }
                     else if (!dt.IsStaging && !st.IsStaging)
                     {
-                        if (st.SampleCount > 1 || dt.SampleCount > 1) { D3DLog.Once("copy-ms", "copy of a multisampled texture"); return; }
+                        if (st.SampleCount > 1 || dt.SampleCount > 1)
+                        {
+                            // sample for sample, through a pass (WebGPU copies no multisampled texture)
+                            if (!CopyMultisampled(st, sm, sl, sx, sy, dt, dm, dl, dx, dy, w, h))
+                                D3DLog.Once("copy-ms", "a copy of a multisampled texture that cannot be read by a shader (or of another sample count) is not made");
+                            continue;
+                        }
                         var from = new WGPUTexelCopyTextureInfo { texture = st.Gpu, mipLevel = sm, origin = new WGPUOrigin3D { x = sx, y = sy, z = sl }, aspect = WGPUTextureAspect.All };
                         var to = new WGPUTexelCopyTextureInfo { texture = dt.Gpu, mipLevel = dm, origin = new WGPUOrigin3D { x = dx, y = dy, z = dl }, aspect = WGPUTextureAspect.All };
                         if (st.Kind == 3 && Device.Gpu.IsOpenGL && (size.depthOrArrayLayers > 1 || from.origin.z > 0))

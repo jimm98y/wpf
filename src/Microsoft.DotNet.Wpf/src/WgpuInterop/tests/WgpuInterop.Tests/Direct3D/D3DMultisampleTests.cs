@@ -92,5 +92,48 @@ namespace WgpuInterop.Tests.Direct3D
             }
             finally { Release(rtv); Release(staging); Release(resolved); Release(ms); Release(ctx); Release(dev); }
         }
-    }
+    
+        /// <summary>CopyResource between two multisampled textures copies them sample for sample (through a
+        /// pass: WebGPU copies none): the copy resolves to the source's colour.</summary>
+        [Fact]
+        public void CopyResource_BetweenMultisampledTextures()
+        {
+            IntPtr dev, ctx; uint level;
+            Check(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx), "D3D11CreateDevice");
+            IntPtr a = 0, b = 0, resolved = 0, staging = 0, rtvA = 0, rtvB = 0;
+            try
+            {
+                var create = (delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D);
+                var td = new D3D11_TEXTURE2D_DESC
+                {
+                    Width = 16, Height = 16, MipLevels = 1, ArraySize = 1, Format = DXGI_FORMAT.B8G8R8A8_UNORM,
+                    SampleDesc = new DXGI_SAMPLE_DESC { Count = 4 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET | D3D11_BIND.SHADER_RESOURCE,
+                };
+                Check(create(dev, &td, null, &a), "CreateTexture2D a");
+                var tb = td; tb.BindFlags = D3D11_BIND.RENDER_TARGET;
+                Check(create(dev, &tb, null, &b), "CreateTexture2D b");
+                var rd = td; rd.SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }; rd.BindFlags = D3D11_BIND.RENDER_TARGET;
+                Check(create(dev, &rd, null, &resolved), "CreateTexture2D resolved");
+                var sd = rd; sd.Usage = D3D11_USAGE.STAGING; sd.BindFlags = 0; sd.CPUAccessFlags = D3D11_CPU_ACCESS.READ;
+                Check(create(dev, &sd, null, &staging), "CreateTexture2D staging");
+                var rtv = (delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRenderTargetView);
+                Check(rtv(dev, a, null, &rtvA), "rtv a");
+                Check(rtv(dev, b, null, &rtvB), "rtv b");
+                var clearView = (delegate* unmanaged<IntPtr, IntPtr, float*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearRenderTargetView);
+                float* red = stackalloc float[] { 1f, 0f, 0f, 1f };
+                float* blue = stackalloc float[] { 0f, 0f, 1f, 1f };
+                clearView(ctx, rtvA, red);
+                clearView(ctx, rtvB, blue);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, b, a);
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, IntPtr, uint, DXGI_FORMAT, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ResolveSubresource))(ctx, resolved, 0, b, 0, td.Format);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.CopyResource))(ctx, staging, resolved);
+                D3D11_MAPPED_SUBRESOURCE m;
+                Check(((delegate* unmanaged<IntPtr, IntPtr, uint, D3D11_MAP, uint, D3D11_MAPPED_SUBRESOURCE*, int>)Fn(ctx, Vtbl.ID3D11DeviceContext.Map))(ctx, staging, 0, D3D11_MAP.READ, 0, &m), "Map");
+                uint px = *(uint*)((byte*)m.pData + 8 * m.RowPitch + 8 * 4);
+                ((delegate* unmanaged<IntPtr, IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Unmap))(ctx, staging, 0);
+                Assert.Equal(0xFFFF0000u, px);      // BGRA: red, a's colour
+            }
+            finally { Release(rtvA); Release(rtvB); Release(staging); Release(resolved); Release(b); Release(a); Release(ctx); Release(dev); }
+        }
+}
 }
