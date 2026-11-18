@@ -29,7 +29,13 @@
 //   3. `down` AND `up` CARRY NO POSITION, and `up` carries no serial either. Contact starts and
 //      ends wherever the last motion left the tool, which is the same rule wl_touch.up follows.
 //
-//   4. PRESSURE IS REPORTED WHILE HOVERING. It is not a proxy for contact: the compositor decides
+//   4. A FRAME IS ONE SAMPLE, AND NOTHING IS COALESCED. Unlike a MotionEvent's history or a
+//      browser's getCoalescedEvents(), there is no batch of earlier samples to unpack: the
+//      compositor sends every hardware sample as a frame of its own, and each is delivered as it
+//      is read off the socket. So this head never needs TouchMoveCoalesced -- every sample already
+//      is its own move.
+//
+//   5. PRESSURE IS REPORTED WHILE HOVERING. It is not a proxy for contact: the compositor decides
 //      what counts as logical contact (some devices need a pressure threshold), and says so with
 //      down and up. Pressure is carried on hover moves too, which is correct -- WPF just has
 //      nothing that reads it until the tip is down.
@@ -104,6 +110,12 @@ namespace MS.Internal.Interop.Wayland
             public double TiltX = double.NaN;
             public double TiltY = double.NaN;
 
+            /// <summary>Rotation about the tool's own axis, clockwise, degrees -- or NaN.</summary>
+            public double Twist = double.NaN;
+
+            /// <summary>BTN_STYLUS, the lower barrel button, is held.</summary>
+            public bool BarrelDown;
+
             public ToolState(int contactId) => ContactId = contactId;
 
             /// <summary>
@@ -113,7 +125,11 @@ namespace MS.Internal.Interop.Wayland
             /// </summary>
             public bool IsInverted => Type == ZWP_TABLET_TOOL_V2_TYPE_ERASER;
 
-            public PenState Pen => new PenState(Pressure, TiltX, TiltY, IsInverted);
+            /// <summary>
+            /// The barrel is reported for every tool, held or not: the protocol carries a tool's
+            /// buttons whatever kind it is, and has no capability that says a tool lacks them.
+            /// </summary>
+            public PenState Pen => new PenState(Pressure, TiltX, TiltY, IsInverted, Twist, double.NaN, double.NaN, BarrelDown);
 
             public void ResetFrame()
             {
@@ -392,7 +408,15 @@ namespace MS.Internal.Interop.Wayland
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void OnToolRotation(IntPtr data, IntPtr tool, int degrees)
         {
-            // Twist, for an artist's brush tool. PenState has no field for it yet.
+            try
+            {
+                // Twist: wl_fixed degrees, clockwise from the tool's neutral position -- the same
+                // sense as Windows' pen rotation, so only the range needs folding. Sent only by a
+                // tool with the rotation capability (an art pen), and only when it changes.
+                if (s_tools.TryGetValue(tool, out ToolState? state))
+                    state.Twist = PenGeometry.NormalizeDegrees(WaylandInput.Fixed(degrees));
+            }
+            catch { }
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
@@ -412,6 +436,10 @@ namespace MS.Internal.Interop.Wayland
                 // A barrel button. Queued rather than raised here so it keeps its place relative to
                 // the motion and the tip in the same frame.
                 tracked.FrameButtons.Add(((int)button, state != 0, serial));
+
+                // ...while its STATE is the sample's at once, so the contact this frame reports
+                // carries it, as a Windows pen packet carries its barrel bit.
+                if (button == WaylandInput.BTN_STYLUS) tracked.BarrelDown = state != 0;
             }
             catch { }
         }
@@ -460,15 +488,18 @@ namespace MS.Internal.Interop.Wayland
 
             if (state.FrameHasMotion)
             {
-                // The mouse follows the pen whether or not the tip is down -- hovering a pen over a
-                // button should light it up, exactly as hovering a mouse does.
-                RaiseMouse(surface, WaylandMouseKind.Move, 0, state, time);
-
+                // The contact first, then the mouse, as every head reports them: the ink path reads
+                // what the pen measured when the MOUSE move arrives, so the other way round each
+                // point of a stroke would carry the previous sample's pressure.
                 if (state.IsDown && sink is not null)
                 {
                     ToScreen(surface, state, out int moveX, out int moveY);
                     sink.TouchMove(WaylandWindow.HandleOf(surface), state.ContactId, moveX, moveY, state.Pen, time);
                 }
+
+                // The mouse follows the pen whether or not the tip is down -- hovering a pen over a
+                // button should light it up, exactly as hovering a mouse does.
+                RaiseMouse(surface, WaylandMouseKind.Move, 0, state, time);
             }
 
             if (state.FrameHasDown && !state.IsDown)
@@ -557,6 +588,8 @@ namespace MS.Internal.Interop.Wayland
             // forgotten here, or the next stroke would open with the pressure the last one ended on.
             state.Pressure = -1;
             state.TiltX = state.TiltY = double.NaN;
+            state.Twist = double.NaN;
+            state.BarrelDown = false;
         }
 
         /// <summary>

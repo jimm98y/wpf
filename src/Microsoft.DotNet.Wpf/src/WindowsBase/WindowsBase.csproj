@@ -270,6 +270,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceList.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\WeakReferenceEnumerator.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaPen.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformAccentColor.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDragDrop.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\CocoaDialogs.cs" />
@@ -290,6 +291,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\BrowserBlocking.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformFocus.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitWindow.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\UIKitPencil.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\WindowFrame.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\VisionXrHost.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\AndroidWindow.cs" />

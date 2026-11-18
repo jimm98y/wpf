@@ -17,7 +17,10 @@ WindowsBase and not the reverse. PresentationCore installs itself into the seam 
 
 | piece | where |
 |---|---|
-| `IPlatformTouchSink`, `PenState` | `Shared/MS/Internal/Interop/PlatformTouch.cs` |
+| `IPlatformTouchSink`, `PenState`, `TouchSample`, `PenGeometry` | `Shared/MS/Internal/Interop/PlatformTouch.cs` |
+| `PlatformPenPoints` (pen to `StylusPoint`) | `PresentationFramework/MS/Internal/Ink/PlatformPenPoints.cs` |
+| `CocoaPen` (macOS tablet) | `Shared/MS/Internal/Interop/CocoaPen.cs` |
+| `UIKitPencil` (Pencil eraser, angles) | `Shared/MS/Internal/Interop/UIKitPencil.cs` |
 | `PlatformTouchDevice`, `PlatformTouchSink` | `PresentationCore/System/Windows/Input/PlatformTouchDevice.cs` |
 | `IPlatformGestureSink` (macOS) | `Shared/MS/Internal/Interop/PlatformGesture.cs` |
 | `PlatformGestureManipulator` | `PresentationCore/System/Windows/Input/PlatformGestureManipulator.cs` |
@@ -53,9 +56,9 @@ genuine negatives.
 
 ## Pen
 
-`PenState` carries what the digitizer measured beyond position: pressure, per-axis tilt and which end
-of the pen is down, with twist still to come. It is a struct so those additions do not widen the
-signature again — which they have not, twice now.
+`PenState` carries what the digitizer measured beyond position: pressure, per-axis tilt, which end
+of the pen is down, twist, the contact's size and the barrel button. It is a struct so those
+additions do not widen the signature — which they have not, three times now.
 
 Every field has its own "not reported" value, and that matters: a finger measures none of them and a
 cheap digitizer only some. A finger's pressure is a constant that means nothing, and a browser
@@ -63,8 +66,19 @@ reports `0.5` for a held mouse button. Substituting a default for a measurement 
 `StylusPoint` ends up asserting a tilt nobody sensed, so unmeasured values stay unmeasured.
 
 Android and UIKit report tilt spherically — an angle from vertical plus the direction the tip leans —
-and each resolves it into the two per-axis tilts the browser and Windows use, which is what
-`StylusPointProperties.XTiltOrientation`/`YTiltOrientation` take.
+and both resolve it into the two per-axis tilts the browser and Windows use through
+`PenGeometry.TiltFromSpherical`, which is exact (`tan tiltX = tan θ · dirX`). Scaling the angle by
+the direction's cosine and sine, which both heads did before, under-reports every diagonal lean: 60°
+towards a corner is 50.8° per axis, not 42.4°.
+
+**Coalesced samples.** A digitizer samples faster than a platform delivers — a Pencil at 240Hz into
+a 60Hz touch stream — and each platform keeps what it folded together: `coalescedTouchesForTouch:`,
+`MotionEvent` history, `getCoalescedEvents()`. `TouchMoveCoalesced` carries them on the ONE move
+they belong to, so the touch and mouse event counts are unchanged, as on Windows, where the packets
+ride inside the stylus event. The sink keeps the primary contact's samples (root-visual DIPs) until
+the ink path takes them, and replaces them on every move rather than accumulating: the mouse move
+that follows a contact move is the one they precede. `TouchDevice.GetIntermediateTouchPoints`
+returns them too, the current point last.
 
 **Reaching InkCanvas.** `EditingCoordinator` takes its points from a `StylusDevice` when one holds
 capture and from the MOUSE otherwise. Off Windows there is no `StylusDevice`, so every head falls
@@ -72,9 +86,14 @@ through to the mouse branch, which built a `StylusPointCollection` from bare `Po
 sample the default pressure. That branch now asks the seam for the live contact's `PenState`.
 
 Carrying tilt needs more than a value: a `StylusPoint` can only hold properties its
-`StylusPointDescription` names, so the point is built with a description declaring both tilt axes
-beside X, Y and pressure. Note that the `StylusPointCollection(description, int)` overload takes a
-CAPACITY, not the points.
+`StylusPointDescription` names, and every point of a stroke must share ONE description —
+`StylusPointCollection.Add` throws otherwise, which is what a tilted pen used to do on its first
+move. So the description is fixed at the down, exactly as Windows fixes it: the common description of
+`InkCanvas.DefaultStylusPointDescription` and the pen's. An InkCanvas therefore keeps tilt, twist,
+`Width`/`Height` or `BarrelButton` only when the application declared them there, on every platform
+alike; by default a stroke is X, Y and pressure. `PlatformPenPoints` writes the values in Windows'
+units: tilt and twist in tenths of a degree (tilt −900..900, twist 0..3599, clockwise), contact size in
+HIMETRIC. A property the stroke has and a sample lacks takes the neutral value.
 
 **The eraser.** `InkCanvas` already has the whole feature — `EditingModeInverted`, defaulting to
 `EraseByStroke` — and it was unreachable here, because `EditingCoordinator` learns the pen is
@@ -100,11 +119,36 @@ as subtly wrong strokes. The one branch above delivers the same user-visible fea
 | head | touch | pen | eraser | manipulation |
 |---|---|---|---|---|
 | Windows | WM_POINTER (unchanged) | WM_POINTER | WM_POINTER | native |
-| Android | `MotionEvent`, all pointers | S-Pen: pressure + tilt | `TOOL_TYPE_ERASER` | via seam |
-| iPadOS | `UITouch`, all touches | Pencil: pressure + tilt | — (no such end) | via seam |
-| Linux | `wl_touch` | `tablet-v2`: pressure + tilt | tool of type `eraser` | via seam |
-| WebAssembly | pointer events | pen: pressure + tilt | `buttons` bit 5 | via seam |
-| macOS | **n/a** | n/a | n/a | AppKit gestures |
+| Android | `MotionEvent`, all pointers, touch ellipse | pressure, tilt, barrel (`BUTTON_STYLUS_PRIMARY`), history | `TOOL_TYPE_ERASER` | via seam |
+| iPadOS | `UITouch`, all touches, `majorRadius` | Pencil: pressure, tilt, roll as twist (Pro), coalesced touches | `UIPencilInteraction` tool switch | via seam |
+| Linux | `wl_touch` | `tablet-v2`: pressure, tilt, rotation as twist, `BTN_STYLUS` barrel | tool of type `eraser` | via seam |
+| WebAssembly | pointer events, `width`/`height` | pressure, tilt, `twist`, barrel (`buttons` bit 1), `getCoalescedEvents()` | `buttons` bit 5 | via seam |
+| macOS | **n/a** | tablet: pressure, tilt, rotation as twist, barrel, de-coalesced drags | proximity `NSPointingDeviceTypeEraser` | AppKit gestures |
+
+Twist is reported only where a sensor measures it. Android has none: its `AXIS_ORIENTATION` for a
+stylus is the direction of the lean the tilt already uses, not the barrel's rotation. Where a
+platform reports an unsensed twist as zero (the browser, a Pencil without roll, a Mac tablet seen
+without a proximity event), a zero is taken as "not reported".
+
+**The iPad eraser.** An Apple Pencil has no inverted end; iPadOS gives the eraser through
+`UIPencilInteraction` — a double tap, or a squeeze on a Pencil Pro — interpreted by the user's own
+setting (`preferredTapAction`, `preferredSqueezeAction`). "Switch eraser" toggles an eraser state;
+"switch previous" goes back to the other tool once the eraser has been used. While it is on, every
+Pencil contact reports `IsInverted`. Each WPF view carries an interaction.
+
+**A Mac tablet is a digitizer** even though the trackpad is not: its surface is mapped onto the
+screen, and AppKit reports the pen as the mouse with tablet data on the same events
+(`NSEventSubtypeTabletPoint`). `CocoaPen` reports a left press, drag and release that carry that data
+through the seam as well, contact first; a mouse or trackpad carries no subtype and never reaches it.
+Tilt is scaled (±1 is a full tilt, taken as 60°, with AppKit's y up), rotation is counterclockwise, and
+the proximity event's capability mask says which axes the device has. AppKit's own drag coalescing is
+turned off for the length of a pen stroke and done in the pump instead, so the drags already queued
+become one delivered drag carrying the others as samples.
+
+**Order.** Every head reports a contact's down and moves BEFORE the mouse, and iOS and Android report
+the primary contact's LIFT after it: their press is held back until the touch is known not to be a
+press-and-hold right click, and a tap releases it on the way up — a contact lifted first had taken the
+eraser with it before the press it was for.
 
 **Windows keeps its own stack, by design.** This port forces the WM_POINTER path because Wisp reaches
 the tablet through `PenImc_cor3.dll` and no native DLL ships here; see the comment on
@@ -160,7 +204,13 @@ generated entry point, runs the tests on a worker and pumps a `Dispatcher` on th
 
 Honest, because most of this cannot be exercised here:
 
-* the **seam** is executed — nine tests, macOS;
+* the **seam** is executed — nine tests, macOS — and so is the **ink path above it**:
+  `PlatformPenInkTests` draws on a real `InkCanvas` through the seam and the off-Windows mouse entry,
+  and checks the stroke's points, their order with coalesced samples, tilt/twist/size/barrel in
+  Windows' units, the default description, and the inverted end erasing;
+* the heads' **decoding** is executed in `Wpf.Platform.Tests`: `PenGeometryTests`, `CocoaPenTests`
+  (real NSEvents built from CGEvents with tablet fields set, and a stroke reported to a recording
+  sink), `HeadPenInputTests` (the browser's JSON, Android's axes and history, the Pencil tool switch);
 * Linux's **protocol tables** are executed — `WaylandProtocolTableTests`, on any machine, because
   the authored `wl_interface` tables are built without libwayland present. That covers the
   transcription (opcode order, argument types, listener length), not the behaviour;
@@ -172,21 +222,15 @@ Honest, because most of this cannot be exercised here:
 * **Windows** was not touched and wants its injection suites run to confirm tilt reaches
   `StylusPoint`.
 
-The eraser is exercised as far as the seam — `CurrentPen` carries it — and no further. That
-`EditingCoordinator` then switches `InkCanvas` into `EditingModeInverted` is one call at a read
-call site, unexercised, because driving it would need a synthetic WPF mouse-down against a real
-`InkCanvas` with capture.
+No real pen has been used on any of these heads: no tablet, Pencil, S-Pen or browser pen was
+available. The browser's `contactMeasurement`/`pushContact` were run in JavaScriptCore against fake
+`PointerEvent`s; `AndroidHost.cs` compiles against the real Android bindings.
 
 ## Known gaps
 
-* No twist. Linux reports it (`zwp_tablet_tool_v2.rotation`) and the browser reports it
-  (`PointerEvent.twist`), but Android's `AXIS_ORIENTATION` is the azimuth the tilt is already
-  derived from rather than barrel rotation, so two heads out of four could carry a value nothing
-  currently reads.
-* macOS still has no pen of any kind, and iPadOS has no eraser: an Apple Pencil has no inverted end
-  to report.
 * The tablet pad — the buttons, rings and strips on the tablet body — is not handled anywhere.
-* `TouchPoint` reports a zero-size contact rect everywhere. `wl_touch.shape` is received and dropped;
-  no other head reports an ellipse at all.
-* No intermediate touch points: `GetIntermediateTouchPoints` returns empty, so a backend that
-  coalesces (Android's `MotionEvent` history) currently drops the samples between reports.
+* `wl_touch.shape` is still received and dropped, so a Linux finger reports no contact size: the
+  shape arrives after the down or motion it describes, and the touch events are not yet deferred
+  to the frame.
+* Off Windows there is no `StylusDevice`, so `Stylus*` events and `StylusDevice.GetStylusPoints` see
+  none of this; only `InkCanvas` (through the mouse) and the Touch events do.

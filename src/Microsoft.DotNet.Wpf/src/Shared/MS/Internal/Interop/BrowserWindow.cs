@@ -840,28 +840,26 @@ namespace MS.Internal.Interop
                         int id = e.GetProperty("id").GetInt32();
                         int x = e.GetProperty("x").GetInt32();
                         int y = e.GetProperty("y").GetInt32();
-                        var pen = new PenState(
-                            e.GetProperty("p").GetDouble(),
-                            e.TryGetProperty("tx", out JsonElement tx) ? tx.GetDouble() : double.NaN,
-                            e.TryGetProperty("ty", out JsonElement ty) ? ty.GetDouble() : double.NaN,
-                            e.TryGetProperty("inv", out JsonElement inv) && inv.GetBoolean());
+                        PenState pen = BrowserPenInput.ParsePen(e);
                         var ts = (uint)e.GetProperty("ts").GetInt32();
 
                         // Canvas-relative device pixels plus the window's client origin: the seam
                         // takes screen device pixels, and PlatformTouchDevice subtracts the same
                         // origin on the way back out.
+                        int originX = 0, originY = 0;
                         IPlatformWindow window = PlatformWindow.FromHandle(handle);
-                        if (window is not null)
-                        {
-                            window.GetClientScreenOriginPixels(out int originX, out int originY);
-                            x += originX;
-                            y += originY;
-                        }
+                        window?.GetClientScreenOriginPixels(out originX, out originY);
+                        x += originX;
+                        y += originY;
 
                         switch (kind)
                         {
                             case 1: sink.TouchDown(handle, id, x, y, pen, ts); break;
-                            case 0: sink.TouchMove(handle, id, x, y, pen, ts); break;
+                            case 0:
+                                TouchSample[] coalesced = BrowserPenInput.ParseCoalesced(e, originX, originY);
+                                if (coalesced is null) sink.TouchMove(handle, id, x, y, pen, ts);
+                                else sink.TouchMoveCoalesced(handle, id, x, y, pen, ts, coalesced);
+                                break;
                             case 2: sink.TouchUp(handle, id, x, y, ts); break;
                             case 3: sink.TouchCancel(handle, id); break;
                         }
@@ -1054,6 +1052,63 @@ namespace MS.Internal.Interop
             [JSImport("printDocument", Module)]
             internal static partial bool PrintDocument(string jobName,
                                                        [JSMarshalAs<JSType.Array<JSType.Number>>] byte[] document);
+        }
+    }
+
+    /// <summary>
+    ///  The browser's contact message ("tc", browser-window.js pushContact) as the seam takes it.
+    /// </summary>
+    /// <remarks>
+    ///  Its own class, outside the browser-only BrowserWindow, because it is pure parsing: the tests
+    ///  run it on any machine, against the JSON the page sends.
+    /// </remarks>
+    internal static class BrowserPenInput
+    {
+        /// <summary>
+        ///  What one sample measured. Each field is present only when the page measured it, so an
+        ///  absent one is "not reported" rather than zero.
+        /// </summary>
+        internal static PenState ParsePen(JsonElement e)
+        {
+            double width = double.NaN, height = double.NaN;
+            if (e.TryGetProperty("cw", out JsonElement cw) && e.TryGetProperty("ch", out JsonElement ch))
+            {
+                width = cw.GetDouble();
+                height = ch.GetDouble();
+            }
+
+            bool? barrel = e.TryGetProperty("br", out JsonElement br) ? br.GetBoolean() : null;
+
+            return new PenState(
+                e.TryGetProperty("p", out JsonElement p) ? p.GetDouble() : -1,
+                e.TryGetProperty("tx", out JsonElement tx) ? tx.GetDouble() : double.NaN,
+                e.TryGetProperty("ty", out JsonElement ty) ? ty.GetDouble() : double.NaN,
+                e.TryGetProperty("inv", out JsonElement inv) && inv.GetBoolean(),
+                e.TryGetProperty("tw", out JsonElement tw) ? PenGeometry.NormalizeDegrees(tw.GetDouble()) : double.NaN,
+                width, height, barrel);
+        }
+
+        /// <summary>
+        ///  The samples getCoalescedEvents() folded into a move, oldest first, in screen device
+        ///  pixels; null when there are none, so the plain move allocates nothing.
+        /// </summary>
+        internal static TouchSample[] ParseCoalesced(JsonElement e, int originX, int originY)
+        {
+            if (!e.TryGetProperty("cs", out JsonElement cs) || cs.ValueKind != JsonValueKind.Array) return null;
+            int count = cs.GetArrayLength();
+            if (count == 0) return null;
+
+            var samples = new TouchSample[count];
+            int i = 0;
+            foreach (JsonElement c in cs.EnumerateArray())
+            {
+                samples[i++] = new TouchSample(
+                    c.GetProperty("x").GetInt32() + originX,
+                    c.GetProperty("y").GetInt32() + originY,
+                    ParsePen(c),
+                    c.TryGetProperty("ts", out JsonElement ts) ? (uint)ts.GetInt32() : 0);
+            }
+            return samples;
         }
     }
 }

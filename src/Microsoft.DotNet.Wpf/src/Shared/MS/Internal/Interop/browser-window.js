@@ -1294,24 +1294,53 @@ function pushContact(kind, e) {
         if (!handle) return;
     }
     const r = windows.get(handle).canvas.getBoundingClientRect();
-    queue.push({
-        t: "tc", k: kind, h: handle, id: e.pointerId | 0,
+    const message = { t: "tc", k: kind, h: handle, id: e.pointerId | 0, ...contactMeasurement(e, r) };
+
+    // The samples the browser folded into this move: a pen samples at 240Hz and more, and
+    // pointermove fires once a frame, so without them a fast curve is a polygon through a quarter
+    // of its points. The list ends with this event itself, which the message already carries.
+    if (kind === 0 && typeof e.getCoalescedEvents === "function") {
+        const coalesced = e.getCoalescedEvents();
+        if (coalesced.length > 1) message.cs = coalesced.slice(0, -1).map((c) => contactMeasurement(c, r));
+    }
+    queue.push(message);
+}
+
+// What one pointer sample measured, as the seam's PenState takes it. Shared by an event and the
+// coalesced samples inside it. Only what was measured is sent, so a finger's payload is position
+// and nothing else.
+function contactMeasurement(e, r) {
+    const pen = e.pointerType === "pen";
+    const m = {
         x: Math.round((e.clientX - r.left) * dpr()),
         y: Math.round((e.clientY - r.top) * dpr()),
         // A pen reports real pressure; a finger reports a constant 0.5 or 1 that measures nothing,
         // and the mouse reports 0.5 while a button is down. Only the pen's is passed on, so
         // StylusPoint.PressureFactor does not carry a number nobody measured.
-        p: e.pointerType === "pen" ? e.pressure : -1,
+        p: pen ? e.pressure : -1,
+        ts: Math.round(e.timeStamp),
+    };
+    if (pen) {
         // tiltX/tiltY are degrees from vertical and are what the seam takes directly. Zero from a
         // finger means "flat", not "measured as flat", so only a pen's are sent.
-        tx: e.pointerType === "pen" ? (e.tiltX ?? 0) : undefined,
-        ty: e.pointerType === "pen" ? (e.tiltY ?? 0) : undefined,
+        m.tx = e.tiltX ?? 0;
+        m.ty = e.tiltY ?? 0;
         // The inverted (eraser) end. Pointer Events has no flag for it: it arrives as a fifth
-        // BUTTON, bit 5 of buttons, in place of the tip's bit 0. Sent only when set, so the
-        // ordinary pen and finger payloads are unchanged.
-        inv: e.pointerType === "pen" && (e.buttons & 32) !== 0 ? true : undefined,
-        ts: Math.round(e.timeStamp),
-    });
+        // BUTTON, bit 5 of buttons, in place of the tip's bit 0.
+        if ((e.buttons & 32) !== 0) m.inv = true;
+        // Twist, clockwise, 0..359. Zero is also what a pen without the sensor reports, so only a
+        // turned pen sends one; a measured zero is lost, and lands as the zero it was anyway.
+        if (e.twist) m.tw = e.twist;
+        // The barrel button: Pointer Events gives a pen's side button bit 1, the right button's.
+        m.br = (e.buttons & 2) !== 0;
+    }
+    // The contact's size in CSS pixels, as device pixels. One is the specification's "the hardware
+    // cannot say", so it is not a measurement and is not sent.
+    if ((e.width ?? 1) > 1 || (e.height ?? 1) > 1) {
+        m.cw = (e.width ?? 0) * dpr();
+        m.ch = (e.height ?? 0) * dpr();
+    }
+    return m;
 }
 
 function installListeners() {

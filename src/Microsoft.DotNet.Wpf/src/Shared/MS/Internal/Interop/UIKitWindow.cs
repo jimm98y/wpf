@@ -910,6 +910,7 @@ namespace MS.Internal.Interop
             // Only the app's own window: a floating one keeps the frame WPF gives it.
             if (fillsSuperview) SendVoidUIntPtr(view, Sel("setAutoresizingMask:"), (UIntPtr)(2 | 16));
             AddScrollRecognizer(view);
+            UIKitPencil.Attach(view);
             return view;
         }
 
@@ -970,6 +971,7 @@ namespace MS.Internal.Interop
             // superview's size.
             SendVoidBool(view, Sel("setOpaque:"), false);
             AddScrollRecognizer(view);
+            UIKitPencil.Attach(view);
             return view;
         }
 
@@ -1202,21 +1204,21 @@ namespace MS.Internal.Interop
         private static void TouchesBeganImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
         {
             // Position first, then the press - see the note above.
-            DispatchTouch(self, touches, 0);
-            DispatchTouch(self, touches, 1);
+            DispatchTouch(self, touches, IntPtr.Zero, 0);
+            DispatchTouch(self, touches, evt, 1);
         }
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void TouchesMovedImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
-            => DispatchTouch(self, touches, 0);
+            => DispatchTouch(self, touches, evt, 0);
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void TouchesEndedImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
-            => DispatchTouch(self, touches, 2);
+            => DispatchTouch(self, touches, evt, 2);
 
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void TouchesCancelledImp(IntPtr self, IntPtr sel, IntPtr touches, IntPtr evt)
-            => DispatchTouch(self, touches, 3);
+            => DispatchTouch(self, touches, evt, 3);
 
         // ---- Drag-to-scroll ----
         //
@@ -1262,13 +1264,13 @@ namespace MS.Internal.Interop
 
         /// <summary>The contacts of a touch event, read while UIKit's UITouch objects are valid (inside its
         /// callback), as the delivery to the touch sink that is run later (see <see cref="PostInput"/>).</summary>
-        private static Action ReportContacts(IntPtr view, IntPtr touches, int kind, double scale)
+        private static Action ReportContacts(IntPtr view, IntPtr touches, IntPtr evt, int kind, double scale)
         {
             if (PlatformTouch.Sink is null) return null;
 
             IntPtr all = Send(touches, Sel("allObjects"));
             if (all == IntPtr.Zero) return null;
-            var contacts = new List<(int Id, int X, int Y, PenState Pen)>();
+            var contacts = new List<(int Id, int X, int Y, PenState Pen, TouchSample[] Coalesced)>();
 
             nint count = SendNInt(all, Sel("count"));
             for (nint i = 0; i < count; i++)
@@ -1278,34 +1280,29 @@ namespace MS.Internal.Interop
 
                 if (!TryContactId(touch, kind, out int id)) continue;
 
-                CGPoint p = SendPointPtr(touch, Sel("locationInView:"), view);
-                int x = (int)Math.Round(p.x * scale);
-                int y = (int)Math.Round(p.y * scale);
+                Measure(touch, view, scale, out int x, out int y, out PenState pen);
 
-                // UITouchType: 0 direct (a finger), 1 indirect, 2 pencil, 3 indirect pointer. Only a
-                // pencil measures force; a finger's is a constant that means nothing, so it is
-                // reported as unknown rather than handed on as though it were a reading.
-                bool isPencil = SendNInt(touch, Sel("type")) == 2;
-                PenState pen = PenState.None;
-                if (isPencil)
+                // The samples UIKit folded into this move: a Pencil reports at 240Hz into a touch
+                // stream delivered once a frame, and coalescedTouchesForTouch: keeps the rest. The
+                // array ends with the touch itself, which the move already carries.
+                TouchSample[] coalesced = null;
+                if (kind == 0 && evt != IntPtr.Zero)
                 {
-                    double max = SendDouble(touch, Sel("maximumPossibleForce"));
-                    double pressure = max > 0 ? SendDouble(touch, Sel("force")) / max : -1;
-
-                    // UIKit gives the tip's ALTITUDE from the screen (0 = flat, pi/2 = upright) and
-                    // its AZIMUTH around the screen; the seam takes the two per-axis tilts the
-                    // browser and Windows both use, so the spherical pair is resolved into them.
-                    double altitude = SendDouble(touch, Sel("altitudeAngle"));
-                    double azimuth = SendDoublePtr(touch, Sel("azimuthAngleInView:"), view);
-                    double fromVertical = (Math.PI / 2) - altitude;
-                    double degrees = fromVertical * 180.0 / Math.PI;
-
-                    pen = new PenState(pressure,
-                                       degrees * Math.Cos(azimuth),
-                                       degrees * Math.Sin(azimuth));
+                    IntPtr batch = SendPtrNInt(evt, Sel("coalescedTouchesForTouch:"), touch);
+                    nint n = batch != IntPtr.Zero ? SendNInt(batch, Sel("count")) : 0;
+                    if (n > 1)
+                    {
+                        coalesced = new TouchSample[n - 1];
+                        for (nint j = 0; j < n - 1; j++)
+                        {
+                            IntPtr sample = SendPtrNInt(batch, Sel("objectAtIndex:"), j);
+                            Measure(sample, view, scale, out int sx, out int sy, out PenState sp);
+                            coalesced[j] = new TouchSample(sx, sy, sp, (uint)(SendDouble(sample, Sel("timestamp")) * 1000));
+                        }
+                    }
                 }
 
-                contacts.Add((id, x, y, pen));
+                contacts.Add((id, x, y, pen, coalesced));
             }
             if (contacts.Count == 0) return null;
             return () =>
@@ -1314,17 +1311,66 @@ namespace MS.Internal.Interop
                 if (sink is null) return;
                 uint timestamp = (uint)Environment.TickCount;
                 IntPtr window = HandleOf(view);
-                foreach (var (id, x, y, pen) in contacts)
+                foreach (var (id, x, y, pen, coalesced) in contacts)
                 {
                     switch (kind)
                     {
                         case 1: sink.TouchDown(window, id, x, y, pen, timestamp); break;
-                        case 0: sink.TouchMove(window, id, x, y, pen, timestamp); break;
+                        case 0:
+                            if (coalesced is null) sink.TouchMove(window, id, x, y, pen, timestamp);
+                            else sink.TouchMoveCoalesced(window, id, x, y, pen, timestamp, coalesced);
+                            break;
                         case 2: sink.TouchUp(window, id, x, y, timestamp); break;
                         case 3: sink.TouchCancel(window, id); break;
                     }
                 }
             };
+        }
+
+        // SEL-safe probe for iPadOS 17.5's rollAngle: answered once, the class is the same for every touch.
+        private static int s_hasRollAngle = -1;
+
+        /// <summary>
+        /// Where a UITouch is (view pixels) and what it measured -- for the touch an event is about and
+        /// for each of the samples coalesced into it alike.
+        /// </summary>
+        private static void Measure(IntPtr touch, IntPtr view, double scale, out int x, out int y, out PenState pen)
+        {
+            // locationInView:, the point the mouse is driven from too, so a sample and the move it
+            // precedes are measured the same way.
+            CGPoint p = SendPointPtr(touch, Sel("locationInView:"), view);
+            x = (int)Math.Round(p.x * scale);
+            y = (int)Math.Round(p.y * scale);
+
+            // UITouchType: 0 direct (a finger), 1 indirect, 2 pencil, 3 indirect pointer. Only a
+            // pencil measures force; a finger's is a constant that means nothing, so it is
+            // reported as unknown rather than handed on as though it were a reading.
+            nint type = SendNInt(touch, Sel("type"));
+            if (type == 2)
+            {
+                double max = SendDouble(touch, Sel("maximumPossibleForce"));
+                double pressure = max > 0 ? SendDouble(touch, Sel("force")) / max : -1;
+
+                // UIKit gives the tip's ALTITUDE from the screen and its AZIMUTH around it; the seam
+                // takes the per-axis pair the browser and Windows use.
+                UIKitPencil.Tilt(SendDouble(touch, Sel("altitudeAngle")),
+                                 SendDoublePtr(touch, Sel("azimuthAngleInView:"), view),
+                                 out double tiltX, out double tiltY);
+
+                // Twist: a Pencil Pro's barrel roll, from iPadOS 17.5. The Pencil has no barrel
+                // button, and its contact area is a point's, so neither is reported. The eraser is
+                // the tool the Pencil's double tap or squeeze switched to (UIKitPencil).
+                if (s_hasRollAngle < 0) s_hasRollAngle = SendBoolPtr(touch, Sel("respondsToSelector:"), Sel("rollAngle")) ? 1 : 0;
+                double twist = s_hasRollAngle == 1 ? UIKitPencil.TwistFromRoll(SendDouble(touch, Sel("rollAngle"))) : double.NaN;
+
+                pen = new PenState(pressure, tiltX, tiltY, UIKitPencil.EraserActive, twist, double.NaN, double.NaN, null);
+                return;
+            }
+
+            // A finger: majorRadius is the radius of the touch in points (UIKit gives no minor axis
+            // or direction, so the contact is the circle it describes), as device pixels.
+            double radius = type == 0 ? SendDouble(touch, Sel("majorRadius")) : 0;
+            pen = radius > 0 ? PenState.Contact(2 * radius * scale, 2 * radius * scale) : PenState.None;
         }
 
         /// <summary>The contact id for a UITouch, allocating on a down and releasing on an up.</summary>
@@ -1439,7 +1485,7 @@ namespace MS.Internal.Interop
         /// <summary>TouchMessage kinds of the right button (a press held still, TouchHold).</summary>
         public const int RightPress = TouchHold.RightPress, RightRelease = TouchHold.RightRelease;
 
-        private static void DispatchTouch(IntPtr view, IntPtr touches, int kind)
+        private static void DispatchTouch(IntPtr view, IntPtr touches, IntPtr evt, int kind)
         {
             // Never let a managed exception unwind into UIKit.
             try
@@ -1456,18 +1502,28 @@ namespace MS.Internal.Interop
                 // Every touch, not just the one the mouse follows. The mouse emulation stays: a
                 // TouchDevice raises the Touch events and drives Manipulation but does not promote
                 // itself to the mouse, so contacts alone would gain pinch and lose Button.Click.
-                Action contacts = ReportContacts(view, touches, kind, scale);
+                Action contacts = ReportContacts(view, touches, evt, kind, scale);
 
                 // The mouse has no notion of a cancelled press, so a cancel still releases it.
                 int mouseKind = kind == 3 ? 2 : kind;
+
+                // The contact BEFORE the mouse for a down or a move: the ink path reads what the
+                // Pencil measured -- its pressure, which end, the samples coalesced into this move --
+                // when the MOUSE event arrives, so reported after it each point carried the previous
+                // event's pressure and the coalesced samples landed behind the point they precede.
+                // The lift goes AFTER: a tap's press is held back (TouchHold) until the touch lifts,
+                // and a contact lifted first would have taken the eraser with it before the press it
+                // is the eraser for.
+                bool contactFirst = kind is 0 or 1;
                 PostInput(() =>
                 {
                     // the frame's own (a frame view's touches): the caption, the edges, the close button
                     if (s_frameViews.TryGetValue(view, out UIKitWindow framed)) { FrameTouch(framed, mouseKind, p); return; }
                     // the window may have gone since (a tap on its close box): its view is released
                     if (!s_byView.ContainsKey(view)) return;
+                    if (contactFirst) contacts?.Invoke();
                     Gesture(view, mouseKind, p.x * scale, p.y * scale, scale);
-                    contacts?.Invoke();
+                    if (!contactFirst) contacts?.Invoke();
                 });
             }
             catch (Exception e)
@@ -1874,6 +1930,7 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDouble(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern nint SendNInt(IntPtr receiver, IntPtr selector);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern double SendDoublePtr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] [return: MarshalAs(UnmanagedType.I1)] private static extern bool SendBoolPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrNInt(IntPtr receiver, IntPtr selector, nint arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGPoint SendPointPtr(IntPtr receiver, IntPtr selector, IntPtr arg);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern CGRect SendRect(IntPtr receiver, IntPtr selector);

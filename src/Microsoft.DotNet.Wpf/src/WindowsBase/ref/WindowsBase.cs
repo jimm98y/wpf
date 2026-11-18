@@ -178,6 +178,8 @@ namespace MS.Internal.Interop
         public static bool GetOrigin(System.IntPtr handle, out int left, out int top) { throw null; }
         public static void NotifyTouch(System.IntPtr handle, int kind, int xPixels, int yPixels) { }
         public static void NotifyTouchContact(System.IntPtr handle, int kind, int contactId, int xPixels, int yPixels, double pressure, double tiltX, double tiltY, bool isEraser = false) { }
+        public static void NotifyMotionContact(System.IntPtr handle, int kind, int contactId, int xPixels, int yPixels, double pressure, double tilt, double orientation, double touchMajor, double touchMinor, bool isStylus, bool isEraser, bool? barrelButton, double[] history) { }
+        public const int MotionHistoryStride = 8;
         public void SetContentSize(int width, int height) { }
         public void SetContentSizePixels(int cx, int cy) { }
         public void SetFrameOrigin(int xPixels, int yPixels) { }

@@ -2789,7 +2789,7 @@ namespace MS.Internal.Interop
                 // Our own wake (WakeFromWait) has done its job by being dequeued.
                 if (IsWakeEvent(evt)) s_wakePosted = false;
                 // An event for a window another host owns (the WinForms host's) is that host's.
-                else if (!DispatchToForeignHost(evt)) DispatchEvent(evt);
+                else if (!DispatchToForeignHost(evt)) DispatchEvent(GatherPenDrags(app, mode, distantPast, evt));
                 evt = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
                                     ulong.MaxValue, distantPast, mode, true);
             }
@@ -2910,7 +2910,19 @@ namespace MS.Internal.Interop
             // Translate mouse/scroll events into the managed input event before letting AppKit
             // dispatch the event normally (so window dragging, etc. still work).
             s_consumedByNonClient = false;
+
+            // Which end of a tablet pen came into range -- an event of its own, or riding on a
+            // mouse event -- before the mouse event that may follow from it (CocoaPen).
+            ulong eventType = 0;
+            try
+            {
+                eventType = SendNUInt(evt, Sel("type"));
+                if (CocoaPen.Read(evt, out CocoaPen.TabletReading reading) && reading.IsProximity) CocoaPen.NoteProximity(reading);
+            }
+            catch { /* a stray event shouldn't break the pump */ }
+
             try { ReportMouseEvent(evt); } catch { /* a stray event shouldn't break the pump */ }
+            CocoaPen.AfterMouse(eventType);
             try { ReportKeyEvent(evt); }
             catch (Exception e) when (s_traceKeys) { Console.Error.WriteLine("[keys] key event threw: " + e); }
             catch { /* a stray event shouldn't break the pump */ }
@@ -3385,9 +3397,71 @@ namespace MS.Internal.Interop
             // as SetFocus from WM_LBUTTONDOWN does on Windows
             if (type == NSLeftMouseDown && w.TakesKeyboardOnPress) w.TakeKeyboard();
 
+            // A tablet pen's tip: reported to the touch seam as well, and first, as every head reports a
+            // pen (CocoaPen). A mouse or a trackpad carries no tablet data and is untouched.
+            CocoaPen.BeforeMouse(evt, type, HandleOf(view), bx, by);
+
             // The message carries the HWND (Handle), which is what the providers compare with their
             // source's -- AppKit gave a view.
             handler(new CocoaMouseMessage(HandleOf(view), (int)type, button, x, y, wheel, Environment.TickCount, wheelH));
+        }
+
+        /// <summary>
+        /// Folds the pen drags already waiting behind <paramref name="evt"/> into it, the way AppKit's
+        /// own coalescing would, but keeping each one as a coalesced sample of the drag that is
+        /// delivered (CocoaPen). Returns the event to deliver: the last of the run.
+        /// </summary>
+        /// <remarks>
+        /// Only during a pen stroke, when AppKit's coalescing is off, and only a run of pen drags for
+        /// the same window with nothing else between them: the queue is PEEKED, so a release, a key
+        /// or a drag for another window behind them stops the run and is delivered in its place.
+        /// </remarks>
+        private static IntPtr GatherPenDrags(IntPtr app, IntPtr mode, IntPtr distantPast, IntPtr evt)
+        {
+            try
+            {
+                while (CocoaPen.IsPenDrag(evt))
+                {
+                    IntPtr next = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+                                                ulong.MaxValue, distantPast, mode, false);
+                    if (next == IntPtr.Zero || !CocoaPen.IsPenDrag(next)) break;
+                    IntPtr window = Send(evt, Sel("window"));
+                    if (window == IntPtr.Zero || Send(next, Sel("window")) != window) break;
+
+                    if (EventScreenPixels(evt, out int sx, out int sy) &&
+                        CocoaPen.Read(evt, out CocoaPen.TabletReading reading) && reading.IsPoint)
+                    {
+                        CocoaPen.AddCoalesced(sx, sy, CocoaPen.PenOf(reading));
+                    }
+
+                    // The event just peeked is the head of the queue, so this takes that same one.
+                    evt = SendNextEvent(app, Sel("nextEventMatchingMask:untilDate:inMode:dequeue:"),
+                                        ulong.MaxValue, distantPast, mode, true);
+                }
+            }
+            catch { /* deliver what there is */ }
+            return evt;
+        }
+
+        /// <summary>
+        /// Where a mouse event happened, in screen device pixels with a top-left origin: the same
+        /// arithmetic <see cref="ReportMouseEvent"/> uses, so a coalesced sample and the drag it
+        /// rides in are measured alike.
+        /// </summary>
+        private static bool EventScreenPixels(IntPtr evt, out int x, out int y)
+        {
+            x = y = 0;
+            IntPtr window = Send(evt, Sel("window"));
+            if (window == IntPtr.Zero) return false;
+            CocoaWindow w = FromHandle(Send(window, Sel("contentView")));
+            if (w == null) return false;
+
+            NSPoint loc = SendPoint(evt, Sel("locationInWindow"));
+            NSPoint screen = SendPointPoint(window, Sel("convertPointToScreen:"), loc);
+            double scale = w.GetBackingScale();
+            x = (int)Math.Round(screen.x * scale);
+            y = (int)Math.Round((PrimaryScreenHeightPoints() - screen.y) * scale);
+            return true;
         }
 
         private static readonly bool s_traceInput = Environment.GetEnvironmentVariable("WF_TRACE_INPUT") is "1" or "2";

@@ -1402,11 +1402,40 @@ namespace MS.Internal.Interop
         public static void NotifyTouchContact(IntPtr handle, int kind, int contactId,
                                               int xPixels, int yPixels, double pressure,
                                               double tiltX, double tiltY, bool isEraser = false)
-            => OnUi(() => TouchContact(handle, kind, contactId, xPixels, yPixels, pressure, tiltX, tiltY, isEraser));
+            => OnUi(() => TouchContact(handle, kind, contactId, xPixels, yPixels,
+                                       new PenState(pressure, tiltX, tiltY, isEraser), null));
 
+        /// <summary>
+        ///  Reports one contact with everything a MotionEvent measured about it, as the raw axes.
+        /// </summary>
+        /// <param name="xPixels">View-relative pixels, as MotionEvent.getX reports them.</param>
+        /// <param name="pressure">MotionEvent.getPressure; meaningful only for a stylus.</param>
+        /// <param name="tilt">AXIS_TILT, radians from vertical; a stylus's only.</param>
+        /// <param name="orientation">AXIS_ORIENTATION, radians: which way a stylus leans, or which
+        /// way a finger's touch ellipse points.</param>
+        /// <param name="touchMajor">getTouchMajor/Minor: the touch ellipse's diameters, pixels.</param>
+        /// <param name="isStylus">TOOL_TYPE_STYLUS or TOOL_TYPE_ERASER.</param>
+        /// <param name="isEraser">TOOL_TYPE_ERASER, the inverted end.</param>
+        /// <param name="barrelButton">BUTTON_STYLUS_PRIMARY for a stylus; null for a finger.</param>
+        /// <param name="history">For a move, MotionEvent's history, oldest first, flattened
+        /// <see cref="MotionHistoryStride"/> to a sample: x, y, pressure, tilt, orientation, touch
+        /// major, touch minor, event time (ms). Null or empty for none.</param>
+        public static void NotifyMotionContact(IntPtr handle, int kind, int contactId, int xPixels, int yPixels,
+                                               double pressure, double tilt, double orientation,
+                                               double touchMajor, double touchMinor,
+                                               bool isStylus, bool isEraser, bool? barrelButton, double[] history)
+        {
+            PenState pen = AndroidPenInput.Measure(pressure, tilt, orientation, touchMajor, touchMinor, isStylus, isEraser, barrelButton);
+            TouchSample[] coalesced = kind == 0 ? AndroidPenInput.SamplesFromHistory(history, isStylus, isEraser, barrelButton) : null;
+            OnUi(() => TouchContact(handle, kind, contactId, xPixels, yPixels, pen, coalesced));
+        }
+
+        /// <summary>The doubles one historical sample takes in <c>NotifyMotionContact</c>'s history.</summary>
+        public const int MotionHistoryStride = 8;
+
+        /// <param name="coalesced">Samples in VIEW pixels; the window's origin is added here.</param>
         private static void TouchContact(IntPtr handle, int kind, int contactId,
-                                         int xPixels, int yPixels, double pressure,
-                                         double tiltX, double tiltY, bool isEraser)
+                                         int xPixels, int yPixels, PenState pen, TouchSample[] coalesced)
         {
             // Never let a managed exception unwind into the Java frame that delivered this.
             try
@@ -1414,20 +1443,22 @@ namespace MS.Internal.Interop
                 IPlatformTouchSink sink = PlatformTouch.Sink;
                 if (sink is null) return;
 
-                int screenX = xPixels, screenY = yPixels;
+                int originX = 0, originY = 0;
                 if (s_byHandle.TryGetValue(handle, out AndroidWindow window))
                 {
-                    window.GetClientScreenOriginPixels(out int originX, out int originY);
-                    screenX += originX;
-                    screenY += originY;
+                    window.GetClientScreenOriginPixels(out originX, out originY);
                 }
+                int screenX = xPixels + originX, screenY = yPixels + originY;
 
                 uint timestamp = (uint)Environment.TickCount;
-                var pen = new PenState(pressure, tiltX, tiltY, isEraser);
                 switch (kind)
                 {
                     case 1: sink.TouchDown(handle, contactId, screenX, screenY, pen, timestamp); break;
-                    case 0: sink.TouchMove(handle, contactId, screenX, screenY, pen, timestamp); break;
+                    case 0:
+                        if (coalesced is null) sink.TouchMove(handle, contactId, screenX, screenY, pen, timestamp);
+                        else sink.TouchMoveCoalesced(handle, contactId, screenX, screenY, pen, timestamp,
+                                                     AndroidPenInput.Offset(coalesced, originX, originY));
+                        break;
                     case 2: sink.TouchUp(handle, contactId, screenX, screenY, timestamp); break;
                     case 3: sink.TouchCancel(handle, contactId); break;
                 }
@@ -1635,6 +1666,96 @@ namespace MS.Internal.Interop
             if (Math.Abs(s_panAccum) > MaxCarryPixels) s_panAccum = sign * MaxCarryPixels;
 
             handler(new TouchMessage(handle, 3, x, y, Environment.TickCount, sign * WheelNotch));
+        }
+    }
+
+    /// <summary>
+    ///  What a MotionEvent's raw axes mean, as the seam's PenState and coalesced samples. Pure, so it
+    ///  is tested on any machine.
+    /// </summary>
+    internal static class AndroidPenInput
+    {
+        /// <summary>One sample's raw axes as a PenState.</summary>
+        internal static PenState Measure(double pressure, double tilt, double orientation,
+                                         double touchMajor, double touchMinor,
+                                         bool isStylus, bool isEraser, bool? barrelButton)
+        {
+            // Pressure is real on a stylus and mostly a constant 1.0 from a finger digitizer. Reported
+            // as unknown for a finger rather than as a fabricated 1.0, so StylusPoint.PressureFactor
+            // does not claim a measurement nobody made.
+            double p = isStylus ? pressure : -1;
+
+            // AXIS_TILT is the angle from vertical and AXIS_ORIENTATION which way the tip leans: 0 up
+            // the screen, pi/2 to the right. A finger reports neither.
+            double tiltX = double.NaN, tiltY = double.NaN;
+            if (isStylus && !double.IsNaN(tilt))
+            {
+                double o = double.IsNaN(orientation) ? 0 : orientation;
+                PenGeometry.TiltFromSpherical(tilt, Math.Sin(o), -Math.Cos(o), out tiltX, out tiltY);
+            }
+
+            // The contact ellipse, in pixels: its diameters along and across AXIS_ORIENTATION, which
+            // for a FINGER is the ellipse's own direction. Reported as its bounding box, which is what
+            // a Windows contact's size is. A stylus tip's ellipse, where a device gives one at all, is
+            // a point's, and its orientation is the lean rather than the ellipse's -- so it is sized
+            // as a circle.
+            double width = double.NaN, height = double.NaN;
+            if (touchMajor > 0)
+            {
+                if (isStylus)
+                {
+                    width = height = touchMajor;
+                }
+                else
+                {
+                    double minor = touchMinor > 0 ? touchMinor : touchMajor;
+                    PenGeometry.EllipseBounds(touchMajor, minor, orientation, out width, out height);
+                }
+            }
+
+            // Twist is not reported: AXIS_ORIENTATION for a stylus is the direction the tilt leans,
+            // not the barrel's rotation about its own axis, and Android has no axis for that.
+            return new PenState(p, tiltX, tiltY, isEraser, double.NaN, width, height, barrelButton);
+        }
+
+        /// <summary>
+        ///  The flattened history <c>NotifyMotionContact</c> takes, as samples in VIEW pixels, oldest
+        ///  first; null when there is none.
+        /// </summary>
+        /// <remarks>
+        ///  The tool end and the barrel button are the event's, not the sample's: MotionEvent keeps no
+        ///  history of either.
+        /// </remarks>
+        internal static TouchSample[] SamplesFromHistory(double[] history, bool isStylus, bool isEraser, bool? barrelButton)
+        {
+            const int stride = AndroidWindow.MotionHistoryStride;
+            if (history is null || history.Length < stride) return null;
+
+            int count = history.Length / stride;
+            var samples = new TouchSample[count];
+            for (int i = 0; i < count; i++)
+            {
+                int o = i * stride;
+                PenState pen = Measure(history[o + 2], history[o + 3], history[o + 4], history[o + 5], history[o + 6],
+                                       isStylus, isEraser, barrelButton);
+
+                // Truncated, as the host truncates the event's own point and the mouse's, so a sample
+                // and the move it precedes are measured the same way.
+                samples[i] = new TouchSample((int)history[o], (int)history[o + 1], pen, unchecked((uint)(long)history[o + 7]));
+            }
+            return samples;
+        }
+
+        /// <summary>The samples moved from view pixels to screen pixels.</summary>
+        internal static TouchSample[] Offset(TouchSample[] samples, int originX, int originY)
+        {
+            var moved = new TouchSample[samples.Length];
+            for (int i = 0; i < samples.Length; i++)
+            {
+                TouchSample s = samples[i];
+                moved[i] = new TouchSample(s.ScreenX + originX, s.ScreenY + originY, s.Pen, s.TimestampMs);
+            }
+            return moved;
         }
     }
 }

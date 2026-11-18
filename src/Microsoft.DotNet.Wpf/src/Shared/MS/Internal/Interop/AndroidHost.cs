@@ -392,6 +392,15 @@ internal static class WpfInput
         // seam the pen's pressure, tilt and which end of it this is -- and the ink path reads that
         // state when the mouse BUTTON-DOWN arrives. Reported the other way round, a stroke opens with
         // whatever the previous contact left behind, and an eraser held to the screen draws.
+        //
+        // Except for the primary pointer's LIFT, which goes after the mouse. A press is held back
+        // until the touch is known not to be a press-and-hold right click (TouchHold), and a tap
+        // releases it only on the way up -- so a contact lifted first had already taken its pen
+        // state with it, and a quick dab with the eraser end landed as a dot of ink.
+        bool primaryChanged = e.ActionMasked != MotionEventActions.PointerDown
+                           && e.ActionMasked != MotionEventActions.PointerUp;
+        bool liftAfterMouse = kind == 2 && primaryChanged && e.ActionMasked != MotionEventActions.Cancel;
+
         if (e.ActionMasked == MotionEventActions.Cancel)
         {
             for (int i = 0; i < e.PointerCount; i++)
@@ -406,7 +415,7 @@ internal static class WpfInput
                 ReportContact(handle, 0, e, i);
             }
         }
-        else
+        else if (!liftAfterMouse)
         {
             ReportContact(handle, kind, e, e.ActionIndex);
         }
@@ -416,8 +425,6 @@ internal static class WpfInput
         // Still needed: a TouchDevice raises Touch events and drives Manipulation but does not
         // promote itself to the mouse, so without this a tap would stop clicking buttons. Only the
         // FIRST pointer does it -- a second finger must not drag the cursor.
-        bool primaryChanged = e.ActionMasked != MotionEventActions.PointerDown
-                           && e.ActionMasked != MotionEventActions.PointerUp;
         if (primaryChanged)
         {
             // A press must be preceded by a move so WPF's mouse position is current before the
@@ -427,35 +434,56 @@ internal static class WpfInput
             AndroidWindow.NotifyTouch(handle, kind, (int)e.GetX(), (int)e.GetY());
         }
 
+        if (liftAfterMouse) ReportContact(handle, kind, e, e.ActionIndex);
+
         return true;
     }
 
     /// <summary>Reports the pointer at <paramref name="index"/> within the event.</summary>
+    /// <remarks>
+    /// Raw axes only: what they mean -- pressure that is real only from a stylus, the spherical tilt,
+    /// the touch ellipse as a contact box -- is worked out in WindowsBase (AndroidPenInput), where it
+    /// is tested.
+    /// </remarks>
     private static void ReportContact(IntPtr handle, int kind, MotionEvent e, int index)
     {
-        // Pressure is real on a stylus and mostly a constant 1.0 from a finger digitizer. Reported
-        // as unknown for a finger rather than as a fabricated 1.0, so StylusPoint.PressureFactor
-        // does not claim a measurement nobody made.
         // The eraser end reports as its own tool type, and measures the same axes as the tip.
         MotionEventToolType toolType = e.GetToolType(index);
         bool isEraser = toolType == MotionEventToolType.Eraser;
         bool isStylus = toolType == MotionEventToolType.Stylus || isEraser;
-        double pressure = isStylus ? e.GetPressure(index) : -1;
 
-        // AXIS_TILT is the angle from vertical and AXIS_ORIENTATION which way the tip leans, so the
-        // pair resolves into the two per-axis tilts the seam takes. A finger reports neither.
-        double tiltX = double.NaN, tiltY = double.NaN;
-        if (isStylus)
+        // The barrel button is BUTTON_STYLUS_PRIMARY, which is also what Android itself treats as
+        // the pen's secondary click. Not the eraser: Android reports the inverted end as a tool
+        // type of its own, and a button held on the tip is still the tip. A finger has no buttons.
+        bool? barrel = isStylus ? (e.ButtonState & MotionEventButtonState.StylusPrimary) != 0 : null;
+
+        // A move carries the samples Android batched into it since the last one -- MotionEvent's
+        // HISTORY, oldest first -- which a stylus fills at its own rate, well above the display's.
+        double[]? history = null;
+        int historySize = kind == 0 ? e.HistorySize : 0;
+        if (historySize > 0)
         {
-            double tilt = e.GetAxisValue(Axis.Tilt, index);          // radians from vertical
-            double orientation = e.GetAxisValue(Axis.Orientation, index);
-            double degrees = tilt * 180.0 / System.Math.PI;
-            tiltX = degrees * System.Math.Sin(orientation);
-            tiltY = -degrees * System.Math.Cos(orientation);
+            const int stride = AndroidWindow.MotionHistoryStride;
+            history = new double[historySize * stride];
+            for (int h = 0; h < historySize; h++)
+            {
+                int o = h * stride;
+                history[o] = e.GetHistoricalX(index, h);
+                history[o + 1] = e.GetHistoricalY(index, h);
+                history[o + 2] = e.GetHistoricalPressure(index, h);
+                history[o + 3] = e.GetHistoricalAxisValue(Axis.Tilt, index, h);
+                history[o + 4] = e.GetHistoricalAxisValue(Axis.Orientation, index, h);
+                history[o + 5] = e.GetHistoricalTouchMajor(index, h);
+                history[o + 6] = e.GetHistoricalTouchMinor(index, h);
+                history[o + 7] = e.GetHistoricalEventTime(h);
+            }
         }
 
-        AndroidWindow.NotifyTouchContact(handle, kind, e.GetPointerId(index),
-                                         (int)e.GetX(index), (int)e.GetY(index), pressure, tiltX, tiltY, isEraser);
+        AndroidWindow.NotifyMotionContact(handle, kind, e.GetPointerId(index), (int)e.GetX(index), (int)e.GetY(index),
+                                          e.GetPressure(index), e.GetAxisValue(Axis.Tilt, index),
+                                          e.GetAxisValue(Axis.Orientation, index),
+                                          e.GetTouchMajor(index), e.GetTouchMinor(index),
+                                          isStylus, isEraser, barrel, history);
     }
 
     public static bool OnGenericMotion(IntPtr handle, MotionEvent? e)
