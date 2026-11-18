@@ -149,6 +149,8 @@ namespace MS.Internal.Interop
             AddMethod(cls, "setAccessibilityValue:", s_setValue, "v@:@");
             AddMethod(cls, "accessibilityHitTest:", s_hitTest, "@@:{CGPoint=dd}");
 
+            AddPatternMethods(cls);
+
             objc_registerClassPair(cls);
 
             s_elementClass = cls;
@@ -247,7 +249,10 @@ namespace MS.Internal.Interop
         private static byte IsElementImp(IntPtr self, IntPtr sel) => 1;
 
         private static IntPtr RoleImp(IntPtr self, IntPtr sel)
-            => Guarded(self, sel, static (tree, node) => NSStr(CocoaRoles.RoleFor(tree.GetRole(node))), NSStr("AXUnknown"));
+            => Guarded(self, sel, static (tree, node) => NSStr(RoleOf(tree, node)), NSStr("AXUnknown"));
+
+        private static string RoleOf(IAutomationTreeSource tree, int node)
+            => CocoaRoles.RoleFor(tree.GetRole(node), tree.GetState(node));
 
         private static IntPtr RoleDescriptionImp(IntPtr self, IntPtr sel)
         {
@@ -281,6 +286,12 @@ namespace MS.Internal.Interop
                 }
 
                 if (tree.TryGetRange(node, out double value, out _, out _)) return NSDouble(value);
+
+                // A text control's AXValue is its whole text, which is what every range attribute
+                // counts into. The Value pattern's string can differ from it (a password box masks
+                // it, a rich text box has none), and VoiceOver reading one while indexing the other
+                // would speak the wrong characters.
+                if (IsText(state) && tree.TryGetText(node, out string text)) return NSStr(text);
                 return NSStr(tree.GetValue(node));
             }, IntPtr.Zero);
 
@@ -327,9 +338,7 @@ namespace MS.Internal.Interop
                     return default;
                 }
 
-                CocoaWindow.ConvertScreenPixelsToCocoaPoints(x, y, w, h,
-                    out double sx, out double sy, out double sw, out double sh);
-                return new CGRect { x = sx, y = sy, width = sw, height = sh };
+                return ToCocoaRect(x, y, w, h);
             }
             catch (Exception e) { Log("accessibilityFrame", e); return default; }
         }
@@ -404,6 +413,654 @@ namespace MS.Internal.Interop
             catch (Exception e) { Log("hitTest", e); return self; }
         }
 
+        // ---- patterns: text, selection, tables, scrolling, windows -----------------
+        //
+        // These are the NSAccessibility protocol's own accessors, the same ones NSTextView and
+        // NSTableView implement. AppKit derives the attribute list VoiceOver sees from which of
+        // them an object answers, and asks -isAccessibilitySelectorAllowed: per selector before
+        // listing one. Every element here shares one class, so the class answers all of them and
+        // that method narrows them per node to the patterns the node actually has -- otherwise a
+        // button would claim AXNumberOfCharacters and a text box AXRowCount.
+        //
+        // The PARAMETERIZED list is the exception: for an object that is not an NSView AppKit
+        // reports the same fixed set (every text one, AXCellForColumnAndRow) whatever it answers,
+        // and does not filter it. So each parameterized accessor also checks its node and answers
+        // nil -- or NSNotFound -- for one without the pattern, which is what a client gets from an
+        // AppKit control asked a question that does not apply to it.
+
+        private delegate long IntImpl(IntPtr self, IntPtr sel);
+        private delegate long IntIntImpl(IntPtr self, IntPtr sel, long value);
+        private delegate NSRange RangeImpl(IntPtr self, IntPtr sel);
+        private delegate NSRange RangeIntImpl(IntPtr self, IntPtr sel, long value);
+        private delegate NSRange RangePointImpl(IntPtr self, IntPtr sel, CGPoint point);
+        private delegate void VoidRangeImpl(IntPtr self, IntPtr sel, NSRange range);
+        private delegate IntPtr PtrRangeImpl(IntPtr self, IntPtr sel, NSRange range);
+        private delegate CGRect RectRangeImpl(IntPtr self, IntPtr sel, NSRange range);
+        private delegate IntPtr PtrIntIntImpl(IntPtr self, IntPtr sel, long a, long b);
+        private delegate byte BoolSelImpl(IntPtr self, IntPtr sel, IntPtr selector);
+
+        private const string RangeType = "{_NSRange=QQ}";
+        private const string RectType = "{CGRect={CGPoint=dd}{CGSize=dd}}";
+
+        // NSNotFound, the location AppKit uses for "no such range".
+        private const ulong NotFound = long.MaxValue;
+
+        // Held for the same reason as the delegates above: Objective-C keeps only the raw pointer.
+        private static readonly List<Delegate> s_patternImps = new();
+
+        // selector -> which nodes may answer it
+        private static readonly Dictionary<IntPtr, Func<IAutomationTreeSource, int, AccessibleState, bool>> s_gates = new();
+
+        private static void AddPatternMethods(IntPtr cls)
+        {
+            void Add(string selector, Delegate impl, string types, Func<IAutomationTreeSource, int, AccessibleState, bool> gate)
+            {
+                s_patternImps.Add(impl);
+                AddMethod(cls, selector, impl, types);
+                if (gate != null) s_gates[Sel(selector)] = gate;
+            }
+
+            static bool Text(IAutomationTreeSource t, int n, AccessibleState s) => IsText(s);
+            static bool Selection(IAutomationTreeSource t, int n, AccessibleState s) => (s & AccessibleState.SelectionContainer) != 0;
+            static bool Rows(IAutomationTreeSource t, int n, AccessibleState s) => IsTableRole(CocoaRoles.RoleFor(t.GetRole(n), s));
+            static bool SelectedRows(IAutomationTreeSource t, int n, AccessibleState s) => Selection(t, n, s) && Rows(t, n, s);
+            static bool Grid(IAutomationTreeSource t, int n, AccessibleState s) => (s & AccessibleState.Grid) != 0;
+            static bool Table(IAutomationTreeSource t, int n, AccessibleState s) => (s & AccessibleState.Table) != 0;
+            static bool GridItem(IAutomationTreeSource t, int n, AccessibleState s) => (s & AccessibleState.GridItem) != 0;
+            static bool Modal(IAutomationTreeSource t, int n, AccessibleState s) => (s & (AccessibleState.Window | AccessibleState.Modal)) != 0;
+            static bool Window(IAutomationTreeSource t, int n, AccessibleState s)
+                => (s & AccessibleState.Window) != 0 && t.TryGetWindow(n, out _, out _, out _, out _);
+            static bool Minimizable(IAutomationTreeSource t, int n, AccessibleState s)
+                => (s & AccessibleState.Window) != 0 && t.TryGetWindow(n, out _, out bool canMinimize, out _, out _) && canMinimize;
+
+            // text
+            Add("accessibilityNumberOfCharacters", (IntImpl)NumberOfCharactersImp, "q@:", Text);
+            Add("accessibilitySelectedText", (PtrImpl)SelectedTextImp, "@@:", Text);
+            Add("accessibilitySelectedTextRange", (RangeImpl)SelectedTextRangeImp, RangeType + "@:", Text);
+            Add("setAccessibilitySelectedTextRange:", (VoidRangeImpl)SetSelectedTextRangeImp, "v@:" + RangeType, Text);
+            Add("accessibilityVisibleCharacterRange", (RangeImpl)VisibleCharacterRangeImp, RangeType + "@:", Text);
+            Add("accessibilityInsertionPointLineNumber", (IntImpl)InsertionPointLineNumberImp, "q@:", Text);
+            Add("accessibilityStringForRange:", (PtrRangeImpl)StringForRangeImp, "@@:" + RangeType, Text);
+            Add("accessibilityAttributedStringForRange:", (PtrRangeImpl)AttributedStringForRangeImp, "@@:" + RangeType, Text);
+            Add("accessibilityRangeForLine:", (RangeIntImpl)RangeForLineImp, RangeType + "@:q", Text);
+            Add("accessibilityLineForIndex:", (IntIntImpl)LineForIndexImp, "q@:q", Text);
+            Add("accessibilityFrameForRange:", (RectRangeImpl)FrameForRangeImp, RectType + "@:" + RangeType, Text);
+            Add("accessibilityRangeForPosition:", (RangePointImpl)RangeForPositionImp, RangeType + "@:{CGPoint=dd}", Text);
+            Add("accessibilityRangeForIndex:", (RangeIntImpl)RangeForIndexImp, RangeType + "@:q", Text);
+            Add("accessibilityStyleRangeForIndex:", (RangeIntImpl)StyleRangeForIndexImp, RangeType + "@:q", Text);
+
+            // selection
+            Add("accessibilitySelectedChildren", (PtrImpl)SelectedChildrenImp, "@@:", Selection);
+            Add("setAccessibilitySelectedChildren:", (VoidPtrImpl)SetSelectedChildrenImp, "v@:@", Selection);
+            Add("accessibilitySelectedRows", (PtrImpl)SelectedChildrenImp, "@@:", SelectedRows);
+            Add("setAccessibilitySelectedRows:", (VoidPtrImpl)SetSelectedChildrenImp, "v@:@", SelectedRows);
+
+            // tables
+            Add("accessibilityRows", (PtrImpl)RowsImp, "@@:", Rows);
+            Add("accessibilityRowCount", (IntImpl)RowCountImp, "q@:", Grid);
+            Add("accessibilityColumnCount", (IntImpl)ColumnCountImp, "q@:", Grid);
+            Add("accessibilityCellForColumn:row:", (PtrIntIntImpl)CellForColumnAndRowImp, "@@:qq", Grid);
+            Add("accessibilityColumnHeaderUIElements", (PtrImpl)ColumnHeadersImp, "@@:", Table);
+            Add("accessibilityRowIndexRange", (RangeImpl)RowIndexRangeImp, RangeType + "@:", GridItem);
+            Add("accessibilityColumnIndexRange", (RangeImpl)ColumnIndexRangeImp, RangeType + "@:", GridItem);
+
+            // windows. The close and minimize BUTTONS are the native NSWindow's, which AppKit
+            // already exposes; inventing elements for them here would give VoiceOver two of each.
+            Add("isAccessibilityModal", (BoolImpl)ModalImp, "B@:", Modal);
+            Add("isAccessibilityMinimized", (BoolImpl)MinimizedImp, "B@:", Window);
+            Add("setAccessibilityMinimized:", (VoidBoolImpl)SetMinimizedImp, "v@:B", Minimizable);
+
+            // Scrolling has no protocol accessors: AppKit's scroll areas take their page actions
+            // and AXScrollToVisible through the original action API, so the element answers that
+            // API too. AppKit asks each of those selectors separately (NSAccessibilityElement
+            // itself implements none of them and relies on exactly that), but once the class
+            // names its own actions it is asked for ALL of them there -- so the list carries
+            // AXPress as well, and performing routes it back to the press accessor.
+            Add("accessibilityActionNames", (PtrImpl)ActionNamesImp, "@@:", null);
+            Add("accessibilityPerformAction:", (VoidPtrImpl)PerformActionImp, "v@:@", null);
+            Add("accessibilityActionDescription:", (PtrPtrImpl)ActionDescriptionImp, "@@:@", null);
+
+            // Press was offered by every element, text and images included, because the class has
+            // the accessor; now that selectors are narrowed per node it can be offered honestly.
+            s_gates[Sel("accessibilityPerformPress")] = static (t, n, s) => CanPress(t, n);
+
+            // Likewise AXMinValue/AXMaxValue, which only a range control has.
+            static bool Range(IAutomationTreeSource t, int n, AccessibleState s) => t.TryGetRange(n, out _, out _, out _);
+            s_gates[Sel("accessibilityMinValue")] = Range;
+            s_gates[Sel("accessibilityMaxValue")] = Range;
+
+            Add("isAccessibilitySelectorAllowed:", (BoolSelImpl)SelectorAllowedImp, "B@::", null);
+            Add("accessibilityIsAttributeSettable:", (BoolSelImpl)SettableImp, "B@:@", null);
+        }
+
+        private static byte SelectorAllowedImp(IntPtr self, IntPtr sel, IntPtr selector)
+        {
+            try
+            {
+                if (s_gates.TryGetValue(selector, out var gate))
+                {
+                    IAutomationTreeSource tree = Tree;
+                    int node = NodeOf(self);
+                    if (tree == null || node < 0) return 0;
+                    return (byte)(gate(tree, node, tree.GetState(node)) ? 1 : 0);
+                }
+
+                // Not one of ours: allowed, which is what NSObject would have said had it an
+                // opinion -- it implements no accessibility methods of its own to ask.
+                return 1;
+            }
+            catch (Exception e) { Log("isAccessibilitySelectorAllowed", e); return 0; }
+        }
+
+        // The attributes a client may set, by the setter that sets them.
+        private static readonly Dictionary<string, string> s_setters = new()
+        {
+            ["AXValue"] = "setAccessibilityValue:",
+            ["AXFocused"] = "setAccessibilityFocused:",
+            ["AXSelectedTextRange"] = "setAccessibilitySelectedTextRange:",
+            ["AXSelectedChildren"] = "setAccessibilitySelectedChildren:",
+            ["AXSelectedRows"] = "setAccessibilitySelectedRows:",
+            ["AXMinimized"] = "setAccessibilityMinimized:",
+        };
+
+        /// <summary>
+        /// The original API's settability question. AppKit answers it from the setter for an
+        /// allowed selector, but for one -isAccessibilitySelectorAllowed: refuses it falls back to
+        /// this -- and with nothing here it says YES, so a window that cannot be minimized would
+        /// still offer AXMinimized. The answer is the same rule either way: the setter exists and
+        /// the node is allowed it.
+        /// </summary>
+        private static byte SettableImp(IntPtr self, IntPtr sel, IntPtr attribute)
+        {
+            try
+            {
+                if (!s_setters.TryGetValue(ReadString(attribute), out string setter)) return 0;
+                return SelectorAllowedImp(self, sel, Sel(setter));
+            }
+            catch (Exception e) { Log("accessibilityIsAttributeSettable", e); return 0; }
+        }
+
+        internal static bool IsText(AccessibleState state)
+            => (state & AccessibleState.HasText) != 0 && (state & AccessibleState.Password) == 0;
+
+        internal static bool IsTableRole(string role) => role is "AXTable" or "AXOutline";
+
+        private static T GuardedValue<T>(IntPtr self, string what, Func<IAutomationTreeSource, int, T> get, T fallback)
+        {
+            try
+            {
+                IAutomationTreeSource tree = Tree;
+                int node = NodeOf(self);
+                if (tree == null || node < 0) return fallback;
+                return get(tree, node);
+            }
+            catch (Exception e) { Log(what, e); return fallback; }
+        }
+
+        private static void GuardedAction(IntPtr self, string what, Action<IAutomationTreeSource, int> act)
+        {
+            try
+            {
+                IAutomationTreeSource tree = Tree;
+                int node = NodeOf(self);
+                if (tree != null && node >= 0) act(tree, node);
+            }
+            catch (Exception e) { Log(what, e); }
+        }
+
+        // ---- text ----
+
+        private static string TextOf(IAutomationTreeSource tree, int node)
+            => IsText(tree.GetState(node)) && tree.TryGetText(node, out string text) ? text ?? string.Empty : null;
+
+        /// <summary>
+        /// An AppKit range clipped to the text. Ranges arrive from the client unchecked --
+        /// NSNotFound, or past the end after an edit it has not heard about yet -- and a substring
+        /// that threw would only end up as a nil answer anyway.
+        /// </summary>
+        private static (int Start, int Length) Clip(NSRange range, int textLength)
+        {
+            ulong start = Math.Min(range.location, (ulong)textLength);
+            ulong length = Math.Min(range.length, (ulong)textLength - start);
+            return ((int)start, (int)length);
+        }
+
+        private static NSRange RangeOf(int start, int length)
+            => new NSRange { location = (ulong)Math.Max(start, 0), length = (ulong)Math.Max(length, 0) };
+
+        private static NSRange NoRange => new NSRange { location = NotFound, length = 0 };
+
+        private static long NumberOfCharactersImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityNumberOfCharacters", static (tree, node) => (long)(TextOf(tree, node)?.Length ?? 0), 0L);
+
+        private static (int Start, int Length) SelectionOf(IAutomationTreeSource tree, int node, string text)
+        {
+            if (!tree.TryGetTextSelection(node, out int start, out int length)) return (0, 0);
+            return Clip(RangeOf(start, length), text.Length);
+        }
+
+        private static IntPtr SelectedTextImp(IntPtr self, IntPtr sel)
+            => Guarded(self, sel, static (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return IntPtr.Zero;
+                (int start, int length) = SelectionOf(tree, node, text);
+                return NSStr(text.Substring(start, length));
+            }, IntPtr.Zero);
+
+        private static NSRange SelectedTextRangeImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilitySelectedTextRange", static (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return NoRange;
+                (int start, int length) = SelectionOf(tree, node, text);
+                return RangeOf(start, length);
+            }, NoRange);
+
+        private static void SetSelectedTextRangeImp(IntPtr self, IntPtr sel, NSRange range)
+            => GuardedAction(self, "setAccessibilitySelectedTextRange", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return;
+                (int start, int length) = Clip(range, text.Length);
+                tree.SetTextSelection(node, start, length);
+            });
+
+        private static NSRange VisibleCharacterRangeImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityVisibleCharacterRange", static (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return NoRange;
+
+                // Without layout to ask, all of it: VoiceOver reads the visible range when the user
+                // asks for "what is on screen", and saying nothing would be worse than saying it all.
+                if (!tree.TryGetVisibleTextRange(node, out int start, out int length)) return RangeOf(0, text.Length);
+                (int s, int l) = Clip(RangeOf(start, length), text.Length);
+                return RangeOf(s, l);
+            }, NoRange);
+
+        private static long InsertionPointLineNumberImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityInsertionPointLineNumber", static (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return 0L;
+                (int start, _) = SelectionOf(tree, node, text);
+                return (long)LineOf(tree, node, start);
+            }, 0L);
+
+        private static int LineOf(IAutomationTreeSource tree, int node, int offset)
+            => tree.TryGetTextLine(node, offset, out _, out _, out int number) ? Math.Max(number, 0) : 0;
+
+        private static IntPtr StringForRangeImp(IntPtr self, IntPtr sel, NSRange range)
+            => GuardedValue(self, "accessibilityStringForRange", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return IntPtr.Zero;
+                (int start, int length) = Clip(range, text.Length);
+                return NSStr(text.Substring(start, length));
+            }, IntPtr.Zero);
+
+        private static IntPtr AttributedStringForRangeImp(IntPtr self, IntPtr sel, NSRange range)
+            => GuardedValue(self, "accessibilityAttributedStringForRange", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return IntPtr.Zero;
+                (int start, int length) = Clip(range, text.Length);
+
+                // Plain: WPF's text pattern does carry fonts and colours, but VoiceOver reads only
+                // the characters by default and an attribute it misreads is worse than none.
+                IntPtr cls = objc_getClass("NSAttributedString");
+                if (cls == IntPtr.Zero) return IntPtr.Zero;
+                IntPtr attributed = SendPtrPtr(Send(cls, Sel("alloc")), Sel("initWithString:"), NSStr(text.Substring(start, length)));
+                return attributed == IntPtr.Zero ? IntPtr.Zero : Send(attributed, Sel("autorelease"));
+            }, IntPtr.Zero);
+
+        private static NSRange RangeForLineImp(IntPtr self, IntPtr sel, long line)
+            => GuardedValue(self, "accessibilityRangeForLine", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null || line < 0) return NoRange;
+                return RangeForLine(tree, node, text, line);
+            }, NoRange);
+
+        /// <summary>
+        /// The tree answers "which line is this offset on", never "where is line N", so the lines
+        /// are walked from the top. Each step starts at the end of the line before; a line that
+        /// does not end where the tree says (an empty last line, a line reported without its
+        /// break) is stepped over one character at a time so the walk always makes progress.
+        /// </summary>
+        private static NSRange RangeForLine(IAutomationTreeSource tree, int node, string text, long line)
+        {
+            if (!tree.TryGetTextLine(node, 0, out _, out _, out _))
+            {
+                // No line geometry at all: the text is one line.
+                return line == 0 ? RangeOf(0, text.Length) : NoRange;
+            }
+
+            int offset = 0;
+            while (offset <= text.Length)
+            {
+                if (!tree.TryGetTextLine(node, offset, out int start, out int length, out int number)) break;
+                if (number == line)
+                {
+                    (int s, int l) = Clip(RangeOf(start, length), text.Length);
+                    return RangeOf(s, l);
+                }
+                if (number > line) break;
+
+                int next = start + length;
+                offset = next > offset ? next : offset + 1;
+            }
+            return NoRange;
+        }
+
+        private static long LineForIndexImp(IntPtr self, IntPtr sel, long index)
+            => GuardedValue(self, "accessibilityLineForIndex", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return 0L;
+                return (long)LineOf(tree, node, (int)Math.Clamp(index, 0, text.Length));
+            }, 0L);
+
+        private static CGRect FrameForRangeImp(IntPtr self, IntPtr sel, NSRange range)
+            => GuardedValue(self, "accessibilityFrameForRange", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return default;
+                (int start, int length) = Clip(range, text.Length);
+
+                if (!tree.TryGetTextRangeBounds(node, start, length, out double x, out double y, out double w, out double h))
+                {
+                    return default;
+                }
+                return ToCocoaRect(x, y, w, h);
+            }, default(CGRect));
+
+        private static NSRange RangeForPositionImp(IntPtr self, IntPtr sel, CGPoint point)
+            => GuardedValue(self, "accessibilityRangeForPosition", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null) return NoRange;
+
+                CocoaWindow.ConvertCocoaPointsToScreenPixels(point.x, point.y, out double px, out double py);
+                int offset = tree.GetTextOffsetAtPoint(node, px, py);
+                return offset < 0 ? NoRange : ComposedRangeAt(text, offset);
+            }, NoRange);
+
+        private static NSRange RangeForIndexImp(IntPtr self, IntPtr sel, long index)
+            => GuardedValue(self, "accessibilityRangeForIndex", (tree, node) =>
+            {
+                string text = TextOf(tree, node);
+                if (text == null || index < 0 || index > text.Length) return NoRange;
+                return ComposedRangeAt(text, (int)index);
+            }, NoRange);
+
+        /// <summary>
+        /// The user-perceived character around an offset: AppKit's "composed character sequence",
+        /// so moving by character never lands VoiceOver between the halves of a surrogate pair or
+        /// between a letter and its combining accent.
+        /// </summary>
+        internal static NSRange ComposedRangeAt(string text, int offset)
+        {
+            if (offset >= text.Length) return RangeOf(text.Length, 0);
+
+            int[] starts = System.Globalization.StringInfo.ParseCombiningCharacters(text);
+            int index = Array.BinarySearch(starts, offset);
+            if (index < 0) index = ~index - 1;
+
+            int begin = starts[index];
+            int end = index + 1 < starts.Length ? starts[index + 1] : text.Length;
+            return RangeOf(begin, end - begin);
+        }
+
+        private static NSRange StyleRangeForIndexImp(IntPtr self, IntPtr sel, long index)
+            => GuardedValue(self, "accessibilityStyleRangeForIndex", static (tree, node) =>
+            {
+                // One run: the attributed strings above carry no style either, so the whole text
+                // is uniformly styled as far as anything we report can tell.
+                string text = TextOf(tree, node);
+                return text == null ? NoRange : RangeOf(0, text.Length);
+            }, NoRange);
+
+        // ---- selection ----
+
+        private static IntPtr SelectedChildrenImp(IntPtr self, IntPtr sel)
+            => Guarded(self, sel, static (tree, node) => ElementsOf(tree.GetSelectedIds(node)), EmptyArray());
+
+        /// <summary>
+        /// The client picks a new selection. Selecting the first replaces whatever was selected
+        /// and the rest are added to it, which is how a click and then command-clicks would build
+        /// the same selection -- a single-selection container simply ends up with the first.
+        /// </summary>
+        private static void SetSelectedChildrenImp(IntPtr self, IntPtr sel, IntPtr array)
+            => GuardedAction(self, "setAccessibilitySelectedChildren", (tree, node) =>
+            {
+                if (array == IntPtr.Zero) return;
+                bool multiple = (tree.GetState(node) & AccessibleState.MultiSelectable) != 0;
+
+                long count = (long)Send(array, Sel("count"));
+                for (long i = 0; i < count; i++)
+                {
+                    int item = NodeOfElement(SendPtrLong(array, Sel("objectAtIndex:"), i));
+                    if (item < 0) continue;
+
+                    if (i == 0) tree.DoAction(item, AccessibleAction.Select);
+                    else if (!multiple) break;
+                    else if ((tree.GetState(item) & AccessibleState.Selected) == 0) tree.DoAction(item, AccessibleAction.ToggleSelection);
+                }
+            });
+
+        /// <summary>A node id for an object the client handed back, or InvalidNode for anything that is not one of ours.</summary>
+        private static int NodeOfElement(IntPtr obj)
+        {
+            if (obj == IntPtr.Zero || s_elementClass == IntPtr.Zero) return IAutomationTreeSource.InvalidNode;
+            return SendBoolPtr(obj, Sel("isKindOfClass:"), s_elementClass) != 0 ? NodeOf(obj) : IAutomationTreeSource.InvalidNode;
+        }
+
+        private static IntPtr ElementsOf(int[] ids)
+        {
+            if (ids == null || ids.Length == 0) return EmptyArray();
+
+            IntPtr array = Send(objc_getClass("NSMutableArray"), Sel("array"));
+            foreach (int id in ids)
+            {
+                IntPtr element = ElementFor(id);
+                if (element != IntPtr.Zero) SendVoidPtr(array, Sel("addObject:"), element);
+            }
+            return array;
+        }
+
+        // ---- tables ----
+
+        /// <summary>
+        /// A table's rows are the children that are rows -- a DataGrid's header presenter is a
+        /// child too, and is not one. An outline's rows are every row the user can reach, nested
+        /// ones included, because NSOutlineView reports its rows flat; the descent stops at a
+        /// collapsed row, whose children are not on screen.
+        /// </summary>
+        private static IntPtr RowsImp(IntPtr self, IntPtr sel)
+            => Guarded(self, sel, static (tree, node) =>
+            {
+                var rows = new List<int>();
+                CollectRows(tree, node, RoleOf(tree, node) == "AXOutline", rows, depth: 0);
+                return ElementsOf(rows.ToArray());
+            }, EmptyArray());
+
+        private static void CollectRows(IAutomationTreeSource tree, int node, bool nested, List<int> rows, int depth)
+        {
+            if (depth > 64) return;   // a cycle in a broken tree must not hang VoiceOver
+
+            foreach (int child in tree.GetChildIds(node))
+            {
+                if (RoleOf(tree, child) != "AXRow") continue;
+                rows.Add(child);
+                if (nested && (tree.GetState(child) & AccessibleState.Collapsed) == 0)
+                {
+                    CollectRows(tree, child, nested, rows, depth + 1);
+                }
+            }
+        }
+
+        private static long RowCountImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityRowCount", static (tree, node)
+                => tree.TryGetGrid(node, out int rows, out _) ? (long)Math.Max(rows, 0) : 0L, 0L);
+
+        private static long ColumnCountImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityColumnCount", static (tree, node)
+                => tree.TryGetGrid(node, out _, out int columns) ? (long)Math.Max(columns, 0) : 0L, 0L);
+
+        private static IntPtr CellForColumnAndRowImp(IntPtr self, IntPtr sel, long column, long row)
+            => GuardedValue(self, "accessibilityCellForColumnAndRow", (tree, node) =>
+            {
+                if (column < 0 || row < 0 || column > int.MaxValue || row > int.MaxValue) return IntPtr.Zero;
+                int cell = tree.GetGridCell(node, (int)row, (int)column);
+                return cell < 0 ? IntPtr.Zero : ElementFor(cell);
+            }, IntPtr.Zero);
+
+        private static IntPtr ColumnHeadersImp(IntPtr self, IntPtr sel)
+            => Guarded(self, sel, static (tree, node) => ElementsOf(tree.GetColumnHeaderIds(node)), EmptyArray());
+
+        private static NSRange RowIndexRangeImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityRowIndexRange", static (tree, node)
+                => tree.TryGetGridItem(node, out int row, out _, out int rowSpan, out _, out _)
+                    ? RangeOf(row, Math.Max(rowSpan, 1)) : NoRange, NoRange);
+
+        private static NSRange ColumnIndexRangeImp(IntPtr self, IntPtr sel)
+            => GuardedValue(self, "accessibilityColumnIndexRange", static (tree, node)
+                => tree.TryGetGridItem(node, out _, out int column, out _, out int columnSpan, out _)
+                    ? RangeOf(column, Math.Max(columnSpan, 1)) : NoRange, NoRange);
+
+        // ---- windows ----
+
+        private static byte ModalImp(IntPtr self, IntPtr sel)
+            => GuardedBool(self, static (tree, node) => (tree.GetState(node) & AccessibleState.Modal) != 0, false);
+
+        private const int WindowVisualStateNormal = 0, WindowVisualStateMinimized = 2;
+
+        private static byte MinimizedImp(IntPtr self, IntPtr sel)
+            => GuardedBool(self, static (tree, node)
+                => tree.TryGetWindow(node, out int state, out _, out _, out _) && state == WindowVisualStateMinimized, false);
+
+        private static void SetMinimizedImp(IntPtr self, IntPtr sel, byte value)
+            => GuardedAction(self, "setAccessibilityMinimized", (tree, node)
+                => tree.SetWindowVisualState(node, value != 0 ? WindowVisualStateMinimized : WindowVisualStateNormal));
+
+        // ---- scrolling ----
+
+        // System.Windows.Automation.ScrollAmount
+        private const int LargeDecrement = 0, NoAmount = 2, LargeIncrement = 3;
+
+        internal const string ScrollUpByPage = "AXScrollUpByPage", ScrollDownByPage = "AXScrollDownByPage",
+                              ScrollLeftByPage = "AXScrollLeftByPage", ScrollRightByPage = "AXScrollRightByPage",
+                              ScrollToVisible = "AXScrollToVisible";
+
+        private delegate IntPtr PtrPtrImpl(IntPtr self, IntPtr sel, IntPtr arg);
+
+        internal const string Press = "AXPress";
+
+        private static IntPtr ActionNamesImp(IntPtr self, IntPtr sel)
+            => Guarded(self, sel, static (tree, node) =>
+            {
+                List<string> names = ActionNames(tree, node);
+                if (names.Count == 0) return EmptyArray();
+
+                IntPtr array = Send(objc_getClass("NSMutableArray"), Sel("array"));
+                foreach (string name in names) SendVoidPtr(array, Sel("addObject:"), NSStr(name));
+                return array;
+            }, EmptyArray());
+
+        private static bool CanPress(IAutomationTreeSource tree, int node)
+        {
+            foreach (AccessibleAction action in s_pressOrder)
+            {
+                if (tree.SupportsAction(node, action)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Every action the element offers through the action API, AXPress included.</summary>
+        internal static List<string> ActionNames(IAutomationTreeSource tree, int node)
+        {
+            List<string> names = ExtraActions(tree, node);
+            if (CanPress(tree, node)) names.Insert(0, Press);
+            return names;
+        }
+
+        /// <summary>The actions AppKit cannot derive from a protocol accessor, as NSScrollView names them.</summary>
+        internal static List<string> ExtraActions(IAutomationTreeSource tree, int node)
+        {
+            var names = new List<string>();
+            AccessibleState state = tree.GetState(node);
+
+            if ((state & AccessibleState.Scrollable) != 0 &&
+                tree.TryGetScroll(node, out _, out _, out _, out _, out bool horizontal, out bool vertical))
+            {
+                if (vertical) { names.Add(ScrollUpByPage); names.Add(ScrollDownByPage); }
+                if (horizontal) { names.Add(ScrollLeftByPage); names.Add(ScrollRightByPage); }
+            }
+
+            if ((state & AccessibleState.ScrollItem) != 0) names.Add(ScrollToVisible);
+            return names;
+        }
+
+        private static void PerformActionImp(IntPtr self, IntPtr sel, IntPtr action)
+        {
+            try
+            {
+                IAutomationTreeSource tree = Tree;
+                int node = NodeOf(self);
+                if (tree == null || node < 0) return;
+
+                string name = ReadString(action);
+                if (name == Press) PressImp(self, sel);
+                else PerformExtraAction(tree, node, name);
+            }
+            catch (Exception e) { Log("accessibilityPerformAction", e); }
+        }
+
+        private static IntPtr ActionDescriptionImp(IntPtr self, IntPtr sel, IntPtr action)
+        {
+            // AppKit's own localised wording, as for the role description.
+            try { return action == IntPtr.Zero ? IntPtr.Zero : NSAccessibilityActionDescription(action); }
+            catch (Exception e) { Log("accessibilityActionDescription", e); return IntPtr.Zero; }
+        }
+
+        /// <summary>Runs one of <see cref="ExtraActions"/>; false for a name that is not one of them.</summary>
+        internal static bool PerformExtraAction(IAutomationTreeSource tree, int node, string name)
+        {
+            switch (name)
+            {
+                // "Up" is towards the start, which in UIA's terms is a decrement.
+                case ScrollUpByPage: tree.Scroll(node, NoAmount, LargeDecrement); return true;
+                case ScrollDownByPage: tree.Scroll(node, NoAmount, LargeIncrement); return true;
+                case ScrollLeftByPage: tree.Scroll(node, LargeDecrement, NoAmount); return true;
+                case ScrollRightByPage: tree.Scroll(node, LargeIncrement, NoAmount); return true;
+                case ScrollToVisible: tree.ScrollIntoView(node); return true;
+                default: return false;
+            }
+        }
+
+        private static CGRect ToCocoaRect(double x, double y, double w, double h)
+        {
+            CocoaWindow.ConvertScreenPixelsToCocoaPoints(x, y, w, h,
+                out double sx, out double sy, out double sw, out double sh);
+            return new CGRect { x = sx, y = sy, width = sw, height = sh };
+        }
+
+        /// <summary>
+        /// The element for a node, for tests that drive the class through objc_msgSend as AppKit
+        /// would. Loads AppKit first: the class's accessors build AppKit objects, and a test
+        /// process has not loaded it.
+        /// </summary>
+        internal static IntPtr ElementForTest(int nodeId)
+        {
+            if (!OperatingSystem.IsMacOS()) return IntPtr.Zero;
+            const int RTLD_NOW = 2;
+            if (dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_NOW) == IntPtr.Zero) return IntPtr.Zero;
+            EnsureElementClass();
+            return ElementFor(nodeId);
+        }
+
         // ---- notifications out -----------------------------------------------------
 
         private static void OnTreeChanged(AutomationChange change)
@@ -413,25 +1070,37 @@ namespace MS.Internal.Interop
                 IntPtr element = ElementFor(change.NodeId);
                 if (element == IntPtr.Zero) return;
 
-                string notification = change.Kind switch
-                {
-                    AutomationChangeKind.FocusChanged => "AXFocusedUIElementChanged",
-                    AutomationChangeKind.ValueChanged => "AXValueChanged",
-                    AutomationChangeKind.SelectionChanged => "AXSelectedChildrenChanged",
-                    AutomationChangeKind.ChildrenChanged => "AXLayoutChanged",
-                    AutomationChangeKind.ChildAdded => "AXLayoutChanged",
-                    AutomationChangeKind.ChildRemoved => "AXLayoutChanged",
-                    // NSAccessibility has no notification of its own for expanded/checked; both are
-                    // read back through AXValue, so that is what VoiceOver has to be told changed.
-                    AutomationChangeKind.ExpandedChanged => "AXValueChanged",
-                    AutomationChangeKind.CheckedChanged => "AXValueChanged",
-                    _ => "AXTitleChanged",
-                };
-
-                NSAccessibilityPostNotification(element, NSStr(notification));
+                NSAccessibilityPostNotification(element, NSStr(NotificationFor(Tree, change)));
             }
             catch (Exception e) { Log("postNotification", e); }
         }
+
+        /// <summary>The NSAccessibility notification a change is announced with.</summary>
+        internal static string NotificationFor(IAutomationTreeSource tree, AutomationChange change) => change.Kind switch
+        {
+            AutomationChangeKind.FocusChanged => "AXFocusedUIElementChanged",
+            AutomationChangeKind.ValueChanged => "AXValueChanged",
+            AutomationChangeKind.SelectionChanged => "AXSelectedChildrenChanged",
+            AutomationChangeKind.ChildrenChanged => "AXLayoutChanged",
+            AutomationChangeKind.ChildAdded => "AXLayoutChanged",
+            AutomationChangeKind.ChildRemoved => "AXLayoutChanged",
+            // NSAccessibility has no notification of its own for expanded/checked; both are
+            // read back through AXValue, so that is what VoiceOver has to be told changed.
+            AutomationChangeKind.ExpandedChanged => "AXValueChanged",
+            AutomationChangeKind.CheckedChanged => "AXValueChanged",
+            // The text is the element's AXValue (see ValueImp), so an edit is a value change --
+            // which is what NSTextView posts as the user types.
+            AutomationChangeKind.TextChanged => "AXValueChanged",
+            AutomationChangeKind.TextSelectionChanged => "AXSelectedTextChanged",
+            // A table's selection is its selected ROWS to VoiceOver, and it listens for the rows
+            // notification there; NSTableView posts that one, not the children one.
+            AutomationChangeKind.SelectionContainerChanged =>
+                tree != null && IsTableRole(RoleOf(tree, change.NodeId)) ? "AXSelectedRowsChanged" : "AXSelectedChildrenChanged",
+            // Scrolling moves every child of the scroll area without changing any of them, which is
+            // exactly what the layout notification means; VoiceOver re-reads positions on it.
+            AutomationChangeKind.ScrollChanged => "AXLayoutChanged",
+            _ => "AXTitleChanged",
+        };
 
         // ---- helpers ---------------------------------------------------------------
 
@@ -509,6 +1178,8 @@ namespace MS.Internal.Interop
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrPtr(IntPtr r, IntPtr s, IntPtr a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrInt(IntPtr r, IntPtr s, int a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrDouble(IntPtr r, IntPtr s, double a);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrLong(IntPtr r, IntPtr s, long a);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern byte SendBoolPtr(IntPtr r, IntPtr s, IntPtr a);
 
         // Resolved through dlsym rather than [DllImport("...AppKit")]. A DllImport naming a
         // framework by path is resolved EAGERLY by the iOS AOT linker, which then fails the whole
@@ -535,6 +1206,23 @@ namespace MS.Internal.Interop
 
         private delegate void PostNotificationDelegate(IntPtr element, IntPtr notification);
 
+        private static IntPtr s_actionDescription = (IntPtr)(-1);
+
+        private static IntPtr NSAccessibilityActionDescription(IntPtr action)
+        {
+            if (s_actionDescription == (IntPtr)(-1))
+            {
+                const int RTLD_NOW = 2;
+                IntPtr appKit = dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_NOW);
+                s_actionDescription = appKit == IntPtr.Zero ? IntPtr.Zero : dlsym(appKit, "NSAccessibilityActionDescription");
+            }
+
+            if (s_actionDescription == IntPtr.Zero) return IntPtr.Zero;
+            return Marshal.GetDelegateForFunctionPointer<ActionDescriptionDelegate>(s_actionDescription)(action);
+        }
+
+        private delegate IntPtr ActionDescriptionDelegate(IntPtr action);
+
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlopen(string path, int mode);
         [DllImport("/usr/lib/libSystem.dylib")] private static extern IntPtr dlsym(IntPtr handle, string symbol);
 
@@ -543,6 +1231,9 @@ namespace MS.Internal.Interop
 
         [StructLayout(LayoutKind.Sequential)]
         private struct CGRect { public double x; public double y; public double width; public double height; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct NSRange { public ulong location; public ulong length; }
     }
 
     /// <summary>
@@ -591,12 +1282,32 @@ namespace MS.Internal.Interop
             32 => "AXWindow",           // Window
             33 => "AXGroup",            // Pane
             34 => "AXGroup",            // Header
-            35 => "AXColumn",           // HeaderItem
+            // A column header is a button to AppKit (NSTableHeaderView's cells are, with the sort
+            // subrole): AXColumn is the column itself, an element with rows and an index, which a
+            // WPF header item is not -- VoiceOver would go looking for cells under it.
+            35 => "AXButton",           // HeaderItem
             36 => "AXTable",            // Table
             37 => "AXGroup",            // TitleBar
             38 => "AXSplitter",         // Separator
             _ => "AXUnknown",
         };
+
+        /// <summary>
+        /// The role for a node, given its patterns as well as its control type. A grid cell and a
+        /// scrolling pane usually come with a control type that says nothing (Custom, Group,
+        /// Pane), and to VoiceOver the role is what decides how they are navigated: a cell is
+        /// read with its row and column, a scroll area offers paging. A type that already means
+        /// something -- a list that scrolls, a text box in a cell -- keeps its own role.
+        /// </summary>
+        internal static string RoleFor(int automationControlType, AccessibleState state)
+        {
+            string role = RoleFor(automationControlType);
+            if (role is not ("AXUnknown" or "AXGroup")) return role;
+
+            if ((state & AccessibleState.GridItem) != 0) return "AXCell";
+            if ((state & AccessibleState.Scrollable) != 0) return "AXScrollArea";
+            return role;
+        }
 
         /// <summary>Roles whose AXValue is a checked-state number rather than text.</summary>
         internal static bool IsToggleRole(int automationControlType)
