@@ -179,7 +179,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static int GetRateCaps(IntPtr self, uint index, D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS* c)
         {
             if (c == null || index != 0) return HResult.E_INVALIDARG;
-            *c = default;            // progressive frames only, no deinterlacing, no inverse telecine
+            // bob: each field of an interlaced frame shown alone, its lines interpolated (D3D11_VIDEO_PROCESSOR_PROCESSOR_CAPS_DEINTERLACE_BOB)
+            *c = new D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS { ProcessorCaps = 0x2 };
             return HResult.S_OK;
         }
 
@@ -229,7 +230,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         [UnmanagedCallersOnly]
-        private static void GetRateCaps(IntPtr self, D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS* c) { if (c != null) *c = default; }
+        private static void GetRateCaps(IntPtr self, D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS* c) { if (c != null) *c = new D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS { ProcessorCaps = 0x2 }; }
     }
 
     /// <summary>ID3D11VideoProcessorInputView / OutputView: a texture (a slice of it) to read or write.</summary>
@@ -305,7 +306,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             var d = Self(self);
             if (d == null || desc == null) return HResult.E_INVALIDARG;
             if (desc->InputWidth == 0 || desc->InputHeight == 0 || desc->OutputWidth == 0 || desc->OutputHeight == 0) return HResult.E_INVALIDARG;
-            if (desc->InputFrameFormat != 0) D3DLog.Once("vpinterlaced", $"video processor for interlaced input (frame format {desc->InputFrameFormat}): fields are not weaved, frames are shown as they are");
             return ComObject.Out(e, new D3DVideoProcessorEnumerator(d, *desc));
         }
 
@@ -458,7 +458,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (Vp(p) is not { } v || stream != 0) return;
             v.FrameFormat = format;
-            if (format != 0) D3DLog.Once("vpfield", $"video processor stream frame format {format}: fields are not weaved, frames are shown as they are");
         }
 
         [UnmanagedCallersOnly]
@@ -552,10 +551,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 input = From<D3DVideoView>(streams[0].pInputSurface);
                 if (input == null || !input.Input) return HResult.E_INVALIDARG;
-                if (streams[0].PastFrames != 0 || streams[0].FutureFrames != 0) D3DLog.Once("vpref", "VideoProcessorBlt with reference frames: no deinterlacing, the current frame alone");
+                if (streams[0].PastFrames != 0 || streams[0].FutureFrames != 0) D3DLog.Once("vpref", "VideoProcessorBlt with reference frames: deinterlaced by bob, from the current frame alone");
+            }
+            // an interlaced frame (bob): the field OutputIndex names -- the first in time, then the second
+            uint field = 0;
+            if (input != null && p.FrameFormat is 1 or 2)
+            {
+                bool second = (streams[0].OutputIndex & 1) != 0;
+                bool topFirst = p.FrameFormat == 1;
+                field = topFirst != second ? 1u : 2u;       // 1 top (even lines), 2 bottom (odd)
             }
             int hr = HResult.S_OK;
-            try { c.Run(x => hr = x.VideoBlt(p, o, input), p, o, input); }
+            try { c.Run(x => hr = x.VideoBlt(p, o, input, field), p, o, input); }
             catch (Exception e) { D3DLog.Error("VideoProcessorBlt", e); return HResult.E_FAIL; }
             return hr;
         }
@@ -601,7 +608,7 @@ struct P {
     m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>,   // codes (Y, Cb, Cr, 1) to RGB
     bg: vec4<f32>,       // the background
     info: vec4<u32>,     // luma width, luma height, rotation, 1 to fill the background
-    codes: vec4<f32>,    // what one unit of a texel is in codes (255 for NV12; 1/64 for P010, 1 for P016)
+    codes: vec4<f32>,    // x: what one unit of a texel is in codes (255 for NV12; 1/64 for P010, 1 for P016); y: the field (bob) 0 none, 1 top, 2 bottom
 };
 @group(0) @binding(0) var tex: texture_2d<TEXEL>;
 @group(0) @binding(1) var<uniform> p: P;
@@ -621,12 +628,27 @@ fn code(x: i32, y: i32) -> f32 {
 fn lo() -> vec2<i32> { return max(vec2<i32>(p.src.xy), vec2<i32>(0, 0)); }
 fn hi() -> vec2<i32> { return min(vec2<i32>(ceil(p.src.zw)), vec2<i32>(i32(p.info.x), i32(p.info.y))) - vec2<i32>(1, 1); }
 
+// bob: the rows of one field (parity k), the frame row v between two of them
+fn fieldRows(v: f32, k: i32, a: i32, z: i32) -> vec3<f32> {
+    let fy = (v - f32(k)) * 0.5;
+    let r = floor(fy);
+    let r0 = clamp(i32(r) * 2 + k, a, z); let r1 = clamp(i32(r) * 2 + 2 + k, a, z);
+    // a row outside the clamp keeps the field's parity
+    let q0 = select(r0, r0 + 1, (r0 & 1) != k && r0 + 1 <= z); let q1 = select(r1, r1 - 1, (r1 & 1) != k && r1 - 1 >= a);
+    return vec3<f32>(f32(q0), f32(q1), fy - r);
+}
+
 fn luma(u: vec2<f32>) -> f32 {
     let a = lo(); let z = hi();
     let b = floor(u); let f = u - b;
     let x0 = clamp(i32(b.x), a.x, z.x); let x1 = clamp(i32(b.x) + 1, a.x, z.x);
-    let y0 = clamp(i32(b.y), a.y, z.y); let y1 = clamp(i32(b.y) + 1, a.y, z.y);
-    return mix(mix(code(x0, y0), code(x1, y0), f.x), mix(code(x0, y1), code(x1, y1), f.x), f.y);
+    var y0 = clamp(i32(b.y), a.y, z.y); var y1 = clamp(i32(b.y) + 1, a.y, z.y);
+    var fy = f.y;
+    if (p.codes.y > 0.5) {
+        let rows = fieldRows(u.y, i32(p.codes.y) - 1, a.y, z.y);
+        y0 = i32(rows.x); y1 = i32(rows.y); fy = rows.z;
+    }
+    return mix(mix(code(x0, y0), code(x1, y0), f.x), mix(code(x0, y1), code(x1, y1), f.x), fy);
 }
 
 fn chromaAt(i: i32, j: i32) -> vec2<f32> {
@@ -637,8 +659,14 @@ fn chromaAt(i: i32, j: i32) -> vec2<f32> {
 
 fn chroma(c: vec2<f32>) -> vec2<f32> {
     let b = floor(c); let f = c - b;
-    let i = i32(b.x); let j = i32(b.y);
-    return mix(mix(chromaAt(i, j), chromaAt(i + 1, j), f.x), mix(chromaAt(i, j + 1), chromaAt(i + 1, j + 1), f.x), f.y);
+    let i = i32(b.x); var j0 = i32(b.y); var j1 = j0 + 1;
+    var fy = f.y;
+    if (p.codes.y > 0.5) {
+        // 4:2:0 interlaced: the chroma rows alternate fields too
+        let rows = fieldRows(c.y, i32(p.codes.y) - 1, lo().y / 2, hi().y / 2);
+        j0 = i32(rows.x); j1 = i32(rows.y); fy = rows.z;
+    }
+    return mix(mix(chromaAt(i, j0), chromaAt(i + 1, j0), f.x), mix(chromaAt(i, j1), chromaAt(i + 1, j1), f.x), fy);
 }
 
 @fragment
@@ -701,7 +729,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             return _videoPipelines[(uintTexels, outFormat)] = (layout, pipeline);
         }
 
-        private int VideoBlt(D3DVideoProcessor p, D3DVideoView output, D3DVideoView? input)
+        private int VideoBlt(D3DVideoProcessor p, D3DVideoView output, D3DVideoView? input, uint field = 0)
         {
             var ot = output.Texture;
             uint ow = Math.Max(1, ot.Desc.Width >> (int)output.Mip), oh = Math.Max(1, ot.Desc.Height >> (int)output.Mip);
@@ -753,7 +781,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
                     };
                     if (clip.right > clip.left && clip.bottom > clip.top && dst.right > dst.left && dst.bottom > dst.top)
                     {
-                        IntPtr g1 = BltGroup(layout, input, ParamsFor(p, input, dst, target, null, fill: false), views, uintTexels);
+                        IntPtr g1 = BltGroup(layout, input, ParamsFor(p, input, dst, target, null, fill: false, field), views, uintTexels);
                         groups.Add(g1);
                         Scissor(pass, clip);
                         wgpuRenderPassEncoderSetBindGroup(pass, 0, g1, 0, null);
@@ -775,7 +803,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         private static void Scissor(IntPtr pass, D3D11_RECT_V r)
             => wgpuRenderPassEncoderSetScissorRect(pass, (uint)r.left, (uint)r.top, (uint)(r.right - r.left), (uint)(r.bottom - r.top));
 
-        private byte[] ParamsFor(D3DVideoProcessor p, D3DVideoView? input, D3D11_RECT_V dst, D3D11_RECT_V target, float[]? bg, bool fill)
+        private byte[] ParamsFor(D3DVideoProcessor p, D3DVideoView? input, D3D11_RECT_V dst, D3D11_RECT_V target, float[]? bg, bool fill, uint field = 0)
         {
             var f = new float[40];
             var u = new uint[40];
@@ -797,6 +825,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             Array.Copy(VideoMatrix(p.StreamColor, p.OutputColor, bits), 0, f, 8, 12);
             if (bg != null) Array.Copy(bg, 0, f, 20, 4);
             f[28] = unit;
+            f[29] = field;
             var bytes = new byte[160];
             Buffer.BlockCopy(f, 0, bytes, 0, 160);
             u[0] = w; u[1] = h; u[2] = p.Rotation; u[3] = fill ? 1u : 0u;

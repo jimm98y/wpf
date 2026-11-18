@@ -37,6 +37,10 @@ namespace WgpuInterop.Tests.Direct3D
             public int[]? Source, Dest, Target;         // rects: left, top, right, bottom
             public uint Rotation;
             public bool FlatChroma;
+            /// <summary>Interlaced: luma white on the top field's (even) rows, black on the bottom's; the frame
+            /// format (1 top field first, 2 bottom first) and the stream's OutputIndex.</summary>
+            public bool Fields;
+            public uint FrameFormat, OutputIndex;
             /// <summary>The largest difference allowed in any channel, and of the mean (codes of 255).</summary>
             public int Max = 3; public double Mean = 1.0;
         }
@@ -51,14 +55,14 @@ namespace WgpuInterop.Tests.Direct3D
             for (uint y = 0; y < c.InH; y++)
                 for (uint x = 0; x < c.InW; x++)
                 {
-                    int v = (int)(16 + (x * 200 / c.InW) + ((x + y) % 7) * 3) + rnd.Next(4);
+                    int v = c.Fields ? (y % 2 == 0 ? 235 : 16) : (int)(16 + (x * 200 / c.InW) + ((x + y) % 7) * 3) + rnd.Next(4);
                     Put(data, y * pitch + x * bpe, v, c.P010);
                 }
             for (uint y = 0; y < c.InH / 2; y++)
                 for (uint x = 0; x < c.InW / 2; x++)
                 {
-                    int cb = c.FlatChroma ? 100 : (int)(64 + y * 128 / (c.InH / 2));
-                    int cr = c.FlatChroma ? 170 : (int)(200 - x * 128 / (c.InW / 2));
+                    int cb = c.Fields ? 128 : c.FlatChroma ? 100 : (int)(64 + y * 128 / (c.InH / 2));
+                    int cr = c.Fields ? 128 : c.FlatChroma ? 170 : (int)(200 - x * 128 / (c.InW / 2));
                     Put(data, (c.InH + y) * pitch + x * 2 * bpe, cb, c.P010);
                     Put(data, (c.InH + y) * pitch + (x * 2 + 1) * bpe, cr, c.P010);
                 }
@@ -131,7 +135,8 @@ namespace WgpuInterop.Tests.Direct3D
                 if (c.Dest is { } d) { var r = new D3D11_RECT_V { left = d[0], top = d[1], right = d[2], bottom = d[3] }; ((delegate* unmanaged<IntPtr, IntPtr, uint, int, D3D11_RECT_V*, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorSetStreamDestRect))(vctx, proc, 0, 1, &r); }
                 if (c.Target is { } t) { var r = new D3D11_RECT_V { left = t[0], top = t[1], right = t[2], bottom = t[3] }; ((delegate* unmanaged<IntPtr, IntPtr, int, D3D11_RECT_V*, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorSetOutputTargetRect))(vctx, proc, 1, &r); }
                 if (c.Rotation != 0) ((delegate* unmanaged<IntPtr, IntPtr, uint, int, uint, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorSetStreamRotation))(vctx, proc, 0, 1, c.Rotation);
-                var stream = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = 1, pInputSurface = iv };
+                if (c.FrameFormat != 0) ((delegate* unmanaged<IntPtr, IntPtr, uint, uint, void>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorSetStreamFrameFormat))(vctx, proc, 0, c.FrameFormat);
+                var stream = new D3D11_VIDEO_PROCESSOR_STREAM { Enable = 1, pInputSurface = iv, OutputIndex = c.OutputIndex };
                 Check(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, uint, uint, D3D11_VIDEO_PROCESSOR_STREAM*, int>)Fn2(vctx, Vtbl.ID3D11VideoContext.VideoProcessorBlt))(vctx, proc, ov, 0, 1, &stream), "VideoProcessorBlt");
 
                 od.Usage = D3D11_USAGE.STAGING; od.BindFlags = 0; od.CPUAccessFlags = D3D11_CPU_ACCESS.READ;
@@ -173,6 +178,31 @@ namespace WgpuInterop.Tests.Direct3D
             yield return new Case { Name = "NV12 rotated 180", Rotation = 2, Max = 2, Mean = 0.6 };
             yield return new Case { Name = "P010 BT.709 limited 1:1, flat chroma", P010 = true, StreamColor = 4 | (1u << 4), FlatChroma = true, Max = 1, Mean = 0.6 };
             yield return new Case { Name = "P010 BT.709 limited 1:1", P010 = true, StreamColor = 4 | (1u << 4), Max = 2, Mean = 0.6 };
+        }
+
+        /// <summary>An interlaced frame, deinterlaced by bob: the field OutputIndex names (top first: 0 the top
+        /// field, 1 the bottom), its lines alone -- white or black, not the frame's grey of both.</summary>
+        [Theory]
+        [InlineData(1u, 0u, 255)]
+        [InlineData(1u, 1u, 0)]
+        [InlineData(2u, 0u, 0)]
+        [InlineData(2u, 1u, 255)]
+        public void VideoProcessorBlt_ShowsTheFieldOfAnInterlacedFrame(uint frameFormat, uint outputIndex, int expected)
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx; uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0x800 | 0x20, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            try
+            {
+                var c = new Case { Name = "fields", Fields = true, FrameFormat = frameFormat, OutputIndex = outputIndex };       // BT.601 limited: 235 white, 16 black
+                byte[] px = Run(dev, ctx, c);
+                for (int y = 8; y < 40; y += 7)
+                {
+                    int g = px[(y * (int)c.OutW + 32) * 4 + 1];
+                    Assert.InRange(g, expected - 4, expected + 4);
+                }
+            }
+            finally { Release(ctx); Release(dev); }
         }
 
         [Fact]
