@@ -138,6 +138,13 @@ namespace System.Management
                 P("ServicePackMinorVersion", U16), P("Status", S), P("SystemDirectory", S), P("SystemDrive", S),
                 P("TotalVirtualMemorySize", U64), P("TotalVisibleMemorySize", U64), P("Version", S), P("WindowsDirectory", S),
             }, OperatingSystem),
+            new WmiClass("Win32_DiskDrive", new[] { "DeviceID" }, new[]
+            {
+                P("BytesPerSector", U32), P("Caption", S), P("CreationClassName", S), P("Description", S), P("DeviceID", S),
+                P("FirmwareRevision", S), P("Index", U32), P("InterfaceType", S), P("Manufacturer", S), P("MediaLoaded", B),
+                P("MediaType", S), P("Model", S), P("Name", S), P("Partitions", U32), P("PNPDeviceID", S), P("SerialNumber", S),
+                P("Size", U64), P("Status", S), P("SystemCreationClassName", S), P("SystemName", S), P("TotalSectors", U64),
+            }, DiskDrives.All),
             new WmiClass("Win32_LogicalDisk", new[] { "DeviceID" }, new[]
             {
                 P("Caption", S), P("Compressed", B), P("Description", S), P("DeviceID", S), P("DriveType", U32), P("FileSystem", S),
