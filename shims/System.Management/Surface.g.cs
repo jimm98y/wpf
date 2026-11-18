@@ -59,7 +59,7 @@ namespace System.Management
         IgnoreCase = 16,
         IgnoreFlavor = 32,
     }
-    public partial class CompletedEventArgs : System.EventArgs
+    public partial class CompletedEventArgs : System.Management.ManagementEventArgs
     {
         internal CompletedEventArgs() { }
         public System.Management.ManagementStatus Status { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
@@ -132,6 +132,10 @@ namespace System.Management
         public bool GetStronglyTypedClassCode(System.Management.CodeLanguage lang, string filePath, string classNamespace) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         public void GetSubclasses(System.Management.ManagementOperationObserver watcher) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         public void GetSubclasses(System.Management.ManagementOperationObserver watcher, System.Management.EnumerationOptions options) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
+    }
+    public abstract partial class ManagementEventArgs : System.EventArgs
+    {
+        internal ManagementEventArgs() { }
     }
     public partial class ManagementObject : System.Management.ManagementBaseObject, System.ICloneable
     {
@@ -332,7 +336,7 @@ namespace System.Management
             public void Reset() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         }
     }
-    public partial class ObjectPutEventArgs : System.EventArgs
+    public partial class ObjectPutEventArgs : System.Management.ManagementEventArgs
     {
         internal ObjectPutEventArgs() { }
         public System.Management.ManagementPath Path { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
@@ -341,13 +345,13 @@ namespace System.Management
     public partial class ObjectQuery : System.Management.ManagementQuery
     {
     }
-    public partial class ObjectReadyEventArgs : System.EventArgs
+    public partial class ObjectReadyEventArgs : System.Management.ManagementEventArgs
     {
         internal ObjectReadyEventArgs() { }
         public System.Management.ManagementBaseObject NewObject { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
     }
     public delegate void ObjectReadyEventHandler(object sender, System.Management.ObjectReadyEventArgs e);
-    public partial class ProgressEventArgs : System.EventArgs
+    public partial class ProgressEventArgs : System.Management.ManagementEventArgs
     {
         internal ProgressEventArgs() { }
         public int Current { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }

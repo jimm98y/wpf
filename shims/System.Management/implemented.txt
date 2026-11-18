@@ -76,4 +76,4 @@ T:System.Management.WqlEventQuery
 T:System.Management.EventWatcherOptions
 T:System.Management.EventArrivedEventArgs
 T:System.Management.StoppedEventArgs
-T:System.Management.ManagementEventArgs
+P:System.Management.ManagementEventArgs.Context
