@@ -7,6 +7,9 @@
 // the mapping of the driver's space to the screen); the form is that window's root. Every element -- a control, or
 // an item a control does not keep an object for (A11yItems' keys) -- is given an id from IdBase up, the same id
 // for as long as the element lives, as a backend keeps elements by id.
+//
+// The patterns beyond name, role, value and actions -- text, selection, grids and tables, scrolling, windows -- and
+// the changes to them are in AutomationSource.Text.cs and AutomationSource.Patterns.cs.
 
 extern alias WindowsBase;
 
@@ -24,7 +27,7 @@ using IAutomationTreeSource = WindowsBase::MS.Internal.Interop.IAutomationTreeSo
 
 namespace WinFormsWebGpu.Accessibility
 {
-    internal sealed class AutomationSource : IAutomationTreeSource
+    internal sealed partial class AutomationSource : IAutomationTreeSource
     {
         /// <summary>The first id WinForms' elements have: above any WPF's tree hands out in a process.</summary>
         internal const int IdBase = 1 << 30;
@@ -74,12 +77,17 @@ namespace WinFormsWebGpu.Accessibility
         private static int IdOf(object element)
         {
             if (element == null) return IAutomationTreeSource.InvalidNode;
+            bool first = false;
+            int id;
             lock (s_gate)
             {
-                Box box = s_ids.GetValue(element, _ => new Box { Id = s_next++ });
+                Box box = s_ids.GetValue(element, _ => { first = true; return new Box { Id = s_next++ }; });
                 if (!s_elements.ContainsKey(box.Id)) s_elements[box.Id] = new WeakReference<object>(element);
-                return box.Id;
+                id = box.Id;
             }
+            // listened to once, outside the lock: its handlers raise changes, which take it again
+            if (first && element is Control c) Listen(c);
+            return id;
         }
 
         private static object ElementOf(int id)
@@ -209,7 +217,30 @@ namespace WinFormsWebGpu.Accessibility
                     if (A11y.IsFocusable(c)) state |= AccessibleState.Focusable;
                     if (A11y.IsFocused(c)) state |= AccessibleState.Focused;
                     if (!A11y.IsVisible(c)) state |= AccessibleState.Offscreen;
-                    if (c is TextBox tb && (tb.UseSystemPasswordChar || tb.PasswordChar != '\0')) state |= AccessibleState.Password;
+                    if (IsPassword(c)) state |= AccessibleState.Password;
+                    // a password box answers no text questions: its characters are what it hides
+                    if (c is TextBoxBase edit && !IsPassword(c))
+                    {
+                        state |= AccessibleState.HasText;
+                        if (edit.ReadOnly) state |= AccessibleState.ReadOnly;
+                    }
+                    if (A11y.HasSelection(c))
+                    {
+                        state |= AccessibleState.SelectionContainer;
+                        if (A11y.CanSelectMultiple(c)) state |= AccessibleState.MultiSelectable;
+                    }
+                    if (c is DataGridView || c is ListView { View: View.Details })
+                    {
+                        state |= AccessibleState.Grid;
+                        if (HasHeaders(c)) state |= AccessibleState.Table;
+                    }
+                    if (ScrollInfoOf(c, out _, out _, out _, out _, out _, out _)) state |= AccessibleState.Scrollable;
+                    if (c is Form form)
+                    {
+                        state |= AccessibleState.Window;
+                        if (form.Modal) state |= AccessibleState.Modal;
+                    }
+                    else state |= AccessibleState.ScrollItem;
                     if (A11y.HasValue(c))
                     {
                         state |= AccessibleState.HasValue;
@@ -239,6 +270,8 @@ namespace WinFormsWebGpu.Accessibility
                         if (A11yItems.IsSelected(element)) state |= AccessibleState.Selected;
                     }
                     if (A11yItems.BoundsOf(element).IsEmpty) state |= AccessibleState.Offscreen;
+                    if (IsGridCell(element)) state |= AccessibleState.GridItem;
+                    state |= AccessibleState.ScrollItem;
                 }
                 if (TryGetRange(id, out _, out _, out _)) state |= AccessibleState.HasRange;
             }
