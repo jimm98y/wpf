@@ -1802,6 +1802,45 @@ namespace MS.Internal.Interop
         [DllImport(CoreGraphics)] private static extern IntPtr CGPathCreateWithRect(CGRect rect, IntPtr transform);
         [DllImport(CoreGraphics)] private static extern void CGPathRelease(IntPtr path);
 
+        // ---- the system's appearance -------------------------------------------------------------------------
+
+        /// <summary>Whether the system is in Dark Mode: the main screen's trait collection's interface style
+        /// (UIUserInterfaceStyleDark, 2).</summary>
+        public static bool IsSystemDarkTheme()
+        {
+            try
+            {
+                IntPtr screen = Send(objc_getClass("UIScreen"), Sel("mainScreen"));
+                IntPtr traits = screen == IntPtr.Zero ? IntPtr.Zero : Send(screen, Sel("traitCollection"));
+                return traits != IntPtr.Zero && Send(traits, Sel("userInterfaceStyle")) == (IntPtr)2;
+            }
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return false; }
+        }
+
+        private static Action s_appearanceChanged;
+        private static System.Threading.Timer s_appearancePoll;
+        private static bool s_lastDark;
+
+        /// <summary>Raised when the user switches between Light and Dark (read every two seconds: a trait change
+        /// reaches only the views' controllers, which are UIKit's).</summary>
+        public static event Action SystemAppearanceChanged
+        {
+            add
+            {
+                s_appearanceChanged += value;
+                if (s_appearancePoll != null) return;
+                s_lastDark = IsSystemDarkTheme();
+                s_appearancePoll = new System.Threading.Timer(_ =>
+                {
+                    bool dark = IsSystemDarkTheme();
+                    if (dark == s_lastDark) return;
+                    s_lastDark = dark;
+                    try { s_appearanceChanged?.Invoke(); } catch { }
+                }, null, 2000, 2000);
+            }
+            remove => s_appearanceChanged -= value;
+        }
+
         private static IntPtr Sel(string name) => sel_registerName(name);
 
 

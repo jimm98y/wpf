@@ -14,17 +14,12 @@ internal static class ThemeManager
         // Off-Windows there is no WM_SETTINGCHANGE to drive a runtime theme change. On macOS the Cocoa
         // event pump polls the system appearance and raises SystemAppearanceChanged when the user toggles
         // Dark/Light; re-apply the Fluent theme for ThemeMode.System, mirroring the Windows path.
-        if (OperatingSystem.IsMacOS())
+        // Every other platform tells of its own (PlatformSettings: macOS's appearance, the Linux desktop's colour
+        // scheme through the portal, iOS's trait collection, Android's night mode, the browser's
+        // prefers-color-scheme); the handler posts to the dispatcher, wherever the notice arrives.
+        if (!OperatingSystem.IsWindows())
         {
-            MS.Internal.Interop.CocoaWindow.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
-        }
-        else if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
-        {
-            // Linux: the desktop's colour-scheme preference comes from xdg-desktop-portal, and its
-            // SettingChanged signal is dispatched from the same pump that drives Wayland, so this
-            // arrives on the UI thread exactly as the macOS one does.
-            MS.Internal.Interop.Wayland.LinuxDesktopSettings.EnsureWatching();
-            MS.Internal.Interop.Wayland.LinuxDesktopSettings.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
+            MS.Internal.Interop.PlatformSettings.SystemAppearanceChanged += OnMacSystemAppearanceChanged;
         }
     }
 
@@ -513,15 +508,7 @@ internal static class ThemeManager
         // ThemeMode.System tracks the OS Dark/Light setting; other platforms default to light.
         if (!OperatingSystem.IsWindows())
         {
-            if (OperatingSystem.IsMacOS())
-            {
-                return !MS.Internal.Interop.CocoaWindow.IsSystemDarkTheme();
-            }
-            if (OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid())
-            {
-                return !MS.Internal.Interop.Wayland.LinuxDesktopSettings.IsSystemDarkTheme();
-            }
-            return true;
+            return !MS.Internal.Interop.PlatformSettings.IsSystemDarkTheme();
         }
 
         var useLightTheme = Registry.GetValue(RegPersonalizeKeyPath,

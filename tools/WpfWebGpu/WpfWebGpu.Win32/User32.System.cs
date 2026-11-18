@@ -160,8 +160,8 @@ public static unsafe partial class Exports
             case 0x1024:    // SPI_GETUIEFFECTS
                 if (action == 0x0048) ((int*)pv)[1] = TRUE; else *(int*)pv = TRUE;
                 return TRUE;
-            case 0x0042:    // SPI_GETHIGHCONTRAST: off
-                ((uint*)pv)[1] = 0;
+            case 0x0042:    // SPI_GETHIGHCONTRAST: HCF_HIGHCONTRASTON | HCF_AVAILABLE where the system has a contrast theme on
+                ((uint*)pv)[1] = HighContrastOn() ? 3u : 0u;
                 return TRUE;
             case 0x200C:    // SPI_GETFOCUSBORDERWIDTH
             case 0x200E:    // SPI_GETFOCUSBORDERHEIGHT
@@ -252,7 +252,56 @@ public static unsafe partial class Exports
 
     /// <summary>GetSysColor's answer, for the stack's own code (the SystemColors detour), whose
     /// imports do not reach this library.</summary>
-    public static uint SysColor(int index) => (uint)index < (uint)s_sysColors.Length ? s_sysColors[index] : 0;
+    public static uint SysColor(int index)
+    {
+        uint[] colors = HighContrastOn() ? (SystemIsDark() ? s_aquatic : s_desert) : s_sysColors;
+        return (uint)index < (uint)colors.Length ? colors[index] : 0;
+    }
+
+    // ---- contrast themes ---------------------------------------------------------------------------
+    //
+    // Where the system has a contrast theme on (WindowsBase's PlatformSettings.HighContrast: the Linux desktop's high
+    // contrast, the browser's forced colours), the system colours are a Windows 11 contrast theme's: Aquatic where the
+    // system is dark, Desert where it is light. Each theme names eight colours; the system colours are made of them
+    // as Windows makes them (the captions and menus' highlight the selection's, the 3D edges the button text).
+
+    private static uint Rgb(uint rgb) => ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF);
+
+    private static uint[] ContrastTheme(uint background, uint text, uint hyperlink, uint inactive, uint selectedBack, uint selectedText, uint buttonBack, uint buttonText)
+    {
+        uint bg = Rgb(background), fg = Rgb(text), link = Rgb(hyperlink), gray = Rgb(inactive), sel = Rgb(selectedBack), selFg = Rgb(selectedText),
+            btn = Rgb(buttonBack), btnFg = Rgb(buttonText);
+        return new[]
+        {
+            bg, bg, sel, bg, bg, bg, fg, fg, fg, selFg,          // scroll bar, desktop, active / inactive caption, menu, window, frame, menu / window text, caption text
+            bg, bg, bg, sel, selFg, btn, btnFg, gray, btnFg, gray, // borders, app workspace, highlight (text), button face / shadow, gray text, button text, inactive caption text
+            btnFg, btnFg, btnFg, fg, bg, 0u, link, sel, bg, sel, bg, // button highlight, 3D dark / light, info text / back, -, hot light, caption gradients, menu highlight, menu bar
+        };
+    }
+
+    private static readonly uint[] s_aquatic = ContrastTheme(0x202020, 0xFFFFFF, 0x75E9FC, 0xA6A6A6, 0x8EE3F0, 0x263B50, 0x202020, 0xFFFFFF);
+    private static readonly uint[] s_desert = ContrastTheme(0xFFFAEF, 0x3D3D3D, 0x1C5E75, 0x676767, 0x903909, 0xFFF5E3, 0xFFFAEF, 0x202020);
+
+    private static long s_contrastReadAt = long.MinValue;
+    private static bool s_contrast, s_dark;
+
+    // read again every few seconds, as the system's setting may change
+    private static bool HighContrastOn()
+    {
+        long now = Environment.TickCount64;
+        if (now - s_contrastReadAt < 3000) return s_contrast;
+        s_contrastReadAt = now;
+        try
+        {
+            Type settings = Type.GetType("MS.Internal.Interop.PlatformSettings, WindowsBase", throwOnError: false);
+            s_contrast = settings?.GetProperty("HighContrast")?.GetValue(null) is true;
+            s_dark = s_contrast && settings?.GetMethod("IsSystemDarkTheme")?.Invoke(null, null) is true;
+        }
+        catch (Exception e) when (e is System.Reflection.TargetInvocationException or System.IO.FileLoadException) { s_contrast = false; }
+        return s_contrast;
+    }
+
+    private static bool SystemIsDark() => s_dark;
     [Win32Export("GetSysColorBrush")] public static nint GetSysColorBrush(int index) => (uint)index < (uint)s_sysColors.Length ? 0x1000 + index : 0;
 
     // ---- monitors ------------------------------------------------------------------------------

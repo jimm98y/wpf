@@ -96,10 +96,8 @@ namespace System.Windows.Forms
 						return false;
 					return Registry.GetValue (DarkModeKeyPath, DarkModeKey, 1) is int light && light == 0;
 				}
-				if (OperatingSystem.IsMacOS ())
-					return WindowsBase::MS.Internal.Interop.CocoaWindow.IsSystemDarkTheme ();
-				if (OperatingSystem.IsLinux () && !OperatingSystem.IsAndroid ())
-					return WindowsBase::MS.Internal.Interop.Wayland.LinuxDesktopSettings.IsSystemDarkTheme ();
+				// every other platform's own (macOS, Linux, iOS, Android, the browser)
+				return WindowsBase::MS.Internal.Interop.PlatformSettings.IsSystemDarkTheme ();
 			} catch (Exception) {
 			}
 			return false;

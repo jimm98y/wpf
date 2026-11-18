@@ -708,6 +708,14 @@ function pushA11y(nodeId, kind) {
     queue.push({ t: "a", id: nodeId, k: kind });
 }
 
+// The user's system appearance, as the page sees it: dark, or forced colours (a contrast theme). A change is queued as
+// an event, as the input is.
+const _dark = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
+const _forced = typeof matchMedia === "function" ? matchMedia("(forced-colors: active)") : null;
+for (const q of [_dark, _forced]) q?.addEventListener?.("change", () => queue.push({ t: "appearance" }));
+export function prefersDark() { return !!_dark?.matches; }
+export function forcedColors() { return !!_forced?.matches; }
+
 export function drainEvents() {
     if (queue.length === 0) return "";
     return JSON.stringify(queue.splice(0));

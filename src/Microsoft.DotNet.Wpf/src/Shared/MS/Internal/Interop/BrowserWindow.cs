@@ -685,6 +685,22 @@ namespace MS.Internal.Interop
 
         /// <summary>Drains DOM events queued by browser-window.js and raises the corresponding
         /// managed events. Called once per dispatcher pump tick on the browser.</summary>
+        /// <summary>Whether the user's system is dark, as the page sees it (prefers-color-scheme: dark).</summary>
+        public static bool IsSystemDarkTheme()
+        {
+            try { return Js.PrefersDark(); } catch (Exception) { return false; }
+        }
+
+        /// <summary>Whether the system forces its own colours (forced-colors: active): Windows' contrast themes, as a
+        /// browser on Windows reports them.</summary>
+        public static bool IsForcedColors()
+        {
+            try { return Js.ForcedColors(); } catch (Exception) { return false; }
+        }
+
+        /// <summary>Raised (from PumpEvents, on the dispatcher thread) when either of those changes.</summary>
+        public static event Action SystemAppearanceChanged;
+
         public static void PumpEvents()
         {
             System.Threading.Interlocked.Increment(ref s_frame);
@@ -722,6 +738,11 @@ namespace MS.Internal.Interop
                         // the sticks and grips while a 3D view fills the eyes
                         BrowserXrHost.Manipulate(e.GetProperty("r").GetDouble(), e.GetProperty("s").GetDouble(),
                             e.GetProperty("x").GetDouble(), e.GetProperty("y").GetDouble(), e.GetProperty("z").GetDouble());
+                        break;
+
+                    case "appearance":
+                        // the page's colour scheme or forced colours changed (the user's system setting)
+                        try { SystemAppearanceChanged?.Invoke(); } catch { }
                         break;
 
                     case "s":
@@ -1014,6 +1035,12 @@ namespace MS.Internal.Interop
 
             [JSImport("setImeCaretRect", Module)]
             internal static partial void SetImeCaretRect(int x, int y, int width, int height);
+
+            [JSImport("prefersDark", Module)]
+            internal static partial bool PrefersDark();
+
+            [JSImport("forcedColors", Module)]
+            internal static partial bool ForcedColors();
 
             [JSImport("drainEvents", Module)]
             internal static partial string DrainEvents();

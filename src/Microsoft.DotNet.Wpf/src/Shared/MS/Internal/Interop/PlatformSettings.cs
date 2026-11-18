@@ -19,7 +19,7 @@ using System.Runtime.InteropServices;
 
 namespace MS.Internal.Interop
 {
-    public static class PlatformSettings
+    public static unsafe class PlatformSettings
     {
         private const int WindowsDefault = 500, AndroidDoubleTapTimeout = 300;
         private static int s_doubleClick = -1;
@@ -55,6 +55,76 @@ namespace MS.Internal.Interop
 
         [DllImport("user32.dll")]
         private static extern int GetDoubleClickTime();
+
+        // ---- appearance ----------------------------------------------------------------------------------------
+
+        /// <summary>Whether the system's apps are dark: Windows' AppsUseLightTheme, macOS's Dark appearance, the Linux
+        /// desktop's colour scheme, iOS's Dark Mode, Android's dark theme, the browser's prefers-color-scheme.</summary>
+        public static bool IsSystemDarkTheme()
+        {
+            try
+            {
+                if (OperatingSystem.IsWindows())
+                    return Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int light && light == 0;
+                if (OperatingSystem.IsMacOS()) return CocoaWindow.IsSystemDarkTheme();
+                if (OperatingSystem.IsIOS() || OperatingSystem.IsTvOS()) return UIKitWindow.IsSystemDarkTheme();
+                if (OperatingSystem.IsAndroid()) return AndroidWindow.IsSystemDarkTheme();
+                if (OperatingSystem.IsLinux()) return Wayland.LinuxDesktopSettings.IsSystemDarkTheme();
+                if (OperatingSystem.IsBrowser()) return BrowserWindow.IsSystemDarkTheme();
+            }
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or TypeLoadException) { }
+            return false;
+        }
+
+        /// <summary>Whether a contrast theme is on, as SPI_GETHIGHCONTRAST reports it: Windows' own; the Linux
+        /// desktop's high contrast; the browser's forced colours (a contrast theme where the browser runs on
+        /// Windows). macOS's and iOS's Increase Contrast is not one: it keeps the apps' colours.</summary>
+        public static bool HighContrast
+        {
+            get
+            {
+                try
+                {
+                    if (OperatingSystem.IsWindows())
+                    {
+                        // HIGHCONTRASTW: cbSize, dwFlags (HCF_HIGHCONTRASTON 1), lpszDefaultScheme
+                        int* hc = stackalloc int[2 + IntPtr.Size / 4];
+                        hc[0] = 8 + IntPtr.Size;
+                        return SystemParametersInfoW(0x0042, (uint)hc[0], hc, 0) != 0 && (hc[1] & 1) != 0;
+                    }
+                    if (OperatingSystem.IsAndroid()) return false;
+                    if (OperatingSystem.IsLinux()) return Wayland.LinuxDesktopSettings.IsHighContrast();
+                    if (OperatingSystem.IsBrowser()) return BrowserWindow.IsForcedColors();
+                }
+                catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or TypeLoadException) { }
+                return false;
+            }
+        }
+
+        [DllImport("user32.dll")]
+        private static extern unsafe int SystemParametersInfoW(uint action, uint param, void* pv, uint winIni);
+
+        private static Action s_appearanceChanged;
+        private static bool s_watching;
+
+        /// <summary>Raised when the system's dark theme or contrast changes (off Windows: each platform's own notice;
+        /// on Windows, WM_SETTINGCHANGE reaches the windows themselves).</summary>
+        public static event Action SystemAppearanceChanged
+        {
+            add
+            {
+                s_appearanceChanged += value;
+                if (s_watching) return;
+                s_watching = true;
+                Action raise = () => s_appearanceChanged?.Invoke();
+                if (OperatingSystem.IsMacOS()) CocoaWindow.SystemAppearanceChanged += raise;
+                else if (OperatingSystem.IsIOS() || OperatingSystem.IsTvOS()) UIKitWindow.SystemAppearanceChanged += raise;
+                else if (OperatingSystem.IsAndroid()) AndroidWindow.SystemAppearanceChanged += raise;
+                else if (OperatingSystem.IsLinux()) { Wayland.LinuxDesktopSettings.EnsureWatching(); Wayland.LinuxDesktopSettings.SystemAppearanceChanged += raise; }
+                else if (OperatingSystem.IsBrowser()) BrowserWindow.SystemAppearanceChanged += raise;
+            }
+            remove => s_appearanceChanged -= value;
+        }
 
         private const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
 

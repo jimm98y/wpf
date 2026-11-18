@@ -20,7 +20,7 @@ namespace WpfMediaAndroid;
     Label = "WPF Media",
     MainLauncher = true,
     Theme = "@android:style/Theme.Material.NoActionBar",
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
+    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode
                          | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
                          | ConfigChanges.Density | ConfigChanges.KeyboardHidden)]
 public class MainActivity : Activity

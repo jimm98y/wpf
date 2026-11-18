@@ -273,7 +273,7 @@ internal static partial class Bundle
                 LaunchMode = LaunchMode.SingleTask,
                 ScreenOrientation = ScreenOrientation.Landscape,
                 Theme = "@android:style/Theme.Black.NoTitleBar.Fullscreen",
-                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
+                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode
                                      | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
                                      | ConfigChanges.Density | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard)]
             [IntentFilter(new[] { Android.Content.Intent.ActionMain },
@@ -358,7 +358,7 @@ internal static partial class Bundle
                 TaskAffinity = "{{ns}}.app{{n}}",
                 LaunchMode = LaunchMode.SingleTask,
                 Theme = "@android:style/Theme.Material.Light.NoActionBar.Fullscreen",
-                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
+                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode
                                      | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
                                      | ConfigChanges.Density | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard)]
             [IntentFilter(new[] { Android.Content.Intent.ActionMain }, Categories = new[] { Android.Content.Intent.CategoryLauncher })]
@@ -398,7 +398,7 @@ internal static partial class Bundle
                 LaunchMode = LaunchMode.SingleTask,
                 Theme = "@android:style/Theme.Material.Light.NoActionBar.Fullscreen",
                 // one app, as on Windows: not torn down and rebuilt per rotation
-                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
+                ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode
                                      | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
                                      | ConfigChanges.Density | ConfigChanges.KeyboardHidden | ConfigChanges.Keyboard)]
             // where windows float (a headset's panel, a desktop's window), the size a desktop app's window

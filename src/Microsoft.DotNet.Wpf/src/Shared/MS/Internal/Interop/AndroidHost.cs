@@ -907,6 +907,8 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     private readonly Android.OS.Handler _handler;
     private readonly Dictionary<IntPtr, View> _views = new();
 
+    public bool IsNightMode => _activity.Resources?.Configuration is { } c && (c.UiMode & UiMode.NightMask) == UiMode.NightYes;
+
 
     /// <summary>
     /// Puts Android's system print UI up with a rendered document. Must run on the UI thread, which

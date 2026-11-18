@@ -203,6 +203,26 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        private const string ContrastKey = "contrast";
+        private static bool? s_highContrast;
+
+        /// <summary>Whether the desktop asks for high contrast, as Windows' contrast themes do: the portal's
+        /// org.freedesktop.appearance contrast (1, higher contrast), else GNOME's own high-contrast setting.</summary>
+        internal static bool IsHighContrast() => s_highContrast ??= QueryHighContrast();
+
+        private static bool QueryHighContrast()
+        {
+            try
+            {
+                if (DBusLite.IsAvailable)
+                    foreach (string method in new[] { "ReadOne", "Read" })
+                        if (DBusLite.CallReadUInt32Variant(PortalService, PortalPath, SettingsInterface, method, new[] { AppearanceNamespace, ContrastKey }, out uint contrast))
+                            return contrast == 1;
+                return ReadGSetting("org.gnome.desktop.a11y.interface", "high-contrast")?.Trim() == "true";
+            }
+            catch { return false; }
+        }
+
         /// <summary>The desktop's double-click time in milliseconds: GNOME's (org.gnome.desktop.peripherals.mouse
         /// double-click) or KDE's (kdeglobals' DoubleClickInterval) through the portal, else gsettings; null where
         /// neither says.</summary>
@@ -278,6 +298,14 @@ namespace MS.Internal.Interop.Wayland
 
             // SettingChanged(s namespace, s key, v value)
             System.Collections.Generic.List<string> args = DBusLite.GetStringArgs(message);
+            if (args.Count >= 2 && string.Equals(args[0], AppearanceNamespace, StringComparison.Ordinal) && string.Equals(args[1], ContrastKey, StringComparison.Ordinal))
+            {
+                // the contrast preference: high contrast's colours follow it
+                bool wasHigh = s_highContrast ?? false;
+                s_highContrast = DBusLite.TryGetUInt32Arg(message, 2, out uint contrast) ? contrast == 1 : QueryHighContrast();
+                if (s_highContrast != wasHigh) SystemAppearanceChanged?.Invoke();
+                return;
+            }
             if (args.Count < 2 ||
                 !string.Equals(args[0], AppearanceNamespace, StringComparison.Ordinal) ||
                 !string.Equals(args[1], ColorSchemeKey, StringComparison.Ordinal))

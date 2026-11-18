@@ -65,6 +65,9 @@ namespace MS.Internal.Interop
         /// <summary>A window to the front, above the others (SetForegroundWindow).</summary>
         void BringToFront(IntPtr handle) { }
 
+        /// <summary>Whether the system is in its dark theme (the configuration's night mode).</summary>
+        bool IsNightMode => false;
+
         /// <summary>A notification (a NotifyIcon's balloon tip, which Windows 10 shows as a toast), tagged; a second
         /// with the same tag replaces the first. <paramref name="kind"/>: 0 none, 1 info, 2 warning, 3 error. What
         /// becomes of it is told through <see cref="AndroidWindow.NotifyNotification"/>.</summary>
@@ -470,6 +473,37 @@ namespace MS.Internal.Interop
 
         /// <summary>The Java-side half of this backend, installed by the app head before WPF starts.</summary>
         public static IAndroidHost Host { get; set; }
+
+        /// <summary>Whether the system is in its dark theme (the host's configuration, its night mode).</summary>
+        public static bool IsSystemDarkTheme()
+        {
+            try { return Host?.IsNightMode ?? false; }
+            catch (Exception) { return false; }
+        }
+
+        private static Action s_appearanceChanged;
+        private static System.Threading.Timer s_appearancePoll;
+        private static bool s_lastDark;
+
+        /// <summary>Raised when the user switches the dark theme on or off (its configuration read every two seconds;
+        /// the activity takes the change itself rather than being recreated for it).</summary>
+        public static event Action SystemAppearanceChanged
+        {
+            add
+            {
+                s_appearanceChanged += value;
+                if (s_appearancePoll != null) return;
+                s_lastDark = IsSystemDarkTheme();
+                s_appearancePoll = new System.Threading.Timer(_ =>
+                {
+                    bool dark = IsSystemDarkTheme();
+                    if (dark == s_lastDark) return;
+                    s_lastDark = dark;
+                    try { s_appearanceChanged?.Invoke(); } catch { }
+                }, null, 2000, 2000);
+            }
+            remove => s_appearanceChanged -= value;
+        }
 
         /// <summary>What became of a notification: (tag, 1 shown, 2 clicked, 3 dismissed).</summary>
         public static event Action<int, int> NotificationEvent;

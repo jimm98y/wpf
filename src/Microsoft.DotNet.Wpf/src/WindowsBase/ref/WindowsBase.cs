@@ -785,6 +785,9 @@ namespace MS.Internal.Interop
     public static partial class PlatformSettings
     {
         public static int DoubleClickTime { get { throw null; } }
+        public static bool HighContrast { get { throw null; } }
+        public static bool IsSystemDarkTheme() { throw null; }
+        public static event System.Action SystemAppearanceChanged { add { } remove { } }
     }
     public static partial class ScreenPixels
     {

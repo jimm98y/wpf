@@ -23,7 +23,7 @@ namespace AndroidSpike;
     // Handle these ourselves instead of letting Android destroy and recreate the activity. A WPF
     // Application cannot be torn down and rebuilt per rotation, and it does not need to be: the
     // view's surface callback already drives the resize all the way into the compositor.
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize
+    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode
                          | ConfigChanges.ScreenLayout | ConfigChanges.SmallestScreenSize
                          | ConfigChanges.Density | ConfigChanges.KeyboardHidden)]
 public class MainActivity : Activity

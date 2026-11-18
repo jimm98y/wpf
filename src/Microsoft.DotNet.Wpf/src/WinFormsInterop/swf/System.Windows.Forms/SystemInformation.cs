@@ -26,6 +26,8 @@
 
 // NOT COMPLETE
 
+extern alias WindowsBase;
+
 using System;
 using System.Drawing;
 using System.ComponentModel;
@@ -156,9 +158,10 @@ namespace System.Windows.Forms
 			}
 		}
 
+		// a contrast theme, as the system has one (WindowsBase's PlatformSettings: SPI_GETHIGHCONTRAST on Windows)
 		public static bool HighContrast {
 			get {
-				return false;
+				return WindowsBase::MS.Internal.Interop.PlatformSettings.HighContrast;
 			}
 		}
 
