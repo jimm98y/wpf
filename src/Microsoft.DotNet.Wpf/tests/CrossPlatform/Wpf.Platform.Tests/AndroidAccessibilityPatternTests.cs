@@ -599,6 +599,9 @@ namespace Wpf.Platform.Tests
             internal readonly Dictionary<int, int> Roles = new();
             internal readonly Dictionary<int, AccessibleState> States = new();
             internal readonly Dictionary<int, string> Names = new();
+            internal readonly Dictionary<int, (string Access, string Accelerator, string Help)> Keys = new();
+            public string GetAccessKey(int id) => Keys.TryGetValue(id, out var k) ? k.Access : string.Empty;
+            public string GetAcceleratorKey(int id) => Keys.TryGetValue(id, out var k) ? k.Accelerator : string.Empty;
             internal readonly Dictionary<int, string> Values = new();
             internal readonly Dictionary<int, int> Parents = new();
             internal readonly Dictionary<int, int[]> Children = new();

@@ -48,6 +48,22 @@ namespace Wpf.Platform.Tests
             return end < 0 ? mirror.Substring(start, mirror.Length - start - 1) : mirror.Substring(start, end - start + 1);
         }
 
+        // ---- keys and descriptions ----
+
+        [Fact]
+        public void KeysAreMirroredAsAriaKeyShortcuts_AndHelpAsADescription()
+        {
+            FakeTree tree = WindowTree();
+            tree.SetChildren(0, 1, 2);
+            tree.Roles[1] = 0; tree.Names[1] = "Open"; tree.States[1] = AccessibleState.Enabled;
+            tree.Keys[1] = ("O", "", "");                    // WPF's button: the letter, pressed with Alt
+            tree.Roles[2] = 11; tree.Names[2] = "Save"; tree.States[2] = AccessibleState.Enabled;
+            tree.Keys[2] = ("S", "Ctrl+Shift+S", "");        // a menu item's letter is pressed alone
+            string mirror = Mirror(tree);
+            Assert.Contains("\"ks\":\"Alt+O\"", NodeOf(mirror, 1));
+            Assert.Contains("\"ks\":\"S Control+Shift+S\"", NodeOf(mirror, 2));
+        }
+
         // ---- text ----
 
         [Fact]

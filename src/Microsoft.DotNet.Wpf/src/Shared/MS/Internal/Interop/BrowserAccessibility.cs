@@ -216,6 +216,13 @@ namespace MS.Internal.Interop
                     == (AccessibleState.SelectionContainer | AccessibleState.MultiSelectable)) json.Append(",\"ms\":1");
                 if (role == "dialog" && (state & AccessibleState.Modal) != 0) json.Append(",\"modal\":1");
 
+                // the keys (aria-keyshortcuts, what browsers map UIA's AccessKey and AcceleratorKey to)
+                // and the help text (aria-description: a tooltip, read after the name)
+                string keys = KeyShortcutsOf(tree, node, controlType);
+                if (keys.Length != 0) json.Append(",\"ks\":\"").Append(Escape(keys)).Append('"');
+                string help = tree.GetHelpText(node);
+                if (!string.IsNullOrEmpty(help)) json.Append(",\"ds\":\"").Append(Escape(help)).Append('"');
+
                 bool text = AppendText(tree, node, controlType, state, json);
 
                 if (!text && tree.TryGetRange(node, out double value, out double min, out double max))
@@ -248,6 +255,40 @@ namespace MS.Internal.Interop
             {
                 Emit(tree, child, parent, window, json, ref count, depth + 1, sync);
             }
+        }
+
+        /// <summary>
+        /// aria-keyshortcuts: the access key and the accelerator, space-separated, in ARIA's spelling
+        /// ("Control", "Meta"). A bare letter (WPF's access key for "_Open") is pressed with Alt, except
+        /// a menu item's, which is the letter alone in the open menu.
+        /// </summary>
+        internal static string KeyShortcutsOf(IAutomationTreeSource tree, int node, int controlType)
+        {
+            string access = tree.GetAccessKey(node) ?? string.Empty;
+            if (access.Length == 1 && controlType != 11) access = "Alt+" + access;     // 11: MenuItem
+            string accel = tree.GetAcceleratorKey(node) ?? string.Empty;
+            string a = AriaKeys(access), b = AriaKeys(accel);
+            return a.Length == 0 ? b : b.Length == 0 ? a : a + " " + b;
+        }
+
+        private static string AriaKeys(string uia)
+        {
+            if (uia.Length == 0) return string.Empty;
+            bool plusKey = uia.EndsWith("++", StringComparison.Ordinal) || uia == "+";
+            string[] parts = (plusKey ? uia[..^1] + "Plus" : uia).Split('+');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string p = parts[i].Trim();
+                parts[i] = i < parts.Length - 1 ? p.ToLowerInvariant() switch
+                {
+                    "ctrl" or "control" => "Control",
+                    "win" or "windows" => "Meta",
+                    "alt" => "Alt",
+                    "shift" => "Shift",
+                    _ => p,
+                } : p.Length == 1 ? p.ToUpperInvariant() : p;
+            }
+            return string.Join("+", parts);
         }
 
         /// <summary>

@@ -846,6 +846,8 @@ export function a11ySync(json) {
         setAttr(el, "aria-valuemax", n.vmax !== undefined ? String(n.vmax) : null);
         setAttr(el, "aria-valuetext", n.vt ?? null);
         setAttr(el, "aria-modal", n.modal && n.r === "dialog" ? "true" : null);
+        setAttr(el, "aria-keyshortcuts", n.ks ?? null);
+        setAttr(el, "aria-description", n.ds ?? null);
 
         setAttr(el, "aria-rowcount", n.rc !== undefined && A11Y_GRID_ROLES.has(n.r) ? String(n.rc) : null);
         setAttr(el, "aria-colcount", n.cc !== undefined && A11Y_GRID_ROLES.has(n.r) ? String(n.cc) : null);
