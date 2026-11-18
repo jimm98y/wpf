@@ -246,9 +246,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     binding = (uint)(DxbcTranslator.ResourceBase + slot), visibility = stage,
                     texture = new WGPUTextureBindingLayout
                     {
-                        sampleType = r.Depth ? WGPUTextureSampleType.Depth : r.Kind switch { 'i' => WGPUTextureSampleType.Sint, 'u' => WGPUTextureSampleType.Uint, _ => WGPUTextureSampleType.Float },
-                        viewDimension = r.Dim switch { 6 => WGPUTextureViewDimension.Cube, 10 => WGPUTextureViewDimension.CubeArray, 5 => WGPUTextureViewDimension._3D, 7 or 8 => WGPUTextureViewDimension._2DArray, 2 => WGPUTextureViewDimension._1D, _ => WGPUTextureViewDimension._2D },
-                        multisampled = r.Dim is 4 or 9 && !(D3DDevice.MsReadsResolved && !r.Depth) ? 1u : 0u,
+                        // a multisampled float texture is read texel by texel: unfilterable
+                        sampleType = r.Depth ? WGPUTextureSampleType.Depth : r.Kind switch { 'i' => WGPUTextureSampleType.Sint, 'u' => WGPUTextureSampleType.Uint, _ => Multisampled(r) ? WGPUTextureSampleType.UnfilterableFloat : WGPUTextureSampleType.Float },
+                        // 1D textures (and arrays) are 2D textures one texel high (DxbcTranslator.Resources)
+                        viewDimension = r.Dim switch { 6 => WGPUTextureViewDimension.Cube, 10 => WGPUTextureViewDimension.CubeArray, 5 => WGPUTextureViewDimension._3D, 7 or 8 => WGPUTextureViewDimension._2DArray, _ => WGPUTextureViewDimension._2D },
+                        multisampled = Multisampled(r) ? 1u : 0u,
                     },
                 });
             var arr = entries.ToArray();
@@ -258,6 +260,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 return wgpuDeviceCreateBindGroupLayout(Device.Gpu.Device, &d);
             }
         }
+
+        /// <summary>A Texture2DMS binding read as multisampled (not as its resolved copy: D3DDevice.MsReadsResolved).</summary>
+        private static bool Multisampled((int Dim, char Kind, bool Depth) r) => r.Dim is 4 or 9 && !(D3DDevice.MsReadsResolved && !r.Depth);
 
         // ---- pipelines -------------------------------------------------------------------------------
 
@@ -569,16 +574,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             return _dummyStorage;
         }
 
-        private IntPtr DummyView(int dim, char kind)
+        /// <summary>A texture of the slot's shape that reads zero: what an unbound slot (or one bound
+        /// with a view of another shape, which D3D leaves undefined) reads.</summary>
+        private IntPtr DummyView((int Dim, char Kind, bool Depth) r)
         {
-            int key = dim * 4 + kind;
+            int dim = r.Dim;
+            bool ms = Multisampled(r);
+            int key = dim * 1024 + r.Kind * 4 + (r.Depth ? 2 : 0) + (ms ? 1 : 0);
             if (_dummyViews.TryGetValue(key, out IntPtr v)) return v;
             uint layers = dim is 6 or 10 ? 6u : 1u;
-            var fmt = kind switch { 'i' => TexFmt.RGBA8Sint, 'u' => TexFmt.RGBA8Uint, _ => TexFmt.RGBA8Unorm };
+            var fmt = r.Depth ? TexFmt.Depth32Float : r.Kind switch { 'i' => TexFmt.RGBA8Sint, 'u' => TexFmt.RGBA8Uint, _ => TexFmt.RGBA8Unorm };
             var d = new WGPUTextureDescriptor
             {
-                usage = WGPUTextureUsage.TextureBinding, dimension = dim == 5 ? WGPUTextureDimension._3D : WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = layers }, format = fmt, mipLevelCount = 1, sampleCount = 1,
+                // a multisampled texture must be renderable
+                usage = WGPUTextureUsage.TextureBinding | (ms ? WGPUTextureUsage.RenderAttachment : 0), dimension = dim == 5 ? WGPUTextureDimension._3D : WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = layers }, format = fmt, mipLevelCount = 1, sampleCount = ms ? 4u : 1u,
             };
             IntPtr tex = wgpuDeviceCreateTexture(Device.Gpu.Device, &d);
             var vd = dim switch { 6 => WGPUTextureViewDimension.Cube, 10 => WGPUTextureViewDimension.CubeArray, 5 => WGPUTextureViewDimension._3D, 7 or 8 => WGPUTextureViewDimension._2DArray, _ => WGPUTextureViewDimension._2D };
@@ -586,6 +596,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             _dummyViews[key] = v;
             return v;
         }
+
+        /// <summary>Whether a texture can be read through a slot the shader declared: multisampled as it
+        /// is, a depth texture where the shader compares. D3D leaves another read undefined (the debug
+        /// layer reports it); WebGPU rejects the draw, so the slot reads zero instead.</summary>
+        private static bool Fits(D3DTexture2D t, DXGI_FORMAT view, (int Dim, char Kind, bool Depth) r)
+        {
+            bool ms = t.SampleCount > 1 && !t.MsShadowed;
+            char kind = Formats.IsDepth(t.Format) ? 'f' : KindOf(view);
+            bool fits = ms == Multisampled(r) && r.Depth == Formats.IsDepth(t.Format) && (kind == r.Kind || (r.Kind is not ('i' or 'u') && kind == 'f'));
+            if (!fits) D3DLog.Once($"srvfit:{r.Dim}:{r.Kind}:{r.Depth}:{ms}:{kind}", $"a shader resource view of a {(ms ? "multisampled " : "")}{view} texture bound where the shader declares {(Multisampled(r) ? "a multisampled" : "a single-sampled")} {(r.Depth ? "depth texture it compares" : Formats.IsDepth(t.Format) ? "texture it samples (a depth texture read without comparison is not supported yet)" : r.Kind is 'i' or 'u' ? (r.Kind == 'i' ? "sint texture" : "uint texture") : "float texture")}: undefined in Direct3D, read as zero");
+            return fits;
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<DXGI_FORMAT, char> s_kinds = new();
+
+        /// <summary>A view format's sample kind: 'i' sint, 'u' uint, 'f' the rest.</summary>
+        private static char KindOf(DXGI_FORMAT f) => s_kinds.GetOrAdd(f, x =>
+        {
+            string n = x.ToString();
+            return n.EndsWith("_SINT", StringComparison.Ordinal) ? 'i' : n.EndsWith("_UINT", StringComparison.Ordinal) ? 'u' : 'f';
+        });
 
         /// <summary>GL: a multisampled texture read by a shader is read through its resolved copy, resolved
         /// again when it was drawn or cleared since (D3DDevice.MsReadsResolved). Ends the pass.</summary>
@@ -696,7 +727,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     continue;
                 }
                 if (srv?.Resource is D3DTexture2D { MsShadowed: true } ms) RefreshMsShadow(ms);
-                IntPtr view = srv != null && srv.Resource is D3DTexture2D ? srv.ViewFor(r.Dim) : DummyView(r.Dim, r.Kind);
+                IntPtr view = srv != null && srv.Resource is D3DTexture2D t2 && Fits(t2, srv.Desc.Format, r) ? srv.ViewFor(r.Dim) : DummyView(r);
                 if (srv == null || srv.Resource is not D3DTexture2D) UnboundTextureReads++;
                 else if (view == IntPtr.Zero) NullTextureViews++;
                 entries.Add(new WGPUBindGroupEntry { binding = (uint)(DxbcTranslator.ResourceBase + slot), textureView = view });

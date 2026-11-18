@@ -313,6 +313,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Depth = depth;
             Planar = Formats.IsPlanar(desc.Format);
             Format = Formats.Texture(desc.Format);
+            // a typeless texture bound as a depth buffer (a shadow map: R32_TYPELESS with a D32_FLOAT
+            // depth-stencil view and an R32_FLOAT shader resource view) is a depth texture
+            if ((desc.BindFlags & D3D11_BIND.DEPTH_STENCIL) != 0)
+                Format = desc.Format switch { DXGI_FORMAT.R32_TYPELESS => TexFmt.Depth32Float, DXGI_FORMAT.R16_TYPELESS => TexFmt.Depth16Unorm, _ => Format };
             if (Format == WGPUTextureFormat.Undefined) throw new NotSupportedException($"texture format {desc.Format}");
             if (desc.Width == 0 || desc.Height == 0) throw new ArgumentException("zero-sized texture");
             uint maxMips = 1 + (uint)Math.Floor(Math.Log2(Math.Max(Math.Max(desc.Width, desc.Height), depth)));
