@@ -1161,6 +1161,63 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.Equal(0, s.Skipped);
         }
 
+        [StructLayout(LayoutKind.Sequential)] private struct TweenNormalVertex { public float X, Y, Z, X1, Y1, Z1, NX, NY, NZ, NX1, NY1, NZ1; }
+
+        /// <summary>Tweening mixes NORMAL and NORMAL1 too: at a factor of 1 the second normal faces away from the light.</summary>
+        [Fact]
+        public void Tweening_MixesTheNormals()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.Declaration(
+                new D3DVERTEXELEMENT9 { Offset = 0, Type = 2, Usage = 0 },
+                new D3DVERTEXELEMENT9 { Offset = 12, Type = 2, Usage = 0, UsageIndex = 1 },
+                new D3DVERTEXELEMENT9 { Offset = 24, Type = 2, Usage = 3 },
+                new D3DVERTEXELEMENT9 { Offset = 36, Type = 2, Usage = 3, UsageIndex = 1 });
+            var mat = new D3DMATERIAL9 { Diffuse = new D3DCOLORVALUE { r = 1, g = 1, b = 1, a = 1 } };
+            Check(((delegate* unmanaged<IntPtr, D3DMATERIAL9*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.SetMaterial))(s.Dev, &mat), "SetMaterial");
+            var light = new D3DLIGHT9 { Type = 3, Diffuse = new D3DCOLORVALUE { r = 1, g = 1, b = 1, a = 1 }, DirZ = 1 };
+            Check(((delegate* unmanaged<IntPtr, uint, D3DLIGHT9*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.SetLight))(s.Dev, 0, &light), "SetLight");
+            Check(((delegate* unmanaged<IntPtr, uint, int, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.LightEnable))(s.Dev, 0, 1), "LightEnable");
+            s.RS(D3DRS.CULLMODE, 1);
+            s.RS(D3DRS.VERTEXBLEND, 255);
+            s.Clear(1, 0xFF000000);
+            TweenNormalVertex V(float x, float y) => new() { X = x, Y = y, Z = 0.5f, X1 = x, Y1 = y, Z1 = 0.5f, NZ = -1, NZ1 = 1 };
+            s.RS(D3DRS.TWEENFACTOR, Asm.F(0));
+            s.DrawUp(5, 2, new[] { V(-1, 1), V(0, 1), V(-1, -1), V(0, -1) });
+            s.RS(D3DRS.TWEENFACTOR, Asm.F(1));
+            s.DrawUp(5, 2, new[] { V(0, 1), V(1, 1), V(0, -1), V(1, -1) });
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Near(0xFFFFFFFF, px[32 * W + 16], 2, "NORMAL faces the light");
+            Near(0xFF000000, px[32 * W + 48], 2, "NORMAL1 faces away");
+        }
+
+        /// <summary>ps_1_1 tex with D3DTTFF_PROJECTED: the coordinates over their last component.</summary>
+        [Fact]
+        public void PixelShader1_1_Tex_ProjectsByTheStageFlags()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr tex = s.Texture(2, 2, new uint[] { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF });
+            s.Texture(0, tex);
+            s.PixelShader(Asm.Code(0xFFFF0101,
+                Asm.I(Asm.Op(66, 0), Asm.D(Asm.Texture, 0)),                                  // tex t0
+                Asm.I(Asm.Op(1, 0), Asm.D(Asm.Temp, 0), Asm.S(Asm.Texture, 0))));             // mov r0, t0
+            s.Tss(0, 24, 3 | 256);                 // D3DTTFF_COUNT3 | D3DTTFF_PROJECTED
+            s.Fvf(FVF_XYZRHW | FVF_TEX1 | 0x10000);
+            s.Clear(1, 0xFF000000);
+            RhwDir[] q = new[]
+            {
+                new RhwDir { X = 0, Y = 0, Z = 0.5f, Rhw = 1, U = 2.25f, V = 0.75f, W = 3 }, new RhwDir { X = 64, Y = 0, Z = 0.5f, Rhw = 1, U = 2.25f, V = 0.75f, W = 3 },
+                new RhwDir { X = 0, Y = 64, Z = 0.5f, Rhw = 1, U = 2.25f, V = 0.75f, W = 3 }, new RhwDir { X = 64, Y = 64, Z = 0.5f, Rhw = 1, U = 2.25f, V = 0.75f, W = 3 },
+            };
+            s.DrawUp(5, 2, q);
+            s.EndScene();
+            // (2.25, 0.75) / 3 = (0.75, 0.25): the top-right texel; unprojected it would wrap to the bottom-left
+            Assert.Equal(0xFF00FF00u, s.Pixels()[32 * W + 32]);
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()

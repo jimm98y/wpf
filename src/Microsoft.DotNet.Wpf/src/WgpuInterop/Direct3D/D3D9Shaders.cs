@@ -698,7 +698,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>The type of the texture bound at a sampler (0: not known), and its address fix (D3D9Programs.AddressFix).</summary>
         private static int BoundType(Ctx c, int sn) => c.StageTypes != null && c.StageTypes.TryGetValue(sn, out int v) ? v & 0xFF : 0;
-        private static int BoundAddress(Ctx c, int sn) => c.StageTypes != null && c.StageTypes.TryGetValue(sn, out int v) ? v >> 8 : 0;
+        private static int BoundAddress(Ctx c, int sn) => c.StageTypes != null && c.StageTypes.TryGetValue(sn, out int v) ? (v >> 8) & 0xFF : 0;
+        /// <summary>ps_1_1-1_3: the component count the stage's coordinates are projected by (0: not projected).</summary>
+        private static int BoundProjection(Ctx c, int sn) => c.StageTypes != null && c.StageTypes.TryGetValue(sn, out int v) ? (v >> 16) & 0xF : 0;
 
         /// <summary>A sample of sampler <paramref name="sn"/> at a vec4 coordinate: mode 0 texld, 1 texldp
         /// (projected), 2 texldb (biased by w), 3 texldl (level w), 4 texldd (gradients). Depth textures:
@@ -747,8 +749,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     Write(c, d, Sample(c, n, Src(c, ref ps), 2), null);
                     return true;
                 case Tex:
-                    Write(c, d, Sample(c, n, Tn(n), 2), null);
+                {
+                    // D3DTTFF_PROJECTED: the coordinates over their last component
+                    int proj = BoundProjection(c, n);
+                    string coord = proj == 0 ? Tn(n) : $"({Tn(n)} / ({Tn(n)}).{"xyzw"[proj - 1]})";
+                    Write(c, d, Sample(c, n, coord, 2), null);
                     return true;
+                }
                 case TexCoord when c.Minor >= 4:
                     Write(c, d, $"vec4<f32>(({Src(c, ref ps)}).xyz, 1.0)", null);
                     return true;

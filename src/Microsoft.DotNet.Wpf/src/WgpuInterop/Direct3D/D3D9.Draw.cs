@@ -997,6 +997,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (k.BlendIndexed && inputs.ByLocation.TryGetValue(14, out var bi)) k.IndicesType = bi.Type;
             }
             k.Tween = !transformed && blend == 255 && inputs.ByLocation.ContainsKey(15);
+            k.TweenNormal = k.Tween && k.Normal && inputs.ByLocation.TryGetValue(14, out var n1) && n1.Usage == D3D9Usage.Normal;
             k.Lighting = State.RS[D3DRS.LIGHTING] != 0 && !transformed;
             k.LocalViewer = State.RS[D3DRS.LOCALVIEWER] != 0;
             k.NormalizeNormals = State.RS[D3DRS.NORMALIZENORMALS] != 0;

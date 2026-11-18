@@ -87,7 +87,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             D3D9Usage.Color when index < 2 => 3 + index,
             D3D9Usage.TexCoord when index < 8 => 5 + index,
             D3D9Usage.BlendWeight when index == 0 => 13,
+            // NORMAL1 (tweening) shares BLENDINDICES' location: tweening and blending are D3DRS_VERTEXBLEND's alternatives
             D3D9Usage.BlendIndices when index == 0 => 14,
+            D3D9Usage.Normal when index == 1 => 14,
             D3D9Usage.Position when index == 1 => 15,
             _ => -1,
         };
@@ -423,7 +425,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             /// <summary>D3DRS_VERTEXBLEND's weights (0: one world matrix), with the vertex's weights and indices
             /// (INDEXEDVERTEXBLENDENABLE); tweening between POSITION and POSITION1.</summary>
             public int BlendWeights;
-            public bool BlendIndexed, Tween;
+            public bool BlendIndexed, Tween, TweenNormal;
             /// <summary>The weights' and indices' D3DDECLTYPE (UNUSED, 17: the vertex has none).</summary>
             public byte WeightType = Unused, IndicesType = Unused;
             public const byte Unused = 17;
@@ -448,7 +450,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 {
                     var sb = new StringBuilder("ff:");
                     sb.Append(Transformed ? 'T' : 't').Append(PosType).Append(Normal ? 'N' : 'n').Append(NormalType).Append(Diffuse ? 'D' : 'd').Append(DiffuseType).Append(Specular ? 'S' : 's').Append(SpecularType).Append(PSize ? 'Z' : 'z').Append(PointMode).Append(PointScale ? 'C' : 'c')
-                        .Append("b").Append(BlendWeights).Append(BlendIndexed ? 'I' : 'i').Append(WeightType).Append('.').Append(IndicesType).Append(Tween ? 'W' : 'w');
+                        .Append("b").Append(BlendWeights).Append(BlendIndexed ? 'I' : 'i').Append(WeightType).Append('.').Append(IndicesType).Append(Tween ? 'W' : 'w').Append(TweenNormal ? 'N' : 'n');
                     for (int i = 0; i < 8; i++) sb.Append(TexDims[i]).Append(TexTypes[i]).Append('.').Append(TexIndex[i]).Append('.').Append(TexTransform[i]).Append(';');
                     sb.Append(Lighting ? 'L' : 'l').Append(LocalViewer ? 'V' : 'v').Append(NormalizeNormals ? 'Z' : 'z').Append(SpecularEnable ? 'P' : 'p');
                     sb.Append(DiffuseSrc).Append(SpecularSrc).Append(AmbientSrc).Append(EmissiveSrc).Append('|').Append(string.Join(",", Lights)).Append("|f").Append(FogMode).Append(RangeFog ? 'r' : '-');
@@ -471,6 +473,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (k.BlendWeights > 0 && k.WeightType != FixedVertex.Unused) w.Append(", @location(13) aWeight : ").Append(Attribute(k.WeightType, "").Type);
             if (k.BlendIndexed && k.IndicesType != FixedVertex.Unused) w.Append(", @location(14) aIndices : ").Append(Attribute(k.IndicesType, "").Type);
             if (k.Tween) w.Append(", @location(15) aPos1 : vec4<f32>");
+            if (k.TweenNormal) w.Append(", @location(14) aNormal1 : vec4<f32>");
             if (k.PointMode != 0) w.Append(", ").Append(CornerParam);
             w.Append(") -> VOut {\n");
             w.Append("    let pin0 = ").Append(Attribute(k.PosType, "aPos").Expr).Append(";\n");
@@ -491,7 +494,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             else
             {
-                string nin = k.Normal ? $"vec4<f32>({Attribute(k.NormalType, "aNormal").Expr}.xyz, 0.0)" : "vec4<f32>(0.0)";
+                string nin = !k.Normal ? "vec4<f32>(0.0)"
+                    : k.TweenNormal ? $"vec4<f32>(mix(({Attribute(k.NormalType, "aNormal").Expr}).xyz, aNormal1.xyz, M.pt.w), 0.0)"
+                    : $"vec4<f32>({Attribute(k.NormalType, "aNormal").Expr}.xyz, 0.0)";
                 if (k.BlendWeights > 0 || k.BlendIndexed)
                 {
                     // vertex blending: the position and normal through each world matrix (by the vertex's

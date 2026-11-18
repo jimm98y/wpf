@@ -296,10 +296,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 int kind = KindOf(state.Tex[i]);
                 int fix = D3D9Programs.AddressFix(state.Samp[i, 1], state.Samp[i, 2], state.Samp[i, 3]);
+                // ps_1_1-1_3: tex projects by the stage's D3DTTFF_PROJECTED (the component count's last)
+                uint ttff = i < 8 ? state.Tss[i, 24] : 0;
+                int proj = ps1 && Code.Minor < 4 && (ttff & 256) != 0 && (ttff & 0xFF) is >= 2 and <= 4 ? (int)(ttff & 0xFF) : 0;
                 if (!ps1 && kind is not (6 or 7) && fix == 0) continue;
-                if (kind == 0 && fix == 0) continue;
-                (types ??= new())[i] = kind | fix << 8;
-                key.Append(i).Append(':').Append(kind | fix << 8).Append(',');
+                if (kind == 0 && fix == 0 && proj == 0) continue;
+                int v = kind | fix << 8 | proj << 16;
+                (types ??= new())[i] = v;
+                key.Append(i).Append(':').Append(v).Append(',');
             }
             if (types == null && !ps1) return Code;
             string k = key.ToString();
