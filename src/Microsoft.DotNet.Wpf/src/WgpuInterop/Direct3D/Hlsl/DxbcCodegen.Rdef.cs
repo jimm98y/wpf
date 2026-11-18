@@ -122,6 +122,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             int headerSize = Sm5 ? 60 : 28, bindSize = v51 ? 40 : 32, varSize = Sm5 ? 40 : 24;
 
             var cbs = _cbuffers.Where(c => c.Slot >= 0 && c.Used).OrderBy(c => c.DeclOrder).ToList();
+            // a structured buffer's element type, as fxc describes it: a "constant buffer" of the
+            // buffer's name (D3D_CT_RESOURCE_BIND_INFO) holding one variable, $Element
+            var bindInfo = _resources.Where(r => r.Used && r.Slot >= 0 && BindKind(r.Type).Kind is 5 or 6 or 9 or 10).OrderBy(r => r.Kind).ThenBy(r => r.Slot).ToList();
             var binds = new List<(string Name, int Kind, int Ret, int Dim, int Samples, int Reg, int Count, int Flags)>();
             foreach (var r in _resources.Where(r => r.Used && r.Slot >= 0 && (r.Kind == 's' || r.Legacy)).OrderBy(r => r.Slot))
                 binds.Add((r.Name, 3, 0, 0, 0, r.Slot, r.ArrayLength, r.Type.IsComparisonSampler ? 2 : 0));
@@ -133,9 +136,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 binds.Add((c.Name, c.Texture ? 1 : 0, 0, 0, 0, c.Slot, 1, c.ExplicitSlot >= 0 ? 1 : 0));
 
             int bindOff = headerSize, cbOff = bindOff + binds.Count * bindSize;
-            int varOff = cbOff + cbs.Count * 24;
-            var members = cbs.Select(c => c.Members).ToList();
-            int varTotal = members.Sum(m => m.Count);
+            int varOff = cbOff + (cbs.Count + bindInfo.Count) * 24;
+            int varTotal = cbs.Sum(c => c.Members.Count) + bindInfo.Count;
             var b = new RdefBuilder { Base = varOff + varTotal * varSize };
 
             // types, defaults and names into the tail
@@ -150,6 +152,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     int name = b.Str(m.Name);
                     varRecords.Add(new[] { name, m.Offset, m.Size, m.Used ? 2 : 0, type, def });
                 }
+            foreach (var r in bindInfo)
+            {
+                var elem = r.Type.Element ?? NumericType.Uint;
+                int type = WriteType(b, elem, written);
+                varRecords.Add(new[] { b.Str("$Element"), 0, SizeOfStructured(elem), 2, type, 0 });
+            }
             var bindNames = binds.Select(x => b.Str(x.Name)).ToList();
             var cbNames = cbs.Select(c => b.Str(c.Name)).ToList();
             int creator = b.Str(Creator);
@@ -157,7 +165,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
             var head = new List<byte>();
             void W(int v) => head.AddRange(BitConverter.GetBytes(v));
-            W(cbs.Count); W(cbs.Count > 0 ? cbOff : 0); W(binds.Count); W(binds.Count > 0 ? bindOff : 0);
+            int cbTotal = cbs.Count + bindInfo.Count;
+            W(cbTotal); W(cbTotal > 0 ? cbOff : 0); W(binds.Count); W(binds.Count > 0 ? bindOff : 0);
             head.Add((byte)_minor); head.Add((byte)_major);
             head.AddRange(BitConverter.GetBytes((ushort)(_stage switch
             {
@@ -184,6 +193,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 W((cbs[i].SizeBytes + 15) & ~15); W(0); W(cbs[i].Texture ? 1 : 0);
                 vi += cbs[i].Members.Count;
             }
+            foreach (var r in bindInfo)
+            {
+                W(b.Str(r.Name)); W(1); W(varOff + vi * varSize);
+                W(SizeOfStructured(r.Type.Element ?? NumericType.Uint)); W(0); W(3);
+                vi++;
+            }
             foreach (var v in varRecords)
             {
                 foreach (int x in v) W(x);
@@ -199,10 +214,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var e = r.Type.Element as NumericType;
             bool structured = kind is 5 or 6 or 9 or 10;
             bool raw = kind is 7 or 8;
-            int ret = structured ? 6 : raw ? 7 : e?.Scalar switch { ScalarKind.Int => 3, ScalarKind.Uint or ScalarKind.Bool => 4, ScalarKind.Double => 9, _ => 5 };
+            int ret = structured || raw ? 6 : e?.Scalar switch { ScalarKind.Int => 3, ScalarKind.Uint or ScalarKind.Bool => 4, ScalarKind.Double => 9, _ => 5 };
             int samples = structured ? (r.Type.Element == null ? 4 : SizeOfStructured(r.Type.Element)) : r.Type.Name.Contains("MS") ? r.Type.Count : -1;
             int flags = structured || raw ? 0 : (Math.Max(1, Math.Min(4, e?.Count ?? 4)) - 1) << 2;
-            if (kind == 6 && r.Type.Name is "AppendStructuredBuffer" or "ConsumeStructuredBuffer") kind = 11;
+            if (kind == 6 && r.Counter) kind = 11;
             return (r.Name, kind, ret, dim, samples, r.Slot, r.ArrayLength, flags | (r.ExplicitSlot >= 0 ? 1 : 0));
         }
     }

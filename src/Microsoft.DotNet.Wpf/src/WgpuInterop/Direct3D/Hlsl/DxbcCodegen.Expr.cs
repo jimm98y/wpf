@@ -25,12 +25,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 case LiteralExpr l:
                     if (l.IsBool) return Wrap(ImmBool(l.IntValue != 0));
-                    if (l.IsFloat) return Wrap(l.Suffix == 'd' ? ImmFloat((float)l.FloatValue).WithType(NumericType.Double) : ImmFloat((float)l.FloatValue));
+                    if (l.IsFloat) return Wrap(l.Suffix is 'd' or 'D' ? ImmDouble(l.FloatValue) : ImmFloat((float)l.FloatValue));
                     if (l.Suffix == 'u') return Wrap(ImmUint((uint)l.IntValue));
                     return Wrap(ImmInt((int)l.IntValue));
-                case NameExpr n: return Name(n);
-                case MemberExpr m: return Member(m);
-                case IndexExpr i: return Index(i);
+                case NameExpr n: return Materialize(Name(n), n);
+                case MemberExpr m: return Materialize(Member(m), m);
+                case IndexExpr i: return Materialize(Index(i), i);
                 case UnaryExpr u: return Unary(u, discard);
                 case BinaryExpr b: return Binary(b);
                 case AssignExpr a: return Assignment(a);
@@ -56,6 +56,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private static NumValue Wrap(Num n) => new() { Type = n.Type, N = n };
 
+        /// <summary>A name, member or element as a place (a value in memory stays one, to be indexed or
+        /// assigned); any other expression's value.</summary>
+        private Value EvalPlace(Expr e) => e switch { NameExpr n => Name(n), MemberExpr m => Member(m), IndexExpr i => Index(i), _ => EvalValue(e) };
+
+        private Value Materialize(Value v, Node at) => v is MemValue mv ? MemRead(mv, at) : v;
+
         // ---- names ----------------------------------------------------------------------------------
 
         private Value Name(NameExpr n)
@@ -69,6 +75,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (_constants.TryGetValue(n.Name, out var k)) return k;
             if (_cbMembers.TryGetValue(n.Name, out var m)) return CbValue(m);
             if (_resourceByName.TryGetValue(n.Name, out var r)) return ResourceValue(r);
+            if (_groupShared.TryGetValue(n.Name, out var g)) return GroupSharedValue(g);
             throw Err(n, $"undeclared identifier '{n.Name}'", 3004);
         }
 
@@ -103,7 +110,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 }
                 case NumericType n:
                 {
-                    var num = new Num { Type = n, File = OperandType.ConstantBuffer, Index = new[] { slot, (long)reg }, Relative = new DxOperand?[2], Comp = Enumerable.Range(comp, Math.Max(1, n.Count)).Select(i => (byte)i).ToArray() };
+                    var num = new Num { Type = n, File = OperandType.ConstantBuffer, Index = new[] { slot, (long)reg }, Relative = new DxOperand?[2], Comp = Enumerable.Range(comp, Math.Max(1, n.Components)).Select(i => (byte)i).ToArray() };
                     // a bool in a constant buffer is 0 or 1: as a bool register it is 0 or ~0
                     if (n.Scalar == ScalarKind.Bool) return Wrap(Compute(Opcode.INe, n, num.WithType(n.WithScalar(ScalarKind.Uint)), ImmUint(0)));
                     return Wrap(num);
@@ -129,6 +136,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 case AggStore a when a.Type is NumericType { IsMatrix: true } mt:
                     return new MatValue { Type = mt, Lines = a.Parts.Select(p => Read((NumStore)p)).ToArray(), Columns = false };
                 case AggStore a: return new AggValue { Type = a.Type, Parts = a.Parts.Select(ReadStore).ToArray() };
+                case MemStore m: return MemRead(m.Loc, m.Type, default(Node)!);
             }
             throw new InvalidOperationException();
         }
@@ -151,9 +159,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private Value Member(MemberExpr m)
         {
-            var target = EvalValue(m.Target);
+            var target = EvalPlace(m.Target);
             switch (target)
             {
+                case MemValue mv: return MemMember(mv, m.Name, m);
                 case AggValue a when a.Type is StructType st:
                 {
                     int i = st.Fields.FindIndex(f => f.Name == m.Name);
@@ -227,7 +236,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private Value Index(IndexExpr ix)
         {
-            var target = EvalValue(ix.Target);
+            var target = EvalPlace(ix.Target);
+            if (target is MemValue mv) return MemIndex(mv, ix.Index, ix);
+            if (target is ObjValue ov && ElementOf(ov, EvalValue(ix.Index), ix) is { } element) return element;
             bool constant = TryConstIndex(ix.Index, out long k);
             switch (target)
             {
@@ -339,6 +350,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private Store StoreOf(Expr e)
         {
+            if (InMemory(e) && EvalPlace(e) is MemValue place) return new MemStore { Type = place.Type, Loc = place.Loc };
             switch (e)
             {
                 case NameExpr n:
@@ -408,6 +420,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         {
             switch (s)
             {
+                case MemStore m:
+                    MemWrite(m.Loc, m.Type, v, at);
+                    return;
                 case NumStore n:
                     Op(Opcode.Mov, n, false, Convert(v, (NumericType)n.Type, at));
                     return;
@@ -484,7 +499,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         {
             if (n.Type.IsFloatLike)
             {
-                if (n.Imm != null) return new Num { Type = n.Type, Imm = n.Imm.Select(x => x ^ 0x80000000).ToArray() };
+                // a double's sign is in its high word
+                if (n.Imm != null) return new Num { Type = n.Type, Imm = n.Imm.Select((x, i) => IsDouble(n.Type) && i % 2 == 0 ? x : x ^ 0x80000000).ToArray() };
                 var r = (Num)n.WithType(n.Type);
                 r.Mod = n.Mod switch { OperandModifier.None => OperandModifier.Neg, OperandModifier.Neg => OperandModifier.None, OperandModifier.Abs => OperandModifier.AbsNeg, _ => OperandModifier.Abs };
                 return r;
@@ -752,8 +768,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var shaped = to.Count == 1 ? n.Type.ScalarOf : NumericType.Vector(n.Type.Scalar, to.Count);
             n = n.WithType(shaped);
             var from = n.Type.Scalar;
-            if (from == to.Scalar || (from is ScalarKind.Float or ScalarKind.Double && to.Scalar is ScalarKind.Float or ScalarKind.Double)) return n.WithType(to.IsMatrix ? to.Row : to);
+            if (from == to.Scalar) return n.WithType(to.IsMatrix ? to.Row : to);
             var t = to.IsMatrix ? to.Row : to;
+            if (DoubleConvert(n, t) is { } dc) return dc;
             if (n.Imm != null) return new Num { Type = t, Imm = n.Imm.Select(x => ConvertBits(x, from, to.Scalar)).ToArray() };
             return (from, to.Scalar) switch
             {

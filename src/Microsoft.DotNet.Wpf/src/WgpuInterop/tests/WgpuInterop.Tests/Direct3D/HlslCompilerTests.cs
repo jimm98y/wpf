@@ -96,6 +96,14 @@ namespace WgpuInterop.Tests.Direct3D
         };
 
         private static bool Drawable(Entry e) => e.Profile.StartsWith("ps_", StringComparison.Ordinal) || e.Profile.StartsWith("vs_", StringComparison.Ordinal);
+        private static bool Compiled(Entry e) => Drawable(e) || e.Profile.StartsWith("cs_", StringComparison.Ordinal);
+
+        /// <summary>Compute shaders whose UAVs depend on the order threads run in (DxbcCoverageTests):
+        /// run, not compared.</summary>
+        private static readonly HashSet<string> OrderDependent = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "compute.cs_atomics.cs_5_0.dxbc", "compute.cs_counter_down.cs_5_0.dxbc", "compute.cs_uav.cs_5_0.dxbc",
+        };
 
         [Fact]
         public void TheChecksum_IsTheOneFxcWrites()
@@ -112,7 +120,7 @@ namespace WgpuInterop.Tests.Direct3D
         {
             var failures = new List<string>();
             int ok = 0;
-            foreach (var e in Entries().Where(Drawable))
+            foreach (var e in Entries().Where(Compiled))
             {
                 if (Gaps.ContainsKey(e.Blob)) continue;
                 var blob = Compile(Source(e), e.File, e.Name, e.Profile, e.Defines, out string errors);
@@ -143,7 +151,7 @@ namespace WgpuInterop.Tests.Direct3D
                 }
                 catch (Exception x) { failures.Add($"{e}: {x.Message.Replace(Environment.NewLine, " | ")}"); }
             }
-            Assert.True(failures.Count == 0, $"{ok} compiled as fxc's do, {failures.Count} did not:{Environment.NewLine}{string.Join(Environment.NewLine, failures)}");
+            Assert.True(ok > 0 && failures.Count == 0, $"{ok} compiled as fxc's do, {failures.Count} did not:{Environment.NewLine}{string.Join(Environment.NewLine, failures)}");
         }
 
         private static string Sig(IEnumerable<SignatureElement> els) =>
@@ -216,6 +224,52 @@ namespace WgpuInterop.Tests.Direct3D
                 foreach (IntPtr p in new[] { ctx, dev }) DxbcPixelParity.Release(p);
             }
             string summary = $"{same} draw as fxc's draw, {differ} differ";
+            Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
+        }
+
+        /// <summary>Each compute shader dispatched with fxc's blob and with ours, every UAV compared.</summary>
+        [Fact]
+        public void EveryComputeShaderOfTheCorpus_ComputesAsFxcsComputes()
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx;
+            uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            var lines = new List<string>();
+            int same = 0, differ = 0;
+            try
+            {
+                string? only = Environment.GetEnvironmentVariable("HLSL_ONLY");
+                foreach (var e in Entries().Where(x => x.Profile.StartsWith("cs_", StringComparison.Ordinal)))
+                {
+                    if (Gaps.ContainsKey(e.Blob)) continue;
+                    if (only != null && !e.Blob.Contains(only, StringComparison.OrdinalIgnoreCase)) continue;
+                    byte[] fxcBlob = Fxc(e);
+                    var ours = Compile(Source(e), e.File, e.Name, e.Profile, e.Defines, out string errors);
+                    if (ours == null) { differ++; lines.Add($"FAIL {e}: {errors.Trim()}"); continue; }
+                    if (Environment.GetEnvironmentVariable("HLSL_DUMP") is { Length: > 0 } dump)
+                    {
+                        Directory.CreateDirectory(dump);
+                        File.WriteAllLines(Path.Combine(dump, e.Blob + ".ours.txt"), DxbcShader.Parse(ours).Instructions.Select(i => i.ToString()));
+                        File.WriteAllLines(Path.Combine(dump, e.Blob + ".fxc.txt"), DxbcShader.Parse(fxcBlob).Instructions.Select(i => i.ToString()));
+                    }
+                    try
+                    {
+                        var a = DxbcComputeParity.Run(dev, ctx, fxcBlob, DxbcPixelParity.Reflect(fxcBlob), 1);
+                        var b = DxbcComputeParity.Run(dev, ctx, ours, DxbcPixelParity.Reflect(ours), 1);
+                        if (OrderDependent.Contains(e.Blob)) { same++; lines.Add($"OK   {e} (run, not compared: the order threads run in shows)"); continue; }
+                        var (count, first) = DxbcComputeParity.Compare(a, b);
+                        if (count == 0 && a.Count == b.Count) { same++; lines.Add($"OK   {e}"); }
+                        else { differ++; lines.Add($"FAIL {e}: {count} words differ; {first}"); }
+                    }
+                    catch (Exception x) { differ++; lines.Add($"FAIL {e}: {x.GetType().Name}: {x.Message.Split('\n')[0]}"); }
+                }
+            }
+            finally
+            {
+                foreach (IntPtr p in new[] { ctx, dev }) DxbcPixelParity.Release(p);
+            }
+            string summary = $"{same} compute as fxc's compute, {differ} differ";
             Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
         }
 

@@ -51,6 +51,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             public int DeclOrder;
             /// <summary>A D3D9-style sampler (sampler2D): a texture and a sampler at one register.</summary>
             public bool Legacy;
+            /// <summary>A structured UAV whose counter the program uses.</summary>
+            public bool Counter;
         }
 
         private readonly List<CBuffer> _cbuffers = new();
@@ -107,7 +109,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                             _resourceByName[v.Name] = r;
                             break;
                         }
-                        if (v.Modifiers.Contains("static") || v.Modifiers.Contains("groupshared"))
+                        if (v.Modifiers.Contains("groupshared"))
+                        {
+                            if (_stage != ShaderStage.Compute) break;       // other stages have none (fxc: ignored)
+                            _groupShared[v.Name] = new GroupShared { Name = v.Name, Type = type };
+                            break;
+                        }
+                        if (v.Modifiers.Contains("static"))
                         {
                             if (v.Modifiers.Contains("const") && v.Init != null && TryConstant(v, type) is { } k) _constants[v.Name] = k;
                             else _statics[v.Name] = v;
@@ -360,6 +368,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (semantic == null) throw Err(at, "missing semantic", 4502);
             var (sname, sindex) = SplitSemantic(semantic);
             int sv = SystemValueOf(sname, output);
+            if (_stage == ShaderStage.Compute)
+            {
+                if (output) throw Err(at, "a compute shader has no outputs", 4502);
+                return ComputeInput(semantic, nt, at)!;
+            }
             var e = new SigEntry { Semantic = sname, Index = sindex, Type = nt, SystemValue = sv, Modifiers = mods, Output = output, InArray = inArray };
             var list = output ? _outputs : _inputs;
             if (!output && sv == 66)
@@ -415,6 +428,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             if (!_functions.TryGetValue(entry, out var fs) || fs.All(f => f.Body == null))
                 throw new HlslException(default, $"entrypoint not found", 3501);
             var f = fs.First(x => x.Body != null);
+            if (_stage == ShaderStage.Compute) ThreadGroup(f);
             // the first pass learns what is used; the second binds it in declaration order and emits
             Generate(f, record: true);
             AssignRegisters();
@@ -433,6 +447,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             _outputs.Clear();
             _writesDepth = false;
             _scopes.Clear();
+            _computeInputs.Clear();
+            _tgsmCount = 0;
+            foreach (var g in _groupShared.Values) g.Register = -1;
         }
 
         private bool _recording;
@@ -930,6 +947,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 if (e.SystemValue is > 0 and < 64) _w.EmitWith(Opcode.DclOutputSiv, 0, null, new[] { o }, new[] { (uint)e.SystemValue });
                 else _w.Emit(Opcode.DclOutput, 0, o);
             }
+            if (_stage == ShaderStage.Compute) ComputeDeclarations();
             if (_temps > 0) _w.Declare(Opcode.DclTemps, 0, (uint)_temps);
             foreach (var (x, size, comps) in _indexables) _w.Declare(Opcode.DclIndexableTemp, 0, (uint)x, (uint)size, (uint)comps);
         }
@@ -995,7 +1013,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             var t = r.Type;
             if (t.Name is "RWStructuredBuffer" or "AppendStructuredBuffer" or "ConsumeStructuredBuffer")
             {
-                uint counter = t.Name == "RWStructuredBuffer" ? 0u : 1u << 12;
+                uint counter = t.Name == "RWStructuredBuffer" && !r.Counter ? 0u : 1u << 12;
                 _w.EmitWith(Opcode.DclUnorderedAccessViewStructured, counter, null, new[] { DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot) }, new[] { (uint)(t.Element == null ? 4 : SizeOfStructured(t.Element)) });
                 return;
             }

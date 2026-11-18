@@ -43,6 +43,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
             public DxOperand Operand()
             {
+                if (Type.Scalar == ScalarKind.Double) return DoubleOperand(this);
                 if (Imm != null)
                 {
                     var v = new uint[4];
@@ -62,6 +63,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 var n = (Num)MemberwiseClone();
                 n.Type = Type.ScalarOf;
+                if (Type.Scalar == ScalarKind.Double)
+                {
+                    // a double: its pair
+                    int k = 2 * Math.Min(i, (Imm?.Length ?? Comp.Length) / 2 - 1);
+                    if (Imm != null) n.Imm = new[] { Imm[k], Imm[k + 1] };
+                    else n.Comp = new[] { Comp[k], Comp[k + 1] };
+                    return n;
+                }
                 if (Imm != null) n.Imm = new[] { Imm[Math.Min(i, Imm.Length - 1)] };
                 else n.Comp = new[] { Comp[Math.Min(i, Comp.Length - 1)] };
                 return n;
@@ -72,6 +81,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 var n = (Num)MemberwiseClone();
                 n.Type = t;
+                if (Type.Scalar == ScalarKind.Double)
+                {
+                    int last = (Imm?.Length ?? Comp.Length) / 2 - 1;
+                    var words = pick.SelectMany(p => new[] { 2 * Math.Min(p, last), 2 * Math.Min(p, last) + 1 }).ToArray();
+                    if (Imm != null) n.Imm = words.Select(w => Imm[w]).ToArray();
+                    else n.Comp = words.Select(w => Comp[w]).ToArray();
+                    return n;
+                }
                 if (Imm != null) n.Imm = pick.Select(p => Imm[Math.Min(p, Imm.Length - 1)]).ToArray();
                 else n.Comp = pick.Select(p => Comp[Math.Min(p, Comp.Length - 1)]).ToArray();
                 return n;
@@ -229,7 +246,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         /// <summary>A fresh temp for a value of n components (.x, .xy, .xyz, .xyzw).</summary>
         private NumStore TempStore(NumericType t)
         {
-            int n = Math.Max(1, Math.Min(4, t.Count));
+            int n = Math.Max(1, Math.Min(4, t.Count * (t.Scalar == ScalarKind.Double ? 2 : 1)));
+            if (n > 4 || (t.Scalar == ScalarKind.Double && t.Count > 2)) throw new HlslException(default, $"a {t} takes more than a register");
             return new NumStore { Type = t, File = OperandType.Temp, Index = new long[] { NewTemp() }, Relative = new DxOperand?[1], Comp = Enumerable.Range(0, n).Select(i => (byte)i).ToArray() };
         }
 
@@ -270,6 +288,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         /// <summary>op dest, sources..., each source aligned to the destination's components.</summary>
         private void Op(Opcode op, NumStore dest, bool saturate, params Num[] srcs)
         {
+            if (DoubleInstruction(op, dest, saturate, srcs)) return;
             var ops = new DxOperand[srcs.Length + 1];
             ops[0] = DestOf(dest);
             // a dot product reads its sources' own components, whatever it writes

@@ -43,6 +43,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private Value Intrinsic(string name, List<Expr> args, Node at)
         {
+            if (InterlockedIntrinsic(name, args, at) is { } atomic) return atomic;
+            if (Barrier(name, at) is { } barrier) return barrier;
             switch (name)
             {
                 // ---- one instruction --------------------------------------------------------------------
@@ -93,6 +95,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                     var x = Compute(Opcode.DerivRtx, a[0].Type, a[0]); x.Mod = OperandModifier.Abs;
                     var y = Compute(Opcode.DerivRty, a[0].Type, a[0]); y.Mod = OperandModifier.Abs;
                     return Wrap(Compute(Opcode.Add, a[0].Type, x, y));
+                }
+                case "fma":
+                {
+                    var a = CommonArgs(args, at, 3, out var t);
+                    if (!IsDouble(t)) throw Err(at, "fma takes doubles", 3013);
+                    return Wrap(Compute(Opcode.Mad, t, a[0], a[1], a[2]));
                 }
                 case "mad":
                 {
@@ -339,8 +347,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 case "firstbitlow": return IntUnary(Opcode.FirstBitLo, args, at, ScalarKind.Uint);
                 case "firstbithigh":
                 {
+                    // firstbit_hi counts from the most significant bit, HLSL from the least: 31 minus
+                    // it, except where no bit is found (~0, which stays)
                     var v = Arg(args, 0, at);
-                    return Wrap(Compute(v.Type.Scalar == ScalarKind.Int ? Opcode.FirstBitShi : Opcode.FirstBitHi, v.Type.WithScalar(ScalarKind.Uint), v));
+                    var ut = v.Type.WithScalar(ScalarKind.Uint);
+                    var hi = Compute(v.Type.Scalar == ScalarKind.Int ? Opcode.FirstBitShi : Opcode.FirstBitHi, ut, v);
+                    var flipped = Compute(Opcode.IAdd, ut, Negate(hi), ImmUint(31));
+                    var none = Compute(Opcode.IEq, ut.WithScalar(ScalarKind.Bool), hi, ImmUint(0xFFFFFFFF));
+                    return Wrap(Compute(Opcode.Movc, ut, none, hi, flipped));
                 }
                 case "f32tof16": { var a = FloatArgs(args, at, 1); return Wrap(Compute(Opcode.F32toF16, a[0].Type.WithScalar(ScalarKind.Uint), a[0])); }
                 case "f16tof32": { var v = Arg(args, 0, at); return Wrap(Compute(Opcode.F16toF32, v.Type.WithScalar(ScalarKind.Float), ConvertNum(v, v.Type.WithScalar(ScalarKind.Uint), at))); }
@@ -540,7 +554,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
 
         private NumericType TexelType(ObjectType t) => t.Element as NumericType ?? NumericType.Vector(ScalarKind.Float, 4);
 
-        private DxOperand ResourceOperand(ObjValue o) => DxOperand.Src(OperandType.Resource, new byte[] { 0, 1, 2, 3 }, o.Register);
+        private DxOperand ResourceOperand(ObjValue o) => DxOperand.Src(o.Obj.IsUav ? OperandType.UnorderedAccessView : OperandType.Resource, new byte[] { 0, 1, 2, 3 }, o.Register);
         private DxOperand SamplerOperand(ObjValue s) => DxOperand.Bare(OperandType.Sampler, s.Sampler >= 0 ? s.Sampler : s.Register);
 
         /// <summary>sample-family instructions over a texture and a sampler, the texel's type's components.</summary>
@@ -575,6 +589,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         {
             var target = EvalValue(m.Target);
             if (target is not ObjValue o) throw Err(m, $"'{m.Name}' is not a method of a {target.Type}", 3018);
+            if (MemoryMethod(o, m) is { } memory) return memory;
             var t = o.Obj;
             ObjValue SamplerArg(int i) => EvalValue(m.Args[i]) as ObjValue ?? throw Err(m.Args[i], "a sampler was expected", 3017);
             Num Coord(int i, int n) => ConvertNum(Arg(m.Args, i, m), NumericType.Vector(ScalarKind.Float, n), m);
