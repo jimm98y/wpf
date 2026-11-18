@@ -268,24 +268,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         public Direct3DShader9(Direct3DDevice9 device, D3D9Shader code) : base(device, code.Pixel ? s_ps : s_vs) => Code = code;
 
-        private readonly Dictionary<int, D3D9Shader> _byStages = new();
+        private readonly Dictionary<string, D3D9Shader> _byStages = new();
 
-        /// <summary>The shader for the textures bound: a ps_1_x shader samples each stage by the type of
-        /// the texture there (2D, cube, volume), so it is translated for each combination it meets.</summary>
-        public D3D9Shader ForTextures(ComObject?[] textures)
+        /// <summary>The kind of texture a sampler reads (D3D9Programs.TextureType): 2D, cube, volume, or a
+        /// depth texture as its depth (INTZ, DF24, DF16: 6) or as a shadow map (the D16 and D24 formats: 7).</summary>
+        internal static int KindOf(ComObject? texture) => texture switch
         {
-            if (!Code.Pixel || Code.Major != 1) return Code;
-            int key = 0;
-            var types = new Dictionary<int, int>();
-            for (int i = 0; i < 6; i++)
+            Direct3DTexture9 { Gpu: { } g } t when Formats.IsDepth(g.Format)
+                => t.Format is D3D9Const.D3DFMT_INTZ or D3D9Const.D3DFMT_DF24 or D3D9Const.D3DFMT_DF16 ? 6 : 7,
+            Direct3DTexture9 { IsCube: true } => 3,
+            Direct3DVolumeTexture9 => 4,
+            Direct3DTexture9 => 2,
+            _ => 0,
+        };
+
+        /// <summary>The pixel shader for the textures and samplers bound. A ps_1_x shader samples each stage by
+        /// the type of the texture there; any shader reads a depth texture by its kind, and needs the address
+        /// modes WebGPU lacks (BORDER, MIRRORONCE) done in its code. So it is translated for each combination
+        /// it meets, and is itself where none of that applies.</summary>
+        public D3D9Shader ForTextures(D3D9State state)
+        {
+            if (!Code.Pixel) return Code;
+            bool ps1 = Code.Major == 1;
+            Dictionary<int, int>? types = null;
+            var key = new System.Text.StringBuilder();
+            for (int i = 0; i < 16; i++)
             {
-                int t = textures[i] switch { Direct3DTexture9 { IsCube: true } => 3, Direct3DVolumeTexture9 => 4, Direct3DTexture9 => 2, _ => 0 };
-                if (t != 0) types[i] = t;
-                key |= t << (i * 3);
+                int kind = KindOf(state.Tex[i]);
+                int fix = D3D9Programs.AddressFix(state.Samp[i, 1], state.Samp[i, 2], state.Samp[i, 3]);
+                if (!ps1 && kind is not (6 or 7) && fix == 0) continue;
+                if (kind == 0 && fix == 0) continue;
+                (types ??= new())[i] = kind | fix << 8;
+                key.Append(i).Append(':').Append(kind | fix << 8).Append(',');
             }
+            if (types == null && !ps1) return Code;
+            string k = key.ToString();
             lock (_byStages)
             {
-                if (!_byStages.TryGetValue(key, out D3D9Shader? s)) _byStages[key] = s = D3D9Bytecode.Translate(Code.Bytecode, pixel: true, types);
+                if (!_byStages.TryGetValue(k, out D3D9Shader? s)) _byStages[k] = s = D3D9Bytecode.Translate(Code.Bytecode, pixel: true, types);
                 return s;
             }
         }

@@ -35,7 +35,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public const int OffPx = 0, OffVp = 16, OffAlpha = 32, OffFog = 48, OffFogColor = 64, OffTFactor = 80, OffAmbient = 96,
             OffMatDiffuse = 112, OffMatAmbient = 128, OffMatSpecular = 144, OffMatEmissive = 160, OffMatPower = 176,
             OffWv = 192, OffProj = 256, OffWvp = 320, OffNrm = 384, OffTex = 448, OffStageConst = 960, OffBump = 1088, OffBumpL = 1216,
-            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, OffPoint = 2352, OffPointScale = 2368, OffBlendWv = 2384, OffBlendNrm = 2896, MiscSize = 3408, BlendMatrices = 8;
+            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, OffPoint = 2352, OffPointScale = 2368, OffBlendWv = 2384, OffBlendNrm = 2896, OffBorder = 3408, MiscSize = 3664, BlendMatrices = 8;
 
         public const string MiscWgsl =
             "struct Light { diffuse : vec4<f32>, specular : vec4<f32>, ambient : vec4<f32>, pos : vec4<f32>, dir : vec4<f32>, att : vec4<f32>, spot : vec4<f32> };\n" +
@@ -45,7 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             "    wv : mat4x4<f32>, proj : mat4x4<f32>, wvp : mat4x4<f32>, nrm : mat4x4<f32>, tex : array<mat4x4<f32>, 8>,\n" +
             "    stageConst : array<vec4<f32>, 8>, bump : array<vec4<f32>, 8>, bumpL : array<vec4<f32>, 8>, lights : array<Light, 8>,\n" +
             "    adj : vec4<f32>, clip : array<vec4<f32>, 6>, pt : vec4<f32>, ptScale : vec4<f32>,\n" +
-            "    blendWv : array<mat4x4<f32>, 8>, blendNrm : array<mat4x4<f32>, 8>,\n" +
+            "    blendWv : array<mat4x4<f32>, 8>, blendNrm : array<mat4x4<f32>, 8>, border : array<vec4<f32>, 16>,\n" +
             "};\n" +
             "@group(0) @binding(2) var<uniform> M : Misc;\n";
 
@@ -118,7 +118,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             _ => "c",
         } + "; }\n";
 
-        private static string TextureType(int d3dType) => d3dType switch { 3 => "texture_cube<f32>", 4 => "texture_3d<f32>", _ => "texture_2d<f32>" };
+        /// <summary>A sampler's WGSL texture type: D3DSAMPLER_TEXTURE_TYPE (2 2D, 3 cube, 4 volume), and the
+        /// shim's own 6 (a depth texture read as its depth: INTZ, DF24, DF16) and 7 (a depth texture read
+        /// as a shadow map: the coordinate's z compared with it, D16 and D24 formats).</summary>
+        internal static string TextureType(int d3dType) => d3dType switch { 3 => "texture_cube<f32>", 4 => "texture_3d<f32>", 6 or 7 => "texture_depth_2d", _ => "texture_2d<f32>" };
+
+        internal static string SamplerType(int d3dType) => d3dType == 7 ? "sampler_comparison" : "sampler";
+
+        /// <summary>The address modes a sampler's coordinates need help with (WebGPU has neither): per
+        /// axis (U bits 0-1, V 2-3, W 4-5) 1 MIRRORONCE, 2 BORDER. The sampler clamps those axes.</summary>
+        internal static int AddressFix(uint u, uint v, uint w)
+        {
+            static int F(uint a) => a == 5 ? 1 : a == 4 ? 2 : 0;
+            return F(u) | F(v) << 2 | F(w) << 4;
+        }
+
+        /// <summary>The coordinates as MIRRORONCE wants them: mirrored about 0 (then clamped by the sampler).</summary>
+        internal static string Addressed(string cs, int fix, int dims)
+        {
+            if ((fix & 0x15) == 0) return cs;
+            var parts = new List<string>();
+            for (int i = 0; i < dims; i++)
+            {
+                string c = $"({cs}).{"xyz"[i]}";
+                parts.Add(((fix >> (2 * i)) & 3) == 1 ? $"abs({c})" : c);
+            }
+            return $"vec{dims}<f32>({string.Join(", ", parts)})";
+        }
+
+        /// <summary>A sample with BORDER axes: the border colour where the coordinates are outside 0-1 on one.</summary>
+        internal static string Bordered(string sample, string cs, int fix, int dims, int sampler)
+        {
+            if ((fix & 0x2A) == 0) return sample;
+            var outside = new List<string>();
+            for (int i = 0; i < dims; i++)
+                if (((fix >> (2 * i)) & 3) == 2) outside.Add($"({cs}).{"xyz"[i]} < 0.0 || ({cs}).{"xyz"[i]} > 1.0");
+            return $"select({sample}, M.border[{sampler}], {string.Join(" || ", outside)})";
+        }
 
         // ---- the inter-stage struct -----------------------------------------------------------------
 
@@ -285,7 +321,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             foreach (var (s, type) in vs.Samplers)
             {
                 w.Append("@group(0) @binding(").Append(VsTextureBase + 2 * s).Append(") var vtex").Append(s).Append(" : ").Append(TextureType(type)).Append(";\n");
-                w.Append("@group(0) @binding(").Append(VsTextureBase + 2 * s + 1).Append(") var vsmp").Append(s).Append(" : sampler;\n");
+                w.Append("@group(0) @binding(").Append(VsTextureBase + 2 * s + 1).Append(") var vsmp").Append(s).Append(" : ").Append(SamplerType(type)).Append(";\n");
                 w.Append(FixupFn($"vfx{s}", fixups.TryGetValue(s, out int k) ? k : 7));
             }
             w.Append(vs.Code);
@@ -338,7 +374,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             foreach (var (s, type) in ps.Samplers)
             {
                 w.Append("@group(0) @binding(").Append(PsTextureBase + 2 * s).Append(") var tex").Append(s).Append(" : ").Append(TextureType(type)).Append(";\n");
-                w.Append("@group(0) @binding(").Append(PsTextureBase + 2 * s + 1).Append(") var smp").Append(s).Append(" : sampler;\n");
+                w.Append("@group(0) @binding(").Append(PsTextureBase + 2 * s + 1).Append(") var smp").Append(s).Append(" : ").Append(SamplerType(type)).Append(";\n");
                 w.Append(FixupFn($"fx{s}", fixups.TryGetValue(s, out int k) ? k : 7));
             }
             w.Append(ps.Code);
@@ -605,7 +641,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 /// <summary>Texture fixup (FixupOf; 8: no texture, reads 1), texture type, D3DTSS_TEXTURETRANSFORMFLAGS.</summary>
                 public int Fixup, TexType;
                 public uint Transform;
-                public string Id => $"{ColorOp}.{ColorArg0}.{ColorArg1}.{ColorArg2}.{AlphaOp}.{AlphaArg0}.{AlphaArg1}.{AlphaArg2}.{ResultArg}.{Fixup}.{TexType}.{Transform}";
+                /// <summary>The stage's sampler's address fix (AddressFix).</summary>
+                public int Address;
+                public string Id => $"{ColorOp}.{ColorArg0}.{ColorArg1}.{ColorArg2}.{AlphaOp}.{AlphaArg0}.{AlphaArg1}.{AlphaArg2}.{ResultArg}.{Fixup}.{TexType}.{Transform}.{Address}";
             }
 
             public readonly List<Stage> Stages = new();
@@ -664,8 +702,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     uint count = s.Transform & 0xFF;
                     bool projected = (s.Transform & 256) != 0 && count > 1;
                     string div = projected ? $" / {tc}.{"xyzw"[(int)count - 1]}" : "";
-                    string uv = s.TexType == 2 || s.TexType == 0 ? $"({tc}.xy{div} + bumpUv)" : $"({tc}.xyz{div})";
-                    w.Append("    let t").Append(i).Append(" = fx").Append(i).Append("(textureSample(tex").Append(i).Append(", smp").Append(i).Append(", ").Append(uv).Append(")) * vec4<f32>(vec3<f32>(bumpL), 1.0);\n");
+                    int dims = s.TexType == 2 || s.TexType == 0 ? 2 : 3;
+                    string uv = dims == 2 ? $"({tc}.xy{div} + bumpUv)" : $"({tc}.xyz{div})";
+                    int fix = s.TexType == 3 ? 0 : s.Address;
+                    string sample = Bordered($"fx{i}(textureSample(tex{i}, smp{i}, {Addressed(uv, fix, dims)}))", uv, fix, dims, i);
+                    w.Append("    let t").Append(i).Append(" = ").Append(sample).Append(" * vec4<f32>(vec3<f32>(bumpL), 1.0);\n");
                 }
                 else w.Append("    let t").Append(i).Append(" = vec4<f32>(1.0);\n");
                 w.Append("    bumpUv = vec2<f32>(0.0);\n    bumpL = 1.0;\n");

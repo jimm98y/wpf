@@ -239,7 +239,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             switch (c)
             {
                 case CRs: RS[i] = (uint)v!; MiscVersion++; break;
-                case CSamp: Samp[i / 16, i % 16] = (uint)v!; break;
+                case CSamp: Samp[i / 16, i % 16] = (uint)v!; if (i % 16 == 4) MiscVersion++; break;      // the border colour is in Misc
                 case CTss: Tss[i / 64, i % 64] = (uint)v!; MiscVersion++; break;
                 case CTex: SetObject(ref Tex[i], (ComObject?)v); break;
                 case CTransform: Transforms[i] = (float[])((float[])v!).Clone(); MiscVersion++; break;
@@ -707,6 +707,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             int s = SamplerIndex(sampler);
             if (d == null || s < 0 || type is < 1 or > 13) return s < 0 && sampler == 256 ? HResult.S_OK : Invalid;
             d.State.Samp[s, type] = value;
+            if (type == 4) d.State.MiscVersion++;       // D3DSAMP_BORDERCOLOR: in Misc
             d.State.Record(D3D9State.CSamp, s * 16 + type);
             return HResult.S_OK;
         }

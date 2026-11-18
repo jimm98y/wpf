@@ -584,22 +584,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     int sn = RegNum(st);
                     string swz = Swz((int)((st >> 16) & 0xFF));
                     if (!c.S.Samplers.TryGetValue(sn, out int type)) c.S.Samplers[sn] = type = 2;
-                    string cs = type == 2 ? $"({coord}).xy" : $"({coord}).xyz";
-                    string tex = c.Vs ? $"vtex{sn}" : $"tex{sn}", smp = c.Vs ? $"vsmp{sn}" : $"smp{sn}";
-                    string e;
-                    if (op == TexLdl || c.Vs) e = $"textureSampleLevel({tex}, {smp}, {cs}, ({coord}).w)";
-                    else if (op == TexLdd)
-                    {
-                        string dx = Src(c, ref ps), dy = Src(c, ref ps);
-                        string g = type == 2 ? ".xy" : ".xyz";
-                        e = $"textureSampleGrad({tex}, {smp}, {cs}, ({dx}){g}, ({dy}){g})";
-                    }
-                    else if ((control & 3) == 1)    // texldp
-                        e = $"textureSample({tex}, {smp}, {(type == 2 ? $"({coord}).xy / ({coord}).w" : $"({coord}).xyz / ({coord}).w")})";
-                    else if ((control & 3) == 2)    // texldb
-                        e = $"textureSampleBias({tex}, {smp}, {cs}, ({coord}).w)";
-                    else e = $"textureSample({tex}, {smp}, {cs})";
-                    e = $"{(c.Vs ? "vfx" : "fx")}{sn}({e})";
+                    // a depth texture bound to a 2D sampler: read as its depth, or as a shadow map
+                    int bound = c.Vs ? 0 : BoundType(c, sn);
+                    if (type == 2 && bound is 6 or 7) c.S.Samplers[sn] = type = bound;
+                    int mode = op == TexLdl || c.Vs ? 3 : op == TexLdd ? 4 : (control & 3) == 1 ? 1 : (control & 3) == 2 ? 2 : 0;
+                    string? dx = op == TexLdd ? Src(c, ref ps) : null, dy = op == TexLdd ? Src(c, ref ps) : null;
+                    string e = SampleExpr(c, sn, type, coord, mode, dx, dy);
                     if (swz.Length > 0) e = $"({e}){swz}";
                     Write(c, d, e, pred);
                     return;
@@ -700,10 +690,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>A ps_1_x texture stage's sample at a vec4 coordinate (its first two or three components).</summary>
         private static string Sample(Ctx c, int stage, string coord, int implied)
         {
-            int type = c.StageTypes != null && c.StageTypes.TryGetValue(stage, out int bound) ? bound : implied;
+            int bound = BoundType(c, stage);
+            int type = bound != 0 ? bound : implied;
             c.S.Samplers[stage] = type;
-            string cs = type == 2 ? $"({coord}).xy" : $"({coord}).xyz";
-            return $"fx{stage}(textureSample(tex{stage}, smp{stage}, {cs}))";
+            return SampleExpr(c, stage, type, coord, 0, null, null);
+        }
+
+        /// <summary>The type of the texture bound at a sampler (0: not known), and its address fix (D3D9Programs.AddressFix).</summary>
+        private static int BoundType(Ctx c, int sn) => c.StageTypes != null && c.StageTypes.TryGetValue(sn, out int v) ? v & 0xFF : 0;
+        private static int BoundAddress(Ctx c, int sn) => c.StageTypes != null && c.StageTypes.TryGetValue(sn, out int v) ? v >> 8 : 0;
+
+        /// <summary>A sample of sampler <paramref name="sn"/> at a vec4 coordinate: mode 0 texld, 1 texldp
+        /// (projected), 2 texldb (biased by w), 3 texldl (level w), 4 texldd (gradients). Depth textures:
+        /// type 6 the depth, type 7 the shadow test of the coordinate's z (both in every channel).</summary>
+        private static string SampleExpr(Ctx c, int sn, int type, string coord, int mode, string? dx, string? dy)
+        {
+            string tex = c.Vs ? $"vtex{sn}" : $"tex{sn}", smp = c.Vs ? $"vsmp{sn}" : $"smp{sn}";
+            int dims = type is 3 or 4 ? 3 : 2;
+            string div = mode == 1 ? $" / ({coord}).w" : "";
+            string cs = dims == 2 ? $"(({coord}).xy{div})" : $"(({coord}).xyz{div})";
+            int fix = c.Vs || type == 3 ? 0 : BoundAddress(c, sn);
+            string at = D3D9Programs.Addressed(cs, fix, dims);
+            string g = dims == 2 ? ".xy" : ".xyz";
+            string e = type switch
+            {
+                7 => $"vec4<f32>(textureSampleCompareLevel({tex}, {smp}, {at}, {(mode == 1 ? $"({coord}).z / ({coord}).w" : $"({coord}).z")}))",
+                6 when mode == 3 => $"vec4<f32>(textureSampleLevel({tex}, {smp}, {at}, i32(({coord}).w)))",
+                6 => $"vec4<f32>(textureSample({tex}, {smp}, {at}))",
+                _ => mode switch
+                {
+                    3 => $"textureSampleLevel({tex}, {smp}, {at}, ({coord}).w)",
+                    4 => $"textureSampleGrad({tex}, {smp}, {at}, ({dx}){g}, ({dy}){g})",
+                    2 => $"textureSampleBias({tex}, {smp}, {at}, ({coord}).w)",
+                    _ => $"textureSample({tex}, {smp}, {at})",
+                },
+            };
+            e = $"{(c.Vs ? "vfx" : "fx")}{sn}({e})";
+            return D3D9Programs.Bordered(e, cs, fix, dims, sn);
         }
 
         /// <summary>The bump-mapped coordinate of stage <paramref name="stage"/>: (u, v) moved by the

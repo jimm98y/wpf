@@ -1048,6 +1048,87 @@ namespace WgpuInterop.Tests.Direct3D
             else Assert.True(Result(across) >= 1);
         }
 
+        /// <summary>BORDER addressing: outside 0-1 the sampler's border colour; MIRRORONCE: the coordinate
+        /// mirrored about 0, then clamped (neither is a WebGPU address mode).</summary>
+        [Fact]
+        public void BorderAndMirrorOnceAddressing()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr tex = s.Texture(2, 1, new uint[] { 0xFFFF0000, 0xFF00FF00 });
+            s.Texture(0, tex);
+            s.Fvf(FVF_XYZRHW | FVF_TEX1);
+            s.Clear(1, 0xFF000000);
+            RhwTex[] Band(float y0, float y1, float u0, float u1) => new[]
+            {
+                new RhwTex { X = -0.5f, Y = y0, Z = 0.5f, Rhw = 1, U = u0, V = 0.5f }, new RhwTex { X = 63.5f, Y = y0, Z = 0.5f, Rhw = 1, U = u1, V = 0.5f },
+                new RhwTex { X = -0.5f, Y = y1, Z = 0.5f, Rhw = 1, U = u0, V = 0.5f }, new RhwTex { X = 63.5f, Y = y1, Z = 0.5f, Rhw = 1, U = u1, V = 0.5f },
+            };
+            s.Samp(0, 1, 4);                    // ADDRESSU = BORDER
+            s.Samp(0, 4, 0xFF0000FF);           // BORDERCOLOR blue
+            s.DrawUp(5, 2, Band(-0.5f, 31.5f, -0.5f, 1.5f));
+            s.Samp(0, 1, 5);                    // ADDRESSU = MIRRORONCE
+            s.DrawUp(5, 2, Band(31.5f, 63.5f, -1f, 1f));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF0000FFu, px[16 * W + 4]);       // u -0.4: the border
+            Assert.Equal(0xFFFF0000u, px[16 * W + 24]);      // u 0.25
+            Assert.Equal(0xFF00FF00u, px[16 * W + 40]);      // u 0.75
+            Assert.Equal(0xFF0000FFu, px[16 * W + 60]);      // u 1.4: the border
+            Assert.Equal(0xFF00FF00u, px[48 * W + 4]);       // u -0.9 mirrors to 0.9
+            Assert.Equal(0xFFFF0000u, px[48 * W + 24]);      // u -0.25 to 0.25
+            Assert.Equal(0xFFFF0000u, px[48 * W + 40]);      // u 0.25
+            Assert.Equal(0xFF00FF00u, px[48 * W + 60]);      // u 0.9
+        }
+
+        /// <summary>A depth texture read by a shader: a D24S8 texture as a shadow map (the coordinate's z
+        /// against the depth: 1 where it is not farther), an INTZ texture as its depth.</summary>
+        [Theory]
+        [InlineData(75)]            // D3DFMT_D24S8: a hardware shadow map
+        [InlineData(0x5A544E49)]    // INTZ: the depth
+        public void DepthTextures_AreReadAsShadowMapsOrAsTheirDepth(int format)
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr depthTex, level;
+            Check(((delegate* unmanaged<IntPtr, uint, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.CreateTexture))(s.Dev, W, H, 1, 2, format, 0, &depthTex, null), "CreateTexture depth");
+            s.Own(depthTex);
+            Check(((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Fn(depthTex, Vtbl.IDirect3DTexture9.GetSurfaceLevel))(depthTex, 0, &level), "GetSurfaceLevel");
+            s.Own(level);
+            var setDepth = (delegate* unmanaged<IntPtr, IntPtr, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.SetDepthStencilSurface);
+            Check(setDepth(s.Dev, level), "SetDepthStencilSurface");
+            s.Clear(2, 0, 0.5f);                                 // the depth: 0.5 everywhere
+            Check(setDepth(s.Dev, IntPtr.Zero), "SetDepthStencilSurface null");
+            s.PixelShader(Asm.Code(0xFFFF0200,
+                Asm.I(Asm.Op(31, 2), 0x80000000u, Asm.D(Asm.Texture, 0, 0x7)),              // dcl t0.xyz
+                Asm.DclSampler2D(0),
+                Asm.I(Asm.Op(66, 3), Asm.D(Asm.Temp, 0), Asm.S(Asm.Texture, 0), Asm.S(Asm.Sampler, 0)),   // texld r0, t0, s0
+                Asm.I(Asm.Op(1, 2), Asm.D(Asm.ColorOut, 0), Asm.S(Asm.Temp, 0))));
+            s.Texture(0, depthTex);
+            s.Fvf(FVF_XYZRHW | FVF_TEX1 | 0x10000);
+            s.Clear(1, 0xFF000000);
+            RhwDir[] Half(float x0, float x1, float z) => new[]
+            {
+                new RhwDir { X = x0, Y = 0, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = z }, new RhwDir { X = x1, Y = 0, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = z },
+                new RhwDir { X = x0, Y = 64, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = z }, new RhwDir { X = x1, Y = 64, Z = 0.5f, Rhw = 1, U = 0.5f, V = 0.5f, W = z },
+            };
+            s.DrawUp(5, 2, Half(0, 32, 0.25f));
+            s.DrawUp(5, 2, Half(32, 64, 0.75f));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0, s.Skipped);
+            if (format == 75)
+            {
+                Assert.Equal(0xFFFFFFFFu, px[32 * W + 16]);      // z 0.25, in front of 0.5: lit
+                Assert.Equal(0x00000000u, px[32 * W + 48]);      // z 0.75, behind: shadowed
+            }
+            else
+            {
+                Near(0x80808080u, px[32 * W + 16], 2, "the depth, in every channel");
+                Near(0x80808080u, px[32 * W + 48], 2, "the depth, whatever z is");
+            }
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()

@@ -187,7 +187,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (_views.TryGetValue((t.Gpu, 0, 2), out IntPtr v)) return v;
             bool cube = (t.Desc.MiscFlags & D3D11_RESOURCE_MISC.TEXTURECUBE) != 0;
             var dim = t.Kind == 3 ? WGPUTextureViewDimension._3D : cube ? WGPUTextureViewDimension.Cube : WGPUTextureViewDimension._2D;
-            v = D3DView.CreateTextureView(t.Gpu, t.Format, dim, 0, t.MipLevels, 0, cube ? 6u : 1u);
+            // a depth-stencil texture is sampled as its depth
+            // (the view's format is the depth aspect's own: Depth24Plus of Depth24PlusStencil8)
+            bool depth = Formats.IsDepth(t.Format);
+            var fmt = !depth ? t.Format : t.Format == TexFmt.Depth24PlusStencil8 ? TexFmt.Depth24Plus : t.Format == TexFmt.Depth32FloatStencil8 ? TexFmt.Depth32Float : t.Format;
+            v = D3DView.CreateTextureView(t.Gpu, fmt, dim, 0, t.MipLevels, 0, cube ? 6u : 1u, depth ? WGPUTextureAspect.DepthOnly : WGPUTextureAspect.All);
             _views[(t.Gpu, 0, 2)] = v;
             _batchViews.Add(v);
             return v;
@@ -539,7 +543,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (decl == null) return Invalid;
                 bool transformed = decl.Elements.Any(e => e.Usage == D3D9Usage.PositionT);
                 D3D9Shader? vs = transformed ? null : State.Vs?.Code;
-                D3D9Shader? ps = State.Ps?.ForTextures(State.Tex);
+                D3D9Shader? ps = State.Ps?.ForTextures(State);
                 if (vs?.Error != null || ps?.Error != null) { DrawsSkipped++; return HResult.S_OK; }
 
                 // the epilogue and the linkage
@@ -904,7 +908,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 D3DLog.Once("d3d9feedback", "a texture bound as a render target and sampled in one draw reads nothing");
                 return (null, none, type);
             }
-            if (Formats.IsDepth(t.Gpu.Format)) { D3DLog.Once("d3d9depthtex", "sampling a depth texture is not supported"); return (null, none, type); }
+            if (Formats.IsDepth(t.Gpu.Format))
+            {
+                // a depth texture: read by a shader as its depth or as a shadow map (the kind is in the
+                // shader's translation, ForTextures); the texture stages do not
+                int kind = Direct3DShader9.KindOf(t);
+                if (!shader) { D3DLog.Once("d3d9depthffp", "a texture stage reading a depth texture reads nothing"); return (null, none, type); }
+                if ((t.Gpu.GpuUsage & WGPUTextureUsage.TextureBinding) == 0) { D3DLog.Once("d3d9depthgl", "a depth texture cannot be sampled on this backend: it reads nothing"); return (null, none, type); }
+                if (type != kind) { D3DLog.Once("d3d9textype", $"a sampler declared as type {type} has a depth texture bound: it reads nothing"); return (null, none, type); }
+                return (t.Gpu, 0, kind);
+            }
             // the texture's type, which must be the one the shader declares (a fixed-function stage takes the texture's)
             int has = t.IsCube ? 3 : 2;
             if (!shader) type = has;
@@ -928,6 +941,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     ColorOp = op, ColorArg1 = State.Tss[i, 2], ColorArg2 = State.Tss[i, 3], ColorArg0 = State.Tss[i, 26],
                     AlphaOp = State.Tss[i, 4], AlphaArg1 = State.Tss[i, 5], AlphaArg2 = State.Tss[i, 6], AlphaArg0 = State.Tss[i, 27],
                     ResultArg = State.Tss[i, 28], Transform = State.Tss[i, 24],
+                    Address = D3D9Programs.AddressFix(State.Samp[i, 1], State.Samp[i, 2], State.Samp[i, 3]),
                     TexType = State.Tex[i] switch { Direct3DTexture9 { IsCube: true } => 3, Direct3DVolumeTexture9 => 4, _ => 2 },
                 };
                 s.Fixup = State.Tex[i] switch
@@ -1101,6 +1115,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 }
                 Put(b, D3D9Programs.OffClip + i * 16, a, bb, c, dd);
             }
+            // the samplers' border colours (D3DSAMP_BORDERCOLOR), for BORDER addressing
+            for (int i = 0; i < 16; i++) PutColor(b, D3D9Programs.OffBorder + i * 16, State.Samp[i, 4]);
             // points: the size and its clamp, the scale factors
             float Fr(int rs) => BitConverter.UInt32BitsToSingle(State.RS[rs]);
             Put(b, D3D9Programs.OffPoint, Fr(D3DRS.POINTSIZE), Math.Max(0, Fr(D3DRS.POINTSIZE_MIN)), Math.Min(Fr(D3DRS.POINTSIZE_MAX), MaxPointSize), Fr(D3DRS.TWEENFACTOR));
@@ -1186,15 +1202,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             void Tex(int baseBinding, int s, (D3DTexture2D? Tex, int Fixup, int Type) t, ulong stage)
             {
                 bool unf = Unfilterable(t.Tex);
+                bool depth = t.Type is 6 or 7;
                 entries.Add(new WGPUBindGroupLayoutEntry
                 {
                     binding = (uint)(baseBinding + 2 * s), visibility = stage,
-                    texture = new WGPUTextureBindingLayout { sampleType = unf ? WGPUTextureSampleType.UnfilterableFloat : WGPUTextureSampleType.Float, viewDimension = ViewDim(t.Type) },
+                    texture = new WGPUTextureBindingLayout
+                    {
+                        sampleType = depth ? WGPUTextureSampleType.Depth : unf ? WGPUTextureSampleType.UnfilterableFloat : WGPUTextureSampleType.Float,
+                        viewDimension = ViewDim(t.Type),
+                    },
                 });
                 entries.Add(new WGPUBindGroupLayoutEntry
                 {
                     binding = (uint)(baseBinding + 2 * s + 1), visibility = stage,
-                    sampler = new WGPUSamplerBindingLayout { type = unf ? WGPUSamplerBindingType.NonFiltering : WGPUSamplerBindingType.Filtering },
+                    sampler = new WGPUSamplerBindingLayout
+                    {
+                        type = t.Type == 7 ? WGPUSamplerBindingType.Comparison : unf || t.Type == 6 ? WGPUSamplerBindingType.NonFiltering : WGPUSamplerBindingType.Filtering,
+                    },
                 });
             }
             foreach (var (s, t) in psTex) Tex(D3D9Programs.PsTextureBase, s, t, WGPUShaderStage_Fragment);
@@ -1217,31 +1241,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             if (_dummies.TryGetValue(d3dType, out IntPtr v)) return v;
             uint layers = d3dType == 3 ? 6u : 1u;
+            var fmt = d3dType is 6 or 7 ? TexFmt.Depth32Float : TexFmt.RGBA8Unorm;
             var d = new WGPUTextureDescriptor
             {
-                usage = WGPUTextureUsage.TextureBinding, dimension = d3dType == 4 ? WGPUTextureDimension._3D : WGPUTextureDimension._2D,
-                size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = layers }, format = TexFmt.RGBA8Unorm, mipLevelCount = 1, sampleCount = 1,
+                usage = WGPUTextureUsage.TextureBinding | (d3dType is 6 or 7 ? WGPUTextureUsage.RenderAttachment : 0), dimension = d3dType == 4 ? WGPUTextureDimension._3D : WGPUTextureDimension._2D,
+                size = new WGPUExtent3D { width = 1, height = 1, depthOrArrayLayers = layers }, format = fmt, mipLevelCount = 1, sampleCount = 1,
             };
             IntPtr tex = wgpuDeviceCreateTexture(Device11.Gpu.Device, &d);
-            v = D3DView.CreateTextureView(tex, TexFmt.RGBA8Unorm, ViewDim(d3dType), 0, 1, 0, layers);
+            v = D3DView.CreateTextureView(tex, fmt, ViewDim(d3dType), 0, 1, 0, layers);
             _dummies[d3dType] = v;
             return v;
         }
 
         /// <summary>The WebGPU sampler of a D3D9 sampler's states.</summary>
-        private IntPtr Sampler(int index, bool unfilterable)
+        /// <summary>The WebGPU sampler of a D3D9 sampler's states; a shadow map's compares (the coordinate's z
+        /// less than or equal to the depth: lit). BORDER and MIRRORONCE clamp: the shader does the rest.</summary>
+        private IntPtr Sampler(int index, bool unfilterable, bool compare = false)
         {
             uint U = State.Samp[index, 1], V = State.Samp[index, 2], W = State.Samp[index, 3];
             uint mag = State.Samp[index, 5], min = State.Samp[index, 6], mip = State.Samp[index, 7], maxMip = State.Samp[index, 9], aniso = State.Samp[index, 10];
             if (unfilterable) { mag = min = 1; if (mip != 0) mip = 1; }
-            string key = $"{U}.{V}.{W}.{mag}.{min}.{mip}.{maxMip}.{aniso}";
+            if (compare && mag == 3) mag = 2;
+            if (compare && min == 3) min = 2;
+            string key = $"{U}.{V}.{W}.{mag}.{min}.{mip}.{maxMip}.{aniso}{(compare ? "c" : "")}";
             if (_samplers.TryGetValue(key, out IntPtr s)) return s;
-            static WGPUAddressMode A(uint a)
-            {
-                if (a == 4) D3DLog.Once("d3d9border", "D3DTADDRESS_BORDER is drawn as clamp");
-                if (a == 5) D3DLog.Once("d3d9mirroronce", "D3DTADDRESS_MIRRORONCE is drawn as mirror");
-                return a switch { 2 or 5 => WGPUAddressMode.MirrorRepeat, 3 or 4 => WGPUAddressMode.ClampToEdge, _ => WGPUAddressMode.Repeat };
-            }
+            static WGPUAddressMode A(uint a) => a switch { 2 => WGPUAddressMode.MirrorRepeat, 3 or 4 or 5 => WGPUAddressMode.ClampToEdge, _ => WGPUAddressMode.Repeat };
             bool anisotropic = mag == 3 || min == 3;
             var d = new WGPUSamplerDescriptor
             {
@@ -1253,7 +1277,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 lodMaxClamp = mip == 0 ? maxMip : 32f,
                 maxAnisotropy = 1,
             };
-            if (anisotropic && mip != 1)
+            if (compare) d.compare = WGPUCompareFunction.LessEqual;
+            if (anisotropic && mip != 1 && !compare)
             {
                 d.magFilter = d.minFilter = WGPUFilterMode.Linear;
                 d.mipmapFilter = WGPUMipmapFilterMode.Linear;
@@ -1274,7 +1299,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             void Tex(int baseBinding, int s, int samplerIndex, (D3DTexture2D? Tex, int Fixup, int Type) t)
             {
                 e.Add(new WGPUBindGroupEntry { binding = (uint)(baseBinding + 2 * s), textureView = t.Tex != null ? SampleView(t.Tex) : Dummy(t.Type) });
-                e.Add(new WGPUBindGroupEntry { binding = (uint)(baseBinding + 2 * s + 1), sampler = Sampler(samplerIndex, Unfilterable(t.Tex)) });
+                e.Add(new WGPUBindGroupEntry { binding = (uint)(baseBinding + 2 * s + 1), sampler = Sampler(samplerIndex, Unfilterable(t.Tex) || t.Type == 6, t.Type == 7) });
             }
             foreach (var (s, t) in psTex) Tex(D3D9Programs.PsTextureBase, s, s, t);
             foreach (var (s, t) in vsTex) Tex(D3D9Programs.VsTextureBase, s, 16 + s, t);
