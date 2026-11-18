@@ -294,9 +294,20 @@ namespace System.Windows.Forms
 				}
 			}
 
+			// The mnemonic, as Windows has it: the control's own (its text names it) or the label's
+			// in front of it in tab order, as "Alt+" and the letter.
 			public override string KeyboardShortcut {
 				get {
-					return base.KeyboardShortcut;
+					string set = base.KeyboardShortcut;
+					if (!string.IsNullOrEmpty (set))
+						return set;
+					string label = null;
+					if (owner.GetStyle (ControlStyles.UseTextForAccessibility) && !string.IsNullOrEmpty (owner.Text))
+						label = owner.Text;
+					else
+						label = WinFormsWebGpu.Accessibility.A11y.PrecedingLabel (owner)?.Text;
+					char mnemonic = Control.MnemonicOf (label);
+					return mnemonic == '\0' ? null : "Alt+" + mnemonic;
 				}
 			}
 
@@ -3695,6 +3706,20 @@ namespace System.Windows.Forms
 				default:
 					throw new NotSupportedException ("keyVal must be CapsLock, NumLock, ScrollLock or Insert");
 			}
+		}
+
+		/// <summary>The letter after the first single ampersand of a text (an "&amp;&amp;" is a literal one), or '\0'.</summary>
+		internal static char MnemonicOf (string text)
+		{
+			if (string.IsNullOrEmpty (text))
+				return '\0';
+			for (int i = 0; i < text.Length - 1; i++) {
+				if (text [i] != '&')
+					continue;
+				if (text [i + 1] == '&') { i++; continue; }
+				return text [i + 1];
+			}
+			return '\0';
 		}
 
 		public static bool IsMnemonic(char charCode, string text) {

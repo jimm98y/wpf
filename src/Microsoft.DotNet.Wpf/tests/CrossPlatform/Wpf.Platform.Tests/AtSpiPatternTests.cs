@@ -24,6 +24,30 @@ namespace Wpf.Platform.Tests
     {
         private const string Emoji = "\U0001F600";   // one character, two UTF-16 code units
 
+        // ---- key bindings ----
+
+        [Fact]
+        public void KeyNamesAreWrittenAsGtkAccelerators()
+        {
+            Assert.Equal("<Alt>f", AtSpiBridge.KeyName("Alt+F"));
+            Assert.Equal("<Control><Shift>o", AtSpiBridge.KeyName("Ctrl+Shift+O"));
+            Assert.Equal("<Control>F5", AtSpiBridge.KeyName("Ctrl+F5"));
+            Assert.Equal("s", AtSpiBridge.KeyName("S"));          // a drop-down's mnemonic: the letter alone
+            Assert.Equal("<Control>plus", AtSpiBridge.KeyName("Ctrl++"));
+            Assert.Equal(string.Empty, AtSpiBridge.KeyName(string.Empty));
+        }
+
+        [Fact]
+        public void TheKeyBindingIsMnemonicSequenceAndShortcut()
+        {
+            var tree = new PatternTree();
+            tree.Keys[1] = ("S", "Ctrl+S");
+            tree.Keys[2] = ("Alt+O", "");
+            Assert.Equal("s;;<Control>s", AtSpiBridge.KeyBindingOf(tree, 1));
+            Assert.Equal("<Alt>o", AtSpiBridge.KeyBindingOf(tree, 2));
+            Assert.Equal(string.Empty, AtSpiBridge.KeyBindingOf(tree, 3));
+        }
+
         // ---- UTF-16 and characters ----
 
         [Fact]
@@ -571,6 +595,10 @@ namespace Wpf.Platform.Tests
             internal readonly Dictionary<int, int[]> RowHeaders = new();
             internal readonly List<(int, AccessibleAction)> Log = new();
             internal bool Multiple;
+            internal readonly Dictionary<int, (string Access, string Accelerator)> Keys = new();
+
+            public string GetAccessKey(int id) => Keys.TryGetValue(id, out var k) ? k.Access : string.Empty;
+            public string GetAcceleratorKey(int id) => Keys.TryGetValue(id, out var k) ? k.Accelerator : string.Empty;
 
             public int GetRootId(IntPtr windowHandle) => 0;
             public int[] GetChildIds(int id) => Children.TryGetValue(id, out var c) ? c : Array.Empty<int>();

@@ -209,7 +209,7 @@ namespace System.Windows.Forms
 		[EditorBrowsable (EditorBrowsableState.Advanced)]
 		protected override AccessibleObject CreateAccessibilityInstance ()
 		{
-			return new ToolStripMenuItemAccessibleObject ();
+			return new ToolStripMenuItemAccessibleObject (this);
 		}
 		
 		protected override ToolStripDropDown CreateDefaultDropDown ()
@@ -504,6 +504,16 @@ namespace System.Windows.Forms
 			return new Size (base_size.Width + text_size.Width - 25, base_size.Height);
 		}
 		
+		/// <summary>The shortcut as UI Automation reports it (AcceleratorKey): the display string, or the keys'
+		/// text, whether or not the menu shows it.</summary>
+		internal string ShortcutText {
+			get {
+				if (!string.IsNullOrEmpty (this.shortcut_display_string))
+					return this.shortcut_display_string;
+				return this.shortcut_keys == Keys.None ? string.Empty : new KeysConverter ().ConvertToString (this.shortcut_keys);
+			}
+		}
+
 		internal string GetShortcutDisplayString ()
 		{
 			if (this.show_shortcut_keys == false)
@@ -541,8 +551,12 @@ namespace System.Windows.Forms
 		#endregion
 
 		#region ToolStripMenuItemAccessibleObject
-		private class ToolStripMenuItemAccessibleObject : AccessibleObject
+		// A drop-down item's, as Windows' is: the item's name, role, state and mnemonic
+		private class ToolStripMenuItemAccessibleObject : ToolStripDropDownItemAccessibleObject
 		{
+			public ToolStripMenuItemAccessibleObject (ToolStripMenuItem owner) : base (owner)
+			{
+			}
 		}
 		#endregion
 	}

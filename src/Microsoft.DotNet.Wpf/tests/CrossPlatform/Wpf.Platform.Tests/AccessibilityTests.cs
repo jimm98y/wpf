@@ -48,7 +48,7 @@ namespace Wpf.Platform.Tests
         public void AtSpi_RoleNamesAreTheSpecSpelling()
         {
             // Orca speaks these verbatim, so a typo is audible. Sampling the ones a user meets first.
-            Assert.Equal("push button", AtSpiRoles.RoleNameFor(0));
+            Assert.Equal("button", AtSpiRoles.RoleNameFor(0));
             Assert.Equal("check box", AtSpiRoles.RoleNameFor(2));
             Assert.Equal("combo box", AtSpiRoles.RoleNameFor(3));
             Assert.Equal("slider", AtSpiRoles.RoleNameFor(15));

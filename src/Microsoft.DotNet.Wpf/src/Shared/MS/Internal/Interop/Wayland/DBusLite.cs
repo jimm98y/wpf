@@ -921,6 +921,8 @@ namespace MS.Internal.Interop.Wayland
 
         internal static void AppendUInt32(byte* iter, uint value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_UINT32, &value);
 
+        internal static void AppendInt16(byte* iter, short value) => dbus_message_iter_append_basic(iter, 'n', &value);
+
         internal static void AppendDouble(byte* iter, double value) => dbus_message_iter_append_basic(iter, DBUS_TYPE_DOUBLE, &value);
 
         internal const int DBUS_TYPE_DOUBLE = (int)'d';

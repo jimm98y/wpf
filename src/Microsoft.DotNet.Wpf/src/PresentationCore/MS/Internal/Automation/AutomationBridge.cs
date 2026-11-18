@@ -216,6 +216,10 @@ namespace MS.Internal.Automation
 
         public string GetHelpText(int id) => Text(PeerOf(id), static p => p.GetHelpText());
 
+        public string GetAccessKey(int id) => Text(PeerOf(id), static p => p.GetAccessKey());
+
+        public string GetAcceleratorKey(int id) => Text(PeerOf(id), static p => p.GetAcceleratorKey());
+
         public string GetValue(int id)
         {
             AutomationPeer peer = PeerOf(id);

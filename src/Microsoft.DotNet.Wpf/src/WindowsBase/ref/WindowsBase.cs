@@ -57,6 +57,8 @@ namespace MS.Internal.Interop
         bool TryGetWindow(int id, out int visualState, out bool canMinimize, out bool canMaximize, out bool isTopmost) { throw null; }
         bool SetWindowVisualState(int id, int visualState) { throw null; }
         bool CloseWindow(int id) { throw null; }
+        string GetAccessKey(int id) { throw null; }
+        string GetAcceleratorKey(int id) { throw null; }
     }
     public static partial class AutomationTree
     {

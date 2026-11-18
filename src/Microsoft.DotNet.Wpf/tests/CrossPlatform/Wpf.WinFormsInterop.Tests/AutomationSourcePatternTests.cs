@@ -73,6 +73,36 @@ namespace Wpf.WinFormsInterop.Tests
             }
         }
 
+        /// <summary>Access keys as Windows reports them: a control's own mnemonic, or the label's in front of it in
+        /// tab order, as "Alt+" and the letter; a menu item's on a drop-down as the letter alone, with its shortcut
+        /// keys as the accelerator.</summary>
+        [Fact]
+        public void AccessKeys_AreTheMnemonics_AndMenuShortcutsTheAccelerators() => OnSta(() =>
+        {
+            var form = new SWF.Form { Width = 300, Height = 200 };
+            var label = new SWF.Label { Text = "&Name:", TabIndex = 0, Location = new Point(4, 30) };
+            var box = new SWF.TextBox { Name = "box", TabIndex = 1, Location = new Point(80, 30) };
+            var open = new SWF.Button { Name = "open", Text = "&Open", TabIndex = 2, Location = new Point(4, 60) };
+            var plain = new SWF.Button { Name = "plain", Text = "Plain", TabIndex = 3, Location = new Point(4, 90) };
+            var menu = new SWF.MenuStrip();
+            var file = new SWF.ToolStripMenuItem("&File");
+            var save = new SWF.ToolStripMenuItem("&Save") { ShortcutKeys = SWF.Keys.Control | SWF.Keys.S };
+            file.DropDownItems.Add(save);
+            menu.Items.Add(file);
+            form.Controls.AddRange(new SWF.Control[] { label, box, open, plain, menu });
+            form.MainMenuStrip = menu;
+            With(form, (tree, root, site) =>
+            {
+                Assert.Equal("Alt+O", tree.GetAccessKey(Find(tree, root, "open")));
+                Assert.Equal("Alt+N", tree.GetAccessKey(Find(tree, root, "box")));
+                Assert.Equal(string.Empty, tree.GetAccessKey(Find(tree, root, "plain")));
+                Assert.Equal(string.Empty, tree.GetAcceleratorKey(Find(tree, root, "open")));
+            });
+            Assert.Equal("Alt+F", file.AccessibilityObject.KeyboardShortcut);
+            Assert.Equal("S", save.AccessibilityObject.KeyboardShortcut);
+            Assert.Equal("Ctrl+S", save.ShortcutText);
+        });
+
         /// <summary>The node of the control named <paramref name="name"/>, found by walking the tree.</summary>
         private static int Find(IAutomationTreeSource tree, int from, string name)
         {

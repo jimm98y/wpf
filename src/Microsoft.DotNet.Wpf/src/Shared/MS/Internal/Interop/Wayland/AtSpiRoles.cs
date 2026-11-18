@@ -146,7 +146,7 @@ namespace MS.Internal.Interop.Wayland
 
         private static string NameOfRole(uint role) => role switch
         {
-            PushButton => "push button",
+            PushButton => "button",           // ATSPI_ROLE_BUTTON (at-spi2 renamed PUSH_BUTTON; its name followed)
             CheckBox => "check box",
             RadioButton => "radio button",
             ComboBox => "combo box",

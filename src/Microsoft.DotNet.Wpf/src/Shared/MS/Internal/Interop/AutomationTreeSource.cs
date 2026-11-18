@@ -239,6 +239,14 @@ namespace MS.Internal.Interop
         /// <summary>Closes the window.</summary>
         bool CloseWindow(int id) => false;
 
+        // ---- keyboard ---------------------------------------------------------------------------------
+
+        /// <summary>The key that moves to or invokes the node (UIA AccessKey: its mnemonic, "Alt+F"). Never null.</summary>
+        string GetAccessKey(int id) => string.Empty;
+
+        /// <summary>The shortcut that invokes the node's command (UIA AcceleratorKey, "Ctrl+O"). Never null.</summary>
+        string GetAcceleratorKey(int id) => string.Empty;
+
         /// <summary>
         /// The reply to any question about a node that does not exist, or never did. Chosen as -1
         /// rather than 0 because 0 is a perfectly good node id and several of these APIs would
@@ -312,6 +320,8 @@ namespace MS.Internal.Interop
             public string GetName(int id) => ForId(id)?.GetName(id);
             public string GetAutomationId(int id) => ForId(id)?.GetAutomationId(id);
             public string GetHelpText(int id) => ForId(id)?.GetHelpText(id);
+            public string GetAccessKey(int id) => ForId(id)?.GetAccessKey(id) ?? string.Empty;
+            public string GetAcceleratorKey(int id) => ForId(id)?.GetAcceleratorKey(id) ?? string.Empty;
             public string GetValue(int id) => ForId(id)?.GetValue(id);
             public bool TryGetRange(int id, out double value, out double minimum, out double maximum)
             {

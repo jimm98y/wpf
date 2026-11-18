@@ -330,7 +330,7 @@ namespace WinFormsWebGpu.Accessibility
         /// <para>Walks backwards through the peers: a Label answers, and any visible tab stop stops the
         /// search -- a control that can be tabbed to is named by its own label, not by one further
         /// back. Windows walks tab order here where the old MSAA layer walked z-order.</para></summary>
-        private static Label PrecedingLabel(Control c)
+        internal static Label PrecedingLabel(Control c)
         {
             Control parent = c.Parent;
             if (parent == null)

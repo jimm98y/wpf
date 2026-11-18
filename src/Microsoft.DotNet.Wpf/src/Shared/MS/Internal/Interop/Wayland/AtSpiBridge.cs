@@ -622,14 +622,16 @@ namespace MS.Internal.Interop.Wayland
             [IfaceComponent] =
                 M("GetExtents", "u>(iiii)") + M("GetPosition", "u>i,i") + M("GetSize", ">i,i") + M("GetLayer", ">u") +
                 M("GetAccessibleAtPoint", "i,i,u>(so)") + M("GrabFocus", ">b") +
-                M("ScrollTo", "u>b") + M("ScrollToPoint", "u,i,i>b"),
+                M("ScrollTo", "u>b") + M("ScrollToPoint", "u,i,i>b") + M("Contains", "i,i,u>b") + M("GetMDIZOrder", ">n") +
+                M("GetAlpha", ">d") + M("SetExtents", "i,i,i,i,u>b") + M("SetPosition", "i,i,u>b") + M("SetSize", "i,i>b"),
             [IfaceAction] =
                 P("NActions", "i") +
-                M("GetNActions", ">i") + M("GetName", "i>s") + M("GetDescription", "i>s") + M("DoAction", "i>b"),
+                M("GetDescription", "i>s") + M("GetName", "i>s") + M("GetLocalizedName", "i>s") + M("GetKeyBinding", "i>s") +
+                M("GetActions", ">a(sss)") + M("DoAction", "i>b"),
             [IfaceValue] =
                 P("MinimumValue", "d") + P("MaximumValue", "d") + P("MinimumIncrement", "d") + P("CurrentValue", "d", "readwrite"),
             [IfaceApplication] =
-                P("ToolkitName", "s") + P("Version", "s") + P("AtspiVersion", "s") + M("GetLocale", "u>s"),
+                P("ToolkitName", "s") + P("Version", "s") + P("AtspiVersion", "s") + M("GetLocale", "u>s") + M("GetApplicationBusAddress", ">s"),
             [IfaceText] =
                 P("CharacterCount", "i") + P("CaretOffset", "i") +
                 M("GetStringAtOffset", "i,u>s,i,i") + M("GetText", "i,i>s") + M("SetCaretOffset", "i>b") +
@@ -952,6 +954,31 @@ namespace MS.Internal.Interop.Wayland
                     return reply;
                 }
 
+                case "Contains":
+                {
+                    // the point in the node's extents (window-relative and screen coordinates are the same space here)
+                    byte* args = stackalloc byte[DBusLite.IterSize];
+                    int px = 0, py = 0;
+                    if (DBusLite.IterInit(message, args))
+                    {
+                        px = DBusLite.ReadInt32Or(args, 0);
+                        if (DBusLite.IterNext(args)) py = DBusLite.ReadInt32Or(args, 0);
+                    }
+                    return ReplyBool(message, px >= x && py >= y && px < x + w && py < y + h);
+                }
+
+                case "GetMDIZOrder":
+                    return Reply(message, it => DBusLite.AppendInt16(it, 0));
+
+                case "GetAlpha":
+                    return Reply(message, it => DBusLite.AppendDouble(it, 1.0));
+
+                case "SetExtents":
+                case "SetPosition":
+                case "SetSize":
+                    // what a client may not do to a control on Windows either: its layout places it
+                    return ReplyBool(message, false);
+
                 case "ScrollTo":
                 case "ScrollToPoint":
                     // Orca's "move to" for an object scrolled out of view. Both come down to the
@@ -986,17 +1013,35 @@ namespace MS.Internal.Interop.Wayland
                 }
 
                 case "GetName":
+                case "GetLocalizedName":
                 case "GetDescription":
+                case "GetKeyBinding":
                 {
                     byte* args = stackalloc byte[DBusLite.IterSize];
                     int index = DBusLite.IterInit(message, args) ? DBusLite.ReadInt32Or(args, -1) : -1;
-
-                    IntPtr reply = DBusLite.NewMethodReturn(message);
-                    DBusLite.IterInitAppend(reply, iter);
-                    DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING,
-                        index >= 0 && index < available.Length ? NameOf(available[index]) : string.Empty);
-                    return reply;
+                    bool valid = index >= 0 && index < available.Length;
+                    string text = !valid ? string.Empty
+                        : member == "GetKeyBinding" ? (index == 0 ? KeyBindingOf(tree, node) : string.Empty)
+                        : NameOf(available[index]);
+                    return ReplyString(message, text);
                 }
+
+                case "GetActions":
+                    return Reply(message, it =>
+                    {
+                        byte* array = stackalloc byte[DBusLite.IterSize];
+                        byte* entry = stackalloc byte[DBusLite.IterSize];
+                        DBusLite.OpenArray(it, "(sss)", array);
+                        for (int i = 0; i < available.Length; i++)
+                        {
+                            DBusLite.OpenStruct(array, entry);
+                            DBusLite.AppendString(entry, DBusLite.DBUS_TYPE_STRING, NameOf(available[i]));
+                            DBusLite.AppendString(entry, DBusLite.DBUS_TYPE_STRING, NameOf(available[i]));
+                            DBusLite.AppendString(entry, DBusLite.DBUS_TYPE_STRING, i == 0 ? KeyBindingOf(tree, node) : string.Empty);
+                            DBusLite.CloseContainer(array, entry);
+                        }
+                        DBusLite.CloseContainer(it, array);
+                    });
 
                 case "DoAction":
                 {
@@ -1039,6 +1084,44 @@ namespace MS.Internal.Interop.Wayland
             return result;
         }
 
+        /// <summary>
+        /// The first action's key binding as ATK writes one, "mnemonic;sequence;shortcut": the access key
+        /// ("Alt+F" as "&lt;Alt&gt;f", a menu's bare letter as it is) and the accelerator ("Ctrl+O" as
+        /// "&lt;Control&gt;o"), the sequence left empty. Orca reads the parts out after the name.
+        /// </summary>
+        internal static string KeyBindingOf(IAutomationTreeSource tree, int node)
+        {
+            string mnemonic = KeyName(tree.GetAccessKey(node) ?? string.Empty);
+            string shortcut = KeyName(tree.GetAcceleratorKey(node) ?? string.Empty);
+            if (shortcut.Length == 0) return mnemonic;
+            return mnemonic + ";;" + shortcut;
+        }
+
+        /// <summary>A UI Automation key name ("Ctrl+Shift+O") in GTK's accelerator form ("&lt;Control&gt;&lt;Shift&gt;o").</summary>
+        internal static string KeyName(string uia)
+        {
+            if (uia.Length == 0) return string.Empty;
+            // the last part is the key ("Ctrl++": the plus key), the ones before it the modifiers
+            bool plusKey = uia.EndsWith("++", StringComparison.Ordinal) || uia == "+";
+            string[] parts = (plusKey ? uia[..^1] + "plus" : uia).Split('+');
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < parts.Length - 1; i++)
+            {
+                string m = parts[i].Trim();
+                sb.Append(m.ToLowerInvariant() switch
+                {
+                    "ctrl" or "control" => "<Control>",
+                    "shift" => "<Shift>",
+                    "alt" => "<Alt>",
+                    "win" or "windows" => "<Super>",
+                    _ => "<" + m + ">",
+                });
+            }
+            string key = parts[^1].Trim();
+            sb.Append(key.Length == 1 ? key.ToLowerInvariant() : key);
+            return sb.ToString();
+        }
+
         internal static string NameOf(AccessibleAction action) => action switch
         {
             AccessibleAction.Invoke => "click",
@@ -1074,6 +1157,9 @@ namespace MS.Internal.Interop.Wayland
                                           System.Globalization.CultureInfo.CurrentUICulture.Name);
                     return reply;
                 }
+                case "GetApplicationBusAddress":
+                    // no peer-to-peer bus of its own: clients stay on the accessibility bus, as GTK's do without one
+                    return ReplyString(message, string.Empty);
                 default:
                     return IntPtr.Zero;
             }

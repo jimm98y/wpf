@@ -2118,8 +2118,18 @@ namespace System.Windows.Forms
 				get { return base.Help; }
 			}
 
+			// The mnemonic: the letter alone on a drop-down, "Alt+" and the letter on the strip itself
+			// (Windows: "this really is the mnemonic, not the shortcut").
 			public override string KeyboardShortcut {
-				get { return base.KeyboardShortcut; }
+				get {
+					string set = base.KeyboardShortcut;
+					if (!string.IsNullOrEmpty (set))
+						return set;
+					char mnemonic = Control.MnemonicOf (owner_item.Text);
+					if (mnemonic == '\0')
+						return string.Empty;
+					return owner_item.IsOnDropDown ? mnemonic.ToString () : "Alt+" + mnemonic;
+				}
 			}
 
 			public override string Name {

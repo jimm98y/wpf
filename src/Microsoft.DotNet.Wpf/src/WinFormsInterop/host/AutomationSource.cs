@@ -181,6 +181,10 @@ namespace WinFormsWebGpu.Accessibility
 
         public string GetHelpText(int id) => Ask(id, e => e is Control c ? A11y.DescriptionOf(c) : null);
 
+        public string GetAccessKey(int id) => Ask(id, e => e is Control c ? c.AccessibilityObject?.KeyboardShortcut : (e as ToolStripItem)?.AccessibilityObject?.KeyboardShortcut) ?? string.Empty;
+
+        public string GetAcceleratorKey(int id) => Ask(id, e => e is ToolStripMenuItem m ? m.ShortcutText : null) ?? string.Empty;
+
         public string GetValue(int id) => Ask(id, e => e is Control c ? (A11y.HasValue(c) ? A11y.ValueOf(c) : null) : (A11yItems.HasValue(e) ? A11yItems.ValueOf(e) : null));
 
         private static string Ask(int id, Func<object, string> question)
