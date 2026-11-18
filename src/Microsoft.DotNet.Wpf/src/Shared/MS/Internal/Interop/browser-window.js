@@ -625,8 +625,8 @@ export function isComposing() { return imeComposing; }
 //     scrolled to where WPF's pane is; scrolling it (a screen reader's scroll gesture) is queued
 //     back as a position. The wheel and the keys never scroll it: both are WPF's.
 //   * a modal window is a dialog with aria-modal, the mirror of every other window inert while it
-//     is up, and Escape in it closes it -- after WPF has had the key, so a Cancel button or an edit
-//     being abandoned sees it first.
+//     is up. Escape is WPF's like every other key: a dialog closes on it only through its own
+//     Cancel button (IsCancel), as on Windows, where a dialog without one ignores Escape.
 
 let a11yHost = null;
 const a11yNodes = new Map();   // id -> element
@@ -637,7 +637,8 @@ const a11yPendingSelection = new Map();
 const a11yPendingScroll = new Map();
 const a11yPendingValue = new Map();
 
-const A11Y_ACTIVATE = 0, A11Y_FOCUS = 1, A11Y_TEXT_SELECTION = 2, A11Y_SCROLL = 3, A11Y_CLOSE_MODAL = 4, A11Y_SET_VALUE = 5;
+// 4 (a dialog closed by Escape) is no longer sent: Escape goes to WPF, whose Cancel button decides
+const A11Y_ACTIVATE = 0, A11Y_FOCUS = 1, A11Y_TEXT_SELECTION = 2, A11Y_SCROLL = 3, A11Y_SET_VALUE = 5;
 
 // Where ARIA allows each attribute; set elsewhere, it is at best ignored.
 const A11Y_MULTISELECT_ROLES = new Set(["grid", "listbox", "tablist", "tree", "treegrid"]);
@@ -684,7 +685,6 @@ function a11yCreate(n, tag) {
 
     el.addEventListener("click", () => pushA11y(id, A11Y_ACTIVATE));
     el.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") { a11yEscape(id); return; }
         // In a text field Enter and Space are text, and reach WPF as keys like every other.
         if (a11yIsText(el)) return;
         if (e.key === "Enter" || e.key === " ") { pushA11y(id, A11Y_ACTIVATE); e.preventDefault(); }
@@ -753,19 +753,6 @@ function a11yScrolled(id, el) {
     el._wpfScroll = [el.scrollLeft, el.scrollTop];
     a11yPendingScroll.set(id, `${h},${v}`);
     pushA11y(id, A11Y_SCROLL);
-}
-
-// Escape in a modal dialog: close it. Queued after the key itself, so WPF handles the Escape first
-// and the managed side closes the dialog only if it is still there; and not while the focused node
-// is an open drop-down or menu, which is what Escape is closing.
-function a11yEscape(id) {
-    const info = a11yInfo.get(id);
-    if (info && info.exp === 1) return;
-    let root = id;
-    for (let n = info; n && n.p >= 0; n = a11yInfo.get(n.p)) root = n.p;
-    const top = a11yInfo.get(root);
-    if (!top || !top.modal) return;
-    setTimeout(() => pushA11y(root, A11Y_CLOSE_MODAL), 0);
 }
 
 export function a11yTakeTextSelection(nodeId) { return a11yTake(a11yPendingSelection, nodeId) ?? ""; }
