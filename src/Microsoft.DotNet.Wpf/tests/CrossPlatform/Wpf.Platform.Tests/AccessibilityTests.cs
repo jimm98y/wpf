@@ -107,7 +107,15 @@ namespace Wpf.Platform.Tests
             {
                 (string member, string detail) = AtSpiRoles.SignalFor(kind);
                 Assert.False(string.IsNullOrEmpty(member), $"{kind} has no AT-SPI member");
-                Assert.False(string.IsNullOrEmpty(detail), $"{kind} has no AT-SPI detail");
+
+                // Text-caret-moved, selection-changed and visible-data-changed have NO detail in
+                // AT-SPI -- Orca subscribes to "object:text-caret-moved" as it is, and a detail would
+                // make it a different event nobody listens for -- so an empty detail is right for
+                // exactly those three members, and a missing one anywhere else.
+                if (member is "TextCaretMoved" or "SelectionChanged" or "VisibleDataChanged")
+                    Assert.Equal(string.Empty, detail);
+                else
+                    Assert.False(string.IsNullOrEmpty(detail), $"{kind} has no AT-SPI detail");
             }
         }
 

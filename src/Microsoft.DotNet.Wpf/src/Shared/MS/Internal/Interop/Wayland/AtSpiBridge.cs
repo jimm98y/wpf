@@ -48,6 +48,11 @@ namespace MS.Internal.Interop.Wayland
         private const string IfaceAction = "org.a11y.atspi.Action";
         private const string IfaceValue = "org.a11y.atspi.Value";
         private const string IfaceApplication = "org.a11y.atspi.Application";
+        private const string IfaceText = "org.a11y.atspi.Text";
+        private const string IfaceEditableText = "org.a11y.atspi.EditableText";
+        private const string IfaceSelection = "org.a11y.atspi.Selection";
+        private const string IfaceTable = "org.a11y.atspi.Table";
+        private const string IfaceTableCell = "org.a11y.atspi.TableCell";
         private const string IfaceProperties = "org.freedesktop.DBus.Properties";
         private const string IfaceIntrospectable = "org.freedesktop.DBus.Introspectable";
 
@@ -278,13 +283,18 @@ namespace MS.Internal.Interop.Wayland
 
                 IntPtr reply = iface switch
                 {
-                    IfaceIntrospectable => HandleIntrospect(message),
+                    IfaceIntrospectable => HandleIntrospect(message, node),
                     IfaceProperties => HandleProperties(message, member, node),
                     IfaceAccessible => HandleAccessible(message, member, node),
                     IfaceComponent => HandleComponent(message, member, node),
                     IfaceAction => HandleAction(message, member, node),
                     IfaceValue => HandleValue(message, member, node),
                     IfaceApplication => HandleApplication(message, member),
+                    IfaceText => HandleText(message, member, node),
+                    IfaceEditableText => HandleEditableText(message, member, node),
+                    IfaceSelection => HandleSelection(message, member, node),
+                    IfaceTable => HandleTable(message, member, node),
+                    IfaceTableCell => HandleTableCell(message, member, node),
                     _ => IntPtr.Zero,
                 };
 
@@ -442,6 +452,65 @@ namespace MS.Internal.Interop.Wayland
                 case "MinimumIncrement":
                     DBusLite.AppendDoubleVariant(iter, 0);
                     break;
+                case "NActions":
+                    DBusLite.AppendInt32Variant(iter, AvailableActions(tree, node).Length);
+                    break;
+
+                // Text
+                case "CharacterCount":
+                    DBusLite.AppendInt32Variant(iter, AtSpiText.CharacterCount(TextOf(tree, node)));
+                    break;
+                case "CaretOffset":
+                {
+                    string text = TextOf(tree, node);
+                    DBusLite.AppendInt32Variant(iter, text == null ? 0 : AtSpiText.ToCodePoints(text, SelectionOf(tree, node, text).Caret));
+                    break;
+                }
+
+                // Selection
+                case "NSelectedChildren":
+                    DBusLite.AppendInt32Variant(iter, tree.GetSelectedIds(node).Length);
+                    break;
+
+                // Table
+                case "NRows":
+                    DBusLite.AppendInt32Variant(iter, tree.TryGetGrid(node, out int rows, out _) ? rows : 0);
+                    break;
+                case "NColumns":
+                    DBusLite.AppendInt32Variant(iter, tree.TryGetGrid(node, out _, out int columns) ? columns : 0);
+                    break;
+                case "NSelectedRows":
+                    DBusLite.AppendInt32Variant(iter, AtSpiPatterns.SelectedRows(tree, node).Length);
+                    break;
+                case "NSelectedColumns":
+                    DBusLite.AppendInt32Variant(iter, 0);   // UIA selects rows and cells, never columns
+                    break;
+                case "Caption":
+                case "Summary":
+                    DBusLite.AppendObjectRefVariant(iter, s_busName, PathForNode(IAutomationTreeSource.InvalidNode));
+                    break;
+
+                // TableCell
+                case "RowSpan":
+                case "ColumnSpan":
+                {
+                    tree.TryGetGridItem(node, out _, out _, out int rowSpan, out int columnSpan, out _);
+                    DBusLite.AppendInt32Variant(iter, Math.Max(property == "RowSpan" ? rowSpan : columnSpan, 1));
+                    break;
+                }
+                case "Position":
+                {
+                    bool placed = tree.TryGetGridItem(node, out int row, out int column, out _, out _, out _);
+                    AppendPairVariant(iter, placed ? row : -1, placed ? column : -1);
+                    break;
+                }
+                case "Table":
+                {
+                    int grid = tree.TryGetGridItem(node, out _, out _, out _, out _, out int g) ? g : IAutomationTreeSource.InvalidNode;
+                    DBusLite.AppendObjectRefVariant(iter, s_busName, PathForNode(grid));
+                    break;
+                }
+
                 default:
                     DBusLite.AppendStringVariant(iter, string.Empty);
                     break;
@@ -471,6 +540,12 @@ namespace MS.Internal.Interop.Wayland
         {
             IfaceValue => new[] { "MinimumValue", "MaximumValue", "MinimumIncrement", "CurrentValue" },
             IfaceApplication => new[] { "ToolkitName", "Version", "AtspiVersion" },
+            IfaceAction => new[] { "NActions" },
+            IfaceText => new[] { "CharacterCount", "CaretOffset" },
+            IfaceSelection => new[] { "NSelectedChildren" },
+            IfaceTable => new[] { "NRows", "NColumns", "Caption", "Summary", "NSelectedRows", "NSelectedColumns" },
+            IfaceTableCell => new[] { "ColumnSpan", "Position", "RowSpan", "Table" },
+            IfaceComponent or IfaceEditableText => Array.Empty<string>(),
             _ => new[] { "Name", "Description", "Parent", "ChildCount", "Locale", "AccessibleId" },
         };
 
@@ -479,16 +554,36 @@ namespace MS.Internal.Interop.Wayland
         /// does -- busctl tree, d-feet and Accerciser's inspector all walk Introspect, and a service
         /// that does not answer it is opaque exactly when something has gone wrong.
         /// </summary>
-        private static IntPtr HandleIntrospect(IntPtr message)
+        private static IntPtr HandleIntrospect(IntPtr message, int node)
         {
+            IAutomationTreeSource tree = Tree;
+            string[] interfaces = node == AppNode ? ApplicationInterfaces
+                : tree == null ? new[] { IfaceAccessible }
+                : InterfacesOf(tree, node);
+
             IntPtr reply = DBusLite.NewMethodReturn(message);
             byte* iter = stackalloc byte[DBusLite.IterSize];
             DBusLite.IterInitAppend(reply, iter);
-            DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING, IntrospectXml);
+            DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING, IntrospectXmlFor(interfaces));
             return reply;
         }
 
-        private const string IntrospectXml =
+        /// <summary>
+        /// The introspection document for a node with these interfaces: the same set GetInterfaces
+        /// reports, so a debugging tool shows exactly what a client would be offered.
+        /// </summary>
+        internal static string IntrospectXmlFor(string[] interfaces)
+        {
+            var xml = new System.Text.StringBuilder(IntrospectHeader);
+            foreach (string iface in interfaces)
+            {
+                if (s_introspection.TryGetValue(iface, out string body))
+                    xml.Append("  <interface name=\"").Append(iface).Append("\">\n").Append(body).Append("  </interface>\n");
+            }
+            return xml.Append("</node>\n").ToString();
+        }
+
+        private const string IntrospectHeader =
             "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\" " +
             "\"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\">\n" +
             "<node>\n" +
@@ -496,43 +591,117 @@ namespace MS.Internal.Interop.Wayland
             "    <method name=\"Get\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"v\" direction=\"out\"/></method>\n" +
             "    <method name=\"GetAll\"><arg type=\"s\" direction=\"in\"/><arg type=\"a{sv}\" direction=\"out\"/></method>\n" +
             "    <method name=\"Set\"><arg type=\"s\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/><arg type=\"v\" direction=\"in\"/></method>\n" +
-            "  </interface>\n" +
-            "  <interface name=\"org.a11y.atspi.Accessible\">\n" +
-            "    <property name=\"Name\" type=\"s\" access=\"read\"/>\n" +
-            "    <property name=\"Description\" type=\"s\" access=\"read\"/>\n" +
-            "    <property name=\"Parent\" type=\"(so)\" access=\"read\"/>\n" +
-            "    <property name=\"ChildCount\" type=\"i\" access=\"read\"/>\n" +
-            "    <method name=\"GetRole\"><arg type=\"u\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetRoleName\"><arg type=\"s\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetLocalizedRoleName\"><arg type=\"s\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetState\"><arg type=\"au\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetChildAtIndex\"><arg type=\"i\" direction=\"in\"/><arg type=\"(so)\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetChildren\"><arg type=\"a(so)\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetIndexInParent\"><arg type=\"i\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetApplication\"><arg type=\"(so)\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetAttributes\"><arg type=\"a{ss}\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetRelationSet\"><arg type=\"a(ua(so))\" direction=\"out\"/></method>\n" +
-            "  </interface>\n" +
-            "  <interface name=\"org.a11y.atspi.Component\">\n" +
-            "    <method name=\"GetExtents\"><arg type=\"u\" direction=\"in\"/><arg type=\"(iiii)\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetPosition\"><arg type=\"u\" direction=\"in\"/><arg type=\"i\" direction=\"out\"/><arg type=\"i\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetSize\"><arg type=\"i\" direction=\"out\"/><arg type=\"i\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetLayer\"><arg type=\"u\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetAccessibleAtPoint\"><arg type=\"i\" direction=\"in\"/><arg type=\"i\" direction=\"in\"/><arg type=\"u\" direction=\"in\"/><arg type=\"(so)\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GrabFocus\"><arg type=\"b\" direction=\"out\"/></method>\n" +
-            "  </interface>\n" +
-            "  <interface name=\"org.a11y.atspi.Action\">\n" +
-            "    <method name=\"GetNActions\"><arg type=\"i\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetName\"><arg type=\"i\" direction=\"in\"/><arg type=\"s\" direction=\"out\"/></method>\n" +
-            "    <method name=\"GetDescription\"><arg type=\"i\" direction=\"in\"/><arg type=\"s\" direction=\"out\"/></method>\n" +
-            "    <method name=\"DoAction\"><arg type=\"i\" direction=\"in\"/><arg type=\"b\" direction=\"out\"/></method>\n" +
-            "  </interface>\n" +
-            "  <interface name=\"org.a11y.atspi.Value\">\n" +
-            "    <property name=\"MinimumValue\" type=\"d\" access=\"read\"/>\n" +
-            "    <property name=\"MaximumValue\" type=\"d\" access=\"read\"/>\n" +
-            "    <property name=\"CurrentValue\" type=\"d\" access=\"readwrite\"/>\n" +
-            "  </interface>\n" +
-            "</node>\n";
+            "  </interface>\n";
+
+        // A method, from its argument signatures: "i,u>s" is (in i, in u) -> (out s).
+        private static string M(string name, string signature)
+        {
+            var line = new System.Text.StringBuilder("    <method name=\"").Append(name).Append("\">");
+            string[] halves = signature.Split('>');
+            foreach (string arg in halves[0].Split(',', StringSplitOptions.RemoveEmptyEntries))
+                line.Append("<arg type=\"").Append(arg).Append("\" direction=\"in\"/>");
+            if (halves.Length > 1)
+                foreach (string arg in halves[1].Split(',', StringSplitOptions.RemoveEmptyEntries))
+                    line.Append("<arg type=\"").Append(arg).Append("\" direction=\"out\"/>");
+            return line.Append("</method>\n").ToString();
+        }
+
+        private static string P(string name, string type, string access = "read")
+            => "    <property name=\"" + name + "\" type=\"" + type + "\" access=\"" + access + "\"/>\n";
+
+        // Each interface's members, as at-spi2-core's xml/*.xml declares them.
+        private static readonly System.Collections.Generic.Dictionary<string, string> s_introspection = new()
+        {
+            [IfaceAccessible] =
+                P("Name", "s") + P("Description", "s") + P("Parent", "(so)") + P("ChildCount", "i") +
+                P("Locale", "s") + P("AccessibleId", "s") +
+                M("GetRole", ">u") + M("GetRoleName", ">s") + M("GetLocalizedRoleName", ">s") + M("GetState", ">au") +
+                M("GetChildAtIndex", "i>(so)") + M("GetChildren", ">a(so)") + M("GetIndexInParent", ">i") +
+                M("GetApplication", ">(so)") + M("GetAttributes", ">a{ss}") + M("GetRelationSet", ">a(ua(so))") +
+                M("GetInterfaces", ">as"),
+            [IfaceComponent] =
+                M("GetExtents", "u>(iiii)") + M("GetPosition", "u>i,i") + M("GetSize", ">i,i") + M("GetLayer", ">u") +
+                M("GetAccessibleAtPoint", "i,i,u>(so)") + M("GrabFocus", ">b") +
+                M("ScrollTo", "u>b") + M("ScrollToPoint", "u,i,i>b"),
+            [IfaceAction] =
+                P("NActions", "i") +
+                M("GetNActions", ">i") + M("GetName", "i>s") + M("GetDescription", "i>s") + M("DoAction", "i>b"),
+            [IfaceValue] =
+                P("MinimumValue", "d") + P("MaximumValue", "d") + P("MinimumIncrement", "d") + P("CurrentValue", "d", "readwrite"),
+            [IfaceApplication] =
+                P("ToolkitName", "s") + P("Version", "s") + P("AtspiVersion", "s") + M("GetLocale", "u>s"),
+            [IfaceText] =
+                P("CharacterCount", "i") + P("CaretOffset", "i") +
+                M("GetStringAtOffset", "i,u>s,i,i") + M("GetText", "i,i>s") + M("SetCaretOffset", "i>b") +
+                M("GetTextBeforeOffset", "i,u>s,i,i") + M("GetTextAtOffset", "i,u>s,i,i") + M("GetTextAfterOffset", "i,u>s,i,i") +
+                M("GetCharacterAtOffset", "i>i") + M("GetAttributeValue", "i,s>s") + M("GetAttributes", "i>a{ss},i,i") +
+                M("GetDefaultAttributes", ">a{ss}") + M("GetCharacterExtents", "i,u>i,i,i,i") + M("GetOffsetAtPoint", "i,i,u>i") +
+                M("GetNSelections", ">i") + M("GetSelection", "i>i,i") + M("AddSelection", "i,i>b") + M("RemoveSelection", "i>b") +
+                M("SetSelection", "i,i,i>b") + M("GetRangeExtents", "i,i,u>i,i,i,i") + M("GetBoundedRanges", "i,i,i,i,u,u,u>a(iisv)") +
+                M("GetAttributeRun", "i,b>a{ss},i,i") + M("GetDefaultAttributeSet", ">a{ss}") +
+                M("ScrollSubstringTo", "i,i,u>b") + M("ScrollSubstringToPoint", "i,i,u,i,i>b"),
+            [IfaceEditableText] =
+                M("SetTextContents", "s>b") + M("InsertText", "i,s,i>b") + M("CopyText", "i,i>") + M("CutText", "i,i>b") +
+                M("DeleteText", "i,i>b") + M("PasteText", "i>b"),
+            [IfaceSelection] =
+                P("NSelectedChildren", "i") +
+                M("GetSelectedChild", "i>(so)") + M("SelectChild", "i>b") + M("DeselectSelectedChild", "i>b") +
+                M("IsChildSelected", "i>b") + M("SelectAll", ">b") + M("ClearSelection", ">b") + M("DeselectChild", "i>b"),
+            [IfaceTable] =
+                P("NRows", "i") + P("NColumns", "i") + P("Caption", "(so)") + P("Summary", "(so)") +
+                P("NSelectedRows", "i") + P("NSelectedColumns", "i") +
+                M("GetAccessibleAt", "i,i>(so)") + M("GetIndexAt", "i,i>i") + M("GetRowAtIndex", "i>i") + M("GetColumnAtIndex", "i>i") +
+                M("GetRowDescription", "i>s") + M("GetColumnDescription", "i>s") + M("GetRowExtentAt", "i,i>i") +
+                M("GetColumnExtentAt", "i,i>i") + M("GetRowHeader", "i>(so)") + M("GetColumnHeader", "i>(so)") +
+                M("GetSelectedRows", ">ai") + M("GetSelectedColumns", ">ai") + M("IsRowSelected", "i>b") +
+                M("IsColumnSelected", "i>b") + M("IsSelected", "i,i>b") + M("AddRowSelection", "i>b") +
+                M("AddColumnSelection", "i>b") + M("RemoveRowSelection", "i>b") + M("RemoveColumnSelection", "i>b") +
+                M("GetRowColumnExtentsAtIndex", "i>b,i,i,i,i,b"),
+            [IfaceTableCell] =
+                P("ColumnSpan", "i") + P("Position", "(ii)") + P("RowSpan", "i") + P("Table", "(so)") +
+                M("GetRowHeaderCells", ">a(so)") + M("GetColumnHeaderCells", ">a(so)") + M("GetRowColumnSpan", ">i,i,i,i"),
+        };
+
+        // ---- which interfaces a node has --------------------------------------------
+
+        private static readonly string[] ApplicationInterfaces = { IfaceAccessible, IfaceApplication };
+
+        private static string[] InterfacesOf(IAutomationTreeSource tree, int node)
+            => InterfacesFor(tree.GetState(node), AvailableActions(tree, node).Length > 0);
+
+        /// <summary>
+        /// The interfaces a node implements, as GetInterfaces reports them. This is what a client
+        /// reads before it asks anything else: libatspi caches it, Orca checks it before every
+        /// query, and an interface missing here is one the node is never asked about however well
+        /// it would have answered. A node offers what its patterns support and nothing more, so
+        /// Orca does not try to read text out of a button.
+        ///
+        /// A password box's text is not offered at all: its characters are the one thing a screen
+        /// reader must not read, and the role (PASSWORD_TEXT) already says what it is.
+        /// </summary>
+        internal static string[] InterfacesFor(AccessibleState state, bool hasActions)
+        {
+            var interfaces = new System.Collections.Generic.List<string>(6) { IfaceAccessible, IfaceComponent };
+            if (hasActions) interfaces.Add(IfaceAction);
+            if ((state & AccessibleState.HasRange) != 0) interfaces.Add(IfaceValue);
+            if (HasTextInterface(state))
+            {
+                interfaces.Add(IfaceText);
+                if (IsEditableText(state)) interfaces.Add(IfaceEditableText);
+            }
+            if ((state & AccessibleState.SelectionContainer) != 0) interfaces.Add(IfaceSelection);
+            if ((state & AccessibleState.Grid) != 0) interfaces.Add(IfaceTable);
+            if ((state & AccessibleState.GridItem) != 0) interfaces.Add(IfaceTableCell);
+            return interfaces.ToArray();
+        }
+
+        internal static bool HasTextInterface(AccessibleState state)
+            => (state & AccessibleState.HasText) != 0 && (state & AccessibleState.Password) == 0;
+
+        /// <summary>Text that can be typed into: EditableText is built on the Value pattern's SetValue,
+        /// so a text without one, or a read-only one, cannot offer it.</summary>
+        internal static bool IsEditableText(AccessibleState state)
+            => HasTextInterface(state) && (state & AccessibleState.HasValue) != 0 && (state & AccessibleState.ReadOnly) == 0;
 
         // ---- org.a11y.atspi.Accessible ---------------------------------------------
 
@@ -550,7 +719,7 @@ namespace MS.Internal.Interop.Wayland
                 case "GetRole":
                     reply = DBusLite.NewMethodReturn(message);
                     DBusLite.IterInitAppend(reply, iter);
-                    DBusLite.AppendUInt32(iter, AtSpiRoles.RoleFor(tree.GetRole(node)));
+                    DBusLite.AppendUInt32(iter, AtSpiRoles.RoleFor(tree.GetRole(node), tree.GetState(node)));
                     return reply;
 
                 case "GetRoleName":
@@ -558,12 +727,15 @@ namespace MS.Internal.Interop.Wayland
                     reply = DBusLite.NewMethodReturn(message);
                     DBusLite.IterInitAppend(reply, iter);
                     DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING,
-                                          AtSpiRoles.RoleNameFor(tree.GetRole(node)));
+                                          AtSpiRoles.RoleNameFor(tree.GetRole(node), tree.GetState(node)));
                     return reply;
 
                 case "GetState":
                 {
-                    ulong states = AtSpiRoles.StatesFor(tree.GetState(node));
+                    AccessibleState state = tree.GetState(node);
+                    int visualState = 0;
+                    if ((state & AccessibleState.Window) != 0) tree.TryGetWindow(node, out visualState, out _, out _, out _);
+                    ulong states = AtSpiRoles.StatesFor(state, visualState);
                     // the frame of the window the compositor has active
                     if (s_active != IntPtr.Zero && tree.GetRootId(s_active) == node) states |= 1UL << StateActive;
                     reply = DBusLite.NewMethodReturn(message);
@@ -639,6 +811,9 @@ namespace MS.Internal.Interop.Wayland
                     DBusLite.OpenAndCloseEmptyArray(iter, "(ua(so))");
                     return reply;
 
+                case "GetInterfaces":
+                    return ReplyStrings(message, InterfacesOf(tree, node));
+
                 default:
                     return IntPtr.Zero;
             }
@@ -678,6 +853,14 @@ namespace MS.Internal.Interop.Wayland
                 case "GetApplication": DBusLite.AppendObjectRef(iter, s_busName, RootPath); break;
                 case "GetAttributes": DBusLite.OpenAndCloseEmptyArray(iter, "{ss}"); break;
                 case "GetRelationSet": DBusLite.OpenAndCloseEmptyArray(iter, "(ua(so))"); break;
+                case "GetInterfaces":
+                {
+                    byte* array = stackalloc byte[DBusLite.IterSize];
+                    DBusLite.OpenArray(iter, "s", array);
+                    foreach (string iface in ApplicationInterfaces) DBusLite.AppendString(array, DBusLite.DBUS_TYPE_STRING, iface);
+                    DBusLite.CloseContainer(iter, array);
+                    break;
+                }
                 default:
                     DBusLite.Unref(reply);
                     return IntPtr.Zero;
@@ -768,6 +951,14 @@ namespace MS.Internal.Interop.Wayland
                     DBusLite.AppendBool(iter, ok);
                     return reply;
                 }
+
+                case "ScrollTo":
+                case "ScrollToPoint":
+                    // Orca's "move to" for an object scrolled out of view. Both come down to the
+                    // ScrollItem pattern, which knows one place to scroll to -- into view -- so the
+                    // edge (ScrollTo's type) or point (ScrollToPoint's) asked for is approximated
+                    // by it, as GTK approximates them by grabbing focus.
+                    return ReplyBool(message, (tree.GetState(node) & AccessibleState.ScrollItem) != 0 && tree.ScrollIntoView(node));
 
                 default:
                     return IntPtr.Zero;
@@ -888,6 +1079,483 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        // ---- arguments and replies --------------------------------------------------
+
+        /// <summary>
+        /// A call's arguments, read once and in order: int32, uint32 and boolean as ints, strings and
+        /// object paths as strings, anything else as null. The patterns below take a handful of
+        /// scalars each, and a client that sends the wrong type -- or none -- gets the fallback for
+        /// that argument rather than a garbled read; a double is never read through an int, which
+        /// would write eight bytes into four.
+        /// </summary>
+        private static object[] ReadArgs(IntPtr message)
+        {
+            byte* args = stackalloc byte[DBusLite.IterSize];
+            if (!DBusLite.IterInit(message, args)) return Array.Empty<object>();
+            var values = new System.Collections.Generic.List<object>(4);
+            do
+            {
+                int type = DBusLite.IterArgType(args);
+                if (type == DBusLite.DBUS_TYPE_INVALID) break;
+                values.Add(type switch
+                {
+                    DBusLite.DBUS_TYPE_INT32 or DBusLite.DBUS_TYPE_UINT32 or DBusLite.DBUS_TYPE_BOOLEAN => (object)DBusLite.ReadInt32(args),
+                    DBusLite.DBUS_TYPE_STRING or DBusLite.DBUS_TYPE_OBJECT_PATH => DBusLite.ReadString(args),
+                    _ => null,
+                });
+            } while (DBusLite.IterNext(args));
+            return values.ToArray();
+        }
+
+        private static int Arg(object[] args, int index, int fallback)
+            => index < args.Length && args[index] is int value ? value : fallback;
+
+        private static string StringArg(object[] args, int index)
+            => index < args.Length && args[index] is string value ? value : string.Empty;
+
+        private delegate void ReplyBody(byte* iter);
+
+        /// <summary>A method return with a body. A body that throws drops the half-built reply, so
+        /// the dispatcher's guard sees the exception and not a leaked message.</summary>
+        private static IntPtr Reply(IntPtr message, ReplyBody body)
+        {
+            IntPtr reply = DBusLite.NewMethodReturn(message);
+            if (reply == IntPtr.Zero) return IntPtr.Zero;
+            try
+            {
+                byte* iter = stackalloc byte[DBusLite.IterSize];
+                DBusLite.IterInitAppend(reply, iter);
+                body(iter);
+                return reply;
+            }
+            catch
+            {
+                DBusLite.Unref(reply);
+                throw;
+            }
+        }
+
+        private static IntPtr ReplyEmpty(IntPtr message) => DBusLite.NewMethodReturn(message);
+        private static IntPtr ReplyBool(IntPtr message, bool value) => Reply(message, iter => DBusLite.AppendBool(iter, value));
+        private static IntPtr ReplyString(IntPtr message, string value) => Reply(message, iter => DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING, value));
+        private static IntPtr ReplyRef(IntPtr message, int node) => Reply(message, iter => DBusLite.AppendObjectRef(iter, s_busName, PathForNode(node)));
+
+        private static IntPtr ReplyInts(IntPtr message, params int[] values) => Reply(message, iter =>
+        {
+            foreach (int value in values) DBusLite.AppendInt32(iter, value);
+        });
+
+        private static IntPtr ReplyIntArray(IntPtr message, int[] values) => Reply(message, iter =>
+        {
+            byte* array = stackalloc byte[DBusLite.IterSize];
+            DBusLite.OpenArray(iter, "i", array);
+            foreach (int value in values) DBusLite.AppendInt32(array, value);
+            DBusLite.CloseContainer(iter, array);
+        });
+
+        private static IntPtr ReplyRefs(IntPtr message, int[] nodes) => Reply(message, iter =>
+        {
+            byte* array = stackalloc byte[DBusLite.IterSize];
+            DBusLite.OpenArray(iter, "(so)", array);
+            foreach (int node in nodes) DBusLite.AppendObjectRef(array, s_busName, PathForNode(node));
+            DBusLite.CloseContainer(iter, array);
+        });
+
+        private static IntPtr ReplyStrings(IntPtr message, string[] values) => Reply(message, iter =>
+        {
+            byte* array = stackalloc byte[DBusLite.IterSize];
+            DBusLite.OpenArray(iter, "s", array);
+            foreach (string value in values) DBusLite.AppendString(array, DBusLite.DBUS_TYPE_STRING, value);
+            DBusLite.CloseContainer(iter, array);
+        });
+
+        /// <summary>The (s, i, i) the GetText*Offset family answers: the text and where it starts and ends.</summary>
+        private static IntPtr ReplyTextRange(IntPtr message, (string Text, int Start, int End) range) => Reply(message, iter =>
+        {
+            DBusLite.AppendString(iter, DBusLite.DBUS_TYPE_STRING, range.Text);
+            DBusLite.AppendInt32(iter, range.Start);
+            DBusLite.AppendInt32(iter, range.End);
+        });
+
+        /// <summary>
+        /// An attribute run: (a{ss}, i, i), the attributes and the run they hold over. Always empty
+        /// over the whole text. WPF's text pattern does carry fonts and colours, but Orca reads none
+        /// of them unless asked, and an attribute it misreads is worse than none -- the same choice
+        /// the macOS backend makes.
+        /// </summary>
+        private static IntPtr ReplyAttributeRun(IntPtr message, int end, bool withRun) => Reply(message, iter =>
+        {
+            DBusLite.OpenAndCloseEmptyArray(iter, "{ss}");
+            if (withRun)
+            {
+                DBusLite.AppendInt32(iter, 0);
+                DBusLite.AppendInt32(iter, end);
+            }
+        });
+
+        [DllImport("libdbus-1.so.3")]
+        private static extern int dbus_message_iter_open_container(byte* iter, int type, [MarshalAs(UnmanagedType.LPUTF8Str)] string signature, byte* sub);
+
+        /// <summary>A variant holding (ii) -- TableCell's Position, the one property here that is a pair.</summary>
+        private static void AppendPairVariant(byte* iter, int first, int second)
+        {
+            byte* variant = stackalloc byte[DBusLite.IterSize];
+            byte* pair = stackalloc byte[DBusLite.IterSize];
+            dbus_message_iter_open_container(iter, DBusLite.DBUS_TYPE_VARIANT, "(ii)", variant);
+            DBusLite.OpenStruct(variant, pair);
+            DBusLite.AppendInt32(pair, first);
+            DBusLite.AppendInt32(pair, second);
+            DBusLite.CloseContainer(variant, pair);
+            DBusLite.CloseContainer(iter, variant);
+        }
+
+        // ---- org.a11y.atspi.Text ---------------------------------------------------
+
+        /// <summary>
+        /// A text node's text, or null for a node without the interface. The first read of a node's
+        /// text is also the baseline its first text-changed signal is diffed against (see
+        /// <see cref="EmitTextChanged"/>); later reads leave the baseline alone, because a client can
+        /// read the new text before the change notification that describes it has been sent.
+        /// </summary>
+        private static string TextOf(IAutomationTreeSource tree, int node)
+        {
+            string text = CurrentText(tree, node);
+            if (text != null && !s_texts.ContainsKey(node)) Remember(s_texts, node, text);
+            return text;
+        }
+
+        private static string CurrentText(IAutomationTreeSource tree, int node)
+            => HasTextInterface(tree.GetState(node)) && tree.TryGetText(node, out string text) ? text ?? string.Empty : null;
+
+        /// <summary>The selection, clipped to the text, with the caret on the end the user moved last.</summary>
+        private static AtSpiText.Selection SelectionOf(IAutomationTreeSource tree, int node, string text)
+        {
+            if (!tree.TryGetTextSelection(node, out int start, out int length)) return default;
+            start = Math.Clamp(start, 0, text.Length);
+            length = Math.Clamp(length, 0, text.Length - start);
+            if (s_selections.TryGetValue(node, out AtSpiText.Selection known) && known.Start == start && known.Length == length)
+                return known;
+            return new AtSpiText.Selection(start, length, caretAtEnd: false);
+        }
+
+        /// <summary>A character range as the tree's UTF-16 one, ordered and clipped. -1 is the end.</summary>
+        private static (int Start, int Length) Utf16Range(string text, int start, int end)
+        {
+            int s = AtSpiText.ToUtf16(text, Math.Max(start, 0));
+            int e = AtSpiText.ToUtf16(text, end);
+            if (e < s) (s, e) = (e, s);
+            return (s, e - s);
+        }
+
+        private static AtSpiText.LineSource LinesOf(IAutomationTreeSource tree, int node)
+            => (int offset, out int start, out int length) => tree.TryGetTextLine(node, offset, out start, out length, out _);
+
+        private static IntPtr ReplyExtents(IntPtr message, IAutomationTreeSource tree, int node, int start, int length)
+        {
+            // The coordinate type is ignored, as Component's is: under Wayland screen and window
+            // coordinates are the same synthesised space (the header explains why).
+            if (length <= 0 || !tree.TryGetTextRangeBounds(node, start, length, out double x, out double y, out double w, out double h))
+                return ReplyInts(message, 0, 0, 0, 0);
+            return ReplyInts(message, (int)x, (int)y, (int)w, (int)h);
+        }
+
+        private static IntPtr HandleText(IntPtr message, string member, int node)
+        {
+            IAutomationTreeSource tree = Tree;
+            if (tree == null || node == AppNode) return IntPtr.Zero;
+
+            object[] args = ReadArgs(message);
+            string text = TextOf(tree, node) ?? string.Empty;
+            int count = AtSpiText.CharacterCount(text);
+
+            switch (member)
+            {
+                case "GetText":
+                    return ReplyString(message, AtSpiText.Substring(text, Arg(args, 0, 0), Arg(args, 1, -1)));
+
+                case "SetCaretOffset":
+                {
+                    int caret = AtSpiText.ToUtf16(text, Math.Clamp(Arg(args, 0, 0), 0, count));
+                    return ReplyBool(message, tree.SetTextSelection(node, caret, 0));
+                }
+
+                case "GetTextAtOffset":
+                case "GetTextBeforeOffset":
+                case "GetTextAfterOffset":
+                {
+                    if (!AtSpiText.TryUnitForBoundary((uint)Arg(args, 1, 0), out AtSpiText.Unit unit))
+                        return ReplyTextRange(message, (string.Empty, 0, 0));
+                    int direction = member == "GetTextBeforeOffset" ? -1 : member == "GetTextAfterOffset" ? 1 : 0;
+                    return ReplyTextRange(message, AtSpiText.TextAt(text, Arg(args, 0, 0), unit, direction, LinesOf(tree, node)));
+                }
+
+                case "GetStringAtOffset":
+                {
+                    if (!AtSpiText.TryUnitForGranularity((uint)Arg(args, 1, 0), out AtSpiText.Unit unit))
+                        return ReplyTextRange(message, (string.Empty, 0, 0));
+                    return ReplyTextRange(message, AtSpiText.TextAt(text, Arg(args, 0, 0), unit, 0, LinesOf(tree, node)));
+                }
+
+                case "GetCharacterAtOffset":
+                    return ReplyInts(message, AtSpiText.CharacterAt(text, Arg(args, 0, -1)));
+
+                case "GetCharacterExtents":
+                {
+                    (int start, int length) = AtSpiText.CharacterRange(text, Arg(args, 0, 0));
+                    return ReplyExtents(message, tree, node, start, length);
+                }
+
+                case "GetRangeExtents":
+                {
+                    (int start, int length) = Utf16Range(text, Arg(args, 0, 0), Arg(args, 1, 0));
+                    return ReplyExtents(message, tree, node, start, length);
+                }
+
+                case "GetOffsetAtPoint":
+                {
+                    int offset = tree.GetTextOffsetAtPoint(node, Arg(args, 0, 0), Arg(args, 1, 0));
+                    return ReplyInts(message, offset < 0 ? -1 : AtSpiText.ToCodePoints(text, offset));
+                }
+
+                // One selection at most: WPF's text selection is a single range. A caret is not a
+                // selection, so a text with nothing selected has none.
+                case "GetNSelections":
+                    return ReplyInts(message, SelectionOf(tree, node, text).Length > 0 ? 1 : 0);
+
+                case "GetSelection":
+                {
+                    AtSpiText.Selection selection = SelectionOf(tree, node, text);
+                    if (Arg(args, 0, -1) != 0 || selection.Length == 0) return ReplyInts(message, 0, 0);
+                    return ReplyInts(message, AtSpiText.ToCodePoints(text, selection.Start),
+                                     AtSpiText.ToCodePoints(text, selection.Start + selection.Length));
+                }
+
+                case "AddSelection":
+                {
+                    // Adding a second range is not possible, so only a text without one can.
+                    if (SelectionOf(tree, node, text).Length > 0) return ReplyBool(message, false);
+                    (int start, int length) = Utf16Range(text, Arg(args, 0, 0), Arg(args, 1, 0));
+                    return ReplyBool(message, tree.SetTextSelection(node, start, length));
+                }
+
+                case "SetSelection":
+                {
+                    if (Arg(args, 0, -1) != 0) return ReplyBool(message, false);
+                    (int start, int length) = Utf16Range(text, Arg(args, 1, 0), Arg(args, 2, 0));
+                    return ReplyBool(message, tree.SetTextSelection(node, start, length));
+                }
+
+                case "RemoveSelection":
+                {
+                    // Removing the selection leaves the caret where it was, as GTK's does.
+                    AtSpiText.Selection selection = SelectionOf(tree, node, text);
+                    if (Arg(args, 0, -1) != 0 || selection.Length == 0) return ReplyBool(message, false);
+                    return ReplyBool(message, tree.SetTextSelection(node, selection.Caret, 0));
+                }
+
+                case "GetAttributes":
+                case "GetAttributeRun":
+                    return ReplyAttributeRun(message, count, withRun: true);
+                case "GetDefaultAttributes":
+                case "GetDefaultAttributeSet":
+                    return ReplyAttributeRun(message, count, withRun: false);
+                case "GetAttributeValue":
+                    return ReplyString(message, string.Empty);
+
+                case "GetBoundedRanges":
+                    return Reply(message, iter => DBusLite.OpenAndCloseEmptyArray(iter, "(iisv)"));
+
+                case "ScrollSubstringTo":
+                case "ScrollSubstringToPoint":
+                    // The tree can scroll a node into view but not a range of its text.
+                    return ReplyBool(message, false);
+
+                default:
+                    return IntPtr.Zero;
+            }
+        }
+
+        // ---- org.a11y.atspi.EditableText -------------------------------------------
+
+        /// <summary>
+        /// Editing, built on the one write the tree offers for text: the Value pattern's SetValue,
+        /// with the whole new text. Insert and delete are computed here from the current text, so
+        /// they are exactly as good as SetValue is -- the caret is the control's business afterwards.
+        /// Copy, cut and paste need the clipboard, which is the application's and not the
+        /// accessibility tree's, so they are declined rather than half done.
+        /// </summary>
+        private static IntPtr HandleEditableText(IntPtr message, string member, int node)
+        {
+            IAutomationTreeSource tree = Tree;
+            if (tree == null || node == AppNode) return IntPtr.Zero;
+
+            object[] args = ReadArgs(message);
+            bool editable = IsEditableText(tree.GetState(node));
+            string text = TextOf(tree, node) ?? string.Empty;
+
+            switch (member)
+            {
+                case "SetTextContents":
+                    return ReplyBool(message, editable && tree.SetValue(node, StringArg(args, 0)));
+
+                case "InsertText":
+                {
+                    if (!editable) return ReplyBool(message, false);
+                    int at = AtSpiText.ToUtf16(text, Math.Max(Arg(args, 0, 0), 0));
+                    string inserted = StringArg(args, 1);
+                    int length = Arg(args, 2, -1);
+                    // the length is in characters, and a negative or overlong one means all of it
+                    if (length >= 0 && length < AtSpiText.CharacterCount(inserted)) inserted = AtSpiText.Substring(inserted, 0, length);
+                    return ReplyBool(message, tree.SetValue(node, text.Insert(at, inserted)));
+                }
+
+                case "DeleteText":
+                {
+                    if (!editable) return ReplyBool(message, false);
+                    (int start, int length) = Utf16Range(text, Arg(args, 0, 0), Arg(args, 1, 0));
+                    return ReplyBool(message, length == 0 || tree.SetValue(node, text.Remove(start, length)));
+                }
+
+                case "CopyText":
+                    return ReplyEmpty(message);
+                case "CutText":
+                case "PasteText":
+                    return ReplyBool(message, false);
+
+                default:
+                    return IntPtr.Zero;
+            }
+        }
+
+        // ---- org.a11y.atspi.Selection ----------------------------------------------
+
+        private static IntPtr HandleSelection(IntPtr message, string member, int node)
+        {
+            IAutomationTreeSource tree = Tree;
+            if (tree == null || node == AppNode) return IntPtr.Zero;
+
+            object[] args = ReadArgs(message);
+            int index = Arg(args, 0, -1);
+
+            return member switch
+            {
+                "GetSelectedChild" => ReplyRef(message, AtSpiPatterns.SelectedChildAt(tree, node, index)),
+                "SelectChild" => ReplyBool(message, AtSpiPatterns.SelectChild(tree, node, index)),
+                "DeselectSelectedChild" => ReplyBool(message, AtSpiPatterns.DeselectSelectedChild(tree, node, index)),
+                "DeselectChild" => ReplyBool(message, AtSpiPatterns.DeselectChild(tree, node, index)),
+                "IsChildSelected" => ReplyBool(message, AtSpiPatterns.IsChildSelected(tree, node, index)),
+                "SelectAll" => ReplyBool(message, AtSpiPatterns.SelectAll(tree, node)),
+                "ClearSelection" => ReplyBool(message, AtSpiPatterns.ClearSelection(tree, node)),
+                _ => IntPtr.Zero,
+            };
+        }
+
+        // ---- org.a11y.atspi.Table / TableCell --------------------------------------
+
+        private static IntPtr HandleTable(IntPtr message, string member, int node)
+        {
+            IAutomationTreeSource tree = Tree;
+            if (tree == null || node == AppNode) return IntPtr.Zero;
+
+            object[] args = ReadArgs(message);
+            int a = Arg(args, 0, -1), b = Arg(args, 1, -1);
+            tree.TryGetGrid(node, out int rows, out int columns);
+
+            switch (member)
+            {
+                case "GetAccessibleAt":
+                    return ReplyRef(message, AtSpiPatterns.CellIndex(rows, columns, a, b) < 0 ? IAutomationTreeSource.InvalidNode : tree.GetGridCell(node, a, b));
+                case "GetIndexAt":
+                    return ReplyInts(message, AtSpiPatterns.CellIndex(rows, columns, a, b));
+                case "GetRowAtIndex":
+                    return ReplyInts(message, AtSpiPatterns.RowAndColumnOf(rows, columns, a).Row);
+                case "GetColumnAtIndex":
+                    return ReplyInts(message, AtSpiPatterns.RowAndColumnOf(rows, columns, a).Column);
+
+                case "GetRowExtentAt":
+                    return ReplyInts(message, AtSpiPatterns.SpanAt(tree, node, a, b).RowSpan);
+                case "GetColumnExtentAt":
+                    return ReplyInts(message, AtSpiPatterns.SpanAt(tree, node, a, b).ColumnSpan);
+
+                case "GetRowHeader":
+                    return ReplyRef(message, AtSpiPatterns.RowHeader(tree, node, a));
+                case "GetColumnHeader":
+                    return ReplyRef(message, AtSpiPatterns.ColumnHeader(tree, node, a));
+                case "GetRowDescription":
+                {
+                    int header = AtSpiPatterns.RowHeader(tree, node, a);
+                    return ReplyString(message, header >= 0 ? tree.GetName(header) : string.Empty);
+                }
+                case "GetColumnDescription":
+                {
+                    int header = AtSpiPatterns.ColumnHeader(tree, node, a);
+                    return ReplyString(message, header >= 0 ? tree.GetName(header) : string.Empty);
+                }
+
+                case "GetSelectedRows":
+                    return ReplyIntArray(message, AtSpiPatterns.SelectedRows(tree, node));
+                case "GetSelectedColumns":
+                    return ReplyIntArray(message, Array.Empty<int>());
+                case "IsRowSelected":
+                    return ReplyBool(message, Array.IndexOf(AtSpiPatterns.SelectedRows(tree, node), a) >= 0);
+                case "IsColumnSelected":
+                    return ReplyBool(message, false);
+                case "IsSelected":
+                    return ReplyBool(message, AtSpiPatterns.IsCellSelected(tree, node, a, b));
+
+                // Selecting whole rows and columns is the item's business (its own Selection
+                // pattern, through the container's Selection interface), not the grid's.
+                case "AddRowSelection":
+                case "AddColumnSelection":
+                case "RemoveRowSelection":
+                case "RemoveColumnSelection":
+                    return ReplyBool(message, false);
+
+                case "GetRowColumnExtentsAtIndex":
+                {
+                    (int row, int column) = AtSpiPatterns.RowAndColumnOf(rows, columns, a);
+                    bool ok = row >= 0;
+                    (int rowSpan, int columnSpan) = ok ? AtSpiPatterns.SpanAt(tree, node, row, column) : (0, 0);
+                    bool selected = ok && AtSpiPatterns.IsCellSelected(tree, node, row, column);
+                    return Reply(message, iter =>
+                    {
+                        DBusLite.AppendBool(iter, ok);
+                        DBusLite.AppendInt32(iter, row);
+                        DBusLite.AppendInt32(iter, column);
+                        DBusLite.AppendInt32(iter, rowSpan);
+                        DBusLite.AppendInt32(iter, columnSpan);
+                        DBusLite.AppendBool(iter, selected);
+                    });
+                }
+
+                default:
+                    return IntPtr.Zero;
+            }
+        }
+
+        private static IntPtr HandleTableCell(IntPtr message, string member, int node)
+        {
+            IAutomationTreeSource tree = Tree;
+            if (tree == null || node == AppNode) return IntPtr.Zero;
+
+            switch (member)
+            {
+                case "GetRowHeaderCells":
+                    return ReplyRefs(message, AtSpiPatterns.HeaderCellsOf(tree, node, columns: false));
+                case "GetColumnHeaderCells":
+                    return ReplyRefs(message, AtSpiPatterns.HeaderCellsOf(tree, node, columns: true));
+                case "GetRowColumnSpan":
+                {
+                    bool placed = tree.TryGetGridItem(node, out int row, out int column, out int rowSpan, out int columnSpan, out _);
+                    return placed
+                        ? ReplyInts(message, row, column, Math.Max(rowSpan, 1), Math.Max(columnSpan, 1))
+                        : ReplyInts(message, -1, -1, 0, 0);
+                }
+                default:
+                    return IntPtr.Zero;
+            }
+        }
+
         // ---- events out ------------------------------------------------------------
 
         /// <summary>
@@ -916,6 +1584,7 @@ namespace MS.Internal.Interop.Wayland
                         }
                         EmitStateChanged(path, detail, 1);
                         s_focused = change.NodeId;
+                        SeedText(tree, change.NodeId);
                         break;
 
                     // Each of these is a state that can go BOTH ways, so the current value is read
@@ -976,6 +1645,24 @@ namespace MS.Internal.Interop.Wayland
                         DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "PropertyChange",
                                                 detail, 0, 0, tree?.GetName(change.NodeId) ?? string.Empty);
                         break;
+
+                    case AutomationChangeKind.TextChanged:
+                        EmitTextChanged(tree, change.NodeId, path);
+                        break;
+                    case AutomationChangeKind.TextSelectionChanged:
+                        EmitTextSelectionChanged(tree, change.NodeId, path);
+                        break;
+
+                    // object:selection-changed on the container, and object:visible-data-changed on
+                    // the pane that scrolled: neither carries anything, the client re-reads.
+                    case AutomationChangeKind.SelectionContainerChanged:
+                    case AutomationChangeKind.ScrollChanged:
+                    {
+                        (string member, string none) = AtSpiRoles.SignalFor(change.Kind);
+                        Trace($"event {member} on {path}");
+                        DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, member, none, 0, 0);
+                        break;
+                    }
                 }
 
                 DBusLite.Flush(s_bus);
@@ -987,6 +1674,90 @@ namespace MS.Internal.Interop.Wayland
         }
 
         private const string IfaceEventObject = "org.a11y.atspi.Event.Object";
+
+        // ---- text signals ----------------------------------------------------------
+
+        /// <summary>
+        /// The last text each text node was seen with, and its selection: what a text-changed is
+        /// diffed against and a caret move compared with. Bounded, because node ids are not recycled
+        /// and a long session visits many fields; dropping the lot costs at most one unannounced edit
+        /// in a field nobody has looked at since.
+        /// </summary>
+        private static readonly System.Collections.Generic.Dictionary<int, string> s_texts = new();
+        private static readonly System.Collections.Generic.Dictionary<int, AtSpiText.Selection> s_selections = new();
+        private const int CacheLimit = 256;
+
+        private static void Remember<T>(System.Collections.Generic.Dictionary<int, T> cache, int node, T value)
+        {
+            if (cache.Count >= CacheLimit && !cache.ContainsKey(node)) cache.Clear();
+            cache[node] = value;
+        }
+
+        /// <summary>A field taking focus is where typing is about to happen: its text and selection
+        /// now are the baseline for the first edit and the first caret move.</summary>
+        private static void SeedText(IAutomationTreeSource tree, int node)
+        {
+            if (tree == null) return;
+            string text = CurrentText(tree, node);
+            if (text == null) return;
+            Remember(s_texts, node, text);
+            if (tree.TryGetTextSelection(node, out int start, out int length))
+                Remember(s_selections, node, new AtSpiText.Selection(Math.Clamp(start, 0, text.Length),
+                                                                    Math.Clamp(length, 0, text.Length - Math.Clamp(start, 0, text.Length)), false));
+        }
+
+        /// <summary>
+        /// object:text-changed:delete and :insert, with the offset, the length and the characters
+        /// (AtSpiText.Diff). A node whose text was never seen -- not focused, never read -- has no
+        /// baseline, and gets none of either: an insert of its whole text would be spoken as though
+        /// the user had typed it, and no client is holding a copy that would need correcting.
+        /// </summary>
+        private static void EmitTextChanged(IAutomationTreeSource tree, int node, string path)
+        {
+            if (tree == null) return;
+            string now = CurrentText(tree, node);
+            if (now == null) { s_texts.Remove(node); return; }
+
+            bool known = s_texts.TryGetValue(node, out string before);
+            Remember(s_texts, node, now);
+            if (!known) return;
+
+            foreach ((string detail, int offset, int length, string text) in AtSpiText.Diff(before, now))
+            {
+                Trace($"event TextChanged:{detail} offset={offset} length={length} on {path}");
+                DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "TextChanged", detail, offset, length, text);
+            }
+        }
+
+        /// <summary>
+        /// object:text-caret-moved with the caret's character offset, and object:text-selection-changed
+        /// when a range is or was selected (AtSpiText.SelectionSignals). Orca speaks the character or
+        /// word the caret moved over from the first, and "selected" / "unselected" from the second.
+        /// </summary>
+        private static void EmitTextSelectionChanged(IAutomationTreeSource tree, int node, string path)
+        {
+            if (tree == null) return;
+            string text = CurrentText(tree, node);
+            if (text == null || !tree.TryGetTextSelection(node, out int start, out int length)) return;
+            start = Math.Clamp(start, 0, text.Length);
+            length = Math.Clamp(length, 0, text.Length - start);
+
+            AtSpiText.Selection? before = s_selections.TryGetValue(node, out AtSpiText.Selection known) ? known : null;
+            (AtSpiText.Selection now, bool caretMoved, bool rangeChanged) = AtSpiText.SelectionSignals(before, start, length);
+            Remember(s_selections, node, now);
+
+            if (caretMoved)
+            {
+                int caret = AtSpiText.ToCodePoints(text, now.Caret);
+                Trace($"event TextCaretMoved {caret} on {path}");
+                DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "TextCaretMoved", string.Empty, caret, 0);
+            }
+            if (rangeChanged)
+            {
+                Trace($"event TextSelectionChanged on {path}");
+                DBusLite.EmitAtSpiEvent(s_bus, s_busName, path, IfaceEventObject, "TextSelectionChanged", string.Empty, 0, 0);
+            }
+        }
 
         private static int Has(IAutomationTreeSource tree, int node, AccessibleState state)
             => tree != null && (tree.GetState(node) & state) != 0 ? 1 : 0;
