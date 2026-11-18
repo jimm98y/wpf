@@ -109,8 +109,8 @@ internal static class AndroidFonts
 ///
 /// One Android-specific consequence: SurfaceViews are punched through the view hierarchy by the
 /// system compositor rather than drawn in it, so normal view z-order does NOT order two of them.
-/// Popups have to ask to be a media overlay (see AndroidHost.CreateView) to land above the window
-/// they belong to.
+/// A floating window asks to be a media overlay to land above the app's own, and a popup to be on
+/// top, above them all and the frames drawn round them (see AndroidHost.CreateView).
 ///
 /// NB: this is the arrangement that first surfaced as
 ///     BufferQueueProducer: connect: already connected (cur=1 req=1)
@@ -130,6 +130,10 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
 
     /// <summary>The app's own window, which fills the activity; the others float.</summary>
     public bool FillsScreen { get; init; }
+
+    /// <summary>A popup's surface (AndroidWindow.IsSeeThroughPopup): translucent, and composed above the
+    /// activity's window and every other surface (AndroidHost.CreateView).</summary>
+    public bool IsPopup { get; init; }
 
     public WpfSurfaceView(Context context, IntPtr wpfHandle) : base(context)
     {
@@ -221,16 +225,16 @@ internal sealed class WpfSurfaceView : SurfaceView, ISurfaceHolderCallback
 }
 
 /// <summary>
-/// A WPF popup's native view: a plain, fully transparent View that exists ONLY to receive touches.
+/// The native view of a WPF window drawn into the windows under it -- a child window (an
+/// ElementHost's tree), or a popup where popups have no surface of their own
+/// (AndroidWindow.IsSeeThroughPopup): a plain, fully transparent View that exists ONLY to receive
+/// touches.
 ///
-/// Its PIXELS come from somewhere else. A popup on Android is a child of the same activity as the
-/// window it belongs to, so the compositor draws it straight into that window's surface
-/// (NativePlatform.PopupsShareOwnerSurface) rather than giving it a surface of its own -- which on
-/// the GLES backend could not be transparent anyway, leaving a black box around the popup's rounded
-/// chrome and drop shadow. But WPF still needs the popup to be a real window for INPUT: mouse
-/// capture, hit testing and every message route key off its handle, and a touch landing on the
-/// owner's view would be delivered with the OWNER's handle and ignored by the popup. Hence a view
-/// with no content of its own, sitting exactly where the popup is.
+/// Its PIXELS come from somewhere else: the compositor draws the window straight into the surfaces
+/// of the windows under it (NativePlatform.PopupsShareOwnerSurface). But WPF still needs it to be a
+/// real window for INPUT: mouse capture, hit testing and every message route key off its handle,
+/// and a touch landing on the owner's view would be delivered with the OWNER's handle and ignored by
+/// the popup. Hence a view with no content of its own, sitting exactly where the window is.
 /// </summary>
 internal sealed class WpfPopupView : View
 {
@@ -1286,21 +1290,29 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         view.BringToFront();
         PlaceFrame(handle);
         // a floating window's surface is composed above the app's own (SurfaceViews are layers of their
-        // own, stacked by this rather than by the view order)
-        if (view is WpfSurfaceView surface && !surface.FillsScreen) surface.SetZOrderMediaOverlay(true);
+        // own, stacked by this rather than by the view order); a popup's is on top already
+        if (view is WpfSurfaceView { FillsScreen: false, IsPopup: false } surface) surface.SetZOrderMediaOverlay(true);
         // its child windows come with it, just above it (SetViewParent)...
         RaiseChildren(handle);
-        // ...and the popups stay above it, as they are drawn: a popup's pixels are composed over every
-        // window (WpfPopupView), so its touch target must lie over them too -- under a window brought to
-        // the front, a menu or a floating tool window showed and could not be touched. Not a child window
-        // (an ElementHost's WPF content), which is a touch target of the same kind: raised over every
-        // window, it lay over a dialog shown above its form and took the dialog's touches.
+        // ...and the popups stay above it, as they are drawn: a popup's surface is on top of every
+        // window's (or its pixels composed over every window, WpfPopupView), so its view must lie over
+        // theirs too, for touches go by the view order -- under a window brought to the front, a menu or
+        // a floating tool window showed and could not be touched. Not a child window (an ElementHost's
+        // WPF content), which is a touch target of the same kind: raised over every window, it lay over
+        // a dialog shown above its form and took the dialog's touches.
         var popups = new List<View>();
         for (int i = 0; i < _root.ChildCount; i++)
-            if (_root.GetChildAt(i) is WpfPopupView popup && !_parents.ContainsKey(popup.Handle)) popups.Add(popup);
+        {
+            View? child = _root.GetChildAt(i);
+            if (child is WpfPopupView popup && !_parents.ContainsKey(popup.Handle)) popups.Add(popup);
+            else if (child is WpfSurfaceView { IsPopup: true } surfacePopup) popups.Add(surfacePopup);
+        }
         foreach (View popup in popups) popup.BringToFront();
         UpdateModalAccessibility();
     });
+
+    /// <summary>A popup has a see-through surface of its own here, on top of every window (CreateView).</summary>
+    public bool PopupSurfaces => true;
 
     public void SetViewTranslucent(IntPtr handle) => OnMain(() =>
     {
@@ -1363,14 +1375,25 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
 
     private bool CreateViewCore(IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface)
     {
-        // A popup is drawn into its owner's surface, so it needs no surface of its own -- only a
-        // touch target. See WpfPopupView. A window has one: the app's own, a dialog floating over
-        // it, a borderless form.
+        // A window drawn into the windows under it needs no surface of its own -- only a touch target.
+        // See WpfPopupView. A window has one: the app's own, a dialog floating over it, a borderless
+        // form, and a popup (AndroidWindow.IsSeeThroughPopup).
+        bool popup = borderless && ownSurface && AndroidWindow.FromHandle(handle) is { IsSeeThroughPopup: true };
         View view = borderless && !ownSurface
             ? new WpfPopupView(_activity, handle)
-            : new WpfSurfaceView(_activity, handle) { FillsScreen = fillsScreen };
+            : new WpfSurfaceView(_activity, handle) { FillsScreen = fillsScreen, IsPopup = popup };
+        if (view is WpfSurfaceView { IsPopup: true } popupSurface)
+        {
+            // A popup's surface keeps its alpha -- its rounded chrome and drop shadow lie on a transparent
+            // background, which the system compositor blends over what is under it -- and is composed on
+            // top: above the app's window, so above the frames drawn in it round the floating windows,
+            // and above their surfaces (media overlays), as a popup is over every window on Windows.
+            // Two popups on top are stacked as they were made: a submenu over its menu, a tooltip over both.
+            popupSurface.Holder?.SetFormat(Android.Graphics.Format.Translucent);
+            popupSurface.SetZOrderOnTop(true);
+        }
         // a floating window's surface composes above the app's own; see BringToFront
-        if (view is WpfSurfaceView floating && !fillsScreen) floating.SetZOrderMediaOverlay(true);
+        else if (view is WpfSurfaceView floating && !fillsScreen) floating.SetZOrderMediaOverlay(true);
 
         // A top-level window IS the activity's content area, so it must FOLLOW it -- MatchParent is
         // the Android spelling of the autoresizing mask UIKitWindow gives its view. Sizing it to the
@@ -1557,7 +1580,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     {
         // A floating window's title is its pane's, which TalkBack announces as it appears; the app's
         // own window fills the activity, whose label already says it.
-        if (Build.VERSION.SdkInt >= BuildVersionCodes.P && view is WpfSurfaceView { FillsScreen: false })
+        if (Build.VERSION.SdkInt >= BuildVersionCodes.P && view is WpfSurfaceView { FillsScreen: false, IsPopup: false })
         {
             string? title = pane.Length != 0 ? pane : null;
             if (view.AccessibilityPaneTitle != title) view.AccessibilityPaneTitle = title;

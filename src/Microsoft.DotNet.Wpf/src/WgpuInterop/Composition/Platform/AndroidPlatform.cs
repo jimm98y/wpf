@@ -65,6 +65,19 @@ namespace Microsoft.Wpf.Interop.WebGpu
             set => Composition.Platform.AndroidInterop.PopupQuery = value;
         }
 
+        /// <summary>
+        /// Whether a window's surface keeps the alpha the renderer leaves in it, so that a translucent
+        /// surface view shows what is under it through the window's transparent parts: true on the Vulkan
+        /// backend, whose swap chain images are RGBA and whose composite alpha on Android is INHERIT, the
+        /// view's (the sink configures it so, Configure). Not on GLES, where
+        /// wgpu-hal's EGL config need have no alpha at all -- measured on the emulator's GLES, a popup on a
+        /// surface of its own showed black round its rounded corners and shadow -- nor before the device
+        /// exists. The windowing layer asks before giving a popup a surface of its own
+        /// (AndroidWindow.IsSeeThroughPopup).
+        /// </summary>
+        public static bool SurfacesKeepAlpha
+            => Composition.ProcessGpu.AdapterDescription?.Contains("backend=Vulkan") == true;
+
         /// <summary>See AndroidInterop.StereoQuery.</summary>
         public static Func<IntPtr, bool>? StereoWindowQuery
         {

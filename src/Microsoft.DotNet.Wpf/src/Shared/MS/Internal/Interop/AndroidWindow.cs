@@ -5,7 +5,8 @@
 // The Android windowing backend — the Android sibling of CocoaWindow, BrowserWindow and UIKitWindow.
 //
 // Android is shaped like iOS from WPF's point of view: one fullscreen activity, so a WPF "window" is
-// a view inside it, and popups are borderless sibling views drawn into their owner's surface.
+// a view inside it, and popups are borderless sibling views with see-through surfaces of their own
+// (IsSeeThroughPopup) -- or, where the host has none to give, drawn into the windows under them.
 //
 // The app runs on a UI thread of its own, not on the main Looper's: WPF's dispatcher blocks there,
 // as on the desktop heads, so a modal dialog, a MessageBox or an Invoke's wait is a nested frame like
@@ -119,6 +120,12 @@ namespace MS.Internal.Interop
         /// </summary>
         double RefreshRateHz => 0;
 
+        /// <summary>A popup (a drop-down, a menu, a tooltip) presents through a see-through surface of its own, above
+        /// every window and its frame (AndroidWindow.IsSeeThroughPopup), rather than being drawn into the windows
+        /// under it. The flat activity's host does; a host that has no such surface to give one leaves popups drawn
+        /// into the windows (NativePlatform.PopupsShareOwnerSurface).</summary>
+        bool PopupSurfaces => false;
+
         /// <summary>The screen is a desktop (a headset's: AndroidXrHost), not a phone's or a tablet's: the app's own
         /// window is a window on it as any other is -- moved by its caption, sized from its edges, maximized and
         /// restored -- rather than the screen itself.</summary>
@@ -160,7 +167,56 @@ namespace MS.Internal.Interop
         // The app's own window: the first top-level one, which fills the activity. The others float.
         private static IntPtr s_mainHandle;
         private bool _ownSurface;
+        private bool _popup;   // a borderless window that is not a child: a popup (Create)
+        private const int WS_CHILD = 0x40000000;
         private bool IsMain => _handle != IntPtr.Zero && _handle == s_mainHandle;
+
+        /// <summary>
+        /// The window is a popup that presents through a see-through surface of its own, as a popup's
+        /// window does on Windows: past its owner's edge, and over every window and its frame.
+        /// </summary>
+        /// <remarks>
+        /// A popup used to be drawn into its owner's surface alone, for its alpha (see
+        /// NativePlatform.PopupsShareOwnerSurface): a drop-down at the bottom of a dialog then ended
+        /// where the dialog did, and it is still drawn into the windows under it where it cannot have a
+        /// surface that keeps its alpha. A surface view whose format is translucent is blended by the
+        /// system compositor with the premultiplied colour the renderer leaves in it, over everything
+        /// under it -- where the renderer's swap chain keeps that alpha, which on the Vulkan backend it
+        /// does and on GLES it need not (AndroidPlatform.SurfacesKeepAlpha) -- so a popup has one where
+        /// that holds and the host can give it one (IAndroidHost.PopupSurfaces). Decided when the view
+        /// is made, which is what has the surface or not. WPF_ANDROID_COMPOSITE_POPUPS=1 draws popups
+        /// into the windows under them always.
+        /// </remarks>
+        public bool IsSeeThroughPopup => _seeThroughPopup;
+
+        private bool _seeThroughPopup;
+
+        private bool ChooseSeeThroughPopup(IAndroidHost host)
+            => _popup && s_popupSurfaces && host?.PopupSurfaces == true && SurfacesKeepAlpha();
+
+        /// <summary>Whether the compositor's surfaces keep their alpha (CompositorSurfacesKeepAlpha); a test
+        /// stands in for the GPU here.</summary>
+        internal static Func<bool> SurfacesKeepAlpha { get; set; } = CompositorSurfacesKeepAlpha;
+
+        /// <summary>The engine's AndroidPlatform.SurfacesKeepAlpha, asked reflectively as the rest of the seam
+        /// is (InstallCompositorResolver); false without an engine.</summary>
+        private static bool CompositorSurfacesKeepAlpha()
+        {
+            try
+            {
+                s_keepsAlpha ??= Type.GetType("Microsoft.Wpf.Interop.WebGpu.AndroidPlatform, Microsoft.Wpf.Interop.WebGpu", throwOnError: false)
+                    ?.GetProperty("SurfacesKeepAlpha", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                return s_keepsAlpha?.GetValue(null) is true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static System.Reflection.PropertyInfo s_keepsAlpha;
+
+        private static readonly bool s_popupSurfaces = Environment.GetEnvironmentVariable("WPF_ANDROID_COMPOSITE_POPUPS") != "1";
 
         /// <summary>The app's own window, pinned to the activity it fills -- not on a desktop (IAndroidHost.DesktopWindows),
         /// where it is a window as the others are.</summary>
@@ -339,7 +395,8 @@ namespace MS.Internal.Interop
             _xPixels = ox; _yPixels = oy; _widthPixels = Math.Max(1, ow); _heightPixels = Math.Max(1, oh);
             if (!IsBorderless && !fills) ApplyFrame();
             if (s_trace) Console.WriteLine($"[android] 0x{_handle:x} into {host.GetType().Name} at ({_xPixels},{_yPixels}) {_widthPixels}x{_heightPixels}px{(HasFrame ? " framed" : "")}{(fills ? " filling" : "")}");
-            host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, IsBorderless, fills, _ownSurface);
+            _seeThroughPopup = ChooseSeeThroughPopup(host);
+            host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, IsBorderless, fills, _ownSurface || IsSeeThroughPopup);
             if (_translucent) host.SetViewTranslucent(_handle);
             if (!_visible || _minimized) host.SetViewVisible(_handle, false);
             RaiseResized();
@@ -537,7 +594,11 @@ namespace MS.Internal.Interop
 
             IsBorderless = borderless;
             _ownSurface = borderless && ownSurface;
+            // a popup, not a child window (an ElementHost's tree, drawn into the window it lies in) nor a form's
+            // borderless window, which has a surface of its own anyway
+            _popup = borderless && !ownSurface && (FrameStyle & WS_CHILD) == 0;
             InstallCompositorResolver();
+            _seeThroughPopup = ChooseSeeThroughPopup(Host);
 
             // Start well above zero and step by a page so these never collide with each other, with
             // HwndWrapper's own synthetic handles, or with a real pointer. They are only ever compared
@@ -580,7 +641,7 @@ namespace MS.Internal.Interop
             lock (s_zOrder) s_zOrder.Add(this);
             if (main) s_mainHandle = _handle;
 
-            if (Host is null || !Host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, borderless, main && !desktop, _ownSurface))
+            if (Host is null || !Host.CreateView(_handle, _xPixels, _yPixels, _widthPixels, _heightPixels, borderless, main && !desktop, _ownSurface || IsSeeThroughPopup))
             {
                 // No activity to host the view. Keep the handle registered so WPF's teardown path
                 // still finds this window, but it will never present anything.
@@ -1030,10 +1091,11 @@ namespace MS.Internal.Interop
             // the size the surface has is the window's own only where the window is the screen (the app's own, which
             // follows the activity); a floating window's is the one it was given, which its surface follows. Taken from
             // a surface made at the size a window was created at, a dialog sized to its content right after was grown
-            // back to its creation size by the surface's report arriving late.
+            // back to its creation size by the surface's report arriving late. A popup's is the same: WPF makes it
+            // and only then moves and sizes it to where it opens (SetWindowPos).
             OnUi(() =>
             {
-                if (w.FillsScreen || w.IsBorderless)
+                if (w.FillsScreen || (w.IsBorderless && !w.IsSeeThroughPopup))
                 {
                     w._widthPixels = widthPixels;
                     w._heightPixels = heightPixels;
@@ -1127,8 +1189,9 @@ namespace MS.Internal.Interop
             => !s_byHandle.TryGetValue(handle, out AndroidWindow w) || !w.IsBorderless;
 
         /// <summary>
-        /// Whether this window is a popup (a borderless sibling view), which on this head means its
-        /// scene belongs in its OWNER's surface rather than one of its own.
+        /// Whether this window is drawn into the windows under it rather than presenting a surface of its
+        /// own: a borderless sibling view with none -- a child window, or a popup where the host gives
+        /// popups no surface (IsSeeThroughPopup).
         /// </summary>
         /// <remarks>
         /// The compositor used to work that out from MilTarget.IsLayered, which is a Windows
@@ -1138,7 +1201,7 @@ namespace MS.Internal.Interop
         /// the app kept rendering, and none of the popup's pixels ever reached the screen.
         /// </remarks>
         public static bool IsPopupWindow(IntPtr handle)
-            => s_byHandle.TryGetValue(handle, out AndroidWindow w) && w.IsBorderless;
+            => s_byHandle.TryGetValue(handle, out AndroidWindow w) && w.IsBorderless && !w._ownSurface && !w.IsSeeThroughPopup;
 
         /// <summary>The window is shown to the two eyes apart -- a headset's window holding 3D (AndroidXrHost):
         /// the compositor draws it twice into a surface twice its width, the left eye's picture beside the

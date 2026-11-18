@@ -105,6 +105,7 @@ namespace MS.Internal.Interop
         public System.IntPtr Handle { get { throw null; } }
         public static MS.Internal.Interop.IAndroidHost Host { get { throw null; } set { } }
         public bool IsBorderless { get { throw null; } }
+        public bool IsSeeThroughPopup { get { throw null; } }
         public static System.IntPtr MouseCaptureHandle { get { throw null; } set { } }
         public static event System.Action<MS.Internal.Interop.AndroidWindow.TouchMessage> MouseInput { add { } remove { } }
         public event System.Action<bool> ActiveChanged { add { } remove { } }
@@ -578,6 +579,7 @@ namespace MS.Internal.Interop
         double RefreshRateHz { get { throw null; } }
         bool DesktopWindows { get { throw null; } }
         bool DrawsFrames { get { throw null; } }
+        bool PopupSurfaces { get { throw null; } }
         void FrameChanged(System.IntPtr handle) { }
         bool CreateView(System.IntPtr handle, int x, int y, int width, int height, bool borderless, bool fillsScreen, bool ownSurface);
         void BringToFront(System.IntPtr handle) { }

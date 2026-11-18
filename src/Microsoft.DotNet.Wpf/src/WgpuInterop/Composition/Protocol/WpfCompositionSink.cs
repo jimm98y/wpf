@@ -564,12 +564,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
                     Log($"target 0x{tk.Key:x}: hwnd=0x{tk.Value.Hwnd:x} root={tk.Value.RootHandle} {tk.Value.Width}x{tk.Value.Height} layered={tk.Value.IsLayered} (transp=0x{tk.Value.Transparency:x})");
             }
-            // Where a popup cannot own a presentable transparent surface (Android on the GLES
-            // backend), its scene is drawn INTO the window it belongs to instead. Collect those
-            // first, translated to where the popup sits, so the owner's single render pass paints
-            // them on top of its own content -- see NativePlatform.PopupsShareOwnerSurface.
+            // Where a popup cannot present through a surface of its own, its scene is drawn INTO the
+            // windows under it instead. Collect those first, with where each popup sits, so every
+            // window's single render pass paints the part of them over it on top of its own content --
+            // see NativePlatform.PopupsShareOwnerSurface and PopupOverlays.
             EnsureGpu();
-            List<SceneVisual>? popupOverlays = CollectPopupOverlays();
+            List<PopupPlacement>? popupOverlays = CollectPopupOverlays();
 
             // Every target that wanted a frame actually got one. A target that bailed out -- no
             // surface yet, nothing to present into, a window the compositor is not showing -- leaves
@@ -626,7 +626,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 if (ts.Surface == IntPtr.Zero) { presentedEvery = false; continue; }
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 int presentedBefore = PresentedFrames;
-                Present(ts, popupOverlays != null ? Overlay(root, popupOverlays) : root, t);
+                Present(ts, popupOverlays != null ? OverlayPopups(root, t, popupOverlays) : root, t);
                 _perfRenderTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t1;
                 // Present bails out for a window with no drawable, or one the compositor is not
                 // scheduling; that frame did not reach the screen, so nothing may be skipped after it.
@@ -685,36 +685,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         }
 
         /// <summary>
-        /// The popup scenes to draw into their owner's surface this frame, each already translated to
-        /// the popup's position, or null where popups present themselves (every platform but Android
-        /// on GLES). Returns null rather than an empty list when there is nothing to composite, so the
-        /// owner's scene is passed through untouched and no wrapper visual is allocated.
-        /// </summary>
-        /// <summary>
-        /// Whether this target is drawn into the surface of the window it belongs to rather than one
-        /// of its own.
+        /// Whether this target is drawn into the surface of the windows under it rather than one of
+        /// its own.
         /// </summary>
         /// <remarks>
-        /// IsLayered alone was the test, and it is a WINDOWS notion (per-pixel alpha, WS_EX_LAYERED),
-        /// false for every popup on the heads that composite. On iOS that meant the head gave a popup
-        /// a touch-only view with a plain CALayer while the compositor tried to build a Metal swap
-        /// chain on it -- which wgpu asserts against, in a function that cannot unwind, so opening
-        /// any popup aborted the process (see IosInterop.CanPresentTo for the panic).
+        /// IsLayered was the test, and it is a WINDOWS notion (per-pixel alpha, WS_EX_LAYERED). It says
+        /// nothing about whether a window has a surface: on iOS the head gave a popup a touch-only view
+        /// with a plain CALayer while the compositor tried to build a Metal swap chain on it -- which
+        /// wgpu asserts against, in a function that cannot unwind, so opening any popup aborted the
+        /// process (see IosInterop.CanPresentTo for the panic) -- and where a popup has a see-through
+        /// surface of its own, a layered one was still drawn into its owner, ending at its edge.
         ///
-        /// So ask the platform whether the window can be presented to, and keep IsLayered for the
-        /// heads where a popup is a real transparent window that simply cannot present itself.
+        /// So ask the platform: whether the window can be presented to, and whether the windowing
+        /// layer draws it into the windows under it. A layered window that has a surface presents
+        /// through it, transparent (EnsureSurface).
         /// </remarks>
         private static bool IsCompositedIntoOwner(MilTarget t)
-            => t.IsLayered
-               || !Platform.NativePlatform.CanPresentToWindow((IntPtr)t.Hwnd)
+            => !Platform.NativePlatform.CanPresentToWindow((IntPtr)t.Hwnd)
                || Platform.NativePlatform.IsPopupWindow((IntPtr)t.Hwnd);
 
-        private List<SceneVisual>? CollectPopupOverlays()
+        /// <summary>
+        /// The popups to draw into other windows' surfaces this frame, each with where its window sits,
+        /// or null where popups present themselves. Null rather than an empty list when there is nothing
+        /// to composite, so every window's scene is passed through untouched.
+        /// </summary>
+        private List<PopupPlacement>? CollectPopupOverlays()
         {
             if (!Platform.NativePlatform.PopupsShareOwnerSurface)
                 return null;
 
-            List<SceneVisual>? overlays = null;
+            List<PopupPlacement>? overlays = null;
             foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
             {
                 MilTarget t = kv.Value;
@@ -725,24 +725,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
                 if (root is null) continue;
 
-                // The popup's scene is in ITS window's coordinates; move it to where that window sits
-                // inside the activity. Both are device pixels, so this is a plain translation.
+                // The popup's scene is in ITS window's coordinates; where that window sits is in the
+                // space every window's origin is given in (the activity, the UIWindow), device pixels.
                 Platform.NativePlatform.GetWindowOrigin((IntPtr)t.Hwnd, out int x, out int y);
-                var placed = new SceneVisual { Offset = new System.Numerics.Vector2(x, y) };
-                placed.Children.Add(root);
-                (overlays ??= new List<SceneVisual>()).Add(placed);
+                (overlays ??= new List<PopupPlacement>()).Add(new PopupPlacement(root, x, y, t.Width, t.Height));
             }
             return overlays;
         }
 
-        /// <summary>Wraps the owner's scene and the popup overlays in one parent, so a single render
-        /// pass draws the window and then the popups above it (children draw after their parent).</summary>
-        private static SceneVisual Overlay(SceneVisual root, List<SceneVisual> overlays)
+        /// <summary>The window's scene with the popups that lie over it drawn above it, in its own
+        /// coordinates -- one render pass draws the window and then the popups (children draw after
+        /// their parent). See PopupOverlays.</summary>
+        private static SceneVisual OverlayPopups(SceneVisual root, MilTarget t, List<PopupPlacement> overlays)
         {
-            var composite = new SceneVisual();
-            composite.Children.Add(root);
-            foreach (SceneVisual o in overlays) composite.Children.Add(o);
-            return composite;
+            Platform.NativePlatform.GetWindowOrigin((IntPtr)t.Hwnd, out int x, out int y);
+            return PopupOverlays.Compose(root, x, y, t.Width, t.Height, overlays);
         }
 
         // Render a layered popup off-screen with a transparent clear (so its shadow/rounded

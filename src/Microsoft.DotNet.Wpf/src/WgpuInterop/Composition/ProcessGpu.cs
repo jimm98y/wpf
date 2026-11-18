@@ -67,6 +67,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             }
         }
 
+        /// <summary>The adapter the process's device was made on, or null while there is none -- asked without
+        /// making one.</summary>
+        public static string? AdapterDescription
+        {
+            get { lock (s_lock) return s_ctx?.AdapterDescription; }
+        }
+
         /// <summary>The device, for an adapter's description (no reference taken; made and kept if none).</summary>
         public static WgpuContext Peek()
         {

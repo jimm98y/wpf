@@ -8,9 +8,9 @@
 // A window that has a surface of its own (the app's main window, a dialog, a borderless form) gets an
 // OpenXR swapchain backed by an Android Surface (XR_KHR_android_surface_swapchain). That Surface is handed
 // to AndroidWindow as the window's native window, exactly as a SurfaceView's would be, so the renderer
-// draws into it unchanged; the compositor shows it as a quad layer. A popup has no surface on Android (it
-// is drawn into its owner's, PopupsShareOwnerSurface) and none here: it is only a place the pointer can
-// be over.
+// draws into it unchanged; the compositor shows it as a quad layer. A popup has none here (PopupSurfaces is
+// false): it is drawn into the windows under it (PopupsShareOwnerSurface, PopupOverlays), and is only a
+// place the pointer can be over.
 //
 // The windows lie on one plane in front of the user, a desktop of GetScreenPixels' size, each at its
 // position on it -- so what the app knows of where its windows are holds -- and a little in front of the

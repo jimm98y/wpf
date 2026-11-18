@@ -11,9 +11,9 @@
 //          not track the view's size).
 //   iOS    a UIView subclass overriding +layerClass to return CAMetalLayer IS Metal-backed, so its
 //          own backing layer is the surface and UIKit keeps the geometry in sync for free. No
-//          sublayer, no autoresizing mask, no zPosition ordering, and no window-opacity dance
-//          (iOS has one opaque window; WPF popups fall back to swap-chain presents because
-//          NativePlatform.SupportsLayeredWindows is false off Windows).
+//          sublayer, no autoresizing mask and no zPosition ordering. A popup's view is see-through
+//          (UIKitWindow.MakeSeeThrough), which IsWindowOpaque reports, as a popup's NSWindow is
+//          on macOS.
 //
 // The nativeWindow handle passed in is therefore a UIView* whose layer is already a CAMetalLayer.
 //
@@ -109,9 +109,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// CAMetalLayer.
         /// </summary>
         /// <remarks>
-        /// The head builds two kinds of view: a Metal-backed one for a real window, and a TOUCH-ONLY
-        /// one for a popup, which deliberately has no Metal layer because a popup is drawn into its
-        /// owner's surface instead (UIKitWindow.Create, NativePlatform.PopupsShareOwnerSurface).
+        /// The head builds two kinds of view: a Metal-backed one for a window or a popup, and a
+        /// TOUCH-ONLY one for a window drawn into the windows under it -- a child window, or a popup
+        /// where WPF_IOS_COMPOSITE_POPUPS=1 -- which deliberately has no Metal layer
+        /// (UIKitWindow.Create, NativePlatform.PopupsShareOwnerSurface).
         ///
         /// The compositor decided which was which from MilTarget.IsLayered, and that is a WINDOWS
         /// notion -- it is Transparency != 0, set from WS_EX_LAYERED per-pixel opacity, and it is
@@ -141,6 +142,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             IntPtr metalClass = objc_getClass("CAMetalLayer");
             return metalClass != IntPtr.Zero && SendBoolPtr(layer, Sel("isKindOfClass:"), metalClass);
         }
+
+        /// <summary>
+        /// Whether the window behind a WPF handle is opaque. A popup's view is not: it presents through a
+        /// see-through layer of its own (UIKitWindow.PopupsPresentThemselves), so its surface is configured
+        /// with alpha and cleared transparent, and its rounded chrome and drop shadow blend over the
+        /// windows under it instead of filling the rest of its rectangle black. Asked of the windowing
+        /// layer, which knows which views it made see-through; without it (a spike driving the engine
+        /// with a view of its own) every window is opaque.
+        /// </summary>
+        public static bool IsWindowOpaque(IntPtr handle)
+        {
+            s_opaqueQuery ??= AppContext.GetData("WpfWebGpu.UIKitWindow.IsOpaque") as Func<IntPtr, bool>;
+            return s_opaqueQuery == null || s_opaqueQuery(handle);
+        }
+        private static Func<IntPtr, bool>? s_opaqueQuery;
 
         /// <summary>Keep the view's CAMetalLayer contentsScale in sync with the screen scale.</summary>
         public static void SetContentsScale(IntPtr uiView, double scale)
@@ -218,10 +234,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
-        /// The view's top-left corner in device pixels within the app's UIWindow. Needed when a popup
-        /// is drawn into its owner's surface rather than its own (NativePlatform.PopupsShareOwnerSurface):
-        /// the popup's scene has to be translated to where the popup sits. Converting to a nil view
-        /// gives window coordinates, which is the same space the owner's own view starts from.
+        /// The view's top-left corner in device pixels within the app's UIWindow. Needed when a window
+        /// is drawn into the surfaces of the windows under it rather than its own
+        /// (NativePlatform.PopupsShareOwnerSurface): its scene is placed where it sits less where each of
+        /// those windows does (PopupOverlays). Converting to a nil view gives window coordinates, the one
+        /// space every window's view is placed in.
         /// </summary>
         public static void GetWindowOrigin(IntPtr uiView, out int x, out int y)
         {

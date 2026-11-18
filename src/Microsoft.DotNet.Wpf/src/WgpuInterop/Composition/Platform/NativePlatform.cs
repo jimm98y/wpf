@@ -190,16 +190,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// </summary>
         public static bool ShownByFirstFrame => Current == PlatformKind.Linux;
 
-        /// <summary>
-        /// Whether this window is a popup, on a head that draws popups into their owner's surface.
-        /// False everywhere else, including where popups are real windows of their own.
-        /// </summary>
-        /// <remarks>
-        /// Android needs asking, because there a popup DOES have a presentable Surface of its own --
-        /// so CanPresentToWindow says yes and cannot distinguish it. The reason to composite there is
-        /// alpha, not capability: a GLES popup surface cannot be transparent (see
-        /// PopupsShareOwnerSurface), which is why one must never be given its own swap chain.
-        /// </remarks>
         /// <summary>A window shown to the two eyes apart: its surface is twice its width, the left eye's
         /// picture beside the right eye's (an OpenXR host's stereo pair, AndroidXrHost).</summary>
         public static bool IsStereoWindow(IntPtr windowHandle) => s_stereoPairs || Current switch
@@ -216,6 +206,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// rendering where no headset is there to split it between the eyes (the window shows both halves).</summary>
         private static readonly bool s_stereoPairs = Environment.GetEnvironmentVariable("WPF_WEBGPU_STEREO_PAIR") == "1";
 
+        /// <summary>
+        /// Whether this window is drawn into the windows under it, on a head where a window can be
+        /// (PopupsShareOwnerSurface) and the windowing layer has to say which. False everywhere else,
+        /// including where popups are real windows of their own.
+        /// </summary>
+        /// <remarks>
+        /// Android needs asking, because CanPresentToWindow cannot tell there: every window's Surface
+        /// arrives late, so a window that has none yet looks like one that will never have one. Linux
+        /// needs it because its popups are mapped surfaces either way.
+        /// </remarks>
         public static bool IsPopupWindow(IntPtr windowHandle) => Current switch
         {
             PlatformKind.Android => AndroidInterop.PopupQuery?.Invoke(windowHandle) == true,
@@ -230,8 +230,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         };
 
         /// <summary>
-        /// Where a window sits, in device pixels. On the mobile heads, where popups are child views
-        /// of one host window (see <see cref="PopupsShareOwnerSurface"/>), that is inside its owner.
+        /// Where a window sits, in device pixels. On the mobile heads, where windows are views in one
+        /// host window (see <see cref="PopupsShareOwnerSurface"/>), that is inside the host window.
         /// On macOS it is the window's content origin on screen (top-left origin): content embedded
         /// in it as a window of its own -- an ElementHost's WPF tree -- is placed in screen space.
         /// </summary>
@@ -245,27 +245,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         }
 
         /// <summary>
-        /// True where a WPF popup cannot present through its own surface and must instead be drawn
-        /// INTO the surface of the window it belongs to.
+        /// True where a WPF window may have no surface of its own and be drawn INTO the surfaces of the
+        /// windows under it instead -- which windows, the platform answers per window
+        /// (CanPresentToWindow, IsPopupWindow).
         ///
-        /// That is the two mobile heads. On both, a popup is a child VIEW of the app's single window
-        /// (an Android activity, an iOS UIWindow), so it already shares the owner's coordinate space
-        /// and can simply be drawn into it. Everywhere else a popup is its own OS window that must
+        /// That is the two mobile heads. On both, a window is a VIEW in the app's single window (an
+        /// Android activity, an iOS UIWindow), so every window shares one coordinate space and one can
+        /// simply be drawn into another. Everywhere else a window is its own OS window that must
         /// present itself, and SupportsLayeredWindows/IsWindowOpaque decide how.
         ///
-        /// On Android it is not merely nicer, it is the only thing that works: when wgpu falls back
-        /// to GLES a popup surface cannot be transparent at all -- wgpu-hal hardcodes
-        /// `composite_alpha_modes: vec![Opaque]` (unchanged through trunk; gfx-rs/wgpu#687 was closed
-        /// by a PR covering only Metal and Vulkan) -- so clearing it transparent, which is what a
-        /// Popup's rounded chrome and drop shadow need, scans out as solid BLACK around the popup.
+        /// What is drawn so there: a child window (an ElementHost's tree, which its host composites), a
+        /// popup on Android's GLES backend or on a host that gives popups no surface (an XR headset's
+        /// desktop of panels), and every popup where WPF_ANDROID_COMPOSITE_POPUPS=1 /
+        /// WPF_IOS_COMPOSITE_POPUPS=1. Each window draws the part of such a window that lies over it,
+        /// in its own coordinates (PopupOverlays): a popup drawn into its owner alone ended at the
+        /// owner's edge, so a drop-down near the bottom of a dialog was cut off where the dialog ended.
+        /// Drawn so, it is whole wherever a window lies under it -- the app's own fills the screen --
+        /// but under what the platform draws round a window above the one drawing it (a dialog's frame).
         ///
-        /// iOS has the same shape of problem for a different reason: it has no layered-window path
-        /// either (SupportsLayeredWindows is false off Windows), so popups there used to present
-        /// opaquely through their own swap chain and lost their shadow and rounded corners.
-        ///
-        /// Compositing sidesteps the popup surface entirely on both, and is the better arrangement
-        /// regardless of backend: one swap chain instead of several, correct alpha, and popups stack
-        /// in the order WPF asked for rather than by the platform's own view/layer ordering rules.
+        /// Popups were drawn so for their alpha: a popup's rounded chrome and drop shadow lie on a
+        /// transparent background, and its own surface was opaque. On iOS that was only the layer being
+        /// made so: a CAMetalLayer told it is not opaque is blended by Core Animation, as macOS blends a
+        /// popup's window, so a popup presents through a see-through layer of its own there
+        /// (UIKitWindow.PopupsPresentThemselves). On Android it is the backend. A translucent surface
+        /// view is blended by the system compositor where the buffers have alpha: on Vulkan the swap
+        /// chain's images are RGBA and its composite alpha is the view's (INHERIT, all Android's loader
+        /// offers besides OPAQUE), so a popup has one there (AndroidWindow.IsSeeThroughPopup); on GLES wgpu-hal
+        /// advertises `composite_alpha_modes: vec![Opaque]` (gfx-rs/wgpu#687 was closed by a PR covering
+        /// only Metal and Vulkan) and the EGL config it picks need have no alpha -- measured on the
+        /// emulator, a popup on a surface of its own showed solid BLACK round its rounded corners -- so
+        /// popups stay drawn into the windows there. A popup with a surface of its own reaches past its
+        /// owner's edge and lies over every window and the frames round them, as on Windows.
         /// </summary>
         /// <remarks>
         /// Linux does NOT join them by default. The GL backend reaching the GPU under VirGL advertises
@@ -276,7 +286,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
         /// surface shows rounded and see-through where it should, and -- unlike one drawn into its
         /// owner -- past the owner's edge, as on Windows.
         ///
-        /// WPF_LINUX_COMPOSITE_POPUPS=1 draws them into their owners again.
+        /// WPF_LINUX_COMPOSITE_POPUPS=1 draws them into their owners again. A Wayland window knows no
+        /// place on the screen, so there a popup's origin is its owner's client's and every toplevel's
+        /// is zero: each draws the popup where it lies in its owner.
         /// </remarks>
         public static bool PopupsShareOwnerSurface
             => Current is PlatformKind.Android or PlatformKind.IOS
@@ -331,6 +343,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Platform
             if (Current == PlatformKind.Windows) return Win32Interop.IsWindowOpaque(nativeWindow);
             // Android: a WPF popup is its own view with a translucent surface (see AndroidInterop).
             if (Current == PlatformKind.Android) return AndroidInterop.IsWindowOpaque(nativeWindow);
+            // iOS: a WPF popup's view and its layer are see-through (see IosInterop).
+            if (Current == PlatformKind.IOS) return IosInterop.IsWindowOpaque(nativeWindow);
             // Linux: borderless windows (popups, menus, tooltips) want a transparent surface where
             // the backend can give them one; the windowing layer answers, defaulting to opaque.
             if (Current == PlatformKind.Linux && LinuxInterop.OpaqueQuery is not null)

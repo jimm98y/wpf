@@ -241,6 +241,52 @@ namespace MS.Internal.Interop
 
         private bool _ownSurface;   // a borderless window with a surface of its own (Create)
 
+        private const int WS_CHILD = 0x40000000;
+
+        /// <summary>
+        /// Whether a popup (a drop-down, a menu, a tooltip) presents through a Metal layer of its own
+        /// rather than being drawn into the windows under it.
+        /// </summary>
+        /// <remarks>
+        /// It used to be drawn into its owner, for its alpha: a popup's rounded chrome and drop shadow
+        /// lie on a transparent background, and the layer it had was opaque. But drawn into its owner it
+        /// ended at the owner's edge -- a drop-down near the bottom of a dialog was cut off where the
+        /// dialog ended -- and under the owner's frame. A CAMetalLayer is not opaque when told so, and Core
+        /// Animation then blends the premultiplied picture the renderer leaves in it over what is under
+        /// the view, as macOS does a popup's window (CocoaWindow); so the popup is a window of its own
+        /// here as there, past its owner's edge and over every window, in the order UIKit stacks the
+        /// views. WPF_IOS_COMPOSITE_POPUPS=1 draws popups into the windows under them again.
+        /// </remarks>
+        internal static bool PopupsPresentThemselves { get; set; } =
+            Environment.GetEnvironmentVariable("WPF_IOS_COMPOSITE_POPUPS") != "1";
+
+        /// <summary>Whether a window made so is a popup with a see-through layer of its own: borderless, not a
+        /// child window (an ElementHost's tree, drawn into the window it lies in) nor a form's borderless window
+        /// (a window with a surface, opaque).</summary>
+        internal static bool PresentsSeeThrough(bool borderless, bool ownSurface, int style)
+            => borderless && !ownSurface && PopupsPresentThemselves && (style & WS_CHILD) == 0;
+
+        /// <summary>The window's view and its layer see-through: what the window leaves transparent shows the
+        /// windows under it (the compositor configures its surface with alpha, IsWindowOpaque).</summary>
+        private void MakeSeeThrough()
+        {
+            _seeThrough = true;
+            SendVoidBool(_view, Sel("setOpaque:"), false);
+            IntPtr layer = Send(_view, Sel("layer"));
+            if (layer != IntPtr.Zero) SendVoidBool(layer, Sel("setOpaque:"), false);
+        }
+
+        private bool _seeThrough;   // the view and its layer are not opaque (MakeSeeThrough, SetOwnFrame)
+
+        /// <summary>
+        /// Whether a window is opaque: a popup's view is not (MakeSeeThrough), nor a window drawing its own
+        /// see-through frame (SetOwnFrame). The compositor asks, through AppContext, to configure the
+        /// window's surface with alpha and clear it transparent -- from its render thread, so this answers
+        /// from what was set rather than asking the view, which UIKit allows on the main thread only.
+        /// </summary>
+        internal static bool IsWindowOpaque(IntPtr handle)
+            => FromHandle(handle) is not { } w || w._view == IntPtr.Zero || !w._seeThrough;
+
         /// <summary>A child window that takes the keyboard when pressed, as SetFocus on one does on Windows.</summary>
         public bool TakesKeyboardOnPress { get; set; }
 
@@ -255,10 +301,9 @@ namespace MS.Internal.Interop
         public void SetOwnFrame()
         {
             if (_view == IntPtr.Zero) return;
-            SendVoidBool(_view, Sel("setOpaque:"), false);
+            MakeSeeThrough();
             IntPtr layer = Send(_view, Sel("layer"));
             if (layer == IntPtr.Zero) return;
-            SendVoidBool(layer, Sel("setOpaque:"), false);
             SendVoidFloat(layer, Sel("setShadowOpacity:"), 0f);
         }
 
@@ -394,8 +439,6 @@ namespace MS.Internal.Interop
                     frame = rootBounds;
             }
 
-            // A popup is drawn INTO its owner's surface (NativePlatform.PopupsShareOwnerSurface), so it
-            // needs no Metal layer of its own -- only somewhere for UIKit to deliver its touches.
             // a floating window with a caption: CreateWindowEx's rectangle is the outer one, the client inside its frame
             _title = title ?? "";
             if (!borderless && !main)
@@ -408,9 +451,16 @@ namespace MS.Internal.Interop
                     frame.height = Math.Max(1, frame.height - FrameHeightPixels / scale);
                 }
             }
-            _view = borderless && !_ownSurface ? CreateTouchOnlyView(frame) : CreateMetalBackedView(frame, fillsSuperview: main);
+            // A popup presents through a see-through Metal layer of its own (PopupsPresentThemselves), above
+            // every window and its frame, as a popup's window is on Windows. A child window, and a popup
+            // where WPF_IOS_COMPOSITE_POPUPS=1, is drawn INTO the windows under it instead
+            // (NativePlatform.PopupsShareOwnerSurface), so it needs no Metal layer -- only somewhere for
+            // UIKit to deliver its touches.
+            bool seeThrough = PresentsSeeThrough(borderless, ownSurface, FrameStyle);
+            _view = borderless && !_ownSurface && !seeThrough ? CreateTouchOnlyView(frame) : CreateMetalBackedView(frame, fillsSuperview: main);
             if (_view == IntPtr.Zero)
                 return;
+            if (seeThrough) MakeSeeThrough();
             if (main) s_mainView = _view;
             else if (!borderless && _frame == null) AddShadow(_view);
             if (_frame != null) CreateFrame(frame);
@@ -424,6 +474,7 @@ namespace MS.Internal.Interop
             _handle = (IntPtr)(s_nextHandle += 4);
             s_byHandle[_handle] = this;
             AppContext.SetData("WpfWebGpu.UIKitWindow.ViewOf", (Func<IntPtr, IntPtr>)ViewOf);
+            AppContext.SetData("WpfWebGpu.UIKitWindow.IsOpaque", (Func<IntPtr, bool>)IsWindowOpaque);
             s_zOrder.Add(this);
             if (s_trace)
                 Console.WriteLine($"[uikit] window 0x{_view:x} '{title}' {(main ? "main" : borderless ? (_ownSurface ? "borderless+surface" : "popup") : "floating")} " +
