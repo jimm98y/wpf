@@ -82,7 +82,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
         private Value ResourceValue(Resource r)
         {
             r.Used = true;
-            if (r.ArrayLength > 1) throw new HlslException(default, $"an array of resources ({r.Name}) is not supported yet");
+            // an array of resources: its elements at consecutive registers, indexed by a constant
+            if (r.ArrayLength > 1)
+                return new AggValue
+                {
+                    Type = new ArrayType(r.Type, r.ArrayLength),
+                    Parts = Enumerable.Range(0, r.ArrayLength).Select(k => (Value)new ObjValue { Type = r.Type, Register = Math.Max(0, r.Slot) + k, Sampler = r.Legacy ? Math.Max(0, r.Slot) + k : -1 }).ToArray(),
+                };
             return new ObjValue { Type = r.Type, Register = Math.Max(0, r.Slot), Sampler = r.Legacy ? Math.Max(0, r.Slot) : -1 };
         }
 
@@ -244,6 +250,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             {
                 case AggValue a when a.Type is ArrayType:
                     if (constant) return a.Parts[Math.Clamp((int)k, 0, a.Parts.Length - 1)];
+                    if (a.Parts.Length > 0 && a.Parts[0] is ObjValue)
+                        throw Err(ix, "an array of resources indexed by a value needs shader model 5.1 (a literal, or an unrolled loop's counter, indexes it)", 3512);
                     // control points: the element's registers, the vertex index relative
                     if (a.Parts.Length > 0 && IsVertexArray(a))
                     {

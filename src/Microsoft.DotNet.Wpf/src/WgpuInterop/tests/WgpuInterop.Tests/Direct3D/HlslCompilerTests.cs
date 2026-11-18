@@ -400,6 +400,29 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.True(differ == 0, summary + Environment.NewLine + string.Join(Environment.NewLine, lines.Where(l => l.StartsWith("FAIL"))));
         }
 
+        /// <summary>An array of textures: its elements at consecutive registers, each declared, one binding
+        /// of the array's count; a literal or an unrolled counter indexes it, a value does not (5.1).</summary>
+        [Fact]
+        public void ResourceArrays_TakeConsecutiveRegisters()
+        {
+            const string src = "Texture2D maps[3] : register(t2); SamplerState s;\n"
+                + "float4 main(float2 uv : TEXCOORD0) : SV_Target { float4 r = maps[0].Sample(s, uv); [unroll] for (int k = 1; k < 3; k++) r += maps[k].Sample(s, uv * k); return r; }\n";
+            var blob = Compile(src, "arr.hlsl", "main", "ps_5_0", Array.Empty<string>(), out string errors);
+            Assert.True(blob != null, errors);
+            var shader = DxbcShader.Parse(blob!);
+            var declared = shader.Instructions.Where(i => i.Op == Opcode.DclResource).Select(i => i.Operands[0].Index0).OrderBy(x => x).ToArray();
+            Assert.Equal(new[] { 2, 3, 4 }, declared);
+            var sampled = shader.Instructions.Where(i => i.Op == Opcode.Sample).Select(i => i.Operands[2].Index0).ToArray();
+            Assert.Equal(new[] { 2, 3, 4 }, sampled);
+            var refl = DxbcReflection.Read(DxbcPixelParity.Chunk(blob!, "RDEF")!);
+            var b = refl.Bindings.Single(x => x.Name == "maps");
+            Assert.Equal((2, 3), (b.Register, b.Count));
+
+            const string dynamic = "Texture2D maps[3]; SamplerState s; int i;\nfloat4 main(float2 uv : TEXCOORD0) : SV_Target { return maps[i].Sample(s, uv); }\n";
+            Assert.Null(Compile(dynamic, "arr.hlsl", "main", "ps_5_0", Array.Empty<string>(), out string derr));
+            Assert.Contains("5.1", derr);
+        }
+
         [Fact]
         public void Errors_AreFxcsText()
         {

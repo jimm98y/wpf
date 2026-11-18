@@ -1011,15 +1011,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
                 _w.Emit(Opcode.DclConstantBuffer, cb.DynamicallyIndexed ? 1u : 0u, o);
             }
             foreach (var r in _resources.Where(r => r.Used && r.Slot >= 0).OrderBy(r => r.Kind).ThenBy(r => r.Slot))
-            {
-                if (r.Kind == 's' || r.Legacy)
+                for (int k = 0; k < Math.Max(1, r.ArrayLength); k++)
                 {
-                    uint mode = r.Type.IsComparisonSampler ? 1u : 0u;
-                    _w.Emit(Opcode.DclSampler, mode, DxOperand.Bare(OperandType.Sampler, r.Slot));
+                    // an array's elements, each its own register (shader model 5.0 declares them so)
+                    if (r.Kind == 's' || r.Legacy)
+                    {
+                        uint mode = r.Type.IsComparisonSampler ? 1u : 0u;
+                        _w.Emit(Opcode.DclSampler, mode, DxOperand.Bare(OperandType.Sampler, r.Slot + k));
+                    }
+                    if (r.Kind == 't' || r.Legacy) DeclareResource(r, k);
+                    if (r.Kind == 'u') DeclareUav(r, k);
                 }
-                if (r.Kind == 't' || r.Legacy) DeclareResource(r);
-                if (r.Kind == 'u') DeclareUav(r);
-            }
             // a tbuffer: a buffer of float4s at its t# (read with ld)
             foreach (var cb in _cbuffers.Where(c => c.Texture && c.Used && c.Slot >= 0))
                 _w.EmitWith(Opcode.DclResource, 1u, null, new[] { DxOperand.Bare(OperandType.Resource, cb.Slot) }, new[] { 0x5555u });
@@ -1104,38 +1106,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D.Hlsl
             return k | k << 4 | k << 8 | k << 12;
         }
 
-        private void DeclareResource(Resource r)
+        private void DeclareResource(Resource r, int k = 0)
         {
             var t = r.Type;
             if (t.Name is "StructuredBuffer")
             {
-                _w.EmitWith(Opcode.DclResourceStructured, 0, null, new[] { DxOperand.Bare(OperandType.Resource, r.Slot) }, new[] { (uint)(t.Element == null ? 4 : SizeOfStructured(t.Element)) });
+                _w.EmitWith(Opcode.DclResourceStructured, 0, null, new[] { DxOperand.Bare(OperandType.Resource, r.Slot + k) }, new[] { (uint)(t.Element == null ? 4 : SizeOfStructured(t.Element)) });
                 return;
             }
             if (t.Name is "ByteAddressBuffer")
             {
-                _w.Emit(Opcode.DclResourceRaw, 0, DxOperand.Bare(OperandType.Resource, r.Slot));
+                _w.Emit(Opcode.DclResourceRaw, 0, DxOperand.Bare(OperandType.Resource, r.Slot + k));
                 return;
             }
             uint control = (uint)Dimension(t) | (t.Name.Contains("MS") ? (uint)t.Count << 5 : 0);
-            _w.EmitWith(Opcode.DclResource, control, null, new[] { DxOperand.Bare(OperandType.Resource, r.Slot) }, new[] { ReturnType(t) });
+            _w.EmitWith(Opcode.DclResource, control, null, new[] { DxOperand.Bare(OperandType.Resource, r.Slot + k) }, new[] { ReturnType(t) });
         }
 
-        private void DeclareUav(Resource r)
+        private void DeclareUav(Resource r, int k = 0)
         {
             var t = r.Type;
             if (t.Name is "RWStructuredBuffer" or "AppendStructuredBuffer" or "ConsumeStructuredBuffer")
             {
                 uint counter = t.Name == "RWStructuredBuffer" && !r.Counter ? 0u : 1u << 12;
-                _w.EmitWith(Opcode.DclUnorderedAccessViewStructured, counter, null, new[] { DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot) }, new[] { (uint)(t.Element == null ? 4 : SizeOfStructured(t.Element)) });
+                _w.EmitWith(Opcode.DclUnorderedAccessViewStructured, counter, null, new[] { DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot + k) }, new[] { (uint)(t.Element == null ? 4 : SizeOfStructured(t.Element)) });
                 return;
             }
             if (t.Name == "RWByteAddressBuffer")
             {
-                _w.Emit(Opcode.DclUnorderedAccessViewRaw, 0, DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot));
+                _w.Emit(Opcode.DclUnorderedAccessViewRaw, 0, DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot + k));
                 return;
             }
-            _w.EmitWith(Opcode.DclUnorderedAccessViewTyped, (uint)Dimension(t), null, new[] { DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot) }, new[] { ReturnType(t) });
+            _w.EmitWith(Opcode.DclUnorderedAccessViewTyped, (uint)Dimension(t), null, new[] { DxOperand.Bare(OperandType.UnorderedAccessView, r.Slot + k) }, new[] { ReturnType(t) });
         }
 
         /// <summary>A structured buffer element's size: tightly packed, as structured buffers are.</summary>
