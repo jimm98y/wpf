@@ -70,3 +70,10 @@ M:System.Management.ObjectQuery.#ctor
 M:System.Management.ObjectQuery.#ctor(System.String)
 M:System.Management.ObjectQuery.#ctor(System.String,System.String)
 M:System.Management.ObjectQuery.Clone
+T:System.Management.ManagementEventWatcher
+T:System.Management.EventQuery
+T:System.Management.WqlEventQuery
+T:System.Management.EventWatcherOptions
+T:System.Management.EventArrivedEventArgs
+T:System.Management.StoppedEventArgs
+T:System.Management.ManagementEventArgs

@@ -34,6 +34,16 @@ namespace System.Management
 
         private static ManagementException Invalid() => new ManagementException(ManagementStatus.InvalidQuery);
 
+        // ISA: an embedded object of the class or one derived from it (Win32_Process is a CIM_Process); a class name as
+        // the class
+        private static bool IsA(object value, string cls)
+        {
+            string name = value is ManagementBaseObject o ? o.Data.ClassName : Convert.ToString(value, CultureInfo.InvariantCulture);
+            if (string.Equals(name, cls, StringComparison.OrdinalIgnoreCase)) return true;
+            return name != null && cls != null && name.StartsWith("Win32_", StringComparison.OrdinalIgnoreCase) && cls.StartsWith("CIM_", StringComparison.OrdinalIgnoreCase)
+                && name.AsSpan(6).Equals(cls.AsSpan(4), StringComparison.OrdinalIgnoreCase);
+        }
+
         private enum Tok { End, Ident, String, Number, Op, LParen, RParen, Comma, Star }
 
         private sealed class Parser
@@ -144,7 +154,7 @@ namespace System.Management
                 {
                     Next();
                     Func<Func<string, object>, object> cls = ParseOperand();
-                    return new Fn(v => string.Equals(Convert.ToString(left(v), CultureInfo.InvariantCulture), Convert.ToString(cls(v), CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase));
+                    return new Fn(v => IsA(left(v), Convert.ToString(cls(v), CultureInfo.InvariantCulture)));
                 }
                 bool notLike = false;
                 if (IsKeyword("NOT")) { notLike = true; Next(); if (!IsKeyword("LIKE")) throw Invalid(); }
@@ -215,7 +225,9 @@ namespace System.Management
                 if (char.IsLetter(c) || c == '_')
                 {
                     int start = _pos;
-                    while (_pos < _text.Length && (char.IsLetterOrDigit(_text[_pos]) || _text[_pos] == '_')) _pos++;
+                    // a dotted name is one name: an embedded object's property (TargetInstance.Name)
+                    while (_pos < _text.Length && (char.IsLetterOrDigit(_text[_pos]) || _text[_pos] == '_'
+                        || (_text[_pos] == '.' && _pos + 1 < _text.Length && (char.IsLetter(_text[_pos + 1]) || _text[_pos + 1] == '_')))) _pos++;
                     _tok = Tok.Ident;
                     _val = _text.Substring(start, _pos - start);
                     return;

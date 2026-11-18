@@ -59,7 +59,7 @@ namespace System.Management
         IgnoreCase = 16,
         IgnoreFlavor = 32,
     }
-    public partial class CompletedEventArgs : System.Management.ManagementEventArgs
+    public partial class CompletedEventArgs : System.EventArgs
     {
         internal CompletedEventArgs() { }
         public System.Management.ManagementStatus Status { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
@@ -72,26 +72,7 @@ namespace System.Management
         public DeleteOptions(System.Management.ManagementNamedValueCollection context, System.TimeSpan timeout) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         public override object Clone() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
     }
-    public partial class EventArrivedEventArgs : System.Management.ManagementEventArgs
-    {
-        internal EventArrivedEventArgs() { }
-        public System.Management.ManagementBaseObject NewEvent { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-    }
     public delegate void EventArrivedEventHandler(object sender, System.Management.EventArrivedEventArgs e);
-    public partial class EventQuery : System.Management.ManagementQuery
-    {
-        public EventQuery() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public EventQuery(string query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public EventQuery(string language, string query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public override object Clone() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-    }
-    public partial class EventWatcherOptions : System.Management.ManagementOptions
-    {
-        public EventWatcherOptions() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public EventWatcherOptions(System.Management.ManagementNamedValueCollection context, System.TimeSpan timeout, int blockSize) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public int BlockSize { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public override object Clone() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-    }
     public enum ImpersonationLevel
     {
         Default = 0,
@@ -151,30 +132,6 @@ namespace System.Management
         public bool GetStronglyTypedClassCode(System.Management.CodeLanguage lang, string filePath, string classNamespace) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         public void GetSubclasses(System.Management.ManagementOperationObserver watcher) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         public void GetSubclasses(System.Management.ManagementOperationObserver watcher, System.Management.EnumerationOptions options) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-    }
-    public abstract partial class ManagementEventArgs : System.EventArgs
-    {
-        internal ManagementEventArgs() { }
-        public object Context { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-    }
-    [System.ComponentModel.ToolboxItemAttribute(false)]
-    public partial class ManagementEventWatcher : System.ComponentModel.Component
-    {
-        public ManagementEventWatcher() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public ManagementEventWatcher(System.Management.EventQuery query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public ManagementEventWatcher(System.Management.ManagementScope scope, System.Management.EventQuery query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public ManagementEventWatcher(System.Management.ManagementScope scope, System.Management.EventQuery query, System.Management.EventWatcherOptions options) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public ManagementEventWatcher(string query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public ManagementEventWatcher(string scope, string query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public ManagementEventWatcher(string scope, string query, System.Management.EventWatcherOptions options) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public System.Management.EventWatcherOptions Options { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public System.Management.EventQuery Query { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public System.Management.ManagementScope Scope { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public event System.Management.EventArrivedEventHandler EventArrived { add { } remove { } }
-        public event System.Management.StoppedEventHandler Stopped { add { } remove { } }
-        public void Start() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public void Stop() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public System.Management.ManagementBaseObject WaitForNextEvent() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
     }
     public partial class ManagementObject : System.Management.ManagementBaseObject, System.ICloneable
     {
@@ -375,7 +332,7 @@ namespace System.Management
             public void Reset() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         }
     }
-    public partial class ObjectPutEventArgs : System.Management.ManagementEventArgs
+    public partial class ObjectPutEventArgs : System.EventArgs
     {
         internal ObjectPutEventArgs() { }
         public System.Management.ManagementPath Path { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
@@ -384,13 +341,13 @@ namespace System.Management
     public partial class ObjectQuery : System.Management.ManagementQuery
     {
     }
-    public partial class ObjectReadyEventArgs : System.Management.ManagementEventArgs
+    public partial class ObjectReadyEventArgs : System.EventArgs
     {
         internal ObjectReadyEventArgs() { }
         public System.Management.ManagementBaseObject NewObject { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
     }
     public delegate void ObjectReadyEventHandler(object sender, System.Management.ObjectReadyEventArgs e);
-    public partial class ProgressEventArgs : System.Management.ManagementEventArgs
+    public partial class ProgressEventArgs : System.EventArgs
     {
         internal ProgressEventArgs() { }
         public int Current { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
@@ -485,39 +442,12 @@ namespace System.Management
         public override object Clone() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
         protected internal override void ParseQuery(string query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
     }
-    public partial class StoppedEventArgs : System.Management.ManagementEventArgs
-    {
-        internal StoppedEventArgs() { }
-        public System.Management.ManagementStatus Status { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-    }
     public delegate void StoppedEventHandler(object sender, System.Management.StoppedEventArgs e);
     public enum TextFormat
     {
         Mof = 0,
         CimDtd20 = 1,
         WmiDtd20 = 2,
-    }
-    public partial class WqlEventQuery : System.Management.EventQuery
-    {
-        public WqlEventQuery() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string queryOrEventClassName) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string eventClassName, string condition) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string eventClassName, string condition, System.TimeSpan groupWithinInterval) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string eventClassName, string condition, System.TimeSpan groupWithinInterval, string[] groupByPropertyList) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string eventClassName, System.TimeSpan withinInterval) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string eventClassName, System.TimeSpan withinInterval, string condition) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public WqlEventQuery(string eventClassName, System.TimeSpan withinInterval, string condition, System.TimeSpan groupWithinInterval, string[] groupByPropertyList, string havingCondition) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public string Condition { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public string EventClassName { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public System.Collections.Specialized.StringCollection GroupByPropertyList { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public System.TimeSpan GroupWithinInterval { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public string HavingCondition { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public override string QueryLanguage { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public override string QueryString { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        public System.TimeSpan WithinInterval { get { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } set { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); } }
-        protected internal void BuildQuery() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        public override object Clone() { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
-        protected internal override void ParseQuery(string query) { throw new System.PlatformNotSupportedException("System.Management is not supported on this platform."); }
     }
     public partial class WqlObjectQuery : System.Management.ObjectQuery
     {
