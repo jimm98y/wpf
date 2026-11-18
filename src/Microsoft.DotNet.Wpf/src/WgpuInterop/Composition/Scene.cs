@@ -1028,6 +1028,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public byte TextRenderingMode { get; set; }
 
         /// <summary>
+        /// RenderOptions.ClearTypeHint = Enabled on this visual: its text (the subtree's) stays ClearType where WPF
+        /// would otherwise draw it grey -- in a layer with an effect, an opacity mask or a group opacity, on a
+        /// transparent window.
+        /// </summary>
+        public bool ClearTypeHintEnabled { get; set; }
+
+        /// <summary>
         /// Pixel-snapping guidelines in this visual's LOCAL space (WPF's GuidelineSet, sent as
         /// MILCMD_VISUAL_SETGUIDELINECOLLECTION). WPF controls emit these so a 1px border or
         /// separator lands ON a device pixel boundary instead of straddling two and rendering

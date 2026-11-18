@@ -84,6 +84,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 NearestBitmapScaling = v.NearestBitmapScaling,
                 HighQualityBitmapScaling = v.HighQualityBitmapScaling,
                 TextRenderingMode = v.TextRenderingMode,
+                ClearTypeHintEnabled = v.ClearTypeHintEnabled,
                 GuidelinesX = v.GuidelinesX,
                 GuidelinesY = v.GuidelinesY,
             };
@@ -139,7 +140,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 || !Nullable.Equals(m.Clip, v.Clip) || !ReferenceEquals(m.ClipGeometry, v.ClipGeometry) || !ReferenceEquals(m.Effect, v.Effect)
                 || !ReferenceEquals(m.OpacityMask, v.OpacityMask) || m.BitmapCached != v.BitmapCached
                 || !ReferenceEquals(m.Snapshot, v.Snapshot) || m.AliasedEdges != v.AliasedEdges
-                || m.NearestBitmapScaling != v.NearestBitmapScaling || m.HighQualityBitmapScaling != v.HighQualityBitmapScaling || m.TextRenderingMode != v.TextRenderingMode || !ReferenceEquals(m.GuidelinesX, v.GuidelinesX)
+                || m.NearestBitmapScaling != v.NearestBitmapScaling || m.HighQualityBitmapScaling != v.HighQualityBitmapScaling || m.TextRenderingMode != v.TextRenderingMode || m.ClearTypeHintEnabled != v.ClearTypeHintEnabled || !ReferenceEquals(m.GuidelinesX, v.GuidelinesX)
                 || !ReferenceEquals(m.GuidelinesY, v.GuidelinesY))
                 return false;
             List<DrawingPrimitive> mc = m.Content;

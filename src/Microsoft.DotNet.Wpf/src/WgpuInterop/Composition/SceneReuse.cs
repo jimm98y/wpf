@@ -78,7 +78,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             && SameRect(a.Clip, b.Clip) && SameGeometry(a.ClipGeometry, b.ClipGeometry) && SameGeometry(a.ClipShape, b.ClipShape)
             && ReferenceEquals(a.Effect, b.Effect) && SameBrush(a.OpacityMask, b.OpacityMask)
             && a.BitmapCached == b.BitmapCached && SameSnapshot(a.Snapshot, b.Snapshot)
-            && a.AliasedEdges == b.AliasedEdges && a.NearestBitmapScaling == b.NearestBitmapScaling && a.HighQualityBitmapScaling == b.HighQualityBitmapScaling && a.TextRenderingMode == b.TextRenderingMode
+            && a.AliasedEdges == b.AliasedEdges && a.NearestBitmapScaling == b.NearestBitmapScaling && a.HighQualityBitmapScaling == b.HighQualityBitmapScaling && a.TextRenderingMode == b.TextRenderingMode && a.ClearTypeHintEnabled == b.ClearTypeHintEnabled
             && SameFloats(a.GuidelinesX, b.GuidelinesX) && SameFloats(a.GuidelinesY, b.GuidelinesY);
 
         private static bool SameSnapshot(SceneSnapshot? a, SceneSnapshot? b)

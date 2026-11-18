@@ -1717,7 +1717,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>The geometry the visual is clipped by: its own, or its rectangle turned (SetTurnedClip).</summary>
         private static PathGeometry? ClipGeo(SceneVisual v) => v.ClipGeometry ?? v.TurnedClip;
 
+        // Text in an intermediate WPF composites with transparency -- an effect's, an opacity mask's, a group opacity's --
+        // is not ClearType there (wpfgfx realizes it for an opaque target only), and neither on a transparent window;
+        // RenderOptions.ClearTypeHint = Enabled at or above it keeps it ClearType.
+        private bool _textInTransparentLayer, _clearTypeHint;
+
+        private bool ClearTypeHere => _clearTypeHint || (!_transparentTarget && !_textInTransparentLayer);
+
         private void CollectVisualCore(SceneVisual v, Matrix3x2 parentWorld, double inheritedOpacity, Scissor parentClip,
+            DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
+        {
+            bool savedLayer = _textInTransparentLayer, savedHint = _clearTypeHint;
+            if (v.ClearTypeHintEnabled) _clearTypeHint = true;
+            if (v.Effect != null || v.OpacityMask != null || (Math.Clamp(v.Opacity, 0.0, 1.0) < 0.999 && CountDrawables(v) > 1))
+                _textInTransparentLayer = true;
+            try { CollectVisualCoreInner(v, parentWorld, inheritedOpacity, parentClip, outData, plan, width, height, outFormat); }
+            finally { _textInTransparentLayer = savedLayer; _clearTypeHint = savedHint; }
+        }
+
+        private void CollectVisualCoreInner(SceneVisual v, Matrix3x2 parentWorld, double inheritedOpacity, Scissor parentClip,
             DrawData outData, List<LayerPass> plan, int width, int height, WGPUTextureFormat outFormat)
         {
             Matrix3x2 world = v.LocalToParent * parentWorld;
@@ -4777,7 +4795,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 // one -- so it needs its own key, or a run drawn once with ClearType and once without
                 // (a rotated copy, a layered window) would be handed the other one's texture.
                 // (not under TextRenderingMode Grayscale or Aliased: the run is grey, or in-or-out)
-                bool subpixel = isGlyph && ClearType && !_transparentTarget && IsAxisAligned(world) && !_biLevelForRun
+                bool subpixel = isGlyph && ClearType && ClearTypeHere && IsAxisAligned(world) && !_biLevelForRun
                                 && _textRenderingMode is 0 or 3;
                 bool biLevel = isGlyph && _biLevelForRun && IsAxisAligned(world);
                 // The ROW COUNT is part of the mask, not merely the fact of smoothing: two

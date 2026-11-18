@@ -134,7 +134,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             // wpfgfx realizes ClearType only for an opaque target and an axis-aligned, unskewed scale.
             // TextRenderingMode Grayscale or Aliased: not ClearType -- the run's outlines, antialiased in grey, or
             // with aliased edges (each pixel in or out), as wpfgfx realizes the run in those modes.
-            bool drawable = ClearType && !_transparentTarget && _textRenderingMode is 0 or 3
+            bool drawable = ClearType && ClearTypeHere && _textRenderingMode is 0 or 3
                             && world.M12 == 0f && world.M21 == 0f && world.M22 == scale && scale > 0f
                             && world.M11 * run.Mirror > 0f
                             && ppem > 0f && ppem <= 200f;

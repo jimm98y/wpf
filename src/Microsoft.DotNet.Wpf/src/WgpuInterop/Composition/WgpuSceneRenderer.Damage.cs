@@ -347,6 +347,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 public bool SnapStretch, SnapBlend;
                 public bool Aliased, Nearest, HighQuality;
                 public byte TextMode;
+                public bool ClearTypeHint;
                 public float[]? GuidesX, GuidesY;
                 public DrawingPrimitive[] Content = Array.Empty<DrawingPrimitive>();
                 public Scissor[] Boxes = Array.Empty<Scissor>();   // per content primitive, device, clipped
@@ -1185,7 +1186,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 if (r.Local != v.LocalToParent || r.Opacity != v.Opacity) return false;
                 if (!ReferenceEquals(r.ClipGeometry, v.ClipGeometry) || !ReferenceEquals(r.Effect, v.Effect)
                     || !ReferenceEquals(r.Mask, v.OpacityMask) || !ReferenceEquals(r.Snapshot, v.Snapshot)) return false;
-                if (r.Aliased != v.AliasedEdges || r.Nearest != v.NearestBitmapScaling || r.HighQuality != v.HighQualityBitmapScaling || r.TextMode != v.TextRenderingMode) return false;
+                if (r.Aliased != v.AliasedEdges || r.Nearest != v.NearestBitmapScaling || r.HighQuality != v.HighQualityBitmapScaling || r.TextMode != v.TextRenderingMode || r.ClearTypeHint != v.ClearTypeHintEnabled) return false;
                 return ReferenceEquals(r.GuidesX, v.GuidelinesX) && ReferenceEquals(r.GuidesY, v.GuidelinesY);
             }
 
@@ -1459,6 +1460,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 r.Nearest = v.NearestBitmapScaling;
                 r.HighQuality = v.HighQualityBitmapScaling;
                 r.TextMode = v.TextRenderingMode;
+                r.ClearTypeHint = v.ClearTypeHintEnabled;
                 r.GuidesX = v.GuidelinesX;
                 r.GuidesY = v.GuidelinesY;
                 CaptureContent(r, v);
@@ -1491,7 +1493,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                     || !ReferenceEquals(r.Mask, v.OpacityMask) || !ReferenceEquals(r.Snapshot, v.Snapshot)) return false;
                 if (v.Snapshot is { } s && (!SameRect(s.Source, r.SnapSource) || !SameRect(s.Dest, r.SnapDest)
                     || s.GdiStretch != r.SnapStretch || s.WindowBlend != r.SnapBlend)) return false;
-                if (r.Aliased != v.AliasedEdges || r.Nearest != v.NearestBitmapScaling || r.HighQuality != v.HighQualityBitmapScaling || r.TextMode != v.TextRenderingMode) return false;
+                if (r.Aliased != v.AliasedEdges || r.Nearest != v.NearestBitmapScaling || r.HighQuality != v.HighQualityBitmapScaling || r.TextMode != v.TextRenderingMode || r.ClearTypeHint != v.ClearTypeHintEnabled) return false;
                 return ReferenceEquals(r.GuidesX, v.GuidelinesX) && ReferenceEquals(r.GuidesY, v.GuidelinesY);
             }
 

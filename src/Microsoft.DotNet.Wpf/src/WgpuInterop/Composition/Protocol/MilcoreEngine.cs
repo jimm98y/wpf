@@ -1343,14 +1343,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     // be READ, because it sits between EdgeMode and BitmapScalingMode.
                     r.U32();
                     uint bitmapScaling = r.U32();
-                    r.U32();                       // ClearTypeHint
+                    uint clearTypeHint = r.U32();
                     uint textRendering = r.U32();
                     // ClearTypeHint / TextRenderingMode / TextHintingMode are ClearType and
                     // hinting hints; this renderer does grayscale AA text, so they are read
                     // past rather than honoured.
                     if (_visuals.TryGetValue(vh, out SceneVisual? rv))
                     {
-                        const uint FlagBitmapScalingMode = 0x1, FlagEdgeMode = 0x2, FlagTextRenderingMode = 0x10;
+                        const uint FlagBitmapScalingMode = 0x1, FlagEdgeMode = 0x2, FlagClearTypeHint = 0x8, FlagTextRenderingMode = 0x10;
+                        // RenderOptions.ClearTypeHint: Auto 0, Enabled 1
+                        rv.ClearTypeHintEnabled = (flags & FlagClearTypeHint) != 0 && clearTypeHint == 1;
                         // TextOptions.TextRenderingMode: Auto 0 (as unset), Aliased 1, Grayscale 2, ClearType 3
                         rv.TextRenderingMode = (flags & FlagTextRenderingMode) != 0 && textRendering <= 3 ? (byte)textRendering : (byte)0;
                         if ((flags & FlagEdgeMode) != 0)
