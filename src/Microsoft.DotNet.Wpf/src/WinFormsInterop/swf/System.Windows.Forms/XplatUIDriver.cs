@@ -26,6 +26,8 @@
 
 // COMPLETE
 
+extern alias WindowsBase;
+
 using System.Drawing;
 using System.Threading;
 using System.Runtime.InteropServices;
@@ -79,9 +81,10 @@ namespace System.Windows.Forms {
 			}
 		}
 
+		// the system's setting (WindowsBase's PlatformSettings), as Windows' GetDoubleClickTime answers
 		internal virtual int DoubleClickTime {
 			get {
-				return 500;
+				return WindowsBase::MS.Internal.Interop.PlatformSettings.DoubleClickTime;
 			}
 		}
 

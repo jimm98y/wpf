@@ -224,7 +224,20 @@ public static unsafe partial class Exports
     [Win32Export("SystemParametersInfoW", "SystemParametersInfo")] public static int SystemParametersInfoW(uint action, uint param, void* pv, uint winIni) => SystemParameter(action, param, pv);
     [Win32Export("SystemParametersInfoA")] public static int SystemParametersInfoA(uint action, uint param, void* pv, uint winIni) => SystemParameter(action, param, pv, wide: false);
     [Win32Export("SystemParametersInfoForDpi")] public static int SystemParametersInfoForDpi(uint action, uint param, void* pv, uint winIni, uint dpi) => SystemParameter(action, param, pv);
-    [Win32Export("GetDoubleClickTime")] public static uint GetDoubleClickTime() => 500;
+    // the system's setting, as the stack reads it (WindowsBase's PlatformSettings, by name: this layer is below it);
+    // Windows' default where the stack is not loaded
+    [Win32Export("GetDoubleClickTime")]
+    public static uint GetDoubleClickTime()
+    {
+        try
+        {
+            if (Type.GetType("MS.Internal.Interop.PlatformSettings, WindowsBase", throwOnError: false)
+                    ?.GetProperty("DoubleClickTime")?.GetValue(null) is int ms && ms > 0)
+                return (uint)ms;
+        }
+        catch (Exception e) when (e is System.Reflection.TargetInvocationException or System.IO.FileLoadException) { }
+        return 500;
+    }
     [Win32Export("GetCaretBlinkTime")] public static uint GetCaretBlinkTime() => 530;
 
     // The Windows 10 default system colours, COLORREF (0x00BBGGRR).

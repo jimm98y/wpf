@@ -252,8 +252,8 @@ namespace MS.Win32
 
         public static int GetDoubleClickTime()
         {
-            // user32-only; 500 ms is the Windows default double-click interval.
-            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetDoubleClickTime() : 500;
+            // the system's setting, on every platform (PlatformSettings: GetDoubleClickTime on Windows)
+            return System.OperatingSystem.IsWindows() ? SafeNativeMethodsPrivate.GetDoubleClickTime() : MS.Internal.Interop.PlatformSettings.DoubleClickTime;
         }
 
         public static bool IsWindowEnabled(HandleRef hWnd)

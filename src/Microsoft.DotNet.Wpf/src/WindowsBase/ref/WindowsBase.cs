@@ -782,6 +782,10 @@ namespace MS.Internal.Interop
             public override string ToString() { throw null; }
         }
     }
+    public static partial class PlatformSettings
+    {
+        public static int DoubleClickTime { get { throw null; } }
+    }
     public static partial class ScreenPixels
     {
         public static byte[] Capture(int x, int y, int width, int height) { throw null; }

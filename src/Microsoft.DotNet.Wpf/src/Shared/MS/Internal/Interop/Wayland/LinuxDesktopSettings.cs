@@ -203,6 +203,26 @@ namespace MS.Internal.Interop.Wayland
             }
         }
 
+        /// <summary>The desktop's double-click time in milliseconds: GNOME's (org.gnome.desktop.peripherals.mouse
+        /// double-click) or KDE's (kdeglobals' DoubleClickInterval) through the portal, else gsettings; null where
+        /// neither says.</summary>
+        internal static int? DoubleClickTime()
+        {
+            try
+            {
+                if (DBusLite.IsAvailable)
+                    foreach (string[] key in new[] { new[] { "org.gnome.desktop.peripherals.mouse", "double-click" }, new[] { "org.kde.kdeglobals.KDE", "DoubleClickInterval" } })
+                        foreach (string method in new[] { "ReadOne", "Read" })
+                            if (DBusLite.CallReadUInt32Variant(PortalService, PortalPath, SettingsInterface, method, key, out uint ms) && ms is > 0 and < 10000)
+                                return (int)ms;
+                string? setting = ReadGSetting("org.gnome.desktop.peripherals.mouse", "double-click");
+                // "int32 400" or "400"
+                if (setting is not null && int.TryParse(setting.Split(' ')[^1], out int fromGSettings) && fromGSettings > 0) return fromGSettings;
+            }
+            catch { }
+            return null;
+        }
+
         /// <summary>
         /// Read one GNOME setting. Shelling out is acceptable for these: each runs at most once per
         /// process and reads a single word, and the alternative is being visibly wrong about the

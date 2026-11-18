@@ -320,6 +320,7 @@
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\WaylandClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\DBusLite.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\LinuxDesktopSettings.cs" />
+    <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformSettings.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\Wayland\PortalDialogs.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformClipboard.cs" />
     <Compile Include="$(WpfSharedDir)\MS\Internal\Interop\PlatformPrint.cs" />
