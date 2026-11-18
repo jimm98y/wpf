@@ -35,7 +35,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public const int OffPx = 0, OffVp = 16, OffAlpha = 32, OffFog = 48, OffFogColor = 64, OffTFactor = 80, OffAmbient = 96,
             OffMatDiffuse = 112, OffMatAmbient = 128, OffMatSpecular = 144, OffMatEmissive = 160, OffMatPower = 176,
             OffWv = 192, OffProj = 256, OffWvp = 320, OffNrm = 384, OffTex = 448, OffStageConst = 960, OffBump = 1088, OffBumpL = 1216,
-            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, OffPoint = 2352, OffPointScale = 2368, MiscSize = 2384;
+            OffLights = 1344, LightStride = 112, OffAdj = 2240, OffClip = 2256, OffPoint = 2352, OffPointScale = 2368, OffBlendWv = 2384, OffBlendNrm = 2896, MiscSize = 3408, BlendMatrices = 8;
 
         public const string MiscWgsl =
             "struct Light { diffuse : vec4<f32>, specular : vec4<f32>, ambient : vec4<f32>, pos : vec4<f32>, dir : vec4<f32>, att : vec4<f32>, spot : vec4<f32> };\n" +
@@ -45,6 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             "    wv : mat4x4<f32>, proj : mat4x4<f32>, wvp : mat4x4<f32>, nrm : mat4x4<f32>, tex : array<mat4x4<f32>, 8>,\n" +
             "    stageConst : array<vec4<f32>, 8>, bump : array<vec4<f32>, 8>, bumpL : array<vec4<f32>, 8>, lights : array<Light, 8>,\n" +
             "    adj : vec4<f32>, clip : array<vec4<f32>, 6>, pt : vec4<f32>, ptScale : vec4<f32>,\n" +
+            "    blendWv : array<mat4x4<f32>, 8>, blendNrm : array<mat4x4<f32>, 8>,\n" +
             "};\n" +
             "@group(0) @binding(2) var<uniform> M : Misc;\n";
 
@@ -85,6 +86,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             D3D9Usage.PSize => 2,
             D3D9Usage.Color when index < 2 => 3 + index,
             D3D9Usage.TexCoord when index < 8 => 5 + index,
+            D3D9Usage.BlendWeight when index == 0 => 13,
+            D3D9Usage.BlendIndices when index == 0 => 14,
+            D3D9Usage.Position when index == 1 => 15,
             _ => -1,
         };
 
@@ -380,6 +384,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             /// <summary>0: points as points, else Points.Mode.</summary>
             public int PointMode;
             public bool PointScale;
+            /// <summary>D3DRS_VERTEXBLEND's weights (0: one world matrix), with the vertex's weights and indices
+            /// (INDEXEDVERTEXBLENDENABLE); tweening between POSITION and POSITION1.</summary>
+            public int BlendWeights;
+            public bool BlendIndexed, Tween;
+            /// <summary>The weights' and indices' D3DDECLTYPE (UNUSED, 17: the vertex has none).</summary>
+            public byte WeightType = Unused, IndicesType = Unused;
+            public const byte Unused = 17;
             /// <summary>Components of each texture coordinate set the vertex has (0: none).</summary>
             public readonly int[] TexDims = new int[8];
             public readonly byte[] TexTypes = new byte[8];
@@ -400,7 +411,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 get
                 {
                     var sb = new StringBuilder("ff:");
-                    sb.Append(Transformed ? 'T' : 't').Append(PosType).Append(Normal ? 'N' : 'n').Append(NormalType).Append(Diffuse ? 'D' : 'd').Append(DiffuseType).Append(Specular ? 'S' : 's').Append(SpecularType).Append(PSize ? 'Z' : 'z').Append(PointMode).Append(PointScale ? 'C' : 'c');
+                    sb.Append(Transformed ? 'T' : 't').Append(PosType).Append(Normal ? 'N' : 'n').Append(NormalType).Append(Diffuse ? 'D' : 'd').Append(DiffuseType).Append(Specular ? 'S' : 's').Append(SpecularType).Append(PSize ? 'Z' : 'z').Append(PointMode).Append(PointScale ? 'C' : 'c')
+                        .Append("b").Append(BlendWeights).Append(BlendIndexed ? 'I' : 'i').Append(WeightType).Append('.').Append(IndicesType).Append(Tween ? 'W' : 'w');
                     for (int i = 0; i < 8; i++) sb.Append(TexDims[i]).Append(TexTypes[i]).Append('.').Append(TexIndex[i]).Append('.').Append(TexTransform[i]).Append(';');
                     sb.Append(Lighting ? 'L' : 'l').Append(LocalViewer ? 'V' : 'v').Append(NormalizeNormals ? 'Z' : 'z').Append(SpecularEnable ? 'P' : 'p');
                     sb.Append(DiffuseSrc).Append(SpecularSrc).Append(AmbientSrc).Append(EmissiveSrc).Append('|').Append(string.Join(",", Lights)).Append("|f").Append(FogMode).Append(RangeFog ? 'r' : '-');
@@ -420,9 +432,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (k.Specular) w.Append(", @location(4) aSpecular : ").Append(Attribute(k.SpecularType, "").Type);
             for (int i = 0; i < 8; i++) if (k.TexDims[i] > 0) w.Append(", @location(").Append(5 + i).Append(") aTex").Append(i).Append(" : ").Append(Attribute(k.TexTypes[i], "").Type);
             if (k.PointMode != 0 && k.PSize) w.Append(", @location(2) aPSize : vec4<f32>");
+            if (k.BlendWeights > 0 && k.WeightType != FixedVertex.Unused) w.Append(", @location(13) aWeight : ").Append(Attribute(k.WeightType, "").Type);
+            if (k.BlendIndexed && k.IndicesType != FixedVertex.Unused) w.Append(", @location(14) aIndices : ").Append(Attribute(k.IndicesType, "").Type);
+            if (k.Tween) w.Append(", @location(15) aPos1 : vec4<f32>");
             if (k.PointMode != 0) w.Append(", ").Append(CornerParam);
             w.Append(") -> VOut {\n");
-            w.Append("    let pin = ").Append(Attribute(k.PosType, "aPos").Expr).Append(";\n");
+            w.Append("    let pin0 = ").Append(Attribute(k.PosType, "aPos").Expr).Append(";\n");
+            // tweening: D3DRS_TWEENFACTOR between the two positions
+            w.Append("    let pin = ").Append(k.Tween && !k.Transformed ? "mix(pin0, aPos1, M.pt.w)" : "pin0").Append(";\n");
             w.Append("    let diffuseIn = ").Append(k.Diffuse ? Attribute(k.DiffuseType, "aDiffuse").Expr : "vec4<f32>(1.0)").Append(";\n");
             w.Append("    let specularIn = ").Append(k.Specular ? Attribute(k.SpecularType, "aSpecular").Expr : "vec4<f32>(0.0, 0.0, 0.0, 1.0)").Append(";\n");
             string pos;
@@ -438,14 +455,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             else
             {
-                w.Append("    let vpos = M.wv * pin;\n");
-                w.Append("    let clip = M.wvp * pin;\n");
-                if (k.Normal)
+                string nin = k.Normal ? $"vec4<f32>({Attribute(k.NormalType, "aNormal").Expr}.xyz, 0.0)" : "vec4<f32>(0.0)";
+                if (k.BlendWeights > 0 || k.BlendIndexed)
                 {
-                    w.Append("    var n = (M.nrm * vec4<f32>(").Append(Attribute(k.NormalType, "aNormal").Expr).Append(".xyz, 0.0)).xyz;\n");
-                    if (k.NormalizeNormals) w.Append("    n = normalize(n);\n");
+                    // vertex blending: the position and normal through each world matrix (by the vertex's
+                    // index, if indexed), weighted; the last weight is what the others leave
+                    w.Append("    let bw = ").Append(k.WeightType != FixedVertex.Unused ? Attribute(k.WeightType, "aWeight").Expr : "vec4<f32>(0.0)").Append(";\n");
+                    string ix = k.IndicesType == FixedVertex.Unused ? "vec4<f32>(0.0, 1.0, 2.0, 3.0)"
+                        : k.IndicesType == Direct3DVertexDeclaration9.D3DCOLOR ? $"round({Attribute(k.IndicesType, "aIndices").Expr} * 255.0)" : Attribute(k.IndicesType, "aIndices").Expr;
+                    w.Append("    let bi = vec4<u32>(min(").Append(k.BlendIndexed ? ix : "vec4<f32>(0.0, 1.0, 2.0, 3.0)").Append(", vec4<f32>(7.0)));\n");
+                    w.Append("    var vposB = vec4<f32>(0.0);\n    var nB = vec4<f32>(0.0);\n    var wLeft = 1.0;\n");
+                    for (int i = 0; i < k.BlendWeights; i++)
+                    {
+                        w.Append("    vposB = vposB + bw[").Append(i).Append("] * (M.blendWv[bi[").Append(i).Append("]] * pin);\n");
+                        w.Append("    nB = nB + bw[").Append(i).Append("] * (M.blendNrm[bi[").Append(i).Append("]] * ").Append(nin).Append(");\n");
+                        w.Append("    wLeft = wLeft - bw[").Append(i).Append("];\n");
+                    }
+                    w.Append("    vposB = vposB + wLeft * (M.blendWv[bi[").Append(k.BlendWeights).Append("]] * pin);\n");
+                    w.Append("    nB = nB + wLeft * (M.blendNrm[bi[").Append(k.BlendWeights).Append("]] * ").Append(nin).Append(");\n");
+                    w.Append("    let vpos = vec4<f32>(vposB.xyz / select(vposB.w, 1.0, vposB.w == 0.0), 1.0);\n");
+                    w.Append("    let clip = M.proj * vpos;\n");
+                    w.Append("    var n = nB.xyz;\n");
                 }
-                else w.Append("    let n = vec3<f32>(0.0);\n");
+                else
+                {
+                    w.Append("    let vpos = M.wv * pin;\n");
+                    w.Append("    let clip = M.wvp * pin;\n");
+                    w.Append("    var n = (M.nrm * ").Append(nin).Append(").xyz;\n");
+                }
+                if (k.Normal && k.NormalizeNormals) w.Append("    n = normalize(n);\n");
                 pos = "clip";
             }
 

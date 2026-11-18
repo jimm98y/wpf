@@ -240,8 +240,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             c[35] = 0x100008;                         // FVFCaps: 8 texture coordinate sets, PSIZE
             c[36] = 0x3FFFFFF;                        // TextureOpCaps: every D3DTEXTUREOP
             c[37] = 8; c[38] = 8;                     // MaxTextureBlendStages, MaxSimultaneousTextures
-            c[39] = 0x13B;                            // VertexProcessingCaps: TEXGEN, MATERIALSOURCE7, DIRECTIONAL/POSITIONAL lights, LOCALVIEWER, TEXGEN_SPHEREMAP
+            c[39] = 0x17B;                            // VertexProcessingCaps: TEXGEN, MATERIALSOURCE7, DIRECTIONAL/POSITIONAL lights, LOCALVIEWER, TWEENING, TEXGEN_SPHEREMAP
             c[40] = 8;                                // MaxActiveLights
+            c[41] = 6;                                // MaxUserClipPlanes
+            c[42] = 4;                                // MaxVertexBlendMatrices
+            c[43] = Direct3DDevice9.BlendMatrixIndices - 1;   // MaxVertexBlendMatrixIndex
             ((float*)c)[44] = Direct3DDevice9.MaxPointSize;   // MaxPointSize
             c[45] = 0xFFFFFF; c[46] = 0xFFFFFF;       // MaxPrimitiveCount, MaxVertexIndex
             c[47] = 16; c[48] = 255;                  // MaxStreams, MaxStreamStride

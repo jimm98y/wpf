@@ -521,7 +521,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 D3D9Shader? vs = transformed ? null : State.Vs?.Code;
                 D3D9Shader? ps = State.Ps?.Code;
                 if (vs?.Error != null || ps?.Error != null) { DrawsSkipped++; return HResult.S_OK; }
-                if (State.RS[D3DRS.VERTEXBLEND] != 0 && vs == null) D3DLog.Once("d3d9blend", "D3D9 fixed-function vertex blending is not applied");
 
                 // the epilogue and the linkage
                 var tail = new D3D9Programs.PixelTail
@@ -778,6 +777,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         /// <summary>D3DCAPS9.MaxPointSize.</summary>
         internal const float MaxPointSize = 256f;
+        /// <summary>The world matrices indexed vertex blending reaches (D3DCAPS9.MaxVertexBlendMatrixIndex + 1).</summary>
+        internal const uint BlendMatrixIndices = D3D9Programs.BlendMatrices;
 
         /// <summary>The vertices an indexed point list reads, per stream in index order (null: past a buffer).</summary>
         private List<byte[]>? GatherPoints(DrawCall c, SortedDictionary<int, List<(int Loc, D3DVERTEXELEMENT9 E)>> streams, Dictionary<int, uint> strides, bool index32)
@@ -927,6 +928,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                         _ => 4,
                     };
                 }
+            uint blend = State.RS[D3DRS.VERTEXBLEND];
+            if (!transformed && blend is >= 1 and <= 3 or 256)
+            {
+                k.BlendWeights = blend == 256 ? 0 : (int)blend;
+                k.BlendIndexed = State.RS[D3DRS.INDEXEDVERTEXBLENDENABLE] != 0;
+                // (0WEIGHTS, not indexed: WORLD alone, as without blending)
+                if (inputs.ByLocation.TryGetValue(13, out var bw)) k.WeightType = bw.Type;
+                if (k.BlendIndexed && inputs.ByLocation.TryGetValue(14, out var bi)) k.IndicesType = bi.Type;
+            }
+            k.Tween = !transformed && blend == 255 && inputs.ByLocation.ContainsKey(15);
             k.Lighting = State.RS[D3DRS.LIGHTING] != 0 && !transformed;
             k.LocalViewer = State.RS[D3DRS.LOCALVIEWER] != 0;
             k.NormalizeNormals = State.RS[D3DRS.NORMALIZENORMALS] != 0;
@@ -1060,7 +1071,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             // points: the size and its clamp, the scale factors
             float Fr(int rs) => BitConverter.UInt32BitsToSingle(State.RS[rs]);
-            Put(b, D3D9Programs.OffPoint, Fr(D3DRS.POINTSIZE), Math.Max(0, Fr(D3DRS.POINTSIZE_MIN)), Math.Min(Fr(D3DRS.POINTSIZE_MAX), MaxPointSize), 0);
+            Put(b, D3D9Programs.OffPoint, Fr(D3DRS.POINTSIZE), Math.Max(0, Fr(D3DRS.POINTSIZE_MIN)), Math.Min(Fr(D3DRS.POINTSIZE_MAX), MaxPointSize), Fr(D3DRS.TWEENFACTOR));
+            // vertex blending: each world matrix (D3DTS_WORLDMATRIX(n)) with the view, and for normals
+            if (State.RS[D3DRS.VERTEXBLEND] != 0 && !shaderVs)
+                for (int i = 0; i < D3D9Programs.BlendMatrices; i++)
+                {
+                    float[] bwv = D3D9Math.Mul(State.Transform(256 + i), view);
+                    Put(b, D3D9Programs.OffBlendWv + i * 64, bwv);
+                    Put(b, D3D9Programs.OffBlendNrm + i * 64, D3D9Math.Transpose(D3D9Math.Inverse(bwv)));
+                }
             Put(b, D3D9Programs.OffPointScale, Fr(D3DRS.POINTSCALE_A), Fr(D3DRS.POINTSCALE_B), Fr(D3DRS.POINTSCALE_C), 0);
             // the viewport adjustment: D3D9's viewport mapped into the part of it on the targets
             Viewport(ts, out clamped);

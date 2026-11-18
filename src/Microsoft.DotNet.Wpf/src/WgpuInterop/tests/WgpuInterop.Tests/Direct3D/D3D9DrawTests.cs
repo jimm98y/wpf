@@ -726,6 +726,77 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.Equal(0, s.Skipped);
         }
 
+        [StructLayout(LayoutKind.Sequential)] private struct PosWeightColor { public float X, Y, Z, W0; public uint Color; }
+        [StructLayout(LayoutKind.Sequential)] private struct PosWeightIndexColor { public float X, Y, Z, W0; public uint Indices, Color; }
+        [StructLayout(LayoutKind.Sequential)] private struct PosPosColor { public float X, Y, Z, X1, Y1, Z1; public uint Color; }
+
+        private static float[] TranslateX(float x) => new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1 };
+
+        /// <summary>A strip from x -1 to -0.5 (the left 16 pixels), all of y.</summary>
+        private static T[] LeftStrip<T>(Func<float, float, T> v) => new[] { v(-1, 1), v(-0.5f, 1), v(-1, -1), v(-0.5f, -1) };
+
+        /// <summary>Vertex blending: half of WORLD, half of WORLD1 (one unit right) moves the strip half a unit.</summary>
+        [Fact]
+        public void VertexBlending_WeighsTheWorldMatrices()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.RS(D3DRS.LIGHTING, 0);
+            s.Fvf(0x6 | FVF_DIFFUSE);       // XYZB1
+            s.Transform(256, Identity);
+            s.Transform(257, TranslateX(1));
+            s.RS(D3DRS.VERTEXBLEND, 1);
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, LeftStrip((x, y) => new PosWeightColor { X = x, Y = y, Z = 0.5f, W0 = 0.5f, Color = 0xFFFF0000 }));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF000000u, px[32 * W + 8]);
+            Assert.Equal(0xFFFF0000u, px[32 * W + 24]);
+            Assert.Equal(0xFF000000u, px[32 * W + 40]);
+        }
+
+        /// <summary>Indexed vertex blending: the vertex names its matrices (3: one unit right, 5: none).</summary>
+        [Fact]
+        public void IndexedVertexBlending_UsesTheVertexIndices()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.RS(D3DRS.LIGHTING, 0);
+            s.Fvf(0x8 | 0x1000 | FVF_DIFFUSE);     // XYZB2, the last beta UBYTE4 indices
+            s.Transform(256 + 3, TranslateX(1));
+            s.Transform(256 + 5, Identity);
+            s.RS(D3DRS.VERTEXBLEND, 1);
+            s.RS(D3DRS.INDEXEDVERTEXBLENDENABLE, 1);
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, LeftStrip((x, y) => new PosWeightIndexColor { X = x, Y = y, Z = 0.5f, W0 = 1, Indices = 0x0503, Color = 0xFF00FF00 }));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF000000u, px[32 * W + 8]);
+            Assert.Equal(0xFF00FF00u, px[32 * W + 40]);
+        }
+
+        /// <summary>Tweening: D3DRS_TWEENFACTOR between POSITION and POSITION1.</summary>
+        [Fact]
+        public void Tweening_MixesThePositions()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.RS(D3DRS.LIGHTING, 0);
+            s.Declaration(
+                new D3DVERTEXELEMENT9 { Offset = 0, Type = 2, Usage = 0 },
+                new D3DVERTEXELEMENT9 { Offset = 12, Type = 2, Usage = 0, UsageIndex = 1 },
+                new D3DVERTEXELEMENT9 { Offset = 24, Type = 4, Usage = 10 });
+            s.RS(D3DRS.VERTEXBLEND, 255);
+            s.RS(D3DRS.TWEENFACTOR, Asm.F(0.5f));
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, LeftStrip((x, y) => new PosPosColor { X = x, Y = y, Z = 0.5f, X1 = x + 1, Y1 = y, Z1 = 0.5f, Color = 0xFF0000FF }));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF000000u, px[32 * W + 8]);
+            Assert.Equal(0xFF0000FFu, px[32 * W + 24]);
+            Assert.Equal(0, s.Skipped);
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()
