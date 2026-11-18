@@ -66,7 +66,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             Slt = 12, Sge = 13, Exp = 14, Log = 15, Lit = 16, Dst = 17, Lrp = 18, Frc = 19, M4x4 = 20, M4x3 = 21, M3x4 = 22, M3x3 = 23,
             M3x2 = 24, Call = 25, CallNz = 26, Loop = 27, Ret = 28, EndLoop = 29, Label = 30, Dcl = 31, Pow = 32, Crs = 33, Sgn = 34,
             Abs = 35, Nrm = 36, SinCos = 37, Rep = 38, EndRep = 39, If = 40, Ifc = 41, Else = 42, EndIf = 43, Break = 44, Breakc = 45,
-            Mova = 46, DefB = 47, DefI = 48, TexKill = 65, Tex = 66, ExpP = 78, LogP = 79, Def = 81, Cmp = 88, Dp2Add = 90, Dsx = 91,
+            Mova = 46, DefB = 47, DefI = 48, TexCoord = 64, TexKill = 65, Tex = 66, TexBem = 67, TexBemL = 68, TexReg2AR = 69, TexReg2GB = 70,
+            TexM3x2Pad = 71, TexM3x2Tex = 72, TexM3x3Pad = 73, TexM3x3Tex = 74, TexM3x3Spec = 76, TexM3x3VSpec = 77, Cnd = 80,
+            TexReg2RGB = 82, TexDp3Tex = 83, TexM3x2Depth = 84, TexDp3 = 85, TexM3x3 = 86, TexDepth = 87, Bem = 89, Phase = 0xFFFD, ExpP = 78, LogP = 79, Def = 81, Cmp = 88, Dp2Add = 90, Dsx = 91,
             Dsy = 92, TexLdd = 93, Setp = 94, TexLdl = 95, BreakP = 96, Comment = 0xFFFE, End = 0xFFFF;
 
         // D3DSHADER_PARAM_REGISTER_TYPE
@@ -76,7 +78,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private static readonly string[] Comparisons = { "", ">", "==", ">=", "<", "!=", "<=", "" };
 
         /// <summary>Parameter tokens of the shader model 1 instructions (whose length field is reserved).</summary>
-        private static int Sm1Length(int op) => op switch
+        private static int Sm1Length(int op, bool pixel, int minor) => pixel ? op switch
+        {
+            Nop or Phase => 0,
+            Mov => 2, Add or Sub or Mul or Dp3 or Dp4 => 3, Mad or Lrp or Cnd or Cmp => 4,
+            Def => 5,
+            Tex or TexCoord => minor >= 4 ? 2 : 1,
+            TexKill or TexDepth => 1,
+            TexBem or TexBemL or TexReg2AR or TexReg2GB or TexReg2RGB or TexM3x2Pad or TexM3x2Tex or TexM3x3Pad or TexM3x3Tex or TexM3x3VSpec
+                or TexDp3Tex or TexM3x2Depth or TexDp3 or TexM3x3 => 2,
+            TexM3x3Spec or Bem => 3,
+            _ => -1,
+        } : op switch
         {
             Nop => 0, Mov or Rcp or Rsq or Exp or Log or Lit or Frc or ExpP or LogP or Mova or Abs or Nrm => 2,
             Add or Sub or Mul or Dp3 or Dp4 or Min or Max or Slt or Sge or Dst or M4x4 or M4x3 or M3x4 or M3x3 or M3x2 or Pow or Crs => 3,
@@ -96,7 +109,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             public D3D9Shader S = null!;
             public bool Vs => !S.Pixel;
-            public int Major;
+            public int Major, Minor;
+            /// <summary>ps_1_x: texture stages as samplers, result shifts, the 1.x value range.</summary>
+            public bool Ps1;
+            /// <summary>ps_1_x: the texture type bound at each stage (absent: what the instruction implies).</summary>
+            public IReadOnlyDictionary<int, int>? StageTypes;
             public readonly Dictionary<int, string> Defs = new();
             public readonly Dictionary<int, int[]> Ints = new();
             public readonly Dictionary<int, bool> Bools = new();
@@ -116,16 +133,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             public void Line(string s) { if (!CurClosed) Cur.Append(Ind).Append(s).Append('\n'); }
         }
 
-        public static D3D9Shader Translate(ReadOnlySpan<byte> bytecode, bool pixel)
+        public static D3D9Shader Translate(ReadOnlySpan<byte> bytecode, bool pixel, IReadOnlyDictionary<int, int>? stageTypes = null)
         {
             var s = new D3D9Shader { Pixel = pixel, Bytecode = bytecode.ToArray(), Hash = HashOf(bytecode) };
-            try { s.Error = TranslateCore(s); }
+            if (stageTypes != null) foreach (var (k, v) in stageTypes) s.Hash = (s.Hash ^ (ulong)(k * 8 + v)) * 1099511628211UL;
+            try { s.Error = TranslateCore(s, stageTypes); }
             catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException) { s.Error = "truncated bytecode"; }
             if (s.Error != null) D3DLog.Once("d3d9sh:" + s.Error, $"D3D9 {(pixel ? "pixel" : "vertex")} shader not translated: {s.Error}");
             return s;
         }
 
-        private static string? TranslateCore(D3D9Shader s)
+        private static string? TranslateCore(D3D9Shader s, IReadOnlyDictionary<int, int>? stageTypes)
         {
             byte[] b = s.Bytecode;
             if (b.Length < 8 || (b.Length & 3) != 0) return "bytecode is not a whole number of tokens";
@@ -136,10 +154,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             if (kind != (s.Pixel ? 0xFFFFu : 0xFFFEu)) return $"version token 0x{version:x8} is not a {(s.Pixel ? "pixel" : "vertex")} shader's";
             s.Major = (int)((version >> 8) & 0xFF);
             s.Minor = (int)(version & 0xFF);
-            if (s.Pixel ? s.Major is not (2 or 3) : s.Major is not (1 or 2 or 3))
+            if (s.Major is not (1 or 2 or 3) || (s.Major == 1 && s.Pixel && s.Minor is < 1 or > 4))
                 return $"{(s.Pixel ? "ps" : "vs")}_{s.Major}_{s.Minor} is not supported";
 
-            var c = new Ctx { S = s, Major = s.Major };
+            var c = new Ctx { S = s, Major = s.Major, Minor = s.Minor, Ps1 = s.Pixel && s.Major == 1, StageTypes = stageTypes };
             c.Cur = c.Main;
             // ps_2_x: the colour and texture-coordinate registers' semantics are implied
             int p = 1;
@@ -149,8 +167,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 int op = (int)(t & 0xFFFF);
                 if (op == End) break;
                 if (op == Comment) { p += 1 + (int)((t >> 16) & 0x7FFF); continue; }
-                int len = s.Major >= 2 ? (int)((t >> 24) & 0xF) : Sm1Length(op);
-                if (len < 0) return $"vs_1_x instruction {op} is not supported";
+                if (op == Phase) { p++; continue; }     // ps_1_4: the texture phase ends; the registers carry on
+                int len = s.Major >= 2 ? (int)((t >> 24) & 0xF) : Sm1Length(op, s.Pixel, s.Minor);
+                if (len < 0) return $"{(s.Pixel ? "ps" : "vs")}_1_x instruction {op} is not supported";
                 if (p + len >= tok.Length) return "truncated instruction stream";
                 Instruction(c, t, op, new ReadOnlySpan<uint>(tok, p + 1, len));
                 if (c.Reason != null) return c.Reason;
@@ -158,6 +177,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             }
             if (c.Blocks.Count > 0) return "unclosed flow control";
             if (s.Pixel && s.ColorOutputs == 0 && !s.WritesDepth) s.ColorOutputs = 0;    // a depth-only or kill-only shader is valid
+            // ps_1_x: the colour is what r0 holds at the end
+            if (c.Ps1)
+            {
+                c.Main.Append("    ").Append(Use(c, "oC0")).Append(" = ").Append(Use(c, "r0")).Append(";\n");
+                s.ColorOutputs = 1;
+            }
 
             // ps_2_x and vs_1/2 inputs and outputs whose semantics follow from the register
             if (s.Pixel && s.Major < 3)
@@ -242,9 +267,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     return Use(c, $"v{n}");
                 case RConst:
                     if (rel != null) { c.RelativeConst = true; return $"kf({n} + {rel})"; }
-                    if (c.Defs.TryGetValue(n, out string? lit)) return lit;
+                    if (c.Defs.TryGetValue(n, out string? lit)) return c.Ps1 ? $"clamp({lit}, vec4<f32>(-1.0), vec4<f32>(1.0))" : lit;
                     if (n > 255) return "vec4<f32>(0.0)";
-                    return $"K.f[{n}]";
+                    // ps_1_x: constants are in -1..1
+                    return c.Ps1 ? $"clamp(K.f[{n}], vec4<f32>(-1.0), vec4<f32>(1.0))" : $"K.f[{n}]";
                 case RAddr:
                     if (c.Vs) { c.UsesA0 = true; return "vec4<f32>(a0)"; }
                     return Use(c, $"t{n}");
@@ -328,12 +354,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>A scalar condition source: its swizzled first component.</summary>
         private static string Scalar(string e) => $"({e}).x";
 
-        private struct DstReg { public int Type, Num, Mask; public bool Saturate; public string Name; }
+        private struct DstReg { public int Type, Num, Mask, Shift; public bool Saturate; public string Name; }
 
         private static DstReg Dest(Ctx c, ref Params ps)
         {
             uint t = ps.Next();
-            var d = new DstReg { Type = RegType(t), Num = RegNum(t), Mask = (int)((t >> 16) & 0xF), Saturate = (t & (1u << 20)) != 0 };
+            var d = new DstReg { Type = RegType(t), Num = RegNum(t), Mask = (int)((t >> 16) & 0xF), Saturate = (t & (1u << 20)) != 0, Shift = (int)((t >> 24) & 0xF) };
             if (Relative(t))
             {
                 if (c.Major >= 3) ps.Next();
@@ -343,6 +369,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 RTemp => Use(c, $"r{d.Num}"),
                 RAddr when c.Vs => "a0",
+                RAddr when c.Ps1 => Use(c, $"t{d.Num}"),
                 RRastOut => Use(c, d.Num switch { 0 => "oPos", 1 => "oFog", _ => "oPts" }),
                 RAttrOut => Use(c, $"oD{d.Num}"),
                 ROutput => Use(c, c.Major >= 3 ? $"o{d.Num}" : $"oT{d.Num}"),
@@ -363,8 +390,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         /// <summary>Writes a vec4 expression to the destination: write mask, saturate, predicate.</summary>
         private static void Write(Ctx c, DstReg d, string value, string? predicate, bool floor = false)
         {
+            // the result shift (_x2, _x4, _x8, _d2, _d4, _d8)
+            if (d.Shift is >= 1 and <= 3) value = $"({value} * {1 << d.Shift}.0)";
+            else if (d.Shift is >= 13 and <= 15) value = $"({value} / {1 << (16 - d.Shift)}.0)";
             if (d.Saturate) value = $"clamp({value}, vec4<f32>(0.0), vec4<f32>(1.0))";
-            string conv(string comp) => d.Type == RAddr ? (floor ? $"i32(floor(_v.{comp}))" : $"i32(round(_v.{comp}))") : $"_v.{comp}";
+            else if (c.Ps1 && d.Type is RTemp or RAddr) value = $"clamp({value}, vec4<f32>(-{F(Ps1MaxValue)}), vec4<f32>({F(Ps1MaxValue)}))";
+            string conv(string comp) => d.Type == RAddr && c.Vs ? (floor ? $"i32(floor(_v.{comp}))" : $"i32(round(_v.{comp}))") : $"_v.{comp}";
             var sb = new StringBuilder("{ let _v = ").Append(value).Append(';');
             for (int i = 0; i < 4; i++)
             {
@@ -539,6 +570,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             DstReg d = Dest(c, ref ps);
             string? pred = predicated ? Predicate(c, ps.Next()) : null;
             if (c.Reason != null) return;
+            if (c.Ps1 && Ps1Instruction(c, op, d, ref ps)) return;
 
             switch (op)
             {
@@ -576,7 +608,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                     Write(c, d, Src(c, ref ps), pred);
                     return;
                 case Mov:
-                    Write(c, d, Src(c, ref ps), pred, floor: c.Major < 2 && d.Type == RAddr);
+                    Write(c, d, Src(c, ref ps), pred, floor: c.Vs && c.Major < 2 && d.Type == RAddr);
                     return;
                 case Setp:
                 {
@@ -612,7 +644,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             {
                 Rcp or Rsq or Exp or Log or Frc or Abs or Nrm or Lit or ExpP or LogP or Dsx or Dsy => 1,
                 Add or Sub or Mul or Dp3 or Dp4 or Min or Max or Slt or Sge or Dst or Pow or Crs => 2,
-                Mad or Lrp or Cmp or Dp2Add => 3,
+                Mad or Lrp or Cmp or Cnd or Dp2Add => 3,
                 Sgn => 1,
                 SinCos => 1,
                 _ => -1,
@@ -634,6 +666,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 Sgn => $"sign({s[0]})",
                 Lrp => $"mix({s[2]}, {s[1]}, {s[0]})",
                 Cmp => $"select({s[2]}, {s[1]}, {s[0]} >= vec4<f32>(0.0))",
+                Cnd => $"select({s[2]}, {s[1]}, {s[0]} > vec4<f32>(0.5))",
                 Rcp => $"vec4<f32>(1.0 / {x0})",
                 Rsq => $"vec4<f32>(inverseSqrt(abs({x0})))",
                 Exp => $"vec4<f32>(exp2({x0}))",
@@ -659,6 +692,123 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             };
             if (op == Lit) c.UsesLit = true;
             Write(c, d, expr, pred);
+        }
+
+        /// <summary>D3DCAPS9.PixelShader1xMaxValue: the range of ps_1_x registers.</summary>
+        public const float Ps1MaxValue = 8f;
+
+        /// <summary>A ps_1_x texture stage's sample at a vec4 coordinate (its first two or three components).</summary>
+        private static string Sample(Ctx c, int stage, string coord, int implied)
+        {
+            int type = c.StageTypes != null && c.StageTypes.TryGetValue(stage, out int bound) ? bound : implied;
+            c.S.Samplers[stage] = type;
+            string cs = type == 2 ? $"({coord}).xy" : $"({coord}).xyz";
+            return $"fx{stage}(textureSample(tex{stage}, smp{stage}, {cs}))";
+        }
+
+        /// <summary>The bump-mapped coordinate of stage <paramref name="stage"/>: (u, v) moved by the
+        /// stage's D3DTSS_BUMPENVMAT and the perturbation's (r, g).</summary>
+        private static string Bumped(int stage, string uv, string du) =>
+            $"vec4<f32>(({uv}).x + M.bump[{stage}].x * ({du}).x + M.bump[{stage}].z * ({du}).y, ({uv}).y + M.bump[{stage}].y * ({du}).x + M.bump[{stage}].w * ({du}).y, 0.0, 0.0)";
+
+        /// <summary>The ps_1_x texture-addressing instructions (and texld, texcrd and bem of ps_1_4).</summary>
+        private static bool Ps1Instruction(Ctx c, int op, DstReg d, ref Params ps)
+        {
+            int n = d.Num;
+            string Tn(int k) => Use(c, $"t{k}");
+            // the dot product of a matrix row (the texture coordinate set of the destination register) with the source
+            string Row(int k, string src) => $"dot(({Tn(k)}).xyz, ({src}).xyz)";
+            switch (op)
+            {
+                case Tex when c.Minor >= 4:
+                    Write(c, d, Sample(c, n, Src(c, ref ps), 2), null);
+                    return true;
+                case Tex:
+                    Write(c, d, Sample(c, n, Tn(n), 2), null);
+                    return true;
+                case TexCoord when c.Minor >= 4:
+                    Write(c, d, $"vec4<f32>(({Src(c, ref ps)}).xyz, 1.0)", null);
+                    return true;
+                case TexCoord:
+                    Write(c, d, $"vec4<f32>(clamp(({Tn(n)}).xyz, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0)", null);
+                    return true;
+                case TexBem:
+                case TexBemL:
+                {
+                    string du = Src(c, ref ps);
+                    string e = Sample(c, n, Bumped(n, Tn(n), du), 2);
+                    if (op == TexBemL) e = $"({e} * vec4<f32>(vec3<f32>(clamp(({du}).z * M.bumpL[{n}].x + M.bumpL[{n}].y, 0.0, 1.0)), 1.0))";
+                    Write(c, d, e, null);
+                    return true;
+                }
+                case Bem:
+                {
+                    string a = Src(c, ref ps), du = Src(c, ref ps);
+                    Write(c, d, Bumped(n, a, du), null);
+                    return true;
+                }
+                case TexReg2AR: { string a = Src(c, ref ps); Write(c, d, Sample(c, n, $"vec4<f32>(({a}).w, ({a}).x, 0.0, 0.0)", 2), null); return true; }
+                case TexReg2GB: { string a = Src(c, ref ps); Write(c, d, Sample(c, n, $"vec4<f32>(({a}).y, ({a}).z, 0.0, 0.0)", 2), null); return true; }
+                case TexReg2RGB: { string a = Src(c, ref ps); Write(c, d, Sample(c, n, $"vec4<f32>(({a}).xyz, 0.0)", 3), null); return true; }
+                case TexM3x2Pad:
+                case TexM3x3Pad:
+                {
+                    // a row of the matrix: its dot product, and the eye vector's component (the set's w) for texm3x3vspec
+                    string a = Src(c, ref ps);
+                    c.Line($"{Use(c, $"q{n}")} = vec4<f32>({Row(n, a)}, ({Tn(n)}).w, 0.0, 0.0);");
+                    return true;
+                }
+                case TexM3x2Tex:
+                {
+                    string a = Src(c, ref ps);
+                    Write(c, d, Sample(c, n, $"vec4<f32>({Use(c, $"q{n - 1}")}.x, {Row(n, a)}, 0.0, 0.0)", 2), null);
+                    return true;
+                }
+                case TexM3x2Depth:
+                {
+                    string a = Src(c, ref ps);
+                    c.S.WritesDepth = true;
+                    c.Line($"{{ let _z = {Use(c, $"q{n - 1}")}.x; let _w = {Row(n, a)}; {Use(c, "oDepth")} = vec4<f32>(select(_z / _w, 1.0, _w == 0.0)); }}");
+                    return true;
+                }
+                case TexM3x3Tex:
+                case TexM3x3:
+                case TexM3x3Spec:
+                case TexM3x3VSpec:
+                {
+                    string a = Src(c, ref ps);
+                    string nv = $"vec3<f32>({Use(c, $"q{n - 2}")}.x, {Use(c, $"q{n - 1}")}.x, {Row(n, a)})";
+                    if (op == TexM3x3) { Write(c, d, $"vec4<f32>({nv}, 1.0)", null); return true; }
+                    if (op == TexM3x3Tex) { Write(c, d, Sample(c, n, $"vec4<f32>({nv}, 0.0)", 3), null); return true; }
+                    // the reflection of the eye vector (a constant, or the sets' w) about the normal
+                    string eye = op == TexM3x3Spec ? $"({Src(c, ref ps)}).xyz" : $"vec3<f32>(q{n - 2}.y, q{n - 1}.y, ({Tn(n)}).w)";
+                    string r = $"(2.0 * _n * dot(_n, _e) / dot(_n, _n) - _e)";
+                    string tmp = Use(c, $"q{n}");
+                    c.Line($"{{ let _n = {nv}; let _e = {eye}; {tmp} = vec4<f32>({r}, 0.0); }}");
+                    Write(c, d, Sample(c, n, tmp, 3), null);
+                    return true;
+                }
+                case TexDp3Tex:
+                {
+                    string a = Src(c, ref ps);
+                    Write(c, d, Sample(c, n, $"vec4<f32>({Row(n, a)}, 0.0, 0.0, 0.0)", 2), null);
+                    return true;
+                }
+                case TexDp3:
+                {
+                    string a = Src(c, ref ps);
+                    Write(c, d, $"vec4<f32>({Row(n, a)})", null);
+                    return true;
+                }
+                case TexDepth:
+                {
+                    c.S.WritesDepth = true;
+                    string r5 = Use(c, $"r{n}");
+                    c.Line($"{Use(c, "oDepth")} = vec4<f32>(select({r5}.x / {r5}.y, 1.0, {r5}.y == 0.0));");
+                    return true;
+                }
+            }
+            return false;
         }
 
         private static string PredCond(Ctx c, uint t)

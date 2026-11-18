@@ -520,7 +520,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (decl == null) return Invalid;
                 bool transformed = decl.Elements.Any(e => e.Usage == D3D9Usage.PositionT);
                 D3D9Shader? vs = transformed ? null : State.Vs?.Code;
-                D3D9Shader? ps = State.Ps?.Code;
+                D3D9Shader? ps = State.Ps?.ForTextures(State.Tex);
                 if (vs?.Error != null || ps?.Error != null) { DrawsSkipped++; return HResult.S_OK; }
 
                 // the epilogue and the linkage

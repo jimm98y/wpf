@@ -253,6 +253,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             c[49] = 0xFFFE0300;                       // VertexShaderVersion 3.0
             c[50] = 256;                              // MaxVertexShaderConst
             c[51] = 0xFFFF0300;                       // PixelShaderVersion 3.0
+            ((float*)c)[52] = D3D9Bytecode.Ps1MaxValue;   // PixelShader1xMaxValue
             c[53] = 0x51;                             // DevCaps2: STREAMOFFSET, CAN_STRETCHRECT_FROM_TEXTURES, VERTEXELEMENTSCANSHARESTREAMOFFSET
             c[56] = 0; c[57] = 0; c[58] = 1;          // master ordinal, ordinal in group, adapters in group
             c[59] = 0x3FF;                            // DeclTypes: every D3DDTCAPS

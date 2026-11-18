@@ -268,6 +268,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         public Direct3DShader9(Direct3DDevice9 device, D3D9Shader code) : base(device, code.Pixel ? s_ps : s_vs) => Code = code;
 
+        private readonly Dictionary<int, D3D9Shader> _byStages = new();
+
+        /// <summary>The shader for the textures bound: a ps_1_x shader samples each stage by the type of
+        /// the texture there (2D, cube, volume), so it is translated for each combination it meets.</summary>
+        public D3D9Shader ForTextures(ComObject?[] textures)
+        {
+            if (!Code.Pixel || Code.Major != 1) return Code;
+            int key = 0;
+            var types = new Dictionary<int, int>();
+            for (int i = 0; i < 6; i++)
+            {
+                int t = textures[i] switch { Direct3DTexture9 { IsCube: true } => 3, Direct3DVolumeTexture9 => 4, Direct3DTexture9 => 2, _ => 0 };
+                if (t != 0) types[i] = t;
+                key |= t << (i * 3);
+            }
+            lock (_byStages)
+            {
+                if (!_byStages.TryGetValue(key, out D3D9Shader? s)) _byStages[key] = s = D3D9Bytecode.Translate(Code.Bytecode, pixel: true, types);
+                return s;
+            }
+        }
+
         private static Vtable Build(string name, Guid iid)
         {
             var vt = new Vtable(name, 5, iid);

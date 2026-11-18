@@ -850,6 +850,154 @@ namespace WgpuInterop.Tests.Direct3D
             Assert.Equal(0, s.Skipped);
         }
 
+        [StructLayout(LayoutKind.Sequential)] private struct RhwColorTex { public float X, Y, Z, Rhw; public uint Color; public float U, V; }
+        [StructLayout(LayoutKind.Sequential)] private struct RhwTex2 { public float X, Y, Z, Rhw, U, V, U1, V1, W1; }
+
+        /// <summary>The whole target as a strip of pre-transformed vertices, texture coordinates 0-1.</summary>
+        private static T[] FullQuad<T>(Func<float, float, float, float, T> v) => new[]
+        {
+            v(-0.5f, -0.5f, 0, 0), v(63.5f, -0.5f, 1, 0), v(-0.5f, 63.5f, 0, 1), v(63.5f, 63.5f, 1, 1),
+        };
+
+        /// <summary>ps_1_1: tex loads t0 from stage 0, and mul_x2 scales the texel by twice the diffuse.</summary>
+        [Fact]
+        public void PixelShader1_1_TexturesThroughTheStages()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr tex = s.Texture(2, 2, new uint[] { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFF808080 });
+            s.Texture(0, tex);
+            s.PixelShader(Asm.Code(0xFFFF0101,
+                Asm.I(Asm.Op(66, 0), Asm.D(Asm.Texture, 0)),                                                                     // tex t0
+                Asm.I(Asm.Op(5, 0), Asm.D(Asm.Temp, 0) | (1u << 24), Asm.S(Asm.Texture, 0), Asm.S(Asm.Input, 0))));              // mul_x2 r0, t0, v0
+            s.Fvf(FVF_XYZRHW | FVF_DIFFUSE | FVF_TEX1);
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, FullQuad((x, y, u, v) => new RhwColorTex { X = x, Y = y, Z = 0.5f, Rhw = 1, Color = 0xFF808080, U = u, V = v }));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Near(0xFFFF0000, px[8 * W + 8], 2, "red texel");
+            Near(0xFF00FF00, px[8 * W + 56], 2, "green texel");
+            Near(0xFF808080, px[56 * W + 56], 2, "grey times twice grey");
+            Assert.Equal(0, s.Skipped);
+        }
+
+        /// <summary>ps_1_1: constants are clamped to -1..1, and cnd picks by r0.a above a half.</summary>
+        [Fact]
+        public void PixelShader1_1_ClampsConstants_AndConditionsOnR0Alpha()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            s.PixelShader(Asm.Code(0xFFFF0101,
+                Asm.Def(0, 4, -1, 0, 1), Asm.Def(1, 0, 1, 0, 1), Asm.Def(2, 0, 0, 1, 1),
+                Asm.I(Asm.Op(1, 0), Asm.D(Asm.Temp, 0, 0x8), Asm.S(Asm.Input, 0)),                                                  // mov r0.a, v0
+                Asm.I(Asm.Op(80, 0), Asm.D(Asm.Temp, 1), Asm.S(Asm.Temp, 0, 0xFF), Asm.S(Asm.Const, 1), Asm.S(Asm.Const, 2)),       // cnd r1, r0.a, c1, c2
+                Asm.I(Asm.Op(4, 0), Asm.D(Asm.Temp, 0), Asm.S(Asm.Const, 0), Asm.S(Asm.Temp, 1, 0x00), Asm.S(Asm.Temp, 1)))); // mad r0, c0, r1.x, r1
+            s.Fvf(FVF_XYZRHW | FVF_DIFFUSE);
+            s.Clear(1, 0xFF000000);
+            RhwColor[] Half(float x0, float x1, uint color) => new[]
+            {
+                new RhwColor { X = x0, Y = 0, Z = 0.5f, Rhw = 1, Color = color }, new RhwColor { X = x1, Y = 0, Z = 0.5f, Rhw = 1, Color = color },
+                new RhwColor { X = x0, Y = 64, Z = 0.5f, Rhw = 1, Color = color }, new RhwColor { X = x1, Y = 64, Z = 0.5f, Rhw = 1, Color = color },
+            };
+            s.DrawUp(5, 2, Half(0, 32, 0xFF000000));       // alpha 1: c1 (green), r1.x 0
+            s.DrawUp(5, 2, Half(32, 64, 0x40000000));      // alpha 0.25: c2 (blue)
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF00FF00u, px[32 * W + 16]);
+            Assert.Equal(0xFF0000FFu, px[32 * W + 48]);
+        }
+
+        /// <summary>ps_1_4: texld samples stage 0 into r0, texcrd copies the second set, and after the
+        /// phase the product is the colour (r1.w is not written: alpha stays the texel's).</summary>
+        [Fact]
+        public void PixelShader1_4_SamplesAndCopiesCoordinates_AcrossThePhase()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr tex = s.Texture(2, 2, new uint[] { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF });
+            s.Texture(0, tex);
+            s.PixelShader(Asm.Code(0xFFFF0104,
+                Asm.I(Asm.Op(66, 0), Asm.D(Asm.Temp, 0), Asm.S(Asm.Texture, 0)),             // texld r0, t0
+                Asm.I(Asm.Op(64, 0), Asm.D(Asm.Temp, 1, 0x7), Asm.S(Asm.Texture, 1)),        // texcrd r1.xyz, t1
+                Asm.I(0x0000FFFD),                                                            // phase
+                Asm.I(Asm.Op(5, 0), Asm.D(Asm.Temp, 0, 0x7), Asm.S(Asm.Temp, 0), Asm.S(Asm.Temp, 1))));   // mul r0.rgb, r0, r1
+            s.Fvf(FVF_XYZRHW | 0x200 | 0x40000);     // two sets, the second of three coordinates
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, FullQuad((x, y, u, v) => new RhwTex2 { X = x, Y = y, Z = 0.5f, Rhw = 1, U = u, V = v, U1 = 1, V1 = 0.5f }));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFFFF0000u, px[8 * W + 8]);
+            Near(0xFF008000, px[8 * W + 56], 2, "green times (1, 0.5, 0)");
+            Near(0xFFFF8000, px[56 * W + 56], 2, "white times (1, 0.5, 0)");
+            Assert.Equal(0, s.Skipped);
+        }
+
+        [StructLayout(LayoutKind.Sequential)] private struct RhwTex4 { public float X, Y, Z, Rhw, U0, V0, U1, V1, W1, U2, V2, W2, U3, V3, W3; }
+
+        /// <summary>ps_1_1 texbem: stage 0's texel (r 1, g 0) through stage 1's bump matrix (00 = 0.5)
+        /// moves stage 1's coordinates half the texture right.</summary>
+        [Fact]
+        public void PixelShader1_1_TexBem_PerturbsTheNextStage()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr bump = s.Texture(1, 1, new uint[] { 0xFFFF0000 });
+            IntPtr color = s.Texture(2, 2, new uint[] { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF });
+            s.Texture(0, bump);
+            s.Texture(1, color);
+            s.Tss(1, 7, Asm.F(0.5f));          // BUMPENVMAT00
+            s.PixelShader(Asm.Code(0xFFFF0101,
+                Asm.I(Asm.Op(66, 0), Asm.D(Asm.Texture, 0)),                                  // tex t0
+                Asm.I(Asm.Op(67, 0), Asm.D(Asm.Texture, 1), Asm.S(Asm.Texture, 0)),           // texbem t1, t0
+                Asm.I(Asm.Op(1, 0), Asm.D(Asm.Temp, 0), Asm.S(Asm.Texture, 1))));             // mov r0, t1
+            s.Fvf(FVF_XYZRHW | 0x200);
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, FullQuad((x, y, u, v) => new RhwTex2 { X = x, Y = y, Z = 0.5f, Rhw = 1, U = u, V = v, U1 = u, V1 = v }));
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFF00FF00u, px[8 * W + 8]);       // u 0.125 + 0.5: the right column
+            Assert.Equal(0xFFFF0000u, px[8 * W + 40]);      // u 0.625 + 0.5 wraps to the left
+            Assert.Equal(0, s.Skipped);
+        }
+
+        /// <summary>ps_1_1 texm3x3spec: the matrix rows (texm3x3pad) and the reflection about the normal
+        /// they make, sampling a cube texture; drawn, not rejected.</summary>
+        [Fact]
+        public void PixelShader1_1_TexM3x3Spec_ReflectsIntoACube()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr cube;
+            Check(((delegate* unmanaged<IntPtr, uint, uint, uint, int, int, IntPtr*, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.CreateCubeTexture))(s.Dev, 1, 1, 0, D3DFMT_A8R8G8B8, 1, &cube, null), "CreateCubeTexture");
+            s.Own(cube);
+            uint[] colors = { 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF };
+            for (int f = 0; f < 6; f++)
+            {
+                D3DLOCKED_RECT lr;
+                Check(((delegate* unmanaged<IntPtr, int, uint, D3DLOCKED_RECT*, D3DRECT9*, uint, int>)Fn(cube, Vtbl.IDirect3DCubeTexture9.LockRect))(cube, f, 0, &lr, null, 0), "LockRect");
+                *(uint*)lr.pBits = colors[f];
+                Check(((delegate* unmanaged<IntPtr, int, uint, int>)Fn(cube, Vtbl.IDirect3DCubeTexture9.UnlockRect))(cube, f, 0), "UnlockRect");
+            }
+            IntPtr normal = s.Texture(1, 1, new uint[] { 0xFF8080FF });       // (0, 0, 1) once _bx2
+            s.Texture(0, normal);
+            s.Texture(3, cube);
+            s.PsConst(0, 0, 0, 1, 0);                                         // the eye: +z
+            const int Bx2 = 4;
+            s.PixelShader(Asm.Code(0xFFFF0101,
+                Asm.I(Asm.Op(66, 0), Asm.D(Asm.Texture, 0)),                                                         // tex t0
+                Asm.I(Asm.Op(73, 0), Asm.D(Asm.Texture, 1), Asm.S(Asm.Texture, 0, mod: Bx2)),                        // texm3x3pad t1, t0_bx2
+                Asm.I(Asm.Op(73, 0), Asm.D(Asm.Texture, 2), Asm.S(Asm.Texture, 0, mod: Bx2)),                        // texm3x3pad t2, t0_bx2
+                Asm.I(Asm.Op(76, 0), Asm.D(Asm.Texture, 3), Asm.S(Asm.Texture, 0, mod: Bx2), Asm.S(Asm.Const, 0)),   // texm3x3spec t3, t0_bx2, c0
+                Asm.I(Asm.Op(1, 0), Asm.D(Asm.Temp, 0), Asm.S(Asm.Texture, 3))));                                    // mov r0, t3
+            // the identity matrix in sets 1-3: the normal is (0, 0, 1), the reflection of +z is +z
+            s.Fvf(FVF_XYZRHW | 0x400 | 0x40000 | 0x100000 | 0x400000);
+            s.Clear(1, 0xFF000000);
+            s.DrawUp(5, 2, FullQuad((x, y, u, v) => new RhwTex4 { X = x, Y = y, Z = 0.5f, Rhw = 1, U0 = u, V0 = v, U1 = 1, V2 = 1, W3 = 1 }));
+            s.EndScene();
+            Assert.Equal(0, s.Skipped);
+            Near(colors[4], s.Pixels()[32 * W + 32], 2, "the +z face");
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()
