@@ -844,6 +844,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 else D3DLog.Once("sods", "stream output of a domain shader is not written");
                 if (gs.StreamOutput.RasterizedStream != 0 || (_dsv == null && _rtv.All(r => r == null))) { DrawsIssued++; return; }
             }
+            // SV_PrimitiveID without the adapter's primitive index: through a pass-through geometry shader
+            if (NeedsPrimitiveIdPass() && PrimitiveIdGs(vs, (uint)_topology) is { } pass) { DrawGeometry(a, vs, pass); return; }
             var t = Translate(vs, _ps.Shader);
             if (t.Error != null) { DrawsSkipped++; return; }
             IntPtr pipeline = Pipeline(t, vs, _ps.Shader, out string? why);

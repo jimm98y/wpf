@@ -75,5 +75,72 @@ namespace WgpuInterop.Tests.Direct3D
                 Release(ctx); Release(dev);
             }
         }
+
+        /// <summary>No geometry shader: the input assembler's primitive ID (on an adapter without a
+        /// primitive index, through the shim's pass-through geometry shader), drawn and indexed.</summary>
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void APixelShaderWithoutAGeometryShader_ReadsTheInputAssemblersPrimitiveId(bool indexed)
+        {
+            Assert.SkipWhen(Requirements.GpuUnavailable is not null, Requirements.GpuUnavailable ?? "");
+            IntPtr dev, ctx;
+            uint level;
+            Assert.True(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0, null, 0, 7, &dev, &level, &ctx) >= 0, "shim");
+            var made = new List<IntPtr>();
+            IntPtr Keep(IntPtr p) { made.Add(p); return p; }
+            try
+            {
+                byte[] vs = Hlsl("static const float2 q[6] = { float2(-1, 1), float2(0, 1), float2(-1, -1), float2(0, 1), float2(1, 1), float2(0, -1) };\n"
+                    + "struct O { float4 pos : SV_Position; float4 c : COLOR0; };\n"
+                    + "O main(uint id : SV_VertexID) { O o; o.pos = float4(q[id], 0.5, 1); o.c = float4(0, 0.5, 0, 1); return o; }\n", "vs_5_0");
+                byte[] ps = Hlsl("float4 main(float4 p : SV_Position, float4 c : COLOR0, uint prim : SV_PrimitiveID) : SV_Target { return float4((prim + 1) / 16.0, c.y, 0, 1); }\n", "ps_5_0");
+                IntPtr v, pp;
+                fixed (byte* p = vs) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateVertexShader))(dev, p, (nuint)vs.Length, IntPtr.Zero, &v), "CreateVertexShader");
+                Keep(v);
+                fixed (byte* p = ps) Check(((delegate* unmanaged<IntPtr, byte*, nuint, IntPtr, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreatePixelShader))(dev, p, (nuint)ps.Length, IntPtr.Zero, &pp), "CreatePixelShader");
+                Keep(pp);
+                var rd = new D3D11_TEXTURE2D_DESC { Width = W, Height = H, MipLevels = 1, ArraySize = 1, Format = DXGI_FORMAT.R16G16B16A16_FLOAT, SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.RENDER_TARGET };
+                IntPtr rt, rtv;
+                Check(((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &rd, null, &rt), "CreateTexture2D rt");
+                Keep(rt);
+                Check(((delegate* unmanaged<IntPtr, IntPtr, void*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateRenderTargetView))(dev, rt, null, &rtv), "CreateRenderTargetView");
+                Keep(rtv);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.VSSetShader))(ctx, v, null, 0);
+                ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.PSSetShader))(ctx, pp, null, 0);
+                ((delegate* unmanaged<IntPtr, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetPrimitiveTopology))(ctx, 4);
+                ((delegate* unmanaged<IntPtr, uint, IntPtr*, IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.OMSetRenderTargets))(ctx, 1, &rtv, IntPtr.Zero);
+                var vp = new D3D11_VIEWPORT { Width = W, Height = H, MaxDepth = 1 };
+                ((delegate* unmanaged<IntPtr, uint, D3D11_VIEWPORT*, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.RSSetViewports))(ctx, 1, &vp);
+                if (indexed)
+                {
+                    // the right triangle first: primitive 0 is the right one, 1 the left
+                    ushort[] idx = { 3, 4, 5, 0, 1, 2 };
+                    IntPtr ib;
+                    fixed (ushort* p = idx)
+                    {
+                        var bd = new D3D11_BUFFER_DESC { ByteWidth = 12, Usage = D3D11_USAGE.DEFAULT, BindFlags = D3D11_BIND.INDEX_BUFFER };
+                        var init = new D3D11_SUBRESOURCE_DATA { pSysMem = p };
+                        Check(((delegate* unmanaged<IntPtr, D3D11_BUFFER_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Fn(dev, Vtbl.ID3D11Device.CreateBuffer))(dev, &bd, &init, &ib), "CreateBuffer ib");
+                    }
+                    Keep(ib);
+                    ((delegate* unmanaged<IntPtr, IntPtr, DXGI_FORMAT, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.IASetIndexBuffer))(ctx, ib, DXGI_FORMAT.R16_UINT, 0);
+                    ((delegate* unmanaged<IntPtr, uint, uint, int, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.DrawIndexed))(ctx, 6, 0, 0);
+                }
+                else ((delegate* unmanaged<IntPtr, uint, uint, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.Draw))(ctx, 6, 0);
+                var px = ReadTarget(dev, ctx, rt, Keep);
+                float R(int x, int y) => px[(y * W + x) * 4];
+                float G(int x, int y) => px[(y * W + x) * 4 + 1];
+                float left = indexed ? 2 / 16f : 1 / 16f, right = indexed ? 1 / 16f : 2 / 16f;
+                Assert.True(Math.Abs(R(4, 4) - left) < 0.01f && Math.Abs(G(4, 4) - 0.5f) < 0.01f, $"left: ({R(4, 4)}, {G(4, 4)})");
+                Assert.True(Math.Abs(R(28, 4) - right) < 0.01f && Math.Abs(G(28, 4) - 0.5f) < 0.01f, $"right: ({R(28, 4)}, {G(28, 4)})");
+            }
+            finally
+            {
+                ((delegate* unmanaged<IntPtr, void>)Fn(ctx, Vtbl.ID3D11DeviceContext.ClearState))(ctx);
+                foreach (IntPtr p in made) Release(p);
+                Release(ctx); Release(dev);
+            }
+        }
     }
 }
