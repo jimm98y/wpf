@@ -57,28 +57,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
 
         // d3dcompiler_47: ours on every OS, Windows too (the user's decision, 2026-10-19: one
         // implementation everywhere). Reflection is managed, over the blob's own chunks; run-time
-        // HLSL compilation is not there yet (section 9), and answers E_FAIL with one line saying so.
+        // HLSL compilation is the shim's own compiler (Hlsl/, section 9).
 
-        private static int NoCompiler(byte* entry, byte* target, IntPtr* code, IntPtr* errors)
-        {
-            if (code != null) *code = IntPtr.Zero;
-            if (errors != null) *errors = IntPtr.Zero;
-            string what = $"{(entry != null ? Marshal.PtrToStringUTF8((IntPtr)entry) : "?")} ({(target != null ? Marshal.PtrToStringUTF8((IntPtr)target) : "?")})";
-            D3DLog.Once("d3dcompile", $"D3DCompile of {what}: the shim has no HLSL compiler yet; precompiled shaders (DXBC) work, run-time HLSL does not (E_FAIL)");
-            return unchecked((int)0x80004005);
-        }
+        private static string? Str(byte* p) => p == null ? null : Marshal.PtrToStringUTF8((IntPtr)p);
 
         [Win32Export("D3DCompile")] [Win32ExportOnWindows(Always, "D3DCompile")]
         public static int D3DCompile(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
-            => NoCompiler(entry, target, code, errors);
+            => src == null ? HResult.E_INVALIDARG : D3DCompiler.Compile(new ReadOnlySpan<byte>(src, checked((int)size)), Str(name), defines, include, entry, target, f1, code, errors);
 
         [Win32Export("D3DCompile2")] [Win32ExportOnWindows(Always, "D3DCompile2")]
         public static int D3DCompile2(void* src, nuint size, byte* name, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, uint secondaryFlags, void* secondary, nuint secondarySize, IntPtr* code, IntPtr* errors)
-            => NoCompiler(entry, target, code, errors);
+            => D3DCompile(src, size, name, defines, include, entry, target, f1, f2, code, errors);
 
         [Win32Export("D3DCompileFromFile")] [Win32ExportOnWindows(Always, "D3DCompileFromFile")]
         public static int D3DCompileFromFile(char* file, void* defines, void* include, byte* entry, byte* target, uint f1, uint f2, IntPtr* code, IntPtr* errors)
-            => NoCompiler(entry, target, code, errors);
+        {
+            if (code != null) *code = IntPtr.Zero;
+            if (errors != null) *errors = IntPtr.Zero;
+            string? path = file == null ? null : new string(file);
+            if (path == null) return HResult.E_INVALIDARG;
+            byte[] bytes;
+            try { bytes = System.IO.File.ReadAllBytes(path); }
+            catch (Exception) { return unchecked((int)0x80070002); }    // HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+            return D3DCompiler.Compile(bytes, path, defines, include, entry, target, f1, code, errors);
+        }
+
+        [Win32Export("D3DCreateBlob")] [Win32ExportOnWindows(Always, "D3DCreateBlob")]
+        public static int D3DCreateBlob(nuint size, IntPtr* blob)
+        {
+            if (blob == null) return HResult.E_INVALIDARG;
+            *blob = D3DBlob.Create(size).Pointer;
+            return HResult.S_OK;
+        }
 
         [Win32Export("D3DReflect")] [Win32ExportOnWindows(Always, "D3DReflect")]
         public static int D3DReflect(void* src, nuint size, Guid* iid, IntPtr* reflector)

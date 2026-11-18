@@ -113,9 +113,10 @@ namespace WgpuInterop.Tests.Direct3D
             finally { Release(ctx); Release(dev); }
         }
 
-        /// <summary>D3DCompile on every OS: E_FAIL, no blobs, no compiler loaded (the shim has none yet).</summary>
+        /// <summary>D3DCompile on every OS: the shim's own compiler (no native one loaded) -- a DXBC
+        /// container in an ID3DBlob, no error blob when there is nothing to say.</summary>
         [Fact]
-        public void D3DCompile_AnswersEFail()
+        public void D3DCompile_CompilesWithTheShimsCompiler()
         {
             byte[] src = System.Text.Encoding.ASCII.GetBytes("float4 main() : SV_Target { return 1; }");
             byte[] entry = System.Text.Encoding.ASCII.GetBytes("main\0"), target = System.Text.Encoding.ASCII.GetBytes("ps_4_0\0");
@@ -125,9 +126,14 @@ namespace WgpuInterop.Tests.Direct3D
             fixed (byte* e = entry)
             fixed (byte* t = target)
                 hr = Exports.CompilePointer(s, (nuint)src.Length, null, null, null, e, t, 0, 0, &code, &errors);
-            Assert.Equal(HResult.E_FAIL, hr);
-            Assert.Equal(IntPtr.Zero, code);
+            Assert.Equal(HResult.S_OK, hr);
             Assert.Equal(IntPtr.Zero, errors);
+            Assert.NotEqual(IntPtr.Zero, code);
+            var ptr = ((delegate* unmanaged<IntPtr, IntPtr>)(*(IntPtr**)code)[3])(code);
+            var size = ((delegate* unmanaged<IntPtr, nuint>)(*(IntPtr**)code)[4])(code);
+            Assert.Equal("DXBC", System.Text.Encoding.ASCII.GetString((byte*)ptr, 4));
+            Assert.Equal((int)size, *(int*)((byte*)ptr + 24));
+            Release(code);
         }
     }
 }

@@ -434,18 +434,30 @@ to write, but it means a native dependency for every head, which the rules here 
 **Runtime compilation.** Applications call `D3DCompile`/`D3DCompileFromFile` and `D3DReflect`.
 
 - **Every OS, Windows included (the user's decisions, 2026-10-19):** the d3dcompiler_47 exports are
-  the shim's. `D3DCompile`, `D3DCompile2` and `D3DCompileFromFile` answer `E_FAIL` with one clear log
-  line until there is a compiler of our own; there is no DXC package and no managed HLSL front end.
-  An app that compiles HLSL at run time ships the DXBC instead: SharpMediaFoundationInterop now embeds
-  its renderer's shaders, compiled ahead of time by fxc (branch `features/precompiled-shaders` of that
-  repo; the bytecode is byte for byte what D3DCompile made of the same source). `D3DReflect` is
-  managed (D3DShaderReflection): ID3D11ShaderReflection read from the blob's chunks (RDEF,
-  signatures, STAT, SFI0, the declarations). It matches d3dcompiler_47 field for field over the
-  corpus and DXEngine's shaders (D3DReflectTests): descriptions and instruction counts, constant
+  the shim's. `D3DCompile`, `D3DCompile2` and `D3DCompileFromFile` run the shim's own HLSL compiler
+  (Direct3D/Hlsl; the user's decision of 2026-11-18, over DXC as a native package): managed, one
+  implementation on every head. It takes the D3D_SHADER_MACRO list, the app's ID3DInclude (or
+  D3D_COMPILE_STANDARD_FILE_INCLUDE) and the D3DCOMPILE_* flags that change code (matrix packing,
+  backwards compatibility), and answers fxc's error text in the error blob.
+  - Front end: C's preprocessor as fxc runs it, then a parser of HLSL as shader models 2 to 5 write
+    it (effect syntax skipped as fxc skips it).
+  - Back end, shader model 4.0 to 5.0 vertex and pixel shaders: DXBC that the translator and
+    D3DReflect read as they read fxc's. Functions are inlined; types are checked as the code is
+    generated; constant buffers pack as fxc packs them (16-byte registers, matrices column-major by
+    default), signatures pack as fxc packs them (first fit, alike interpolation), registers bind to
+    the resources used, in declaration order. The container's checksum is the runtime's.
+  - Checked against fxc (HlslCompilerTests): every vertex and pixel shader of the corpus compiles
+    with fxc's signatures, bindings and constant-buffer layouts, and draws on the shim as fxc's blob
+    of the same source draws, pixel for pixel.
+  - Not yet: geometry, hull, domain and compute shaders; shader models 2 and 3 (D3D9's token stream
+    with CTAB); class linkage. Those targets answer E_FAIL with the error text saying so.
+  `D3DReflect` is managed (D3DShaderReflection): ID3D11ShaderReflection read from the blob's chunks
+  (RDEF, signatures, STAT, SFI0, the declarations). It matches d3dcompiler_47 field for field over
+  the corpus and DXEngine's shaders (D3DReflectTests): descriptions and instruction counts, constant
   buffers, variables with defaults, type trees with class-linkage subtypes, bindings, parameters,
   and lookups of names that are not there.
 - Weighed and set aside: `D3DCompile` through DXC as an optional native package (its DXIL taken by
-  the DXIL path), and a managed HLSL front end (about 30k lines to reach fxc's dialect).
+  the DXIL path).
 
 **Tests for generality.**
 
@@ -490,7 +502,7 @@ to write, but it means a native dependency for every head, which the rules here 
 5. HS/DS.
 6. Doubles and the fallbacks.
 7. DXIL.
-8. Managed D3DReflect, and `D3DCompile` answering `E_FAIL` off Windows.
+8. Managed D3DReflect, and `D3DCompile` through the shim's own HLSL compiler.
 
 Each step is its own commit with its corpus tests.
 
