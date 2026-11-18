@@ -1129,6 +1129,38 @@ namespace WgpuInterop.Tests.Direct3D
             }
         }
 
+        /// <summary>A depth surface larger than the render target (D3D9 draws with its top-left corner): the
+        /// depth test applies, and what one pass wrote is there for the next.</summary>
+        [Fact]
+        public void ALargerDepthSurface_IsDrawnWith_AndKeepsWhatWasDrawn()
+        {
+            RequireGpu();
+            using var s = new Scene();
+            IntPtr big;
+            Check(((delegate* unmanaged<IntPtr, uint, uint, int, int, uint, int, IntPtr*, IntPtr*, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.CreateDepthStencilSurface))(s.Dev, 128, 128, D3DFMT_D24S8, 0, 0, 1, &big, null), "CreateDepthStencilSurface");
+            s.Own(big);
+            Check(((delegate* unmanaged<IntPtr, IntPtr, int>)Fn(s.Dev, Vtbl.IDirect3DDevice9.SetDepthStencilSurface))(s.Dev, big), "SetDepthStencilSurface");
+            s.RS(D3DRS.ZENABLE, 1);
+            s.Fvf(FVF_XYZRHW | FVF_DIFFUSE);
+            s.Clear(3, 0xFF000000, 1);
+            RhwColor[] Quad(float x1, float z, uint color) => new[]
+            {
+                new RhwColor { X = 0, Y = 0, Z = z, Rhw = 1, Color = color }, new RhwColor { X = x1, Y = 0, Z = z, Rhw = 1, Color = color },
+                new RhwColor { X = 0, Y = 64, Z = z, Rhw = 1, Color = color }, new RhwColor { X = x1, Y = 64, Z = z, Rhw = 1, Color = color },
+            };
+            s.DrawUp(5, 2, Quad(32, 0.25f, 0xFFFF0000));
+            s.DrawUp(5, 2, Quad(64, 0.75f, 0xFF00FF00));     // behind the red half
+            s.EndScene();
+            s.Pixels();                                       // submits: the pass ends, the depth goes back
+            s.BeginScene();
+            s.DrawUp(5, 2, Quad(64, 0.5f, 0xFF0000FF));      // in front of the green, behind the red
+            s.EndScene();
+            uint[] px = s.Pixels();
+            Assert.Equal(0xFFFF0000u, px[32 * W + 16]);
+            Assert.Equal(0xFF0000FFu, px[32 * W + 48]);
+            Assert.Equal(0, s.Skipped);
+        }
+
         /// <summary>An event query is signalled once what came before it is submitted.</summary>
         [Fact]
         public void EventQueries_Signal()

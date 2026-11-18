@@ -116,6 +116,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
             _pass = IntPtr.Zero;
             Array.Clear(_passColor);
             _passDepth = IntPtr.Zero;
+            EndProxy();                 // a proxied depth surface's corner: back into the surface
         }
 
         /// <summary>Submits what the device recorded: the arenas' bytes, then the draws.</summary>
@@ -154,6 +155,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         private void ReleaseDrawResources()
         {
             try { FlushDraws(); } catch (Exception e) { D3DLog.Error("D3D9 final flush", e); }
+            ReleaseDepthProxies();
             if (_uniformGpu != IntPtr.Zero) wgpuBufferRelease(_uniformGpu);
             if (_vertexGpu != IntPtr.Zero) wgpuBufferRelease(_vertexGpu);
             _uniformGpu = _vertexGpu = IntPtr.Zero;
@@ -243,9 +245,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
                 if (Targets[i] is { Gpu: not null } t && t.Width == rt0.Width && t.Height == rt0.Height) color[i] = t;
             var ds = DepthStencil;
             if (ds?.Gpu == null) ds = null;
-            else if (ds.Width != rt0.Width || ds.Height != rt0.Height)
+            else if ((ds.Width != rt0.Width || ds.Height != rt0.Height) && !CanProxy(ds, rt0.Width, rt0.Height))
             {
-                D3DLog.Once("d3d9dssize", $"a {ds.Width}x{ds.Height} depth surface with a {rt0.Width}x{rt0.Height} render target is not drawn with (WebGPU attachments are one size)");
+                // larger is drawn through a proxy (D3D9.DepthProxy.cs); smaller D3D9 does not draw with either
+                D3DLog.Once("d3d9dssize", $"a {ds.Width}x{ds.Height} depth surface with a {rt0.Width}x{rt0.Height} render target is not drawn with");
                 ds = null;
             }
             return new TargetSet(color, ds, rt0.Width, rt0.Height);
@@ -256,10 +259,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             var views = new IntPtr[4];
             for (int i = 0; i < 4; i++) if (ts.Color[i] is { } s) views[i] = TargetView(s.Gpu!, s.Level, s.Layer);
-            IntPtr dv = ts.Depth != null ? TargetView(ts.Depth.Gpu!, ts.Depth.Level, ts.Depth.Layer) : IntPtr.Zero;
+            bool proxied = ts.Depth != null && (ts.Depth.Width != ts.Width || ts.Depth.Height != ts.Height);
+            IntPtr dv = ts.Depth == null ? IntPtr.Zero
+                : proxied ? (_depthProxies.TryGetValue((ts.Depth.Gpu!.Gpu, ts.Width, ts.Height), out var known) ? known.View : IntPtr.Zero)
+                : TargetView(ts.Depth.Gpu!, ts.Depth.Level, ts.Depth.Layer);
             bool clearing = clearColor != null || clearDepth != null || clearStencil != null;
-            if (_pass != IntPtr.Zero && !clearing && dv == _passDepth && views.AsSpan().SequenceEqual(_passColor)) return true;
+            bool sameDepth = ts.Depth == null ? _passDepth == IntPtr.Zero : dv != IntPtr.Zero && dv == _passDepth;
+            if (_pass != IntPtr.Zero && !clearing && sameDepth && views.AsSpan().SequenceEqual(_passColor)) return true;
             EndPass();
+            // a larger depth surface: its corner in a proxy of the targets' size, for this pass
+            if (proxied)
+            {
+                dv = BeginProxy(ts.Depth!, ts.Width, ts.Height);
+                _proxyPass = (_depthProxies[(ts.Depth!.Gpu!.Gpu, ts.Width, ts.Height)], ts.Depth!);
+            }
             int count = 0;
             for (int i = 0; i < 4; i++) if (views[i] != IntPtr.Zero) count = i + 1;
             var atts = stackalloc WGPURenderPassColorAttachment[4];
