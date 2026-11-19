@@ -446,7 +446,8 @@ its report is `LocalTransform.windows.txt`.
   - The reader tells a decoder of streaming at the first read, and flushes it only once it has had samples. At the
     end it drains and flushes it, then tells of the end of the stream and of streaming, and flushes again.
   - A transform's own types and samples are read through their vtables and copied.
-  - Local audio decoders are not taken yet.
+  - An audio decoder alike, of float or PCM: the reader takes the decoder's output of the subtype asked for (Windows'
+    enumerates its types to it), and converts after it as after its own.
 
 ## The encoders
 
@@ -593,7 +594,7 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
-  (`MF_SINK_WRITER_MEDIASINK`); the application's local audio decoders in the reader.
+  (`MF_SINK_WRITER_MEDIASINK`).
 - The color converter's IMediaObject; the video processor's formats of more than 8 bits, palettes and the rarer
   packings, and its scaling filter to the byte.
 - More of the source reader:

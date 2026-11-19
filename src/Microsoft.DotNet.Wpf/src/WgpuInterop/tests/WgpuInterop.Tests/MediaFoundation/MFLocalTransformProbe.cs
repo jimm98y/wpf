@@ -37,10 +37,10 @@ namespace WgpuInterop.Tests.MediaFoundation
         private static readonly Guid IID_IMFTransform = new("bf94c121-5b05-4e6f-8000-ba598961414d");
         private static readonly Guid MFT_FRIENDLY_NAME = new("314ffbae-5b41-4c95-9c19-4e7d586face3");
 
-        private static int Register(IntPtr factory, Guid category, string? name, Guid input, Guid output, uint flags = 0)
+        private static int Register(IntPtr factory, Guid category, string? name, Guid input, Guid output, uint flags = 0, Guid? major = null)
         {
-            var i = new MFT_REGISTER_TYPE_INFO { guidMajorType = Video, guidSubtype = input };
-            var o = new MFT_REGISTER_TYPE_INFO { guidMajorType = Video, guidSubtype = output };
+            var i = new MFT_REGISTER_TYPE_INFO { guidMajorType = major ?? Video, guidSubtype = input };
+            var o = new MFT_REGISTER_TYPE_INFO { guidMajorType = major ?? Video, guidSubtype = output };
             if (OperatingSystem.IsWindows()) return WinRegister(factory, &category, name, flags, 1, &i, 1, &o);
             fixed (char* p = name) return MFExports.MFTRegisterLocal(factory, &category, name == null ? null : p, flags, 1, &i, 1, &o);
         }
@@ -175,6 +175,7 @@ namespace WgpuInterop.Tests.MediaFoundation
 
             log.AddRange(Writer(factory));
             log.AddRange(Reader());
+            log.AddRange(AudioReader());
             factory.Release();
             return log;
         }
@@ -264,6 +265,62 @@ namespace WgpuInterop.Tests.MediaFoundation
                 log.Add($"  frames {frames}");
                 MFReader.Release(r);
                 lock (factory.Calls) log.Add($"  calls while reading:\n    {Collapse(factory.Calls)}");
+            }
+            finally
+            {
+                log.Add($"  unregister: {Hr(Unregister(factory.Pointer))}");
+                factory.Release();
+                try { File.Delete(path); } catch { }
+            }
+            return log;
+        }
+
+        private static readonly Guid Audio = new("73647561-0000-0010-8000-00aa00389b71"), ADEC = new("9ea73fb4-ef7a-4559-8d5d-719d8f0426c7");
+        private static readonly Guid AAC = new("00001610-0000-0010-8000-00aa00389b71"), PCM = new("00000001-0000-0010-8000-00aa00389b71"), Float = new("00000003-0000-0010-8000-00aa00389b71");
+
+        /// <summary>The source reader of a file of AAC, a local AAC decoder registered (the spy over the system's): of float, then of PCM.</summary>
+        private static List<string> AudioReader()
+        {
+            var log = new LiveLog { "==== the source reader, a local audio decoder registered" };
+            var factory = new SpyFactory(() => MFEncoderProbe.Encoder(ADEC, Audio, AAC, Float));
+            log.Add($"  register: {Hr(Register(factory.Pointer, ADEC, "Local spy audio decoder", AAC, Float, 0, Audio))}");
+            string path = new Mp4TestFile { AudioFrames = 40 }.WriteTemp("localaudio");
+            try
+            {
+                foreach (var (name, sub) in new[] { ("float", Float), ("PCM", PCM) })
+                {
+                    int hr = MFReader.Create(path, IntPtr.Zero, out var r);
+                    log.Add($"  {name}: create {Hr(hr)}");
+                    if (hr < 0) return log;
+                    const uint FirstAudio = 0xFFFFFFFD;
+                    var t = MFReader.MediaType();
+                    MFReader.SetGuid(t, new Guid("48eba18e-f8c9-4687-bf11-0a74c9f96a8f"), Audio);
+                    MFReader.SetGuid(t, new Guid("f7e34c9a-42e8-4714-b74b-cb29d72c35e5"), sub);
+                    log.Add($"  set {name} {Hr(MFReader.SetCurrentMediaType(r, FirstAudio, t))}");
+                    MFReader.Release(t);
+                    Guid cat; IntPtr x;
+                    hr = ((delegate* unmanaged<IntPtr, uint, uint, Guid*, IntPtr*, int>)MFReader.Fn(r, 16))(r, FirstAudio, 0, &cat, &x);
+                    log.Add($"  transform 0: {Hr(hr)}{(hr >= 0 && Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject.From<SpyTransform>(x) != null ? " the spy" : hr >= 0 ? " not the spy" : "")}");
+                    if (hr >= 0) MFReader.Release(x);
+                    hr = ((delegate* unmanaged<IntPtr, uint, uint, Guid*, IntPtr*, int>)MFReader.Fn(r, 16))(r, FirstAudio, 1, &cat, &x);
+                    log.Add($"  transform 1: {Hr(hr)}");
+                    if (hr >= 0) MFReader.Release(x);
+                    hr = MFReader.GetCurrentMediaType(r, FirstAudio, out var cur);
+                    if (hr >= 0) { log.Add($"  current: {string.Join("; ", MFReader.Dump(cur))}"); MFReader.Release(cur); }
+                    log.Add($"  calls while set up:\n    {Collapse(factory.Calls)}"); factory.Calls.Clear();
+                    int samples = 0; long bytes = 0;
+                    for (int k = 0; k < 100; k++)
+                    {
+                        hr = MFReader.ReadSample(r, FirstAudio, out _, out uint flags, out _, out var s);
+                        if (hr < 0) { log.Add($"  read {Hr(hr)}"); break; }
+                        if (s != IntPtr.Zero) { samples++; bytes += MFReader.SampleBytes(s, out _).Length; MFReader.Release(s); }
+                        if ((flags & 2) != 0) break;
+                    }
+                    log.Add($"  samples {samples}, bytes {bytes}");
+                    MFReader.Release(r);
+                    lock (factory.Calls) log.Add($"  calls while reading:\n    {Collapse(factory.Calls)}");
+                    factory.Calls.Clear();
+                }
             }
             finally
             {

@@ -395,40 +395,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             bool fl = sub == MediaFormats.Float;
             if (sub != MediaFormats.PCM && !fl) return MF.MF_E_INVALIDMEDIATYPE;
             if (Native.Subtype == MediaFormats.PCM || Native.Subtype == MediaFormats.Float) return SetPcm(t, sub);
-            var info = MFAudioDecoder.Registered.FirstOrDefault(i => Array.IndexOf(i.Inputs, Native.Subtype) >= 0);
-            if (info == null || !PlatformAudioDecoder.Supports(info.Codec)) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
-            var dec = new MFAudioDecoder(info);
+            // a decoder the application registered in the process before the shim's own (as Windows' reader takes it)
+            TransformRef? dec = null;
+            if (LocalTransforms.First(MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER, MFAudioDecoder.MFMediaType_Audio, Native.Subtype, Guid.Empty) is var local && local != IntPtr.Zero)
+            {
+                if (Mft.SetInputType(local, Native.Pointer) >= 0) dec = new TransformRef(local);
+                else Com.Release(local);
+            }
+            if (dec == null)
+            {
+                var info = MFAudioDecoder.Registered.FirstOrDefault(i => Array.IndexOf(i.Inputs, Native.Subtype) >= 0);
+                if (info == null || !PlatformAudioDecoder.Supports(info.Codec)) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
+                var own = new MFAudioDecoder(info);
+                if (Mft.SetInputType(own.Pointer, Native.Pointer) < 0) { own.Shutdown(); own.Release(); return SR.MF_E_TOPO_CODEC_NOT_FOUND; }
+                dec = new TransformRef(own);
+            }
             IntPtr p = dec.Pointer;
-            if (Mft.SetInputType(p, Native.Pointer) < 0) { dec.Shutdown(); dec.Release(); return SR.MF_E_TOPO_CODEC_NOT_FOUND; }
+            void Drop() { dec.Own?.Shutdown(); dec.Release(); }
             // the decoder's types: the one asked for, or the first of the kind (the bits converted after)
             var types = new List<MFMediaType>();
             for (uint i = 0; ; i++)
             {
                 IntPtr ot;
                 if (((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, int>)Com.Fn(p, 14))(p, 0, i, &ot) < 0) break;
-                if (ComObject.From<MFMediaType>(ot) is { } m) types.Add(m); else Com.Release(ot);
+                if (ComObject.From<MFMediaType>(ot) is { } m) types.Add(m); else { types.Add(Mp4Types.Read(ot)); Com.Release(ot); }
             }
             try
             {
                 uint rate = Native.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND), ch = Native.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS);
                 // of the kind asked for, or (to convert from) the decoder's first
                 var first = types.FirstOrDefault(x => x.Subtype == sub) ?? types.FirstOrDefault();
-                if (first == null) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                if (first == null) { Drop(); return MF.MF_E_INVALIDMEDIATYPE; }
                 uint bits = t.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, fl ? 32u : first.Subtype == sub ? first.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) : 16u);
                 uint wantRate = t.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, first.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND));
                 uint wantCh = t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, first.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS));
-                if (wantRate is < 1000 or > 384000 || wantCh is < 1 or > 8) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                if (wantRate is < 1000 or > 384000 || wantCh is < 1 or > 8) { Drop(); return MF.MF_E_INVALIDMEDIATYPE; }
                 uint decRate = first.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND), decCh = first.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS);
-                if (fl ? bits != 32 : bits is not (8 or 16 or 24 or 32)) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                if (fl ? bits != 32 : bits is not (8 or 16 or 24 or 32)) { Drop(); return MF.MF_E_INVALIDMEDIATYPE; }
                 var exact = types.FirstOrDefault(x => x.Subtype == sub && x.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) == bits && x.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) == wantCh)
                     ?? types.FirstOrDefault(x => x.Subtype == sub && x.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) == bits && x.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) == decCh);
                 // no type of the decoder's, or another rate: converted from its first (Windows' resampler after it)
                 if (wantRate != decRate) exact = null;
                 var use = exact ?? types[0];
                 decCh = use.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, decCh);
-                if (Mft.SetOutputType(p, use.Pointer) < 0) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                if (Mft.SetOutputType(p, use.Pointer) < 0) { Drop(); return MF.MF_E_INVALIDMEDIATYPE; }
                 DropDecoder();
-                Decoder = new TransformRef(dec);
+                Decoder = dec;
                 _streaming = false;
                 bool convert = exact == null || wantRate != decRate || wantCh != decCh;
                 _conv = convert ? new AudioConverter(use.Subtype == MediaFormats.Float, (int)use.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, 16), (int)decCh, (int)decRate, fl, (int)bits, (int)wantCh, (int)wantRate) : null;
