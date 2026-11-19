@@ -62,10 +62,14 @@ namespace WgpuInterop.Tests.MediaFoundation
             {
                 var r = new List<string>();
                 string file = "";
+                bool resampled = false;
                 foreach (var l in lines)
                 {
                     if (l.StartsWith("==== ")) file = l;
                     if (s_internal.Any(l.Contains)) continue;
+                    // resampled: the packets are the resampler's filter's, each its own (the signal is compared, below)
+                    if (l.StartsWith("decode to ")) resampled = l.Contains(" Hz");
+                    if (resampled && l.StartsWith("  read: flags 0x0 ")) continue;
                     // Windows takes no bitrate of an esds whose descriptors' lengths are of four bytes (as Apple's tools write
                     // them), and makes one of its own the shim does not: the esds' is the shim's
                     if (file == "==== tone-aac.m4a" && (l.StartsWith("  MF_MT_AUDIO_AVG_BYTES_PER_SECOND") || l.StartsWith("  MF_MT_AVG_BITRATE"))) continue;
@@ -107,15 +111,15 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         /// <summary>
-        /// A decoded channel's line ("channel k: frames n first loud f rms r"): the frames the same, the sound beginning within
-        /// two frames and its level within 0.002 -- each system's decoder its own, none of them Windows'.
+        /// A decoded channel's line ("channel k: frames n first loud f rms r"): the frames within two (the same unless resampled),
+        /// the sound beginning within two frames and its level within 0.002 -- each system's decoder and resampler its own.
         /// </summary>
         private static bool SameSignal(string a, string b)
         {
             var x = a.Trim().Split(' '); var y = b.Trim().Split(' ');
-            if (x.Length != 9 || y.Length != 9 || x[0] != "channel" || y[0] != "channel" || x[1] != y[1] || x[3] != y[3]) return false;
+            if (x.Length != 9 || y.Length != 9 || x[0] != "channel" || y[0] != "channel" || x[1] != y[1]) return false;
             var inv = System.Globalization.CultureInfo.InvariantCulture;
-            return Math.Abs(int.Parse(x[6], inv) - int.Parse(y[6], inv)) <= 2 && Math.Abs(double.Parse(x[8], inv) - double.Parse(y[8], inv)) <= 0.002;
+            return Math.Abs(int.Parse(x[3], inv) - int.Parse(y[3], inv)) <= 2 && Math.Abs(int.Parse(x[6], inv) - int.Parse(y[6], inv)) <= 2 && Math.Abs(double.Parse(x[8], inv) - double.Parse(y[8], inv)) <= 0.002;
         }
 
         // ---- decoding -----------------------------------------------------------------------------------

@@ -1429,6 +1429,111 @@ decode to MFAudioFormat_PCM 24 bits: 0x00000000
   read: flags 0x2 time 0 no sample
   channel 0: frames 24576 first loud 2114 rms 0.2451
   channel 1: frames 24576 first loud 2113 rms 0.2453
+decode to MFAudioFormat_PCM 16 bits 48000 Hz: 0x00000000
+  current:
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 192000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 48000
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 225000 buffers 1 bytes 4320
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+  read: flags 0x0 time 224999 duration 232292 buffers 1 bytes 4460
+  read: flags 0x0 time 457291 duration 232083 buffers 1 bytes 4456
+  read: flags 0x0 time 689373 duration 232292 buffers 1 bytes 4460
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 26749 first loud 2300 rms 0.2451
+  channel 1: frames 26749 first loud 2300 rms 0.2453
+decode to MFAudioFormat_PCM 16 bits 1 channels: 0x00000000
+  current:
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_CHANNEL_MASK = UI4 4
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 232200 buffers 1 bytes 2048
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+  read: flags 0x0 time 232199 duration 232200 buffers 1 bytes 2048
+  read: flags 0x0 time 464399 duration 232200 buffers 1 bytes 2048
+  read: flags 0x0 time 696598 duration 232200 buffers 1 bytes 2048
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 24576 first loud 2113 rms 0.1734
+decode to MFAudioFormat_Float 22050 Hz 1 channels: 0x00000000
+  current:
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+    MF_MT_AUDIO_CHANNEL_MASK = UI4 4
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 22050
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  read: flags 0x0 time 0 duration 218141 buffers 1 bytes 1924
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+  read: flags 0x0 time 218140 duration 232200 buffers 1 bytes 2048
+  read: flags 0x0 time 450340 duration 232200 buffers 1 bytes 2048
+  read: flags 0x0 time 682539 duration 232200 buffers 1 bytes 2048
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 12288 first loud 1057 rms 0.1734
+decode to MFAudioFormat_PCM 16 bits 2 channels: 0x00000000
+  current:
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 232200 buffers 1 bytes 4096
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+  read: flags 0x0 time 232199 duration 232200 buffers 1 bytes 4096
+  read: flags 0x0 time 464399 duration 232200 buffers 1 bytes 4096
+  read: flags 0x0 time 696598 duration 232200 buffers 1 bytes 4096
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 24576 first loud 2114 rms 0.2451
+  channel 1: frames 24576 first loud 2113 rms 0.2453
+decode to MFAudioFormat_PCM 16 bits 8000 Hz 6 channels: 0x00000000
+  current:
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 96000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 12
+    MF_MT_AUDIO_CHANNEL_MASK = UI4 63
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 6
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 8000
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 193750 buffers 1 bytes 1860
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+  read: flags 0x0 time 193749 duration 232500 buffers 1 bytes 2232
+  read: flags 0x0 time 426249 duration 232500 buffers 1 bytes 2232
+  read: flags 0x0 time 658748 duration 231250 buffers 1 bytes 2220
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 4459 first loud 384 rms 0.2451
+  channel 1: frames 4459 first loud 384 rms 0.2453
+  channel 2: frames 4459 first loud -1 rms 0.0000
+  channel 3: frames 4459 first loud -1 rms 0.0000
+  channel 4: frames 4459 first loud -1 rms 0.0000
+  channel 5: frames 4459 first loud -1 rms 0.0000
 ==== tone-alac.m4a
 create 0x00000000
 native:
@@ -1513,3 +1618,103 @@ decode to MFAudioFormat_PCM 24 bits: 0x00000000
   read: flags 0x0 time 1857596 duration 642404 buffers 1 bytes 8499
   read: flags 0x2 time 0 no sample
   channel 0: frames 11025 first loud 2 rms 0.2589
+decode to MFAudioFormat_PCM 16 bits 48000 Hz: 0x00000000
+  current:
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 96000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 48000
+    MF_MT_AUDIO_VALID_BITS_PER_SAMPLE = UI4 16
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 921667 buffers 1 bytes 8848
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+      MFSampleExtension_Discontinuity = UI4 1
+  read: flags 0x0 time 921667 duration 928750 buffers 1 bytes 8916
+  read: flags 0x0 time 1850417 duration 642500 buffers 1 bytes 6168
+  read: flags 0x0 time 2492917 duration 6875 buffers 1 bytes 66
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 11999 first loud 2 rms 0.2589
+decode to MFAudioFormat_PCM 16 bits 1 channels: 0x00000000
+  current:
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AUDIO_VALID_BITS_PER_SAMPLE = UI4 16
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 928798 buffers 1 bytes 8192
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+      MFSampleExtension_Discontinuity = UI4 1
+  read: flags 0x0 time 928798 duration 928798 buffers 1 bytes 8192
+  read: flags 0x0 time 1857596 duration 642403 buffers 1 bytes 5666
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 11025 first loud 2 rms 0.2589
+decode to MFAudioFormat_Float 22050 Hz 1 channels: 0x00000000
+  current:
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 22050
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  read: flags 0x0 time 0 duration 914739 buffers 1 bytes 8068
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+      MFSampleExtension_Discontinuity = UI4 1
+  read: flags 0x0 time 914739 duration 928798 buffers 1 bytes 8192
+  read: flags 0x0 time 1843537 duration 642177 buffers 1 bytes 5664
+  read: flags 0x0 time 2485714 duration 14512 buffers 1 bytes 128
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 5513 first loud 1 rms 0.2589
+decode to MFAudioFormat_PCM 16 bits 2 channels: 0x00000000
+  current:
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+    MF_MT_AUDIO_CHANNEL_MASK = UI4 3
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AUDIO_VALID_BITS_PER_SAMPLE = UI4 16
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 928798 buffers 1 bytes 16384
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+      MFSampleExtension_Discontinuity = UI4 1
+  read: flags 0x0 time 928798 duration 928798 buffers 1 bytes 16384
+  read: flags 0x0 time 1857596 duration 642404 buffers 1 bytes 11332
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 11025 first loud 2 rms 0.2589
+  channel 1: frames 11025 first loud 2 rms 0.2589
+decode to MFAudioFormat_PCM 16 bits 8000 Hz 6 channels: 0x00000000
+  current:
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 96000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 12
+    MF_MT_AUDIO_CHANNEL_MASK = UI4 63
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 6
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 8000
+    MF_MT_AUDIO_VALID_BITS_PER_SAMPLE = UI4 16
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  read: flags 0x0 time 0 duration 890000 buffers 1 bytes 8544
+      8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN
+      MFSampleExtension_CleanPoint = UI4 1
+      MFSampleExtension_Discontinuity = UI4 1
+  read: flags 0x0 time 890000 duration 928750 buffers 1 bytes 8916
+  read: flags 0x0 time 1818750 duration 642500 buffers 1 bytes 6168
+  read: flags 0x0 time 2461250 duration 38750 buffers 1 bytes 372
+  read: flags 0x2 time 0 no sample
+  channel 0: frames 2000 first loud -1 rms 0.0000
+  channel 1: frames 2000 first loud -1 rms 0.0000
+  channel 2: frames 2000 first loud 1 rms 0.2589
+  channel 3: frames 2000 first loud -1 rms 0.0000
+  channel 4: frames 2000 first loud -1 rms 0.0000
+  channel 5: frames 2000 first loud -1 rms 0.0000

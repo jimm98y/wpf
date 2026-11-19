@@ -109,9 +109,17 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
     apertures and `MF_MT_VIDEO_NOMINAL_RANGE`.
   - With `MF_SOURCE_READER_D3D_MANAGER`, the frames are textures of the manager's device: NV12, and for
     RGB a B8G8R8X8 / B8G8R8A8 texture. The conversion to RGB still runs on the CPU.
-  - Audio is decoded to PCM (8, 16, 24 or 32 bits) or float. The reader converts to bit depths the
-    decoder does not give, but it does not resample or remix yet: another rate or channel count gives
-    MF_E_INVALIDMEDIATYPE.
+  - Audio is decoded to PCM (8, 16, 24 or 32 bits) or float, of any rate and channel count. Like
+    Windows' resampler, the reader converts after the decoder (`AudioConverter.cs`):
+    - to mono (L + R) / 2;
+    - mono to stereo duplicated, mono to more to the centre;
+    - stereo to more to the front left and right; more to fewer by ITU's coefficients;
+    - `MF_MT_AUDIO_CHANNEL_MASK` set where the count of channels changes;
+    - the rate by a windowed sinc (32 taps, Kaiser) with its delay taken out, so the sound stays where it
+      was in time.
+
+    The packets differ from Windows' (its filter's look-ahead is longer), while the types are the same;
+    the frames are within two and the level within 0.0005.
   - ALAC's native type is Windows' own: its subtype `616c6163-767a-…`, the bytes per second of its
     configuration, and no WAVEFORMATEX attributes.
   - Known difference: an esds whose descriptor lengths are four bytes long (as Apple's tools write
@@ -144,7 +152,7 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
-- The encoders, and resampling and remixing in the reader.
+- The encoders.
 - More of the source reader:
   - more containers (WAV, MP3, ADTS, WebM/Matroska, ASF);
   - reading from a media source (`MFCreateSourceReaderFromMediaSource`) and from network URLs;

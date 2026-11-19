@@ -415,16 +415,18 @@ namespace WgpuInterop.Tests.MediaFoundation
             if (hr >= 0 && count > 0) Marshal.FreeCoTaskMem((IntPtr)acts);
             MFReader.Release(native);
 
-            foreach (var (sub, bits) in new[] { (PCM, 0u), (PCM, 16u), (Float, 0u), (PCM, 24u) })
+            foreach (var (sub, bits, rate, chans) in new[] { (PCM, 0u, 0u, 0u), (PCM, 16u, 0u, 0u), (Float, 0u, 0u, 0u), (PCM, 24u, 0u, 0u), (PCM, 16u, 48000u, 0u), (PCM, 16u, 0u, 1u), (Float, 0u, 22050u, 1u), (PCM, 16u, 0u, 2u), (PCM, 16u, 8000u, 6u) })
             {
                 MFReader.Create(path, IntPtr.Zero, out r);
                 var t = MFReader.MediaType();
                 MFReader.SetGuid(t, new Guid("48eba18e-f8c9-4687-bf11-0a74c9f96a8f"), MFMediaType_Audio);
                 MFReader.SetGuid(t, new Guid("f7e34c9a-42e8-4714-b74b-cb29d72c35e5"), sub);
                 if (bits > 0) MFReader.SetU32(t, new Guid("f2deb57f-40fa-4764-aa33-ed4f2d1ff669"), bits);
+                if (rate > 0) MFReader.SetU32(t, new Guid("5faeeae7-0290-4c31-9e8a-c534f68d9dba"), rate);
+                if (chans > 0) MFReader.SetU32(t, new Guid("37e48bf5-645e-4c5b-89de-ada9e29b696a"), chans);
                 hr = MFReader.SetCurrentMediaType(r, MFReader.FIRST_AUDIO, t);
                 MFReader.Release(t);
-                log.Add($"decode to {MFReader.Name(sub)}{(bits > 0 ? $" {bits} bits" : "")}: {Hr(hr)}");
+                log.Add($"decode to {MFReader.Name(sub)}{(bits > 0 ? $" {bits} bits" : "")}{(rate > 0 ? $" {rate} Hz" : "")}{(chans > 0 ? $" {chans} channels" : "")}: {Hr(hr)}");
                 if (hr >= 0)
                 {
                     MFReader.GetCurrentMediaType(r, MFReader.FIRST_AUDIO, out var c);
