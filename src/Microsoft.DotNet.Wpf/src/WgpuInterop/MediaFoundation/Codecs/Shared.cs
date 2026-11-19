@@ -40,6 +40,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         public static readonly Guid H264 = FourCC("H264"), HEVC = FourCC("HEVC"), H263 = FourCC("H263"), MP4V = FourCC("MP4V"), VP90 = FourCC("VP90"), AV1 = FourCC("AV01");
         public static readonly Guid MPEG2 = new("e06d8026-db46-11cf-b4d1-00805f6cbbea");
         public static readonly Guid ProRes = FourCC("apch");
+        public static Guid Wave(ushort tag) => new Guid(tag, 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71);
+        public static readonly Guid PCM = Wave(1), Float = Wave(3), AAC = Wave(0x1610), MP3 = Wave(0x55), Opus = Wave(0x704F), FLAC = Wave(0xF1AC);
+        /// <summary>Windows' ALAC subtype: of no WAVE format tag.</summary>
+        public static readonly Guid ALAC = new("616c6163-767a-494d-b478-f29d25dc9037");
+        public static Guid Of(AudioCodec codec) => codec switch
+        {
+            AudioCodec.AAC => AAC, AudioCodec.Mp3 => MP3, AudioCodec.Opus => Opus, AudioCodec.Flac => FLAC, _ => ALAC,
+        };
         public static Guid Of(VideoCodec codec) => codec switch
         {
             VideoCodec.H262 => MPEG2, VideoCodec.H263 => H263, VideoCodec.Mpeg4 => MP4V, VideoCodec.H264 => H264, VideoCodec.H265 => HEVC,

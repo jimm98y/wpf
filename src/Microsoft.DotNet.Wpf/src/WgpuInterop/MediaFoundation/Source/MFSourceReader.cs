@@ -51,7 +51,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public static readonly Guid MFMediaType_Audio = new("73647561-0000-0010-8000-00aa00389b71");
         public static readonly Guid MFAudioFormat_AAC = new("00001610-0000-0010-8000-00aa00389b71"), MFAudioFormat_MP3 = new("00000055-0000-0010-8000-00aa00389b71");
         public static readonly Guid MFAudioFormat_PCM = new("00000001-0000-0010-8000-00aa00389b71"), MFAudioFormat_Float = new("00000003-0000-0010-8000-00aa00389b71");
-        public static readonly Guid MFAudioFormat_FLAC = new("0000f1ac-0000-0010-8000-00aa00389b71"), MFAudioFormat_ALAC = new("00006c61-0000-0010-8000-00aa00389b71");
+        public static readonly Guid MFAudioFormat_FLAC = new("0000f1ac-0000-0010-8000-00aa00389b71"), MFAudioFormat_ALAC = MediaFormats.ALAC;
         public static readonly Guid MFAudioFormat_Opus = new("0000704f-0000-0010-8000-00aa00389b71");
         public static readonly Guid MFAudioFormat_Dolby_AC3 = new("e06d802c-db46-11cf-b4d1-00805f6cbbea"), MFAudioFormat_Dolby_DDPlus = new("a7fb87af-2d02-42fb-a4d4-05cd93843bdd");
         public static readonly Guid MFVideoFormat_RGB32 = new("00000016-0000-0010-8000-00aa00389b71"), MFVideoFormat_ARGB32 = new("00000015-0000-0010-8000-00aa00389b71");
@@ -287,7 +287,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             {
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
                 if (n != 0 || s.Decoder == null) return MF.MF_E_INVALIDINDEX;
-                if (category != null) *category = SR.MFT_CATEGORY_VIDEO_DECODER;
+                if (category != null) *category = s.Track.Audio ? MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER : SR.MFT_CATEGORY_VIDEO_DECODER;
                 *transform = s.Decoder.AddRefPointer();
             }
             return MF.S_OK;

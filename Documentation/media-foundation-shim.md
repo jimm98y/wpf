@@ -45,6 +45,26 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - VideoToolbox's decoder is made from the stream's own configuration: H.264's and HEVC's parameter sets, the first VP9 key frame, the AV1 sequence header, the headers before the first MPEG-4 picture.
   - Frames are handed out in display order.
 
+## The audio decoders
+
+`IMFTransform`s under Windows' names and CLSIDs (`MFAudioTransform.cs`) over the system's decoder
+(`Codecs/PlatformAudioDecoder.cs`): AudioToolbox on Apple's systems, GStreamer on Linux, MediaCodec on
+Android. The decoders are SharpMediaFoundationInterop's (MIT, by the same author), adapted.
+
+- "Microsoft AAC Audio Decoder MFT" (AAC, raw AAC, ADTS), "MP3 Decoder MFT", "Microsoft FLAC Audio
+  Decoder MFT" and "Microsoft Opus Audio Decoder MFT" are listed by `MFTEnumEx` in
+  `MFT_CATEGORY_AUDIO_DECODER`. The ALAC decoder is not listed, as on Windows, where `MFTEnumEx` finds
+  none for its ALAC subtype, though its source reader decodes ALAC.
+- **Output types, in Windows' order:**
+  - AAC and MP3: 32-bit float, then 16-bit PCM.
+  - FLAC: those and the stream's bits.
+  - ALAC: the stream's PCM alone. The reader converts it to float and to other bit depths, with the
+    durations rounded, as Windows' resampler does.
+- **Samples:** one per packet. The time is the first input's, then counted in frames. AAC's durations
+  are rounded; the others' are rounded down. AAC's samples carry no discontinuity; the others pass on
+  the input's.
+- Nothing of the priming is cut: an MP4's iTunSMPB is not read, as on Windows.
+
 ## The source reader
 
 `IMFSourceReaderEx` over a demuxer of the shim's own (`Source/`). Windows' reader was probed for
@@ -89,8 +109,13 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
     apertures and `MF_MT_VIDEO_NOMINAL_RANGE`.
   - With `MF_SOURCE_READER_D3D_MANAGER`, the frames are textures of the manager's device: NV12, and for
     RGB a B8G8R8X8 / B8G8R8A8 texture. The conversion to RGB still runs on the CPU.
-  - Audio is not decoded yet: setting PCM or float on a compressed stream gives
-    MF_E_TOPO_CODEC_NOT_FOUND.
+  - Audio is decoded to PCM (8, 16, 24 or 32 bits) or float. The reader converts to bit depths the
+    decoder does not give, but it does not resample or remix yet: another rate or channel count gives
+    MF_E_INVALIDMEDIATYPE.
+  - ALAC's native type is Windows' own: its subtype `616c6163-767a-…`, the bytes per second of its
+    configuration, and no WAVEFORMATEX attributes.
+  - Known difference: an esds whose descriptor lengths are four bytes long (as Apple's tools write
+    them) gives Windows a bitrate of its own making. The shim takes the esds' bitrate.
 - **Seeking** (`SetCurrentPosition`) goes to the sync sample at or before the position. In a fragmented
   file it goes to the first sync sample of the fragment, as Windows does.
 - **Presentation attributes:** `MF_PD_DURATION` (the mvhd's), `MF_PD_TOTAL_FILE_SIZE`,
@@ -109,7 +134,9 @@ through its vtables, as an app does:
 - **The coded size:** a 56x40 picture in 64x48 of macroblocks gives an output type of 64x48, the picture in its aperture.
 - **The device manager's device:** each frame an NV12 texture of the device behind `IMFDXGIBuffer`, each identical when read back.
 
-`MFSourceReaderTests` compares the reader's report with Windows'. It also decodes the I_PCM files to NV12
+`MFSourceReaderTests` compares the reader's report with Windows', including two audio files made with
+macOS's afconvert (AAC and ALAC tones). Decoded, they have the same frames as Windows' decoding, with the
+sound beginning within two frames and its level within 0.002. It also decodes the I_PCM files to NV12
 and to RGB32 (exact to the byte), through the callback, into the device manager's textures, and from a
 byte stream. On Windows the same tests drive Windows' own reader, and they pass there too. They also pass
 on macOS and in the Ubuntu VM.
@@ -117,7 +144,7 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
-- The audio decoders (AAC, MP3, FLAC, ALAC, Opus) and the encoders.
+- The encoders, and resampling and remixing in the reader.
 - More of the source reader:
   - more containers (WAV, MP3, ADTS, WebM/Matroska, ASF);
   - reading from a media source (`MFCreateSourceReaderFromMediaSource`) and from network URLs;

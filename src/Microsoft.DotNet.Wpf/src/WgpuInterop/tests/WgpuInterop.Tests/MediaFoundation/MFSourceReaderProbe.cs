@@ -358,6 +358,115 @@ namespace WgpuInterop.Tests.MediaFoundation
             return log;
         }
 
+        private static readonly Guid MFMediaType_Audio = new("73647561-0000-0010-8000-00aa00389b71");
+        private static readonly Guid PCM = new("00000001-0000-0010-8000-00aa00389b71"), Float = new("00000003-0000-0010-8000-00aa00389b71");
+        private static readonly Guid MFT_CATEGORY_AUDIO_DECODER = new("9ea73fb4-ef7a-4559-8d5d-719d8f0426c7");
+
+        [DllImport("mfplat.dll", EntryPoint = "MFTEnumEx")] private static extern int WinMFTEnumEx(Guid category, uint flags, MFT_REGISTER_TYPE_INFO* input, MFT_REGISTER_TYPE_INFO* output, IntPtr** activates, uint* count);
+
+        /// <summary>The audio of a file: decoded to PCM and to float, the samples' times and sizes, the signal per channel.</summary>
+        internal static List<string> AudioReport(string path)
+        {
+            var log = new List<string>();
+            int hr = MFReader.Create(path, IntPtr.Zero, out var r);
+            log.Add($"create {Hr(hr)}");
+            if (hr < 0) return log;
+            MFReader.GetNativeMediaType(r, MFReader.FIRST_AUDIO, 0, out var native);
+            log.Add("native:");
+            log.AddRange(MFReader.Dump(native).Select(l => "  " + l));
+            MFReader.Release(r);
+
+            // the decoders, by themselves
+            var input = new MFT_REGISTER_TYPE_INFO { guidMajorType = MFMediaType_Audio, guidSubtype = MFReader.G(native, new Guid("f7e34c9a-42e8-4714-b74b-cb29d72c35e5")) };
+            IntPtr* acts; uint count;
+            hr = OperatingSystem.IsWindows() ? WinMFTEnumEx(MFT_CATEGORY_AUDIO_DECODER, 1 | 4 | 0x20 | 0x40, &input, null, &acts, &count) : MFExports.MFTEnumEx(MFT_CATEGORY_AUDIO_DECODER, 1 | 4 | 0x20 | 0x40, &input, null, &acts, &count);
+            log.Add($"MFTEnumEx {Hr(hr)} count {(hr >= 0 ? count : 0)}");
+            for (uint i = 0; hr >= 0 && i < count; i++)
+            {
+                IntPtr a = acts[i];
+                log.Add($"  decoder {i}:");
+                log.AddRange(MFReader.Dump(a).Where(l => l.Contains("314ffbae") || l.Contains("6821c42b") || l.Contains("4276c9b1") || l.Contains("8eae8cf3") || l.Contains("FRIENDLY")).Select(l => "    " + l));
+                if (i == 0)
+                {
+                    IntPtr t; var iid = new Guid("bf94c121-5b05-4e6f-8000-ba598961414d");
+                    int h = ((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)MFReader.Fn(a, 33))(a, &iid, &t);
+                    log.Add($"    activate {Hr(h)}");
+                    if (h >= 0)
+                    {
+                        h = ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)MFReader.Fn(t, 15))(t, 0, native, 0);
+                        log.Add($"    SetInputType {Hr(h)}");
+                        for (uint n = 0; n < 12; n++)
+                        {
+                            IntPtr ot;
+                            h = ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, int>)MFReader.Fn(t, 14))(t, 0, n, &ot);
+                            if (h < 0) { log.Add($"    output {n}: {Hr(h)}"); break; }
+                            log.Add($"    output {n}:");
+                            log.AddRange(MFReader.Dump(ot).Select(l => "      " + l));
+                            MFReader.Release(ot);
+                        }
+                        var info = stackalloc uint[6];
+                        h = ((delegate* unmanaged<IntPtr, uint, uint*, int>)MFReader.Fn(t, 6))(t, 0, info);
+                        log.Add($"    input stream info {Hr(h)}: latency {*(long*)info} flags 0x{info[2]:x} size {info[3]} lookahead {info[4]} alignment {info[5]}");
+                        MFReader.Release(t);
+                    }
+                }
+                MFReader.Release(a);
+            }
+            if (hr >= 0 && count > 0) Marshal.FreeCoTaskMem((IntPtr)acts);
+            MFReader.Release(native);
+
+            foreach (var (sub, bits) in new[] { (PCM, 0u), (PCM, 16u), (Float, 0u), (PCM, 24u) })
+            {
+                MFReader.Create(path, IntPtr.Zero, out r);
+                var t = MFReader.MediaType();
+                MFReader.SetGuid(t, new Guid("48eba18e-f8c9-4687-bf11-0a74c9f96a8f"), MFMediaType_Audio);
+                MFReader.SetGuid(t, new Guid("f7e34c9a-42e8-4714-b74b-cb29d72c35e5"), sub);
+                if (bits > 0) MFReader.SetU32(t, new Guid("f2deb57f-40fa-4764-aa33-ed4f2d1ff669"), bits);
+                hr = MFReader.SetCurrentMediaType(r, MFReader.FIRST_AUDIO, t);
+                MFReader.Release(t);
+                log.Add($"decode to {MFReader.Name(sub)}{(bits > 0 ? $" {bits} bits" : "")}: {Hr(hr)}");
+                if (hr >= 0)
+                {
+                    MFReader.GetCurrentMediaType(r, MFReader.FIRST_AUDIO, out var c);
+                    log.Add("  current:");
+                    log.AddRange(MFReader.Dump(c).Select(l => "    " + l));
+                    uint ch = MFReader.U32(c, new Guid("37e48bf5-645e-4c5b-89de-ada9e29b696a"), 1), bps = MFReader.U32(c, new Guid("f2deb57f-40fa-4764-aa33-ed4f2d1ff669"), 16);
+                    bool fl = MFReader.G(c, new Guid("f7e34c9a-42e8-4714-b74b-cb29d72c35e5")) == Float;
+                    MFReader.Release(c);
+                    var all = new List<byte>();
+                    for (int n = 0; n < 400; n++)
+                    {
+                        int h = MFReader.ReadSample(r, MFReader.FIRST_AUDIO, out _, out uint f, out long ts, out var smp);
+                        if (h < 0) { log.Add($"  read {Hr(h)}"); break; }
+                        if (smp == IntPtr.Zero) { log.Add($"  read: flags 0x{f:x} time {ts} no sample"); if ((f & 2) != 0) break; continue; }
+                        var b = MFReader.SampleBytes(smp, out uint nb);
+                        if (n < 4 || (f & 0x20) != 0) log.Add($"  read: flags 0x{f:x} time {ts} duration {MFReader.Duration(smp)} buffers {nb} bytes {b.Length}");
+                        if (n == 0) log.AddRange(MFReader.Dump(smp).Select(l => "      " + l));
+                        all.AddRange(b);
+                        MFReader.Release(smp);
+                    }
+                    // the signal: per channel, the frames, the first loud one, the RMS
+                    int bytesPer = (int)bps / 8, frame = bytesPer * (int)ch;
+                    int frames = all.Count / Math.Max(1, frame);
+                    var arr = all.ToArray();
+                    for (int k = 0; k < ch; k++)
+                    {
+                        double sum = 0; int first = -1;
+                        for (int i = 0; i < frames; i++)
+                        {
+                            int o = i * frame + k * bytesPer;
+                            double v = fl ? BitConverter.ToSingle(arr, o) : bytesPer == 2 ? BitConverter.ToInt16(arr, o) / 32768.0 : bytesPer == 3 ? ((arr[o] | arr[o + 1] << 8 | (sbyte)arr[o + 2] << 16) / 8388608.0) : BitConverter.ToInt32(arr, o) / 2147483648.0;
+                            sum += v * v;
+                            if (first < 0 && Math.Abs(v) > 0.03) first = i;
+                        }
+                        log.Add(FormattableString.Invariant($"  channel {k}: frames {frames} first loud {first} rms {Math.Sqrt(sum / Math.Max(1, frames)):F4}"));
+                    }
+                }
+                MFReader.Release(r);
+            }
+            return log;
+        }
+
         private static List<string> Native(IntPtr r, uint i)
         {
             MFReader.GetNativeMediaType(r, i, 0, out var t);
@@ -367,6 +476,9 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         private static bool AllEnded(IntPtr r, List<string> log) => log.Count(l => l.StartsWith("read:") && l.Contains("no sample")) >= 2;
+
+        /// <summary>Audio made with afconvert, macOS's: AAC of a stereo tone of 440 and 660 Hz, ALAC of a mono one.</summary>
+        internal static readonly string[] AudioFiles = { "tone-aac.m4a", "tone-alac.m4a" };
 
         /// <summary>The files of the report (SourceReader.windows.txt is Windows' of them).</summary>
         internal static (string Name, Mp4TestFile File)[] Files() => new[]
@@ -389,6 +501,12 @@ namespace WgpuInterop.Tests.MediaFoundation
             {
                 all.Add($"==== {name}");
                 try { all.AddRange(Report(f, name)); }
+                catch (Exception e) { all.Add("failed: " + e); }
+            }
+            foreach (var m in AudioFiles)
+            {
+                all.Add($"==== {m}");
+                try { all.AddRange(AudioReport(System.IO.Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Media", m))); }
                 catch (Exception e) { all.Add("failed: " + e); }
             }
             System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_OUT")!, all);

@@ -53,7 +53,26 @@ namespace WgpuInterop.Tests.MediaFoundation
                 ours.Add($"==== {name}");
                 ours.AddRange(MFSourceReaderProbe.Report(f, name));
             }
-            static List<string> Clean(IEnumerable<string> lines) => lines.Where(l => !s_internal.Any(l.Contains)).ToList();
+            foreach (var m in MFSourceReaderProbe.AudioFiles)
+            {
+                ours.Add($"==== {m}");
+                ours.AddRange(MFSourceReaderProbe.AudioReport(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Media", m)));
+            }
+            static List<string> Clean(IEnumerable<string> lines)
+            {
+                var r = new List<string>();
+                string file = "";
+                foreach (var l in lines)
+                {
+                    if (l.StartsWith("==== ")) file = l;
+                    if (s_internal.Any(l.Contains)) continue;
+                    // Windows takes no bitrate of an esds whose descriptors' lengths are of four bytes (as Apple's tools write
+                    // them), and makes one of its own the shim does not: the esds' is the shim's
+                    if (file == "==== tone-aac.m4a" && (l.StartsWith("  MF_MT_AUDIO_AVG_BYTES_PER_SECOND") || l.StartsWith("  MF_MT_AVG_BITRATE"))) continue;
+                    r.Add(l);
+                }
+                return r;
+            }
             var w = Clean(windows); var o = Clean(ours);
 
             // a read of any stream: the samples (with their attributes) by stream, each in order
@@ -81,10 +100,22 @@ namespace WgpuInterop.Tests.MediaFoundation
             var (wr, wreads) = Split(w);
             var (or, oreads) = Split(o);
             for (int i = 0; i < Math.Max(wr.Count, or.Count); i++)
-                Assert.True(i < wr.Count && i < or.Count && wr[i] == or[i], $"line {i}: Windows '{(i < wr.Count ? wr[i] : "(none)")}', ours '{(i < or.Count ? or[i] : "(none)")}'");
+                Assert.True(i < wr.Count && i < or.Count && (wr[i] == or[i] || SameSignal(wr[i], or[i])), $"line {i}: Windows '{(i < wr.Count ? wr[i] : "(none)")}', ours '{(i < or.Count ? or[i] : "(none)")}'");
             Assert.Equal(wreads.Keys.OrderBy(k => k), oreads.Keys.OrderBy(k => k));
             foreach (var k in wreads.Keys)
                 Assert.True(wreads[k].SequenceEqual(oreads[k]), $"{k}: Windows\n{string.Join("\n", wreads[k])}\nours\n{string.Join("\n", oreads[k])}");
+        }
+
+        /// <summary>
+        /// A decoded channel's line ("channel k: frames n first loud f rms r"): the frames the same, the sound beginning within
+        /// two frames and its level within 0.002 -- each system's decoder its own, none of them Windows'.
+        /// </summary>
+        private static bool SameSignal(string a, string b)
+        {
+            var x = a.Trim().Split(' '); var y = b.Trim().Split(' ');
+            if (x.Length != 9 || y.Length != 9 || x[0] != "channel" || y[0] != "channel" || x[1] != y[1] || x[3] != y[3]) return false;
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            return Math.Abs(int.Parse(x[6], inv) - int.Parse(y[6], inv)) <= 2 && Math.Abs(double.Parse(x[8], inv) - double.Parse(y[8], inv)) <= 0.002;
         }
 
         // ---- decoding -----------------------------------------------------------------------------------

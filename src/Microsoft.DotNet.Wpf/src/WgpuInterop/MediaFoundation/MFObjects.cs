@@ -461,6 +461,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return r.ToArray();
         }
 
+        /// <summary>The bytes of a sample not of ours, through its own IMFSample methods.</summary>
+        internal static byte[] ForeignSampleBytes(IntPtr sample)
+        {
+            uint n;
+            ((delegate* unmanaged<IntPtr, uint*, int>)Com.Fn(sample, 39))(sample, &n);
+            var all = new List<byte>();
+            for (uint i = 0; i < n; i++)
+            {
+                IntPtr b;
+                if (((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(sample, 40))(sample, i, &b) < 0) continue;
+                all.AddRange(From<MFBuffer>(b) is { } ours ? MFVideoDecoder.OwnBytes(ours) : MFSample.ForeignBytes(b));
+                Com.Release(b);
+            }
+            return all.ToArray();
+        }
+
         /// <summary>A buffer not of ours: through its own Lock and Unlock.</summary>
         internal static byte[] ForeignBytes(IntPtr p)
         {

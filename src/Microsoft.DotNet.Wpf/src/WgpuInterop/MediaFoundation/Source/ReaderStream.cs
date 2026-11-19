@@ -77,6 +77,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             uint bitrate = t.EsdsBitrate != 0 ? t.EsdsBitrate : Bitrate(t, d);
             a.Set(MF.MF_MT_MAJOR_TYPE, SR.MFMediaType_Audio);
             a.Set(MF.MF_MT_SUBTYPE, asub.Value);
+            if (!pcm && asub != SR.MFAudioFormat_AAC && asub != SR.MFAudioFormat_MP3)
+            {
+                // ALAC as Windows has it (FLAC, Opus, AC-3 likewise): the bytes per second its configuration gives, no WAVEFORMATEX
+                if (asub == SR.MFAudioFormat_ALAC && t.Config.Length >= 24)
+                {
+                    bits = t.Config[5]; channels = t.Config[9];
+                    rate = (int)((uint)t.Config[20] << 24 | (uint)t.Config[21] << 16 | (uint)t.Config[22] << 8 | t.Config[23]);
+                    bitrate = 8 * ((uint)t.Config[16] << 24 | (uint)t.Config[17] << 16 | (uint)t.Config[18] << 8 | t.Config[19]);
+                }
+                a.Set(SR.MF_MT_AUDIO_AVG_BYTES_PER_SECOND, bitrate / 8);
+                a.Set(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, (uint)bits);
+                a.Set(SR.MF_MT_AUDIO_NUM_CHANNELS, (uint)channels);
+                a.Set(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, (uint)rate);
+                a.Set(SR.MF_MT_AVG_BITRATE, bitrate);
+                if (t.Config.Length > 0) a.Set(MF.MF_MT_USER_DATA, MFValue.Of(t.Config));
+                a.Set(SR.MF_MT_MPEG4_SAMPLE_DESCRIPTION, MFValue.Of(t.SampleDescription));
+                a.Set(SR.MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY, 0u);
+                return mt;
+            }
             a.Set(SR.MF_MT_AM_FORMAT_TYPE, SR.FORMAT_WaveFormatEx);
             a.Set(SR.MF_MT_AUDIO_NUM_CHANNELS, (uint)channels);
             a.Set(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, (uint)rate);
@@ -177,7 +196,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private bool _inputDone, _drainSent;
 
         // decoding
-        public MFVideoDecoder? Decoder;
+        public MFTransform? Decoder;
         private Guid _decoderOut;              // the decoder's subtype
         private Guid _rgb;                     // the RGB type after it, or empty
         private bool _firstOut = true;
@@ -225,12 +244,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     Replace(Native.Clone());
                     return MF.S_OK;
                 }
-                if (Track.Audio)
-                {
-                    // the audio decoders are still to come
-                    D3DLog.Once("mf-reader-audio:" + sub, $"Media Foundation: the source reader decodes no audio yet ({Track.Format} to {sub})");
-                    return SR.MF_E_TOPO_CODEC_NOT_FOUND;
-                }
+                if (Track.Audio) return SetAudio(t, sub);
                 bool rgb = Array.IndexOf(s_rgb, sub) >= 0;
                 if (Array.IndexOf(s_decoderOutputs, sub) < 0 && !rgb) return MF.MF_E_INVALIDMEDIATYPE;
                 if (rgb && !_reader.VideoProcessing) return MF.MF_E_INVALIDMEDIATYPE;
@@ -266,6 +280,113 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         }
 
         private void Replace(MFMediaType t) { Current.Release(); Current = t; }
+
+        // ---- audio ------------------------------------------------------------------------------------
+
+        private static readonly Guid MF_MT_AUDIO_VALID_BITS_PER_SAMPLE = new("d9bf8d6a-9530-4b7c-9ddf-ff6fd58bbd06");
+        /// <summary>The bits the reader converts the decoder's output to (Windows' resampler between them); 0 where none.</summary>
+        private uint _audioBits;
+        private bool _audioFloat;
+
+        /// <summary>A decoder of the stream's codec, of PCM or float; the bits it does not give converted after it.</summary>
+        private int SetAudio(MFMediaType t, Guid sub)
+        {
+            bool fl = sub == MediaFormats.Float;
+            if (sub != MediaFormats.PCM && !fl) return MF.MF_E_INVALIDMEDIATYPE;
+            var info = MFAudioDecoder.Registered.FirstOrDefault(i => Array.IndexOf(i.Inputs, Native.Subtype) >= 0);
+            if (info == null || !PlatformAudioDecoder.Supports(info.Codec)) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
+            var dec = new MFAudioDecoder(info);
+            IntPtr p = dec.Pointer;
+            if (Mft.SetInputType(p, Native.Pointer) < 0) { dec.Shutdown(); dec.Release(); return SR.MF_E_TOPO_CODEC_NOT_FOUND; }
+            // the decoder's types: the one asked for, or the first of the kind (the bits converted after)
+            var types = new List<MFMediaType>();
+            for (uint i = 0; ; i++)
+            {
+                IntPtr ot;
+                if (((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, int>)Com.Fn(p, 14))(p, 0, i, &ot) < 0) break;
+                if (ComObject.From<MFMediaType>(ot) is { } m) types.Add(m); else Com.Release(ot);
+            }
+            try
+            {
+                uint rate = Native.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND), ch = Native.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS);
+                // of the kind asked for, or (to convert from) the decoder's first
+                var first = types.FirstOrDefault(x => x.Subtype == sub) ?? types.FirstOrDefault();
+                if (first == null) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                uint bits = t.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, fl ? 32u : first.Subtype == sub ? first.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) : 16u);
+                uint wantRate = t.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, first.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND));
+                uint wantCh = t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, first.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS));
+                if (wantRate != first.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND) || wantCh != first.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS))
+                {
+                    D3DLog.Once("mf-reader-resample", "Media Foundation: the source reader does not resample or remix audio yet");
+                    dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE;
+                }
+                if (fl ? bits != 32 : bits is not (8 or 16 or 24 or 32)) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                var exact = types.FirstOrDefault(x => x.Subtype == sub && x.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) == bits);
+                var use = exact ?? first;
+                if (Mft.SetOutputType(p, use.Pointer) < 0) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                DropDecoder();
+                Decoder = dec;
+                _audioBits = exact == null ? bits : 0;
+                _audioFloat = fl;
+                var cur = use.Clone();
+                if (exact == null)
+                {
+                    cur.Attributes.Set(MF.MF_MT_SUBTYPE, sub);
+                    uint block = wantCh * bits / 8;
+                    cur.Attributes.Set(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, bits);
+                    cur.Attributes.Set(SR.MF_MT_AUDIO_BLOCK_ALIGNMENT, block);
+                    cur.Attributes.Set(SR.MF_MT_AUDIO_AVG_BYTES_PER_SECOND, block * wantRate);
+                    cur.Attributes.Delete(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE);
+                }
+                Replace(cur);
+                RestartAtSync();
+                return MF.S_OK;
+            }
+            finally { foreach (var x in types) x.Release(); }
+        }
+
+        /// <summary>The decoder's PCM as the bits asked for.</summary>
+        private MFSample ConvertAudio(MFSample s)
+        {
+            try
+            {
+                var src = s.Bytes();
+                var from = Mft.OutputType(Decoder!.Pointer);
+                uint inBits = from?.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, 16) ?? 16;
+                bool inFloat = from?.Subtype == MediaFormats.Float;
+                from?.Release();
+                int inBytes = (int)inBits / 8, outBytes = (int)_audioBits / 8, n = src.Length / inBytes;
+                var o = new byte[n * outBytes];
+                for (int i = 0; i < n; i++)
+                {
+                    double v = inFloat ? BitConverter.ToSingle(src, i * 4) : inBytes == 2 ? BitConverter.ToInt16(src, i * 2) / 32768.0
+                        : inBytes == 3 ? (src[i * 3] | src[i * 3 + 1] << 8 | (sbyte)src[i * 3 + 2] << 16) / 8388608.0 : BitConverter.ToInt32(src, i * 4) / 2147483648.0;
+                    if (_audioFloat) { BitConverter.TryWriteBytes(o.AsSpan(i * 4), (float)v); continue; }
+                    switch (outBytes)
+                    {
+                        case 1: o[i] = (byte)(Math.Clamp(Math.Round(v * 128), -128, 127) + 128); break;
+                        case 2: BitConverter.TryWriteBytes(o.AsSpan(i * 2), (short)Math.Clamp(Math.Round(v * 32768), -32768, 32767)); break;
+                        case 3: { int x = (int)Math.Clamp(Math.Round(v * 8388608), -8388608, 8388607); o[i * 3] = (byte)x; o[i * 3 + 1] = (byte)(x >> 8); o[i * 3 + 2] = (byte)(x >> 16); break; }
+                        default: BitConverter.TryWriteBytes(o.AsSpan(i * 4), (int)Math.Clamp(Math.Round(v * 2147483648.0), int.MinValue, int.MaxValue)); break;
+                    }
+                }
+                var r = new MFSample();
+                var buf = new MFMemoryBuffer((uint)Math.Max(1, o.Length));
+                byte* d = buf.LockBytes(true);
+                o.CopyTo(new Span<byte>(d, o.Length));
+                buf.UnlockBytes();
+                buf.CurrentLength = (uint)o.Length;
+                r.SetBuffer(buf.Pointer);
+                buf.Release();
+                // Windows' resampler: the duration of the frames, rounded
+                uint rate = Current.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100), ch = Math.Max(1, Current.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, 1));
+                long frames = n / ch;
+                r.Time = s.Time; r.Duration = (frames * 10_000_000 + rate / 2) / rate;
+                foreach (var (k, v) in s.Attributes.All()) r.Attributes.Set(k, MFAttributesObject.Copy(v));
+                return r;
+            }
+            finally { s.Release(); }
+        }
 
         /// <summary>A decoded type as Windows' reader makes it, of the size; the picture's apertures from the decoder where it gives them.</summary>
         private MFMediaType Decoded(Guid sub, uint w, uint h, MFMediaType? fromDecoder)
@@ -373,6 +494,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 }
                 if (hr >= 0 && got != null)
                 {
+                    if (Track.Audio) return _audioBits != 0 ? ConvertAudio(got) : got;
                     var outSample = _rgb != Guid.Empty ? ToRgb(got) : got;
                     if (_firstOut || _discontinuity) { outSample.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u); _firstOut = false; _discontinuity = false; }
                     return outSample;
@@ -420,7 +542,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 s.Attributes.Set(SR.MFSampleExtension_NALULengthInfo, MFValue.Of(blob));
             }
             if (m.Sync) s.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
-            if (_discontinuity) { s.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u); if (Decoder == null) _discontinuity = false; }
+            if (_discontinuity) { s.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u); if (Decoder == null || Track.Audio) _discontinuity = false; }
             return s;
         }
 
@@ -500,6 +622,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
     {
         public static int ProcessMessage(IntPtr t, uint message, nuint param) => ((delegate* unmanaged<IntPtr, uint, nuint, int>)Com.Fn(t, 23))(t, message, param);
         public static int SetInputType(IntPtr t, IntPtr type) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Com.Fn(t, 15))(t, 0, type, 0);
+        public static int SetOutputType(IntPtr t, IntPtr type) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Com.Fn(t, 16))(t, 0, type, 0);
         public static int ProcessInput(IntPtr t, IntPtr sample) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Com.Fn(t, 24))(t, 0, sample, 0);
 
         /// <summary>The decoder's output type of the subtype, set.</summary>

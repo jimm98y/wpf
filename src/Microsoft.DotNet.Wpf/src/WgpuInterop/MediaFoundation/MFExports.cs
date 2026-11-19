@@ -116,6 +116,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(new[] { MF.MFVideoFormat_NV12, MF.MFVideoFormat_YV12, MF.MFVideoFormat_IYUV, MF.MFVideoFormat_I420, MF.MFVideoFormat_YUY2 })));
                     found.Add(a);
                 }
+            if (sync && category == MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER)
+                foreach (var info in MFAudioDecoder.Registered)
+                {
+                    if (!info.Listed) continue;
+                    if (input != null && (input->guidMajorType != MFAudioDecoder.MFMediaType_Audio && input->guidMajorType != Guid.Empty || input->guidSubtype != Guid.Empty && Array.IndexOf(info.Inputs, input->guidSubtype) < 0)) continue;
+                    if (output != null && output->guidSubtype != Guid.Empty && output->guidSubtype != MediaFormats.PCM && output->guidSubtype != MediaFormats.Float) continue;
+                    if (!PlatformAudioDecoder.Supports(info.Codec)) continue;
+                    var a = new MFActivate(() => new MFAudioDecoder(info));
+                    a.Attributes.Set(MF.MFT_FRIENDLY_NAME_Attribute, MFValue.Of(info.Name));
+                    a.Attributes.Set(MF.MFT_TRANSFORM_CLSID_Attribute, info.Clsid);
+                    a.Attributes.Set(MF.MFT_INPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, info.Inputs)));
+                    a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, new[] { MediaFormats.Float, MediaFormats.PCM })));
+                    found.Add(a);
+                }
             if (found.Count == 0) return MF.S_OK;
             var array = (IntPtr*)Marshal.AllocCoTaskMem(found.Count * IntPtr.Size);
             for (int i = 0; i < found.Count; i++) array[i] = found[i].Pointer;
@@ -124,12 +138,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return MF.S_OK;
         }
 
-        private static byte[] TypeInfos(Guid[] subtypes)
+        private static byte[] TypeInfos(Guid[] subtypes) => TypeInfos(MF.MFMediaType_Video, subtypes);
+
+        private static byte[] TypeInfos(Guid major, Guid[] subtypes)
         {
             var b = new byte[subtypes.Length * 32];
             for (int i = 0; i < subtypes.Length; i++)
             {
-                MF.MFMediaType_Video.TryWriteBytes(b.AsSpan(i * 32));
+                major.TryWriteBytes(b.AsSpan(i * 32));
                 subtypes[i].TryWriteBytes(b.AsSpan(i * 32 + 16));
             }
             return b;

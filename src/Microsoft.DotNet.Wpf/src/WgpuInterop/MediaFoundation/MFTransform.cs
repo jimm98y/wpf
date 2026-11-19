@@ -436,7 +436,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     }
                     else
                     {
-                        bytes = ForeignSampleBytes(sample);
+                        bytes = MFSample.ForeignSampleBytes(sample);
                         long t;
                         if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(sample, 35))(sample, &t) >= 0) time = t;
                     }
@@ -447,23 +447,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             catch (Exception e) { D3DLog.Error("IMFTransform.ProcessInput", e); return MF.E_FAIL; }
         }
 
-        /// <summary>The bytes of a sample not of ours, through its own IMFSample methods.</summary>
-        private static byte[] ForeignSampleBytes(IntPtr sample)
-        {
-            uint n;
-            ((delegate* unmanaged<IntPtr, uint*, int>)Com.Fn(sample, 39))(sample, &n);
-            var all = new List<byte>();
-            for (uint i = 0; i < n; i++)
-            {
-                IntPtr b;
-                if (((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(sample, 40))(sample, i, &b) < 0) continue;
-                all.AddRange(From<MFBuffer>(b) is { } ours ? OwnBytes(ours) : MFSample.ForeignBytes(b));
-                Com.Release(b);
-            }
-            return all.ToArray();
-        }
-
-        private static byte[] OwnBytes(MFBuffer b)
+        internal static byte[] OwnBytes(MFBuffer b)
         {
             byte* p = b.LockBytes(false);
             try { return new ReadOnlySpan<byte>(p, (int)b.CurrentLength).ToArray(); }

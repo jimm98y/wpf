@@ -304,7 +304,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                         switch (ct)
                         {
                             case "esds": Esds(t, payload); break;
-                            case "dOps": case "dfLa": case "alac": case "dac3": case "dec3": t.Config = payload; break;
+                            // dfLa and alac are full boxes: their version and flags before the configuration
+                            case "dfLa": case "alac": t.Config = payload.Length > 4 ? payload.AsSpan(4).ToArray() : payload; break;
+                            case "dOps": case "dac3": case "dec3": t.Config = payload; break;
                             case "wave": foreach (var (wt, ws, wn) in Children(payload, 0, payload.Length)) if (wt == "esds") Esds(t, payload.AsSpan(ws, wn).ToArray()); break;
                         }
                     }
