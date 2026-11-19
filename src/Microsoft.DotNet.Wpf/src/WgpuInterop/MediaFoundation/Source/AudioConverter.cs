@@ -108,6 +108,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             };
         }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         /// <summary>Input frames in, output bytes out (fewer at first: the filter's look-ahead; <see cref="Drain"/> gives the rest).</summary>
         public byte[] Convert(byte[] src)
         {
@@ -152,6 +153,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// <summary>The history's end of real input (past it, the padding of the drain).</summary>
         private int _realEnd;
 
+        // compiled optimized at once: the inner loop of every resampled sample
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)]
         private float[][] Filter(bool draining)
         {
             int have = _history[0].Count;

@@ -8,6 +8,23 @@ internal static class HostInfo
     public static bool IsWindows => OperatingSystem.IsWindows();
     public static bool IsMacOS => OperatingSystem.IsMacOS();
 
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint = "getauxval")] private static extern nuint GetAuxVal(nuint type);
+
+    /// <summary>
+    /// Linux on an arm64 CPU with SME (Apple's M4 in a virtual machine, say): the kernel's signal frame carries the SME
+    /// state there, larger than the runtime's alternate signal stack takes, so a thread the GC suspends by a signal
+    /// (activation injection) in a loop of its own dies in the handler (SIGILL) -- now and then, the more the GC runs.
+    /// </summary>
+    public static bool LinuxArm64WithSme
+    {
+        get
+        {
+            if (!OperatingSystem.IsLinux() || System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.Arm64) return false;
+            try { return (GetAuxVal(26) & (1u << 23)) != 0; }                 // AT_HWCAP2, HWCAP2_SME
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return false; }
+        }
+    }
+
     /// <summary>The portable RID of this process, e.g. osx-arm64 or win-x64.</summary>
     public static string Rid
     {

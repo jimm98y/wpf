@@ -39,6 +39,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             int n = src.Read(0, h);
             if (n >= 12 && h.Slice(0, 4).SequenceEqual("RIFF"u8) && h.Slice(8, 4).SequenceEqual("WAVE"u8)) return new WavContainer(src);
             if (n >= 4 && h.Slice(0, 4).SequenceEqual("fLaC"u8)) return new FlacContainer(src);
+            if (MatroskaContainer.Sniff(h)) return new MatroskaContainer(src);
             if (Mp4Demuxer.Sniff(src)) return Mp4Demuxer.Open(src);
             if (n >= 3 && h.Slice(0, 3).SequenceEqual("ID3"u8) || n >= 2 && h[0] == 0xFF && (h[1] & 0xE0) == 0xE0)
             {

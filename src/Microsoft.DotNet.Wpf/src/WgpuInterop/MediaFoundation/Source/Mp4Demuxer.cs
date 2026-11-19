@@ -516,16 +516,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// A sample as Windows' source hands it out: H.264 / H.265 in Annex B, the parameter sets (3-byte start
         /// codes) before a sync sample and each NAL unit after a 4-byte one; with the NAL units' lengths.
         /// </summary>
-        public override byte[] Read(Mp4Track t, in Mp4Sample s, out uint[]? nalLengths)
+        public override byte[] Read(Mp4Track t, in Mp4Sample s, out uint[]? nalLengths) => ToAnnexB(t, ReadAt(s.Offset, s.Size), s.Sync, out nalLengths);
+
+        /// <summary>
+        /// A sample as Windows' sources hand it out: H.264 / H.265 in Annex B, the parameter sets before a sync sample and
+        /// each NAL unit after a 4-byte start code; with the NAL units' lengths. Others as they are.
+        /// </summary>
+        public static byte[] ToAnnexB(Mp4Track t, byte[] raw, bool sync, out uint[]? nalLengths)
         {
             nalLengths = null;
-            byte[] raw = ReadAt(s.Offset, s.Size);
             if (!t.AnnexB) return raw;
             var lengths = new List<uint>();
             var o = new List<byte>(raw.Length + 64);
             // the parameter sets: H.264's after 3-byte start codes, HEVC's after 4-byte ones (as Windows has them)
             byte[] sc = t.Hevc ? new byte[] { 0, 0, 0, 1 } : new byte[] { 0, 0, 1 };
-            if (s.Sync)
+            if (sync)
                 foreach (var p in t.ParameterSets) { o.AddRange(sc); o.AddRange(p); lengths.Add((uint)(p.Length + sc.Length)); }
             int at = 0, L = t.NalLength;
             while (at + L <= raw.Length)

@@ -171,6 +171,10 @@ internal sealed class Runner
         // (64 MB: 15 ms a frame became 9). Only when the user has not chosen one.
         if (!HostInfo.IsWindows && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_GCgen0size")))
             psi.Environment["DOTNET_GCgen0size"] = "0x4000000";
+        // An SME CPU on Linux (HostInfo.LinuxArm64WithSme): the GC suspends threads without signalling them, by its own
+        // polls and return addresses. Only when the user has not chosen.
+        if (HostInfo.LinuxArm64WithSme && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_INTERNAL_ThreadSuspendInjection")))
+            psi.Environment["DOTNET_INTERNAL_ThreadSuspendInjection"] = "0";
 
         // the program under its own name: its own executable (ProgramHost), where this OS runs one
         // (WPFRUN_DOTNET_EXEC=1: through dotnet exec, as before). WPFRUN_PROCESS_NAME: the process's name where it is

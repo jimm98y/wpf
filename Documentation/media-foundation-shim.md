@@ -73,7 +73,11 @@ Android. The decoders are SharpMediaFoundationInterop's (MIT, by the same author
     parser drops the frame.
   - The decoder's delay of 528 frames is left out at the start (where the system's decoder keeps it)
     and is not flushed at the end, as Windows' decoder does.
-- **FLAC:** the stream's PCM only, with its channel mask and valid bits, and no clean points.
+- **FLAC:** the stream's PCM only, with its channel mask and valid bits. The input's clean point is
+  passed on. A frame of packets carries the next packet's time, as Windows' decoder stamps it.
+- **Opus:** float only. The pre-skip is left out (less what the system's decoder drops itself).
+- A decoded chunk carries the time of the input packet it comes from (by the packets' durations),
+  falling back to counting frames from the first input.
 - `MFTEnumEx` gives the output types Windows' decoders list: AAC's float and PCM, the others' PCM.
 
 ## The source reader
@@ -94,7 +98,20 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
     frames. FLAC has no duration or size (characteristics 6), and its metadata goes in Windows' unnamed
     attribute `3eadb782-…`.
   - Known difference: Windows estimates an ADTS file's duration and bitrate from its start, by a rule
-    one file does not show; the shim's are exact. Only box headers and sample tables are read at open; samples are read from the file as
+    one file does not show; the shim's are exact.
+  - Matroska and WebM (`Source/MatroskaContainer.cs`), as Windows' Matroska source reads them:
+    - the blocks in storage order at their timecodes, with DefaultDuration in 100 ns units, rounded
+      down;
+    - Annex B H.264 and HEVC as from MP4;
+    - FLAC's CodecPrivate as a sample of its own before the first frame (the decoder reads its
+      configuration in band);
+    - native types with the codec ID (Windows' unnamed attribute `9668dde5-…`), compressed, no bitrate,
+      and the frame rate of twice the DefaultDuration (Windows reads it as a field's);
+    - characteristics 6, MIME `video/x-matroska`; lacing (Xiph, EBML, fixed) is read.
+
+    Known differences: Windows' FLAC bytes per second in Matroska follow a rule one file does not
+    show. Windows' Opus decoder hands the sound out 274 frames after where the pre-skip puts it; the
+    frame count is the same. Only box headers and sample tables are read at open; samples are read from the file as
   they are asked for. The source is a file (a path or a `file:` URL), the shim's `MFCreateFile` byte
   stream, or any application `IMFByteStream`, read through its vtable.
 - **Streams:** the audio tracks first, then the video ones, whatever the order of the traks or their

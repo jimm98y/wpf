@@ -63,6 +63,13 @@ namespace WgpuInterop.Tests.MediaFoundation
                 ours.Add($"==== {m}");
                 ours.AddRange(MFSourceReaderProbe.VideoReport(MFSourceReaderProbe.AudioPath(m)));
             }
+            foreach (var m in MFSourceReaderProbe.AvFiles)
+            {
+                ours.Add($"==== {m}");
+                ours.AddRange(MFSourceReaderProbe.VideoReport(MFSourceReaderProbe.AudioPath(m)));
+                ours.Add("---- audio");
+                ours.AddRange(MFSourceReaderProbe.AudioReport(MFSourceReaderProbe.AudioPath(m)));
+            }
             static List<string> Clean(IEnumerable<string> lines)
             {
                 var r = new List<string>();
@@ -76,6 +83,10 @@ namespace WgpuInterop.Tests.MediaFoundation
                     // resampler's, each system's own (the signal is compared, below)
                     if (l.StartsWith("decode to ")) resampled = l.Contains(" Hz") || file is "==== tone.aac" or "==== tone.flac" or "==== tone.mp3" or "==== tone-notag.mp3";
                     if (resampled && l.StartsWith("  read: flags 0x0 ")) continue;
+                    // Matroska's FLAC: Windows' bytes per second are of a rule the file does not show; Opus: Windows' decoder hands
+                    // the sound out 274 frames later than the pre-skip puts it (the frames the same): the level and onset not compared
+                    if (file == "==== clip.mkv" && l.StartsWith("  MF_MT_AUDIO_AVG_BYTES_PER_SECOND")) continue;
+                    if (file == "==== clip.webm" && l.StartsWith("  channel ")) { r.Add(string.Join(' ', l.Split(' ').Take(6))); continue; }
                     // ADTS has no length of its own: Windows estimates its duration and bitrate from its start, the shim from all of it
                     if (file == "==== tone.aac" && (l.StartsWith("presentation MF_PD_DURATION") || l.StartsWith("presentation MF_PD_AUDIO_ENCODING_BITRATE") || l.StartsWith("  MF_MT_AUDIO_AVG_BYTES_PER_SECOND"))) continue;
                     // Windows takes no bitrate of an esds whose descriptors' lengths are of four bytes (as Apple's tools write

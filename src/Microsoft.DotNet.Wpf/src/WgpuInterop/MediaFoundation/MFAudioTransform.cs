@@ -55,6 +55,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private readonly Queue<byte[]> _ready = new();
         private byte[] _scratch = Array.Empty<byte>();
         private Packetizer? _packets;
+        private byte[]? _inband;
+        private bool _inClean;
+        private readonly List<(long Time, long Start, long Frames)> _inputs = new();   // the packets: their times, where their frames start
+        private long _pos;                                  // the frames the decoder has made, those it left out counted
+
+        /// <summary>The frames the stream's start loses before the first handed out: Opus's pre-skip, MP3's delay.</summary>
+        private long LeadingDrop => _info.Codec switch
+        {
+            AudioCodec.Opus => _in?.Attributes.Get(MF.MF_MT_USER_DATA)?.B is { Length: >= 12 } h ? h[10] | h[11] << 8 : 0,
+            AudioCodec.Mp3 => 528,
+            _ => 0,
+        };                             // FLAC: the input's clean point, which Windows' decoder passes on                           // FLAC's metadata blocks, of a sample of its own ("fLaC" ...)
         private long _inFrames, _decodedFrames;           // MP3: the frames pushed (in samples), the samples handed out
         private long _delayLeft = 528;                     // MP3: the decoder's delay still to leave out
         private static readonly Guid MF_MT_AUDIO_CHANNEL_MASK = new("55fb5765-644a-4caf-8479-938983bb1588");
@@ -128,7 +140,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             lock (d._lock)
             {
                 if (d._info.Codec == AudioCodec.Mp3 && d._out == null) return MF.MF_E_TRANSFORM_TYPE_NOT_SET;
-                if (d._info.Codec == AudioCodec.Flac) { info[3] = 65536; return MF.S_OK; }
+                if (d._info.Codec is AudioCodec.Flac or AudioCodec.Opus) { info[3] = 65536; return MF.S_OK; }
                 if (d._info.Codec != AudioCodec.Mp3) info[2] = 0xF;
             }
             return MF.S_OK;
@@ -176,7 +188,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             var a = _in!.Attributes;
             uint rate = a.U32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100), ch = a.U32(MF_MT_AUDIO_NUM_CHANNELS, 2), bits = 16;
-            var cfg = a.Get(Source.FlacContainer.FlacMetadataAttribute)?.B ?? a.Get(MF.MF_MT_USER_DATA)?.B ?? Array.Empty<byte>();
+            var cfg = a.Get(Source.FlacContainer.FlacMetadataAttribute)?.B ?? a.Get(MF.MF_MT_USER_DATA)?.B ?? _inband ?? Array.Empty<byte>();
             if (_info.Codec == AudioCodec.Alac && cfg.Length >= 24) { bits = cfg[5]; ch = cfg[9]; rate = (uint)(cfg[20] << 24 | cfg[21] << 16 | cfg[22] << 8 | cfg[23]); }
             else if (_info.Codec == AudioCodec.Flac && cfg.Length >= 4 + 18)
             {
@@ -204,12 +216,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             a.Set(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, block * rate);
             a.Set(MF_MT_AUDIO_BITS_PER_SAMPLE, bits);
             a.Set(MF_MT_AUDIO_BLOCK_ALIGNMENT, block);
-            // the speakers: FLAC's always, MP3's of its float types
-            if (flac || mp3 && fl) a.Set(MF_MT_AUDIO_CHANNEL_MASK, Source.AudioConverter.Mask((int)ch));
+            bool opus = codec == AudioCodec.Opus;
+            // the speakers: FLAC's and Opus's always, MP3's of its float types
+            if (flac || opus || mp3 && fl) a.Set(MF_MT_AUDIO_CHANNEL_MASK, Source.AudioConverter.Mask((int)ch));
             a.Set(MF_MT_AUDIO_NUM_CHANNELS, ch);
-            if (!alac && !flac && !(mp3 && fl)) a.Set(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1u);
+            if (!alac && !flac && !opus && !(mp3 && fl)) a.Set(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1u);
             a.Set(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
-            if ((alac || flac) && !fl) a.Set(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE, bits);
+            if ((alac || flac) && !fl || opus) a.Set(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE, bits);
             a.Set(MF.MF_MT_MAJOR_TYPE, MFMediaType_Audio);
             a.Set(MF.MF_MT_SUBTYPE, fl ? MediaFormats.Float : MediaFormats.PCM);
             return t;
@@ -225,6 +238,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return _info.Codec switch
             {
                 AudioCodec.Alac or AudioCodec.Flac => new[] { (false, bits, 0u) },
+                AudioCodec.Opus => new[] { (true, 32u, 0u) },
                 AudioCodec.Mp3 when ch == 2 => new[] { (true, 32u, 0u), (false, 16u, 0u), (false, 8u, 0u), (true, 32u, 1u), (false, 16u, 1u), (false, 8u, 1u) },
                 AudioCodec.Mp3 => new[] { (true, 32u, 0u), (false, 16u, 0u), (false, 8u, 0u) },
                 _ => new[] { (true, 32u, 0u), (false, 16u, 0u) },
@@ -352,10 +366,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             {
                 if (_decoder != null || _in == null) return _decoder;
                 var (rate, ch, _) = Format();
-                var cfg = _in.Attributes.Get(Source.FlacContainer.FlacMetadataAttribute)?.B ?? _in.Attributes.Get(MF.MF_MT_USER_DATA)?.B ?? Array.Empty<byte>();
+                var cfg = _in.Attributes.Get(Source.FlacContainer.FlacMetadataAttribute)?.B ?? _in.Attributes.Get(MF.MF_MT_USER_DATA)?.B ?? _inband ?? Array.Empty<byte>();
+                // FLAC's metadata may come in band (Matroska's): the decoder made once it has
+                if (_info.Codec == AudioCodec.Flac && cfg.Length == 0) return null;
                 // AAC's user data: HEAACWAVEINFO's 12 bytes, then the AudioSpecificConfig
                 if (_info.Codec == AudioCodec.AAC) cfg = cfg.Length > 12 ? cfg.AsSpan(12).ToArray() : cfg;
-                _decoder = PlatformAudioDecoder.Create(_info.Codec, new AudioDecoderOptions { Channels = ch, SampleRate = rate, Config = cfg.Length > 0 ? cfg : null });
+                // Opus: its pre-skip (OpusHead's), left out as Windows' decoder leaves it out
+                uint skip = _info.Codec == AudioCodec.Opus && cfg.Length >= 12 && cfg.AsSpan(0, 8).SequenceEqual("OpusHead"u8) ? (uint)(cfg[10] | cfg[11] << 8) : 0;
+                skip = skip > PlatformAudioDecoder.OpusDropsItself ? skip - PlatformAudioDecoder.OpusDropsItself : 0;
+                _decoder = PlatformAudioDecoder.Create(_info.Codec, new AudioDecoderOptions { Channels = ch, SampleRate = rate, Config = _info.Codec == AudioCodec.Opus ? null : cfg.Length > 0 ? cfg : null, SkipSamples = skip });
                 if (_decoder != null) { _channels = _decoder.Channels; _rate = _decoder.SampleRate; _bits = _decoder.BitsPerSample; }
                 return _decoder;
             }
@@ -364,14 +383,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// <summary>Whether decoded audio is waiting (taken from the decoder into the queue).</summary>
         private bool Pending()
         {
-            if (_ready.Count > 0) return true;
-            if (_decoder == null) return false;
-            while (_decoder.TryTake(ref _scratch, out uint n))
-            {
-                if (n == 0) continue;
-                _ready.Enqueue(_scratch.AsSpan(0, (int)n).ToArray());
-            }
-            return _ready.Count > 0;
+            if (_ready.Count == 0 && _decoder != null)
+                while (_decoder.TryTake(ref _scratch, out uint n))
+                {
+                    if (n == 0) continue;
+                    _ready.Enqueue(_scratch.AsSpan(0, (int)n).ToArray());
+                }
+            return _ready.Count > 0 && !HeldForNext();
+        }
+
+        /// <summary>
+        /// FLAC of packets: a frame waits for the next packet (whose time it is stamped with, as Windows' decoder does), or
+        /// for the drain.
+        /// </summary>
+        private bool HeldForNext()
+        {
+            if (_info.Codec != AudioCodec.Flac || _draining || _inputs.Count == 0) return false;
+            long p = _pos == 0 ? LeadingDrop : _pos;
+            var last = _inputs[^1];
+            return p >= last.Start;
         }
 
         [UnmanagedCallersOnly]
@@ -386,6 +416,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                         d._decoder?.Flush();
                         d._packets?.Reset();
                         d._inFrames = d._decodedFrames = 0; d._delayLeft = 528;
+                        d._inputs.Clear(); d._pos = 0;
                         d._ready.Clear();
                         d._t0 = null; d._frames = 0; d._draining = false;
                         return MF.S_OK;
@@ -412,15 +443,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     if (d._shutdown) return MF.MF_E_SHUTDOWN;
                     if (d._in == null) return MF.MF_E_TRANSFORM_TYPE_NOT_SET;
                     if (d.Pending()) return MF.MF_E_NOTACCEPTING;
+                    if (d._info.Codec == AudioCodec.Flac && d._packets == null && d._decoder == null)
+                    {
+                        var head = From<MFSample>(sample)?.Bytes() ?? MFSample.ForeignSampleBytes(sample);
+                        if (head.Length >= 8 && head.AsSpan(0, 4).SequenceEqual("fLaC"u8)) { d._inband = head.AsSpan(4).ToArray(); return MF.S_OK; }
+                    }
                     var dec = d.Decoder;
                     if (dec == null) return MF.E_FAIL;
                     if (d._draining) { dec.EndDrain(); d._draining = false; }
-                    long time = 0;
+                    long time = 0, inDuration = 0;
                     byte[] bytes;
                     if (From<MFSample>(sample) is { } s)
                     {
-                        bytes = s.Bytes(); time = s.Time ?? 0;
+                        bytes = s.Bytes(); time = s.Time ?? 0; inDuration = s.Duration ?? 0;
                         if (s.Attributes.U32(MF.MFSampleExtension_Discontinuity) != 0) d._discontinuity = true;
+                        d._inClean = s.Attributes.U32(MF.MFSampleExtension_CleanPoint) != 0;
                     }
                     else
                     {
@@ -429,6 +466,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                         if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(sample, 35))(sample, &t) >= 0) time = t;
                     }
                     d._t0 ??= time;
+                    // the packet's place in what the decoder makes, for its time to go with what it decodes to
+                    if (inDuration > 0 && d._decoder != null)
+                    {
+                        long frames = (inDuration * d._decoder.SampleRate + 5_000_000) / 10_000_000;
+                        long start = d._inputs.Count > 0 ? d._inputs[^1].Start + d._inputs[^1].Frames : 0;
+                        d._inputs.Add((time, start, frames));
+                    }
                     if (d._packets != null)
                         foreach (var frame in d._packets.Push(bytes))
                         {
@@ -494,9 +538,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     long rate = d._rate == 0 ? 44100 : d._rate;
                     long t = d._t0 ?? 0;
                     long time = t + d._frames * 10_000_000 / rate;
+                    // of packets of known durations: the time of the packet the frames come of (the frames left out at the
+                    // start, the pre-skip and the decoder's delay, of the first packets: its time, as Windows' decoders give it)
+                    if (d._inputs.Count > 0)
+                    {
+                        long p = d._pos == 0 ? d.LeadingDrop : d._pos;
+                        d._pos = p;
+                        while (d._inputs.Count > 1 && d._inputs[0].Start + d._inputs[0].Frames <= p) d._inputs.RemoveAt(0);
+                        var head = d._inputs[0];
+                        long offset = Math.Max(0, p - Math.Max(head.Start, d.LeadingDrop));
+                        time = head.Time + offset * 10_000_000 / rate;
+                        // Windows' FLAC decoder stamps a frame with the next packet's time (the last: its own and its duration)
+                        if (d._info.Codec == AudioCodec.Flac)
+                            time = d._inputs.Count > 1 ? d._inputs[1].Time : head.Time + head.Frames * 10_000_000 / rate;
+                        d._pos += frames;
+                    }
                     long duration = d._info.Codec == AudioCodec.AAC ? (frames * 10_000_000 + rate / 2) / rate : frames * 10_000_000 / rate;
                     d._frames += frames;
-                    int hr = Write(sample, bytes, time, duration, d._discontinuity && d._info.Codec != AudioCodec.AAC, d._info.Codec != AudioCodec.Flac);
+                    int hr = Write(sample, bytes, time, duration, d._discontinuity && d._info.Codec != AudioCodec.AAC, d._info.Codec != AudioCodec.Flac || d._inClean);
                     d._discontinuity = false;
                     return hr;
                 }

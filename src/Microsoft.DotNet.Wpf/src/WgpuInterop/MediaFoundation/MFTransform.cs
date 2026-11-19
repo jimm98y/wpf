@@ -21,6 +21,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using Microsoft.Wpf.Interop.WebGpu.Direct3D;
 using Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs;
@@ -60,6 +61,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private MFMediaType? _in, _out;
         private PlatformVideoDecoder? _decoder;
         private DecodedFrame? _ready;
+        private readonly Dictionary<long, long> _durations = new();
         private bool _draining, _shutdown;
         /// <summary>The coded size the output has (the first frame's, aligned), and the picture's.</summary>
         private (uint W, uint H) _coded, _picture;
@@ -430,17 +432,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     if (d._draining) { dec.EndDrain(); d._draining = false; }
                     byte[] bytes;
                     long time = 0;
+                    long dur = 0;
                     if (From<MFSample>(sample) is { } s)
                     {
                         bytes = s.Bytes();
                         time = s.Time ?? 0;
+                        dur = s.Duration ?? 0;
                     }
                     else
                     {
                         bytes = MFSample.ForeignSampleBytes(sample);
                         long t;
                         if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(sample, 35))(sample, &t) >= 0) time = t;
+                        if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(sample, 37))(sample, &t) >= 0) dur = t;
                     }
+                    // the input's duration, the frame of its time to carry it (Windows' decoders keep it)
+                    if (dur > 0) { d._durations[time] = dur; if (d._durations.Count > 64) d._durations.Remove(d._durations.Keys.Min()); }
                     dec.Push(bytes, time);
                 }
                 return MF.S_OK;
@@ -490,7 +497,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                         return MF.MF_E_TRANSFORM_STREAM_CHANGE;
                     }
                     if (d._out == null) return MF.MF_E_TRANSFORM_TYPE_NOT_SET;
-                    long duration = d.FrameDuration();
+                    long duration = d._durations.Remove(f.Time, out long given) ? given : d.FrameDuration();
                     IntPtr* slot = (IntPtr*)(buffers + SampleOffset);
                     if (d._manager != IntPtr.Zero)
                     {

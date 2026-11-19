@@ -446,6 +446,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 hr = MFReader.SetCurrentMediaType(r, MFReader.FIRST_AUDIO, t);
                 MFReader.Release(t);
                 log.Add($"decode to {MFReader.Name(sub)}{(bits > 0 ? $" {bits} bits" : "")}{(rate > 0 ? $" {rate} Hz" : "")}{(chans > 0 ? $" {chans} channels" : "")}: {Hr(hr)}");
+                if (Environment.GetEnvironmentVariable("MF_PROBE_OUT") is { Length: > 0 }) Progress("  " + log[^1]);
                 if (hr >= 0)
                 {
                     MFReader.GetCurrentMediaType(r, MFReader.FIRST_AUDIO, out var c);
@@ -490,6 +491,9 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         /// <summary>Clips made with ffmpeg (testsrc2, 128x96, 8 frames, a key frame every 4): their decoding is exact, VP9's, AV1's and HEVC's alike.</summary>
         internal static readonly string[] VideoFiles = { "clip-vp9.mp4", "clip-av1.mp4", "clip-hevc.mp4" };
+
+        /// <summary>Clips of video and audio: WebM (VP9, Opus) and Matroska (HEVC, FLAC).</summary>
+        internal static readonly string[] AvFiles = { "clip.webm", "clip.mkv" };
 
         /// <summary>A video file: its native type, its first samples, its frames decoded to NV12 (a hash of each).</summary>
         internal static List<string> VideoReport(string path)
@@ -601,6 +605,8 @@ namespace WgpuInterop.Tests.MediaFoundation
             ("cropped-rotated", new Mp4TestFile { Width = 64, Height = 48, CropRight = 8, CropBottom = 8, Rotation = 90, Audio = false }),
         };
 
+        private static void Progress(string what) => System.IO.File.AppendAllText(Environment.GetEnvironmentVariable("MF_PROBE_OUT") + ".progress", what + "\n");
+
         [Fact]
         public void Probe()
         {
@@ -615,16 +621,26 @@ namespace WgpuInterop.Tests.MediaFoundation
             foreach (var m in AudioFiles)
             {
                 all.Add($"==== {m}");
+                Progress(m);
                 try { all.AddRange(AudioReport(AudioPath(m))); }
                 catch (Exception e) { all.Add("failed: " + e); }
             }
             foreach (var m in VideoFiles)
             {
                 all.Add($"==== {m}");
+                Progress(m);
                 try { all.AddRange(VideoReport(AudioPath(m))); }
                 catch (Exception e) { all.Add("failed: " + e); }
             }
+            foreach (var m in AvFiles)
+            {
+                all.Add($"==== {m}");
+                Progress(m);
+                try { all.AddRange(VideoReport(AudioPath(m))); Progress(m + " audio"); all.AddRange(AudioReport(AudioPath(m))); }
+                catch (Exception e) { all.Add("failed: " + e); }
+            }
             System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_OUT")!, all);
+            System.IO.File.Delete(Environment.GetEnvironmentVariable("MF_PROBE_OUT") + ".progress");
         }
     }
 }
