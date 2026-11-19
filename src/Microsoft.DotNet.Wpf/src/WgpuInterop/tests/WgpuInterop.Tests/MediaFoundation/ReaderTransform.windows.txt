@@ -1,0 +1,277 @@
+==== wav + AAC encoder, unconfigured
+  current before: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  add 0xc00d36b4
+  current after: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 0xc00d36bf
+  encoder input current 0xc00d6d60
+  encoder output current 0xc00d6d60
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 2000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 3000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  set position 0 0x00000000
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  remove all 0x00000000
+  current after removing: 73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a; MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_AVG_BITRATE = UI4 1411200; MF_MT_COMPRESSED = UI4 0; MF_MT_FIXED_SIZE_SAMPLES = UI4 1; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 0xc00d36bf
+==== wav + AAC encoder, output set
+  current before: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  encoder output 0x00000000
+  add 0xc00d36b4
+  current after: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 0xc00d36bf
+  encoder input current 0xc00d6d60
+  encoder output current 0xc00d6d60
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 2000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 3000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  set position 0 0x00000000
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  remove all 0x00000000
+  current after removing: 73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a; MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_AVG_BITRATE = UI4 1411200; MF_MT_COMPRESSED = UI4 0; MF_MT_FIXED_SIZE_SAMPLES = UI4 1; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 0xc00d36bf
+==== wav + AAC encoder, both set
+  current before: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  encoder output 0x00000000
+  encoder input 0x00000000
+  add 0xc00d36b4
+  current after: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 0xc00d36bf
+  encoder input current 0xc00d6d60
+  encoder output current 0xc00d6d60
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 2000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 3000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  set position 0 0x00000000
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  remove all 0x00000000
+  current after removing: 73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a; MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_AVG_BITRATE = UI4 1411200; MF_MT_COMPRESSED = UI4 0; MF_MT_FIXED_SIZE_SAMPLES = UI4 1; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 0xc00d36bf
+==== wav as float + AAC encoder, output set
+  set float 0x00000000
+  add 0xc00d36b4
+  current after: MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 352800; MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32; MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 8; MF_MT_AUDIO_NUM_CHANNELS = UI4 2; MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1; MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100; MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio; MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  transform 0: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 1: 0xc00d36bf
+==== mp4 + H.264 encoder, native type
+  encoder output 0x00000000
+  add 0xc00d36b4
+  current after: 73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea; 8f020eea-1508-471f-9da6-507d7cfa40db = UI4 1; MF_MT_AVG_BITRATE = UI4 928000; MF_MT_FRAME_RATE = UI8 107374182401 (25:1); MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_INTERLACE_MODE = UI4 7; MF_MT_MAJOR_TYPE = GUID MFMediaType_Video; MF_MT_MPEG2_LEVEL = UI4 30; MF_MT_MPEG2_PROFILE = UI4 66; MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0; MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[132] 00000084737473640000000000000001000000746176633100000000000000010000000000000000000000000000000000400030004800000048000000000000...; MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1); MF_MT_SAMPLE_SIZE = UI4 1; MF_MT_SUBTYPE = GUID MFVideoFormat_H264; MF_MT_VIDEO_ROTATION = UI4 0; a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+  transform 0: 0xc00d36bf
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 800000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (6 samples, 27942 bytes)
+==== mp4 + H.264 encoder, NV12 set
+  set NV12 0x00000000
+  encoder output 0x00000000
+  add 0xc00d36b4
+  current after: 799cabd6-3508-4db4-a3c7-569cd533deb1 = UI4 0; MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1; MF_MT_AVG_BITRATE = UI4 928000; MF_MT_COMPRESSED = UI4 0; MF_MT_DEFAULT_STRIDE = UI4 64; MF_MT_FIXED_SIZE_SAMPLES = UI4 1; MF_MT_FRAME_RATE = UI8 107374182401 (25:1); MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_INTERLACE_MODE = UI4 7; MF_MT_MAJOR_TYPE = GUID MFMediaType_Video; MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1); MF_MT_SAMPLE_SIZE = UI4 4608; MF_MT_SUBTYPE = GUID MFVideoFormat_NV12; MF_MT_VIDEO_ROTATION = UI4 0
+  transform 0: video decoder
+  transform 1: 0xc00d36bf
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x0 time 800000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x2 no sample (6 samples, 27648 bytes)
+==== wav, effect of PCM
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, SetInputType MFAudioFormat_PCM: ok, GetOutputCurrentType x3, GetOutputAvailableType 0, SetOutputType MFAudioFormat_PCM: ok
+  current after: MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 1: 0xc00d36bf
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, GetOutputCurrentType, ProcessMessage START_OF_STREAM, GetOutputCurrentType, GetOutputStreamInfo x11, ProcessMessage DRAIN, GetOutputStreamInfo; inputs 5
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set PCM with the effect 0x00000000
+  calls: SetOutputType MFAudioFormat_PCM: ok, GetOutputStreamInfo, GetOutputCurrentType
+  current: MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: 0xc00d36bf
+  calls at the reader's release: 
+==== wav, effect of float
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, SetInputType MFAudioFormat_PCM: refused x3, SetInputType MFAudioFormat_Float test: ok, SetInputType MFAudioFormat_Float: ok, GetOutputCurrentType x3, GetOutputAvailableType 0, GetOutputAvailableType 1, GetOutputAvailableType 0, SetOutputType MFAudioFormat_Float: ok, GetOutputStreamAttributes
+  current after: MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16; MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  transform 0: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 1: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 2: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 3: 0xc00d36bf
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 88200 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, GetOutputCurrentType, ProcessMessage START_OF_STREAM, GetOutputCurrentType, GetOutputStreamInfo x11, ProcessMessage DRAIN, GetOutputStreamInfo; inputs 5
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set PCM with the effect 0x00000000
+  calls: GetOutputAvailableType 0, GetOutputAvailableType 1
+  current: MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: 0xc00d36bf
+  calls at the reader's release: 
+==== wav as float, effect of PCM
+  set MFAudioFormat_Float 0x00000000
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, SetInputType MFAudioFormat_PCM: ok, GetOutputCurrentType x3, GetOutputAvailableType 0, GetOutputAvailableType 1, GetOutputAvailableType 0, SetOutputType MFAudioFormat_PCM: ok, GetOutputStreamAttributes
+  current after: MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32; MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  transform 0: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 1: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 2: 0xc00d36bf
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 176400 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, GetOutputCurrentType, ProcessMessage START_OF_STREAM, GetOutputCurrentType, GetOutputStreamInfo x11, ProcessMessage DRAIN, GetOutputStreamInfo; inputs 5
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set PCM with the effect 0x00000000
+  calls: SetOutputType MFAudioFormat_PCM: ok, GetOutputStreamInfo, GetOutputCurrentType, GetOutputStreamAttributes
+  current: MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: 0xc00d36bf
+  calls at the reader's release: 
+==== wav as float, effect of float, providing
+  set MFAudioFormat_Float 0x00000000
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, SetInputType MFAudioFormat_PCM: refused x3, SetInputType MFAudioFormat_Float test: ok, SetInputType MFAudioFormat_Float: ok, GetOutputCurrentType x3, GetOutputAvailableType 0, SetOutputType MFAudioFormat_Float: ok
+  current after: MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32; MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  transform 0: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 1: 11064c48-3648-4ed0-932e-05ce8ac811b7
+  transform 2: 0xc00d36bf
+  read: flags 0x0 time 0 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x0 time 1000000 duration 1000000 [MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (5 samples, 176400 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, ProcessMessage START_OF_STREAM, ProcessMessage DRAIN; inputs 5
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set PCM with the effect 0x00000000
+  calls: GetOutputAvailableType 0, GetOutputAvailableType 1, GetOutputAvailableType 0, SetOutputType MFAudioFormat_Float: ok, GetOutputStreamInfo, GetOutputStreamAttributes
+  current: MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: 0xc00d36bf
+  calls at the reader's release: 
+==== mp4 as NV12, effect of NV12, providing
+  set MFVideoFormat_NV12 0x00000000
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, GetInputAvailableType 0, SetInputType MFVideoFormat_NV12 64x48: ok, GetOutputCurrentType, GetInputStreamAttributes, GetOutputCurrentType x2, GetOutputAvailableType 0, SetOutputType MFVideoFormat_NV12 64x48: ok
+  current after: MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  transform 0: video decoder
+  transform 1: 12e17c21-532c-4a6e-8a1c-40825a736397
+  transform 2: 0xc00d36bf
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x2 no sample (6 samples, 27648 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, ProcessMessage START_OF_STREAM, ProcessMessage DRAIN; inputs 6
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set NV12 with the effect 0x00000000
+  calls: SetOutputType MFVideoFormat_NV12 64x48: ok, GetOutputStreamInfo
+  current: MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: video decoder
+  transform 1: 0xc00d36bf
+  calls at the reader's release: 
+==== mp4 as NV12, effect of NV12
+  set MFVideoFormat_NV12 0x00000000
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, GetInputAvailableType 0, SetInputType MFVideoFormat_NV12 64x48: ok, GetOutputCurrentType, GetInputStreamAttributes, GetOutputCurrentType x2, GetOutputAvailableType 0, SetOutputType MFVideoFormat_NV12 64x48: ok
+  current after: MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  transform 0: video decoder
+  transform 1: 12e17c21-532c-4a6e-8a1c-40825a736397
+  transform 2: 0xc00d36bf
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x2 no sample (6 samples, 27648 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, GetOutputCurrentType, ProcessMessage START_OF_STREAM, ProcessMessage DRAIN; inputs 6
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set NV12 with the effect 0x00000000
+  calls: SetOutputType MFVideoFormat_NV12 64x48: ok, GetOutputStreamInfo, GetOutputCurrentType
+  current: MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: video decoder
+  transform 1: 0xc00d36bf
+  calls at the reader's release: 
+==== mp4 native, effect of NV12
+  add 0xc00d36b4
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, SetInputType MFVideoFormat_H264 64x48: refused x3, GetInputStreamAttributes, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  current after: MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+  transform 0: 0xc00d36bf
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af MFSampleExtension_CleanPoint]
+  read: flags 0x2 no sample (6 samples, 27942 bytes)
+  calls: ; inputs 0
+  set position 0 0x00000000
+  calls: 
+  set NV12 with the effect 0x00000000
+  calls: 
+  current: MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  remove all 0x00000000
+  calls: 
+  transform 0: video decoder
+  transform 1: 0xc00d36bf
+  calls at the reader's release: 
+==== mp4 as NV12, effect of RGB32
+  set MFVideoFormat_NV12 0x00000000
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, GetInputAvailableType 0, GetInputStreamAttributes, GetInputAvailableType 1, GetInputAvailableType 0, SetInputType MFVideoFormat_RGB32 64x48: ok, GetOutputCurrentType, GetInputStreamAttributes, GetOutputCurrentType x2, GetOutputAvailableType 0, GetOutputAvailableType 1, GetOutputAvailableType 0, SetOutputType MFVideoFormat_RGB32 64x48: ok, GetOutputStreamAttributes
+  current after: MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  transform 0: video decoder
+  transform 1: 302ea3fc-aa5f-47f9-9f7a-c2188bb16302
+  transform 2: 12e17c21-532c-4a6e-8a1c-40825a736397
+  transform 3: 302ea3fc-aa5f-47f9-9f7a-c2188bb16302
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x2 no sample (6 samples, 27648 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, ProcessMessage START_OF_STREAM, ProcessMessage DRAIN; inputs 6
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set NV12 with the effect 0x00000000
+  calls: GetOutputAvailableType 0, GetOutputAvailableType 1
+  current: MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: video decoder
+  transform 1: 0xc00d36bf
+  calls at the reader's release: 
+==== mp4 as NV12, effect of YUY2 or NV12
+  set MFVideoFormat_NV12 0x00000000
+  add 0x00000000
+  calls: GetOutputCurrentType, GetAttributes, GetStreamCount x2, GetStreamIDs, GetAttributes, GetStreamCount, GetStreamIDs, GetOutputCurrentType, GetInputAvailableType 0, SetInputType 32595559-0000-0010-8000-00aa00389b71 64x48: ok, GetOutputCurrentType, GetInputStreamAttributes, GetOutputCurrentType x2, GetOutputAvailableType 0, GetOutputAvailableType 1, GetOutputAvailableType 0, SetOutputType 32595559-0000-0010-8000-00aa00389b71 64x48: ok, GetOutputStreamAttributes
+  current after: MF_MT_FRAME_SIZE = UI8 274877906992 (64:48); MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  transform 0: video decoder
+  transform 1: 12e17c21-532c-4a6e-8a1c-40825a736397
+  transform 2: 302ea3fc-aa5f-47f9-9f7a-c2188bb16302
+  transform 3: 0xc00d36bf
+  read: flags 0x0 time 0 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x0 time 400000 duration 400000 [19124e7c-ad4b-465f-bb18-20186287b6af 424c754c-97c8-48d6-8777-fc41f7b60879 79ea74df-a740-445b-bc98-c9ed1f260eee MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 b4dd4a8c-0beb-44c4-8b75-b02b913b04f0]
+  read: flags 0x2 no sample (6 samples, 27648 bytes)
+  calls: GetAttributes, GetInputCurrentType, GetOutputCurrentType, GetOutputStreamAttributes, ProcessMessage BEGIN_STREAMING, GetOutputStreamInfo, ProcessMessage START_OF_STREAM, ProcessMessage DRAIN; inputs 6
+  set position 0 0x00000000
+  calls: ProcessMessage FLUSH
+  set NV12 with the effect 0x00000000
+  calls: GetOutputAvailableType 0, GetOutputAvailableType 1
+  current: MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  remove all 0x00000000
+  calls: ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, GetOutputStreamAttributes, ProcessMessage FLUSH, ProcessMessage END_OF_STREAM, ProcessMessage END_STREAMING, SetOutputType null: ok, SetInputType null: ok
+  transform 0: video decoder
+  transform 1: 0xc00d36bf
+  calls at the reader's release: 

@@ -261,8 +261,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         [UnmanagedCallersOnly]
         private static int AddTransformForStream(IntPtr self, uint i, IntPtr transform)
         {
-            D3DLog.Once("mf-reader-addtransform", "IMFSourceReaderEx.AddTransformForStream: the shim's source reader takes no transforms of the application's");
-            return MF.E_NOTIMPL;
+            if (R(self) is not { } r || transform == IntPtr.Zero) return MF.E_POINTER;
+            try
+            {
+                lock (r._lock)
+                {
+                    if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
+                    return s.AddEffect(transform);
+                }
+            }
+            catch (Exception e) { D3DLog.Error("IMFSourceReaderEx.AddTransformForStream", e); return MF.E_FAIL; }
         }
 
         [UnmanagedCallersOnly]
@@ -272,7 +280,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             lock (r._lock)
             {
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
-                return MF.S_OK;                     // the decoder is no transform the application added
+                s.RemoveEffects();
+                return MF.S_OK;
             }
         }
 
@@ -284,9 +293,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             lock (r._lock)
             {
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
-                if (n != 0 || s.Decoder == null) return MF.MF_E_INVALIDINDEX;
-                if (category != null) *category = s.Audio ? MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER : SR.MFT_CATEGORY_VIDEO_DECODER;
-                *transform = s.Decoder.AddRefPointer();
+                var list = s.Transforms();
+                if (n >= list.Count) return MF.MF_E_INVALIDINDEX;
+                var (cat, t, own) = list[(int)n];
+                if (category != null) *category = cat;
+                if (own) { var standIn = new MFConverterStandIn(s.Current, s.Current); *transform = standIn.Pointer; }
+                else { Com.AddRef(t); *transform = t; }
             }
             return MF.S_OK;
         }

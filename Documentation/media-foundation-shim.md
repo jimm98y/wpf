@@ -186,6 +186,42 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
   `OnFlush`.
 - `IMFSourceReaderEx.AddTransformForStream` is not implemented.
 
+### Transforms of the application's
+
+`IMFSourceReaderEx::AddTransformForStream` takes an effect MFT (or its activation object) as Windows'
+reader does (`Source/ReaderEffects.cs`). This was probed with `SpyEffect`, a pass-through effect that logs
+every call made of it (`MFReaderTransformProbe`, the report in `ReaderTransform.windows.txt`); the shim's
+reader makes the same calls in the same order.
+- **Where the effect goes:** after the decoder (or the file's own PCM), before the reader's own conversion
+  to the current type. The current type stays as it was.
+- **Its input:**
+  - Audio: the decoder's type is tried three times. If it is refused, a float type of the same rate and
+    channels is tested, then set, with the reader's converter before the effect.
+  - Video: the effect's first input type is asked for. If its subtype is the decoder's, the decoder's
+    type is set. If not, the effect's first type is set: the decoder's output changes to it where the
+    decoder gives it (YUY2), else the video processor goes before the effect (RGB32), after the effect's
+    types are asked for again.
+  - A compressed stream is offered as it is: three tries, no decoding added.
+- **Its output:** the effect's types are asked for until one has the current subtype. If none does, its
+  first is set, with a converter (the video processor) after it.
+- **Refusals:** an effect that takes nothing it can be given, or whose output nothing converts back
+  (an encoder), gets MF_E_INVALIDMEDIATYPE. It is let go as Windows lets one go: flush, end of stream,
+  end streaming, its types cleared.
+- **Streaming:**
+  - Begun at the first read, drained at the end, flushed by a seek.
+  - For audio from an effect that doesn't provide its samples, the reader asks the output size before
+    each output.
+  - `RemoveAllTransformsForStream` ends each effect. It also drops the reader's own converters and
+    keeps the decoder. An audio stream's current type becomes its WAVEFORMATEX's type, as
+    `MFInitMediaTypeFromWaveFormatEx` makes it.
+- **A new current type with effects:** the effect's output is set as it is where it has that subtype,
+  else its types are searched.
+- **`GetTransformForStream`:** the decoder, then each effect (`MFT_CATEGORY_AUDIO_EFFECT` /
+  `MFT_CATEGORY_VIDEO_EFFECT`), with the reader's converters around it as stand-ins
+  (`MFT_CATEGORY_AUDIO_EFFECT` / `MFT_CATEGORY_VIDEO_PROCESSOR`). The PCM-to-float converter is listed
+  even with no effect, as Windows lists it.
+- **Not compared:** the attributes of decoded video frames, which come from each system's decoder.
+
 ## Media sources
 
 **The objects they are described and talk by** (`MFSourceObjects.cs`), for the shim's own sources and the
@@ -356,7 +392,6 @@ on macOS and in the Ubuntu VM.
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;
-  - the application's transforms;
   - the RGB conversion of textures on the GPU (the shim's video processor).
 - The media session, and camera capture (`MFEnumDeviceSources`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder (the test VM has none).

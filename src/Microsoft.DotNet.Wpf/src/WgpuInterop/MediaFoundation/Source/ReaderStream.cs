@@ -241,6 +241,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public bool Selected;
         private bool _discontinuity = true;
         private MFSample? _held;               // a sample the decoder did not take yet
+        private ReaderEffects? _fx;            // the application's transforms, after the decoder
         /// <summary>Every sample read (and decoded); the end told.</summary>
         public bool Ended;
         private bool _inputDone, _drainSent;
@@ -261,6 +262,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         {
             DropDecoder();
             _held?.Release(); _held = null;
+            _fx?.Dispose(); _fx = null;
             Feed.Dispose();
             Native.Release();
             Current.Release();
@@ -287,6 +289,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private static readonly Guid[] s_rgb = { SR.MFVideoFormat_RGB32, SR.MFVideoFormat_ARGB32, SR.MFVideoFormat_RGB24 };
 
         public int SetCurrent(MFMediaType t)
+        {
+            var before = Current.Clone();
+            try
+            {
+                // with transforms after the decoder, a picture of the subtype it gives already keeps it (and them) as they are
+                if (_fx is { Any: true } && Video && Decoder != null && t.Subtype == Current.Subtype)
+                {
+                    _fx.Retarget(Current, before);
+                    t.Release();
+                    return MF.S_OK;
+                }
+                int hr = SetCurrentCore(t);
+                if (hr >= 0 && _fx is { Any: true }) { _fx.Retarget(Current, before); SetupFinal(); }
+                return hr;
+            }
+            finally { before.Release(); }
+        }
+
+        private int SetCurrentCore(MFMediaType t)
         {
             try
             {
@@ -575,6 +596,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         {
             _discontinuity = true;
             _held?.Release(); _held = null;
+            _fx?.Flush();
             Ended = false;
             _inputDone = false;
             _drainSent = false;
@@ -599,7 +621,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             {
                 while (_conv != null)
                 {
-                    var raw = Compressed();
+                    var raw = Staged();
                     if (raw == null)
                     {
                         if (!_convDrained) { _convDrained = true; if (ConvertAudio(null, _conv.Drain()) is { } tail) return tail; }
@@ -608,13 +630,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     if (ConvertAudio(raw) is { } c) return c;
                 }
                 if (drain) { flags = SR.ENDOFSTREAM; return null; }
-                var next = Compressed();
+                var next = Staged();
                 if (next == null) { Ended = true; flags = SR.ENDOFSTREAM; return null; }
                 return next;
             }
             var p = Decoder.Pointer;
             while (true)
             {
+                if (_fx is { Any: true } && _fx.TryTake(out var pending))
+                {
+                    var done = Finish(pending!);
+                    if (done != null) return done;
+                    continue;
+                }
                 int hr = Mft.Output(p, out var got, out bool changed, this);
                 if (changed)
                 {
@@ -631,6 +659,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     dt?.Release();
                     continue;
                 }
+                if (hr >= 0 && got != null && _fx is { Any: true }) { _fx.Push(got); continue; }
                 if (hr >= 0 && got != null)
                 {
                     if (Audio)
@@ -649,6 +678,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 {
                     if (!_drainSent) { Mft.ProcessMessage(p, 1, 0); _drainSent = true; continue; }    // MFT_MESSAGE_COMMAND_DRAIN
                     if (drain && !_inputDone && (_held != null || !Feed.AtEnd)) { _drainSent = false; flags |= SR.ENDOFSTREAM; return null; }
+                    // what the application's transforms still hold
+                    if (_fx is { Any: true }) { _fx.Drain(); if (_fx.TryTake(out var last)) { var done = Finish(last!); if (done != null) return done; continue; } }
                     // what the resampler still holds
                     if (_conv != null && !_convDrained) { _convDrained = true; if (ConvertAudio(null, _conv.Drain()) is { } tail) return tail; }
                     Ended = true;
@@ -667,6 +698,131 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 finally { c?.Release(); }
                 if (Feed.AtEnd) _inputDone = true;
             }
+        }
+
+        /// <summary>The next sample of the source, through the application's transforms where there are any; null at the end.</summary>
+        private MFSample? Staged()
+        {
+            if (_fx is not { Any: true }) return Compressed();
+            while (true)
+            {
+                if (_fx.TryTake(out var s)) return s;
+                var c = Compressed();
+                if (c == null) { _fx.Drain(); return _fx.TryTake(out var d) ? d : null; }
+                _fx.Push(c);
+            }
+        }
+
+        /// <summary>A decoded sample out of the transforms, as the current type: converted where it is of another (null: more needed).</summary>
+        private MFSample? Finish(MFSample s)
+        {
+            if (Audio) return _conv == null ? s : ConvertAudio(s);
+            var last = _fx!.LastOut!;
+            MFSample o;
+            if (_rgb != Guid.Empty && last.Subtype == _decoderOut) o = ToRgb(s);
+            else if (last.Subtype != Current.Subtype)
+            {
+                var (w, h) = Current.FrameSize;
+                o = ReaderEffects.Replace(s, VideoConvert.Convert(s.Bytes(), last.Subtype, Current.Subtype, (int)w, (int)h));
+            }
+            else o = s;
+            if (_firstOut || _discontinuity) { o.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u); _firstOut = false; _discontinuity = false; }
+            return o;
+        }
+
+        /// <summary>The type the transforms are added after: the decoder's output, or the file's own.</summary>
+        private MFMediaType StageType()
+        {
+            if (Decoder != null && Mft.OutputType(Decoder.Pointer) is { } d) return d;
+            return Native.Clone();
+        }
+
+        /// <summary>IMFSourceReaderEx::AddTransformForStream.</summary>
+        public int AddEffect(IntPtr transform)
+        {
+            var stage = StageType();
+            try
+            {
+                _fx ??= new ReaderEffects(Video);
+                Func<Guid, bool>? retarget = Video && Decoder != null ? sub =>
+                {
+                    if (Array.IndexOf(s_decoderOutputs, sub) < 0 || _reader.Manager != IntPtr.Zero) return false;
+                    if (Mft.SetOutputOf(Decoder.Pointer, sub) < 0) return false;
+                    _decoderOut = sub;
+                    return true;
+                } : null;
+                int hr = _fx.Add(transform, stage, Current, retarget);
+                if (hr < 0) return hr;
+                SetupFinal();
+                return MF.S_OK;
+            }
+            finally { stage.Release(); }
+        }
+
+        /// <summary>After the transforms, the reader's converter of their output to the current type (of audio; video's in Finish).</summary>
+        private void SetupFinal()
+        {
+            if (!Audio || _fx?.LastOut is not { } o) return;
+            var a = o.Attributes; var c = Current.Attributes;
+            bool ofl = o.Subtype == MediaFormats.Float, cfl = Current.Subtype == MediaFormats.Float;
+            uint ob = a.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, ofl ? 32u : 16u), cb = c.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, cfl ? 32u : 16u);
+            uint och = a.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, 2), cch = c.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, och);
+            uint orate = a.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100), crate = c.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, orate);
+            _conv = ofl == cfl && ob == cb && och == cch && orate == crate ? null : new AudioConverter(ofl, (int)ob, (int)och, (int)orate, cfl, (int)cb, (int)cch, (int)crate);
+            _convFrames = 0; _convT0 = null; _convDrained = false;
+        }
+
+        /// <summary>
+        /// IMFSourceReaderEx::RemoveAllTransformsForStream: the application's transforms and the reader's own converters gone,
+        /// the decoder kept; the current type the decoder's output (or the file's own).
+        /// </summary>
+        public void RemoveEffects()
+        {
+            _fx?.RemoveAll();
+            _conv = null; _convFrames = 0; _convT0 = null; _convDrained = false;
+            if (Video && Decoder != null)
+            {
+                if (_rgb != Guid.Empty || Current.Subtype != _decoderOut)
+                {
+                    _rgb = Guid.Empty;
+                    var (w, h) = Current.FrameSize;
+                    Replace(Decoded(_decoderOut, w, h, null));
+                }
+                return;
+            }
+            // audio: the type of its WAVEFORMATEX, as MFInitMediaTypeFromWaveFormatEx makes it
+            var stage = Decoder != null && Mft.OutputType(Decoder.Pointer) is { } d ? d : Native.Clone();
+            if (stage.Subtype == MediaFormats.PCM || stage.Subtype == MediaFormats.Float)
+            {
+                var a = stage.Attributes;
+                uint bytes = a.U32(SR.MF_MT_AUDIO_AVG_BYTES_PER_SECOND);
+                a.Set(SR.MF_MT_AM_FORMAT_TYPE, SR.FORMAT_WaveFormatEx);
+                a.Set(SR.MF_MT_AVG_BITRATE, bytes * 8);
+                a.Set(MF.MF_MT_COMPRESSED, 0u);
+                a.Set(MF.MF_MT_FIXED_SIZE_SAMPLES, 1u);
+                a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
+                a.Set(SR.MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1u);
+            }
+            Replace(stage);
+        }
+
+        /// <summary>The stream's transforms, as GetTransformForStream lists them: the decoder, then each in order (the reader's converters as stand-ins).</summary>
+        public List<(Guid Category, IntPtr Transform, bool Own)> Transforms()
+        {
+            var r = new List<(Guid, IntPtr, bool)>();
+            if (Decoder != null) r.Add((Audio ? MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER : SR.MFT_CATEGORY_VIDEO_DECODER, Decoder.Pointer, false));
+            var proc = Audio ? ReaderEffects.MFT_CATEGORY_AUDIO_EFFECT : ReaderEffects.MFT_CATEGORY_VIDEO_PROCESSOR;
+            MFMediaType? at = null;
+            if (_fx != null)
+                foreach (var e in _fx.Effects)
+                {
+                    if (e.PreAudio != null || e.PreFrom != null) r.Add((proc, IntPtr.Zero, true));
+                    r.Add((Audio ? ReaderEffects.MFT_CATEGORY_AUDIO_EFFECT : ReaderEffects.MFT_CATEGORY_VIDEO_EFFECT, e.Mft, false));
+                    at = e.Out;
+                }
+            bool after = Audio ? _conv != null : at != null ? at.Subtype != Current.Subtype : _rgb != Guid.Empty;
+            if (after) r.Add((proc, IntPtr.Zero, true));
+            return r;
         }
 
         /// <summary>The next sample as the source hands it out; null at the end.</summary>
