@@ -185,6 +185,39 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
   `OnFlush`.
 - `IMFSourceReaderEx.AddTransformForStream` is not implemented.
 
+## The sink writer
+
+`MFCreateSinkWriterFromURL` (to a path, or to the shim's own file byte stream) gives an `IMFSinkWriterEx`
+writing MP4 (`Sink/`). It was probed by writing H.264 of NV12 and AAC of PCM.
+
+- **Streams:**
+  - A stream's target type is H.264, HEVC or AAC.
+  - Its input is that type itself (written as it comes), or what the system's encoder is given.
+  - Video converts from NV12, I420, IYUV, YV12, YUY2, RGB32 and ARGB32; audio converts float and other
+    bit depths to 16-bit PCM.
+  - The encoders are the system's (`Codecs/PlatformEncoders.cs`, SharpMediaFoundationInterop's,
+    adapted): VideoToolbox and AudioToolbox, GStreamer, MediaCodec. H.264 is Baseline where the type
+    names no profile, as Windows' encoder makes it.
+- **The file is laid out as Windows' MPEG-4 sink lays it out** (`Sink/Mp4Muxer.cs`; the box tree is
+  `SinkWriter.windows.txt`):
+  - `ftyp` mp42 (mp41, isom); a `uuid` box of Media Foundation's version; a 64-bit `mdat`; then
+    `moov`.
+  - The movie's timescale is the audio's rate; video is at its frame rate × 1000.
+  - Chunks of 0.32 s, written in the order of their start, video first on ties.
+  - Durations are the last sample's time and duration in 100 ns units, rounded down, then rounded
+    down again in the track's units.
+  - The parameter sets go to avcC / hvcC and out of the samples. The entry is named "AVC Coding".
+  - The esds' descriptors have four-byte lengths (the SLConfig one byte). The audio has a ctts of
+    zeros. `udta` holds an empty iTunes `meta` and `Xtra`.
+- Reading such a file, the reader puts the parameter sets after a leading access unit delimiter, as
+  Windows' reader does.
+
+What differs is the encoders' own output: the sample sizes, the AudioSpecificConfig (GStreamer's
+signals SBR), and AudioToolbox's priming, which makes two AAC packets more than Windows' encoder.
+`MFSinkWriterProbe.TheSinkWriter_WritesTheFileWindowsWrites` compares the box tree with Windows' (all
+but the encoders' bytes) on macOS and Linux and reads the file back. Windows' own reader decodes a file
+the shim wrote to the same frames.
+
 ## Tests
 
 They pass on macOS (VideoToolbox) and in the Ubuntu 26.04 VM (GStreamer: libav's and OpenH264's decoders). `MFDecoderTests` makes an H.264 stream whose pictures are all I_PCM macroblocks (raw samples), so a
@@ -204,7 +237,9 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
-- The encoders.
+- The encoders as MFTs of their own (`MFTEnumEx` lists Windows' "H264 Encoder MFT" and "Microsoft AAC
+  Audio Encoder MFT"; the sink writer uses the system's encoders directly), and writing to an
+  application's byte stream.
 - More of the source reader:
   - more containers (WAV, MP3, ADTS, WebM/Matroska, ASF);
   - reading from a media source (`MFCreateSourceReaderFromMediaSource`);

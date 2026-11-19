@@ -232,6 +232,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return MF.E_NOTIMPL;
         }
 
+        /// <summary>A sink writer of an MP4 file (Sink/): of the URL's path, or of the shim's own file byte stream.</summary>
+        [Win32Export("MFCreateSinkWriterFromURL")]
+        public static int MFCreateSinkWriterFromURL(char* url, IntPtr byteStream, IntPtr attributes, IntPtr* writer)
+        {
+            if (writer == null) return MF.E_POINTER;
+            *writer = IntPtr.Zero;
+            try
+            {
+                System.IO.FileStream file;
+                if (byteStream != IntPtr.Zero)
+                {
+                    if (ComObject.From<Source.MFFileByteStream>(byteStream) is not { } fs) { D3DLog.Once("mf-sink-stream", "Media Foundation: the sink writer writes to files and the shim's own file byte streams"); return MF.E_INVALIDARG; }
+                    file = new System.IO.FileStream(fs.Path, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
+                }
+                else
+                {
+                    if (url == null) return MF.E_INVALIDARG;
+                    string? path = PathOf(new string(url), out int hr);
+                    if (path == null) return hr;
+                    string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+                    if (ext is not (".mp4" or ".m4v" or ".m4a" or ".mov" or ".3gp")) { D3DLog.Once("mf-sink-ext:" + ext, $"Media Foundation: the sink writer writes MP4 files, not {ext}"); return SR_MF_E_UNSUPPORTED_FORMAT; }
+                    file = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
+                }
+                *writer = new Sink.MFSinkWriter(file).Pointer;
+                return MF.S_OK;
+            }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+        }
+
+        private const int SR_MF_E_UNSUPPORTED_FORMAT = unchecked((int)0xC00D36C2);
+
         [Win32Export("MFCreateFile")]
         public static int MFCreateFile(uint access, uint open, uint flags, char* url, IntPtr* stream)
         {

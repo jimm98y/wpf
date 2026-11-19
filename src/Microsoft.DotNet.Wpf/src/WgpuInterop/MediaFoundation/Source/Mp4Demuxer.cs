@@ -528,10 +528,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (!t.AnnexB) return raw;
             var lengths = new List<uint>();
             var o = new List<byte>(raw.Length + 64);
-            // the parameter sets: H.264's after 3-byte start codes, HEVC's after 4-byte ones (as Windows has them)
+            // the parameter sets: H.264's after 3-byte start codes, HEVC's after 4-byte ones (as Windows has them), before the
+            // first NAL unit -- after it where it is an access unit delimiter
             byte[] sc = t.Hevc ? new byte[] { 0, 0, 0, 1 } : new byte[] { 0, 0, 1 };
-            if (sync)
+            bool setsDone = !sync;
+            void Sets()
+            {
                 foreach (var p in t.ParameterSets) { o.AddRange(sc); o.AddRange(p); lengths.Add((uint)(p.Length + sc.Length)); }
+                setsDone = true;
+            }
             int at = 0, L = t.NalLength;
             while (at + L <= raw.Length)
             {
@@ -539,11 +544,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 for (int i = 0; i < L; i++) n = n << 8 | raw[at + i];
                 at += L;
                 if (n <= 0 || at + n > raw.Length) break;
+                bool aud = t.Hevc ? ((raw[at] >> 1) & 0x3F) == 35 : (raw[at] & 0x1F) == 9;
+                if (!setsDone && !aud) Sets();
                 o.AddRange(new byte[] { 0, 0, 0, 1 });
                 o.AddRange(new ArraySegment<byte>(raw, at, n));
                 lengths.Add((uint)n + 4);
                 at += n;
             }
+            if (!setsDone) Sets();
             nalLengths = lengths.ToArray();
             return o.ToArray();
         }

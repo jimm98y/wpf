@@ -47,6 +47,14 @@ namespace WgpuInterop.Tests.MediaFoundation
             return t;
         }
 
+        /// <summary>Windows' Media Foundation started (COM, MFStartup); nothing elsewhere.</summary>
+        public static void Startup()
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            CoInitializeEx(IntPtr.Zero, 0);
+            WinMFStartup(0x20070, 0);
+        }
+
         public static int Create(string path, IntPtr attributes, out IntPtr reader)
         {
             IntPtr r;
