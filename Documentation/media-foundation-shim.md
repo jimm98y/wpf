@@ -99,6 +99,10 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
     attribute `3eadb782-…`.
   - Known difference: Windows estimates an ADTS file's duration and bitrate from its start, by a rule
     one file does not show; the shim's are exact.
+  - Over HTTP(S) (`Source/HttpByteSource.cs`), as Windows' network byte stream reads them: a GET of
+    `bytes=0-` first, then ranges, in cached blocks of 256 KB (a server without ranges is read through
+    once into a temporary file). The reader's report is that of the same file on disk, as Windows'
+    is. A 404 gives NS_E_FILE_NOT_FOUND (0xC00D001A).
   - Matroska and WebM (`Source/MatroskaContainer.cs`), as Windows' Matroska source reads them:
     - the blocks in storage order at their timecodes, with DefaultDuration in 100 ns units, rounded
       down;
@@ -203,7 +207,7 @@ on macOS and in the Ubuntu VM.
 - The encoders.
 - More of the source reader:
   - more containers (WAV, MP3, ADTS, WebM/Matroska, ASF);
-  - reading from a media source (`MFCreateSourceReaderFromMediaSource`) and from network URLs;
+  - reading from a media source (`MFCreateSourceReaderFromMediaSource`);
   - the application's transforms;
   - the RGB conversion of textures on the GPU (the shim's video processor).
 - The media session, and camera capture (`MFEnumDeviceSources`).

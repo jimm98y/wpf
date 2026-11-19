@@ -639,6 +639,20 @@ namespace WgpuInterop.Tests.MediaFoundation
                 try { all.AddRange(VideoReport(AudioPath(m))); Progress(m + " audio"); all.AddRange(AudioReport(AudioPath(m))); }
                 catch (Exception e) { all.Add("failed: " + e); }
             }
+            // over HTTP (MF_PROBE_HTTP=<base URL> serving the media folder, with ranges)
+            if (Environment.GetEnvironmentVariable("MF_PROBE_HTTP") is { Length: > 0 } http)
+            {
+                foreach (var m in new[] { "clip-vp9.mp4", "tone.mp3" })
+                {
+                    all.Add($"==== http {m}");
+                    Progress("http " + m);
+                    try { all.AddRange(m.EndsWith(".mp3") ? AudioReport(http.TrimEnd('/') + "/" + m) : VideoReport(http.TrimEnd('/') + "/" + m)); }
+                    catch (Exception e) { all.Add("failed: " + e); }
+                }
+                all.Add("==== http missing.mp4");
+                all.Add($"create {Hr(MFReader.Create(http.TrimEnd('/') + "/missing.mp4", IntPtr.Zero, out var mr))}");
+                MFReader.Release(mr);
+            }
             System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_OUT")!, all);
             System.IO.File.Delete(Environment.GetEnvironmentVariable("MF_PROBE_OUT") + ".progress");
         }

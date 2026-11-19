@@ -165,7 +165,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 return null;
             }
             int colon = url.IndexOf("://", StringComparison.Ordinal);
-            if (colon > 1) { hr = Source.SR.MF_E_UNSUPPORTED_SCHEME; D3DLog.Once("mf-scheme:" + url[..colon], $"Media Foundation: the source reader reads files only, not {url[..colon]}: URLs"); return null; }
+            if (colon > 1) { hr = Source.SR.MF_E_UNSUPPORTED_SCHEME; D3DLog.Once("mf-scheme:" + url[..colon], $"Media Foundation: the source reader reads files and http(s): URLs, not {url[..colon]}: ones"); return null; }
             return url;
         }
 
@@ -174,11 +174,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             if (reader == null || url == null) return MF.E_POINTER;
             *reader = IntPtr.Zero;
-            string? path = PathOf(new string(url), out int hr);
-            if (path == null) return hr;
+            string text = new string(url);
             Source.IByteSource src;
-            try { src = new Source.FileByteSource(path); }
-            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+            int hr;
+            // http: and https: as Windows' network byte stream reads them
+            if (Uri.TryCreate(text, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
+            {
+                hr = Source.HttpByteSource.Open(u, out var web);
+                if (hr < 0) return hr;
+                src = web!;
+            }
+            else
+            {
+                string? path = PathOf(text, out hr);
+                if (path == null) return hr;
+                try { src = new Source.FileByteSource(path); }
+                catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+            }
             hr = Source.MFSourceReader.Create(src, attributes, out var r);
             if (hr >= 0) *reader = r!.Pointer;
             return hr;

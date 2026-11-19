@@ -366,6 +366,53 @@ namespace WgpuInterop.Tests.MediaFoundation
             finally { MFReader.Release(r); MFReader.Release(stream); File.Delete(path); }
         }
 
+        /// <summary>A file over HTTP (with ranges, as servers give them): read as the same file on disk is; a 404 is Windows' NS_E_FILE_NOT_FOUND.</summary>
+        [Fact]
+        public void TheReader_ReadsAFileOverHttp()
+        {
+            var listener = new System.Net.HttpListener();
+            int port = 0;
+            for (int p = 18771; p < 18800 && port == 0; p++)
+            {
+                try { listener.Prefixes.Clear(); listener.Prefixes.Add($"http://127.0.0.1:{p}/"); listener.Start(); port = p; }
+                catch (System.Net.HttpListenerException) { listener = new System.Net.HttpListener(); }
+            }
+            Assert.SkipWhen(port == 0, "no port to listen on");
+            var serving = System.Threading.Tasks.Task.Run(() =>
+            {
+                while (listener.IsListening)
+                {
+                    System.Net.HttpListenerContext c;
+                    try { c = listener.GetContext(); } catch { return; }
+                    string file = MFSourceReaderProbe.AudioPath(c.Request.Url!.AbsolutePath.TrimStart('/'));
+                    if (!File.Exists(file)) { c.Response.StatusCode = 404; c.Response.Close(); continue; }
+                    var data = File.ReadAllBytes(file);
+                    long a = 0, b = data.Length - 1;
+                    if (c.Request.Headers["Range"] is { } range && range.StartsWith("bytes="))
+                    {
+                        var parts = range[6..].Split('-');
+                        a = long.Parse(parts[0]);
+                        if (parts[1].Length > 0) b = Math.Min(b, long.Parse(parts[1]));
+                        c.Response.StatusCode = 206;
+                        c.Response.AddHeader("Content-Range", $"bytes {a}-{b}/{data.Length}");
+                    }
+                    c.Response.AddHeader("Accept-Ranges", "bytes");
+                    c.Response.ContentType = "video/mp4";
+                    c.Response.ContentLength64 = b - a + 1;
+                    try { c.Response.OutputStream.Write(data, (int)a, (int)(b - a + 1)); c.Response.Close(); } catch { }
+                }
+            });
+            try
+            {
+                var web = MFSourceReaderProbe.VideoReport($"http://127.0.0.1:{port}/clip-vp9.mp4");
+                var disk = MFSourceReaderProbe.VideoReport(MFSourceReaderProbe.AudioPath("clip-vp9.mp4"));
+                Assert.Equal(string.Join("\n", disk), string.Join("\n", web));
+                Assert.Equal(unchecked((int)0xC00D001A), MFReader.Create($"http://127.0.0.1:{port}/missing.mp4", IntPtr.Zero, out var r));
+                MFReader.Release(r);
+            }
+            finally { listener.Stop(); }
+        }
+
         [Fact]
         public void TheReader_RefusesWhatIsNoMediaFile()
         {
