@@ -185,6 +185,18 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
   `OnFlush`.
 - `IMFSourceReaderEx.AddTransformForStream` is not implemented.
 
+## Media sources
+
+What a media source is described and talks by (`MFSourceObjects.cs`), for sources of the shim's own and of
+the application's: `MFCreateEventQueue` (`IMFMediaEventQueue`: events in order, waited for or handed to an
+`IMFAsyncCallback` as they come, one BeginGetEvent at a time, MF_E_SHUTDOWN after Shutdown),
+`MFCreateMediaEvent`, `MFCreateStreamDescriptor` (with its `IMFMediaTypeHandler`: the stream's types, a
+current type among them), `MFCreatePresentationDescriptor` (the streams, selected or not; a clone of its
+own selection). Their behaviour is Media Foundation's documented one, tested
+(`MFSourceObjectsProbe`); Windows' own could not be probed from the test process (its
+`QueueEventParamVar` and `QueueEventParamUnk`, and an unmatched `IsMediaTypeSupported`, fault when called so
+on ARM64).
+
 ## The sink writer
 
 `MFCreateSinkWriterFromURL` (to a path, or to the shim's own file byte stream) gives an `IMFSinkWriterEx`

@@ -213,6 +213,57 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         /// <summary>MF_FILE_ACCESSMODE: read 1, write 2, both 3. MF_FILE_OPENMODE: fail if none 0, fail if one 1, reset 2, append 3, delete 4.</summary>
+        // ---- what media sources are described and talk by (MFSourceObjects.cs) --------------------------------
+
+        [Win32Export("MFCreateEventQueue")]
+        public static int MFCreateEventQueue(IntPtr* queue)
+        {
+            if (queue == null) return MF.E_POINTER;
+            *queue = new MFEventQueue().Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateMediaEvent")]
+        public static int MFCreateMediaEvent(uint type, Guid* extended, int status, byte* value, IntPtr* e)
+        {
+            if (e == null) return MF.E_POINTER;
+            *e = new MFMediaEvent(type, extended == null ? Guid.Empty : *extended, status, MFMediaEvent.ValueOf(value)).Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateStreamDescriptor")]
+        public static int MFCreateStreamDescriptor(uint id, uint count, IntPtr* types, IntPtr* descriptor)
+        {
+            if (descriptor == null || types == null && count > 0) return MF.E_POINTER;
+            *descriptor = IntPtr.Zero;
+            if (count == 0) return MF.E_INVALIDARG;
+            var list = new List<MFMediaType>();
+            for (uint i = 0; i < count; i++)
+            {
+                if (types[i] == IntPtr.Zero) { foreach (var t in list) t.Release(); return MF.E_POINTER; }
+                // the application's types themselves where they are the shim's; copies of others'
+                if (ComObject.From<MFMediaType>(types[i]) is { } ours) { ours.AddRef(); list.Add(ours); }
+                else list.Add(Source.Mp4Types.Read(types[i]));
+            }
+            *descriptor = new MFStreamDescriptor(id, list).Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreatePresentationDescriptor")]
+        public static int MFCreatePresentationDescriptor(uint count, IntPtr* descriptors, IntPtr* pd)
+        {
+            if (pd == null || descriptors == null && count > 0) return MF.E_POINTER;
+            *pd = IntPtr.Zero;
+            var p = new MFPresentationDescriptor();
+            for (uint i = 0; i < count; i++)
+            {
+                if (descriptors[i] == IntPtr.Zero) { p.Release(); return MF.E_POINTER; }
+                p.Add(descriptors[i]);
+            }
+            *pd = p.Pointer;
+            return MF.S_OK;
+        }
+
         /// <summary>The capture devices: none yet (camera and microphone capture are to come), as of a system without any.</summary>
         [Win32Export("MFEnumDeviceSources")]
         public static int MFEnumDeviceSources(IntPtr attributes, IntPtr** activates, uint* count)
