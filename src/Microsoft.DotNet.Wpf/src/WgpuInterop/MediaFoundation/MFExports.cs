@@ -213,6 +213,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         /// <summary>MF_FILE_ACCESSMODE: read 1, write 2, both 3. MF_FILE_OPENMODE: fail if none 0, fail if one 1, reset 2, append 3, delete 4.</summary>
+        /// <summary>The capture devices: none yet (camera and microphone capture are to come), as of a system without any.</summary>
+        [Win32Export("MFEnumDeviceSources")]
+        public static int MFEnumDeviceSources(IntPtr attributes, IntPtr** activates, uint* count)
+        {
+            if (activates == null || count == null) return MF.E_POINTER;
+            *activates = null; *count = 0;
+            D3DLog.Once("mf-capture", "Media Foundation: MFEnumDeviceSources lists no devices yet (capture is to come)");
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateSourceReaderFromMediaSource")]
+        public static int MFCreateSourceReaderFromMediaSource(IntPtr source, IntPtr attributes, IntPtr* reader)
+        {
+            if (reader == null) return MF.E_POINTER;
+            *reader = IntPtr.Zero;
+            D3DLog.Once("mf-reader-source", "Media Foundation: MFCreateSourceReaderFromMediaSource takes no media source yet");
+            return MF.E_NOTIMPL;
+        }
+
         [Win32Export("MFCreateFile")]
         public static int MFCreateFile(uint access, uint open, uint flags, char* url, IntPtr* stream)
         {
