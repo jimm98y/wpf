@@ -42,8 +42,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             vt.Set(33, (delegate* unmanaged<IntPtr, Guid*, int>)&GetMajorType);
             vt.Set(34, (delegate* unmanaged<IntPtr, int*, int>)&IsCompressedFormat);
             vt.Set(35, (delegate* unmanaged<IntPtr, IntPtr, uint*, int>)&IsEqual);
+#if WGPU_BROWSER
+            // WebAssembly's C ABI passes the GUID by reference (and its interpreter makes no wrapper of a struct by value)
+            vt.Set(36, (delegate* unmanaged<IntPtr, Guid*, void**, int>)&GetRepresentation);
+            vt.Set(37, (delegate* unmanaged<IntPtr, Guid*, void*, int>)&FreeRepresentation);
+#else
             vt.Set(36, (delegate* unmanaged<IntPtr, Guid, void**, int>)&GetRepresentation);
             vt.Set(37, (delegate* unmanaged<IntPtr, Guid, void*, int>)&FreeRepresentation);
+#endif
             return vt;
         }
 
@@ -102,8 +108,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return f == 0xF ? MF.S_OK : MF.S_FALSE;
         }
 
+#if WGPU_BROWSER
+        [UnmanagedCallersOnly] private static int GetRepresentation(IntPtr self, Guid* rep, void** p) { if (p != null) *p = null; return MF.MF_E_UNSUPPORTED_REPRESENTATION; }
+        [UnmanagedCallersOnly] private static int FreeRepresentation(IntPtr self, Guid* rep, void* p) => MF.S_OK;
+#else
         [UnmanagedCallersOnly] private static int GetRepresentation(IntPtr self, Guid rep, void** p) { if (p != null) *p = null; return MF.MF_E_UNSUPPORTED_REPRESENTATION; }
         [UnmanagedCallersOnly] private static int FreeRepresentation(IntPtr self, Guid rep, void* p) => MF.S_OK;
+#endif
 
         /// <summary>A copy, for handing out (GetOutputAvailableType and the like).</summary>
         public MFMediaType Clone()

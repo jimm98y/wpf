@@ -5,7 +5,7 @@
 // The system's video decoder, as the shim's Media Foundation decoders use it: compressed samples in
 // (NAL units in Annex B, OBUs, pictures), each with its time; decoded frames out in the order they are
 // shown, each NV12 of its own size. One per system: VideoToolbox on Apple's (the GPU's decoder where
-// it has one); the others come with their heads.
+// it has one), GStreamer on Linux, MediaCodec on Android, WebCodecs in the browser (WebCodecs.cs).
 //
 
 using System;
@@ -23,6 +23,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         {
             try
             {
+#if WGPU_BROWSER
+                if (OperatingSystem.IsBrowser()) return WebCodecs.Supports(codec);
+#endif
                 if (Apple) return VideoToolboxDecoder.Supports(codec);
                 if (OperatingSystem.IsAndroid()) return AndroidVideoDecoder.Supports(codec);
                 if (OperatingSystem.IsLinux()) return GStreamerVideoDecoder.Supports(codec);
@@ -38,6 +41,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         public static PlatformVideoDecoder? Create(VideoCodec codec, bool lowLatency, uint width = 0, uint height = 0)
         {
             if (!Supports(codec)) return null;
+#if WGPU_BROWSER
+            if (OperatingSystem.IsBrowser()) return new WebCodecsVideoDecoder(codec, lowLatency, width, height);
+#endif
             if (Apple) return new AppleVideoDecoder(codec, lowLatency);
             if (OperatingSystem.IsAndroid()) return new AndroidDecoder(codec, lowLatency, width == 0 ? 1920 : width, height == 0 ? 1088 : height);
             if (OperatingSystem.IsLinux()) return new GStreamerDecoder(codec, lowLatency);

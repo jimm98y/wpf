@@ -229,7 +229,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 case 5: return $"R8 {*(double*)(pv + 8)}";
                 case 72: { var g = **(Guid**)(pv + 8); Marshal.FreeCoTaskMem(*(IntPtr*)(pv + 8)); return $"GUID {Name(g)}"; }
                 case 31: { var s = Marshal.PtrToStringUni(*(IntPtr*)(pv + 8)); Marshal.FreeCoTaskMem(*(IntPtr*)(pv + 8)); return $"STR \"{s}\""; }
-                case 0x1011: { uint n = *(uint*)(pv + 8); byte* d = *(byte**)(pv + 16); var h = $"BLOB[{n}] {Hex(d, (int)n)}"; Marshal.FreeCoTaskMem((IntPtr)d); return h; }
+                case 0x1011: { uint n = *(uint*)(pv + 8); byte* d = *(byte**)(pv + (IntPtr.Size == 8 ? 16 : 12)); var h = $"BLOB[{n}] {Hex(d, (int)n)}"; Marshal.FreeCoTaskMem((IntPtr)d); return h; }
                 case 13: { IntPtr u = *(IntPtr*)(pv + 8); Release(u); return "UNKNOWN"; }
                 default: return $"VT {vt}";
             }

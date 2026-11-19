@@ -42,6 +42,7 @@
   <ItemGroup>
     <!-- Ship the JS half next to the assembly so app heads can copy it to wwwroot. -->
     <None Include="wgpu-interop.js" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="browser-codecs.js" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

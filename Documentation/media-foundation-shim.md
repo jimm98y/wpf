@@ -43,6 +43,31 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - VideoToolbox on Apple's systems, the GPU's decoder where there is one.
   - GStreamer on Linux: decodebin picks the best decoder installed, a GPU's (VA-API, V4L2) before the software ones. It is the system's library, loaded at run time and never bundled. The codecs come from the distribution's plugins (`gstreamer1.0-libav`, `-plugins-bad`, `-ugly`).
   - MediaCodec on Android, through the NDK, with frames through an image reader sized to the input type.
+  - **WebCodecs in the browser** (`Codecs/WebCodecs.cs`, `Browser/browser-codecs.js`, the `wpfBrowserCodecs`
+    module that `main.js` registers). It needs the multithreaded runtime: the shim runs on a worker and the
+    decoders on the page's thread. Each JS call is a round trip to the page, and the shim waits for what the
+    decoders make by polling.
+    - Video: `VideoDecoder` for H.264, HEVC, VP9 and AV1.
+      - The codec string is made from the stream: H.264's and HEVC's first SPS, VP9's first frame, AV1's
+        sequence header.
+      - Annex B goes in as it is. Parameter sets that come alone are held for the next chunk. Key frames
+        are found in the chunks, and nothing is decoded before the first.
+      - Each frame is copied out as NV12: of NV12 and I420 directly, of other formats through RGBX.
+    - Audio: `AudioDecoder` for AAC, MP3, FLAC and Opus, with each channel read as f32-planar and written as
+      the stream's PCM.
+    - Times go over in microseconds and come back in 100 ns as they went in.
+    - A drain waits for the decoder's flush and for every copy.
+    - A page without the module (an older `main.js`) has no decoders.
+    - The source reader's report of every test file in headless Chrome (`tests/WasmMedia`, its lines checked by
+      `TheBrowsersReader_DoesWithEachFileWhatWindowsReaderDoes`) is Windows', under the desktop's
+      tolerances.
+- **Apple Lossless in managed code** (`Codecs/AlacDecoder.cs`): a port of the algorithm of Apple's open-source ALAC
+  decoder (Apache 2.0), used where the system has no ALAC decoder of its own (Chrome's WebCodecs has none). Mono
+  and stereo, 16-bit and 24-bit tones decode to the bit what AudioToolbox and GStreamer decode
+  (`AlacDecoderTests`).
+- In the browser, the GUID that `IMFMediaType::GetRepresentation` and `FreeRepresentation` take by value
+  arrives by reference, as WebAssembly's C ABI passes it; the interpreter makes no wrapper for a struct
+  passed by value.
   - The decoders are SharpMediaFoundationInterop's (MIT, by the same author), adapted.
   - VideoToolbox's decoder is made from the stream's own configuration: H.264's and HEVC's parameter sets, the first VP9 key frame, the AV1 sequence header, the headers before the first MPEG-4 picture.
   - Frames are handed out in display order.
@@ -399,7 +424,8 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
+- Android's decoders are in but not yet run on a device or emulator. The browser has no encoders yet
+  (WebCodecs' `VideoEncoder` and `AudioEncoder`).
 - Writing to an application's byte stream from the sink writer, and the sink writer through the encoder
   MFTs (it uses the system's encoders directly).
 - More of the source reader:

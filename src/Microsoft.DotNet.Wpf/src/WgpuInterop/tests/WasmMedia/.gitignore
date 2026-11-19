@@ -1,0 +1,4 @@
+# copied in by the build (CopyMediaJs)
+wwwroot/media/
+wwwroot/browser-codecs.js
+wwwroot/wgpu-interop.js

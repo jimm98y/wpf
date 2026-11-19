@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 // so it needs access to the internal font types.
 [assembly: InternalsVisibleTo("DirectWriteForwarder")]
 [assembly: InternalsVisibleTo("WgpuInterop.SmokeTest")]
+[assembly: InternalsVisibleTo("WgpuInterop.WasmMedia")]
 [assembly: InternalsVisibleTo("WgpuInterop.AdapterProbe")]
 [assembly: InternalsVisibleTo("WaylandSpike")]
 [assembly: InternalsVisibleTo("IosSpike")]

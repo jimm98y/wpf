@@ -54,9 +54,36 @@ namespace WgpuInterop.Tests.MediaFoundation
             finally { MFReader.Via = MFReader.Way.Url; }
         }
 
-        private static void Compare()
+        /// <summary>
+        /// The browser's report (WasmMedia's, run in a browser: MF_BROWSER_REPORT=&lt;file&gt; of its lines), as Windows' report is --
+        /// the same tolerances as the desktop's, the browser's decoders WebCodecs'.
+        /// </summary>
+        [Fact]
+        public void TheBrowsersReader_DoesWithEachFileWhatWindowsReaderDoes()
+        {
+            string? file = Environment.GetEnvironmentVariable("MF_BROWSER_REPORT");
+            Assert.SkipWhen(string.IsNullOrEmpty(file), "MF_BROWSER_REPORT=<file> of the browser's report (tests/WasmMedia)");
+            Compare(File.ReadAllLines(file!).ToList());
+        }
+
+        /// <summary>MF_REPORT_OUT=&lt;file&gt; writes this system's report (for comparing it with another's by hand).</summary>
+        [Fact]
+        public void WriteReport()
+        {
+            string? file = Environment.GetEnvironmentVariable("MF_REPORT_OUT");
+            Assert.SkipWhen(string.IsNullOrEmpty(file), "MF_REPORT_OUT=<file> writes the report");
+            File.WriteAllLines(file!, Report());
+        }
+
+        private static void Compare(List<string>? given = null)
         {
             var windows = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SourceReader.windows.txt"));
+            var ours = given ?? Report();
+            CompareLines(windows, ours);
+        }
+
+        internal static List<string> Report()
+        {
             var ours = new List<string>();
             foreach (var (name, f) in MFSourceReaderProbe.Files())
             {
@@ -80,6 +107,11 @@ namespace WgpuInterop.Tests.MediaFoundation
                 ours.Add("---- audio");
                 ours.AddRange(MFSourceReaderProbe.AudioReport(MFSourceReaderProbe.AudioPath(m)));
             }
+            return ours;
+        }
+
+        private static void CompareLines(string[] windows, List<string> ours)
+        {
             static List<string> Clean(IEnumerable<string> lines)
             {
                 var r = new List<string>();
@@ -133,7 +165,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             var (wr, wreads) = Split(w);
             var (or, oreads) = Split(o);
             for (int i = 0; i < Math.Max(wr.Count, or.Count); i++)
-                Assert.True(i < wr.Count && i < or.Count && (wr[i] == or[i] || SameSignal(wr[i], or[i])), $"line {i}: Windows '{(i < wr.Count ? wr[i] : "(none)")}', ours '{(i < or.Count ? or[i] : "(none)")}'");
+                Assert.True(i < wr.Count && i < or.Count && (wr[i] == or[i] || SameSignal(wr[i], or[i])), $"line {i} ({wr.Take(i + 1).LastOrDefault(l => l.StartsWith("==== "))}): Windows '{(i < wr.Count ? wr[i] : "(none)")}', ours '{(i < or.Count ? or[i] : "(none)")}'");
             Assert.Equal(wreads.Keys.OrderBy(k => k), oreads.Keys.OrderBy(k => k));
             foreach (var k in wreads.Keys)
                 Assert.True(wreads[k].SequenceEqual(oreads[k]), $"{k}: Windows\n{string.Join("\n", wreads[k])}\nours\n{string.Join("\n", oreads[k])}");

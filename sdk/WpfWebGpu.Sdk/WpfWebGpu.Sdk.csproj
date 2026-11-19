@@ -79,6 +79,7 @@
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/XrStereo3D.cs" Pack="true" PackagePath="xr/" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/XrHeadset.cs" Pack="true" PackagePath="xr/" />
     <None Include="$(WgpuInteropDir)Browser/wgpu-interop.js" Pack="true" PackagePath="web/" Condition="Exists('$(WgpuInteropDir)Browser/wgpu-interop.js')" />
+    <None Include="$(WgpuInteropDir)Browser/browser-codecs.js" Pack="true" PackagePath="web/" Condition="Exists('$(WgpuInteropDir)Browser/browser-codecs.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-window.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/browser-media.js')" />
     <None Include="$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/devtools-bridge.js" Pack="true" PackagePath="web/" Condition="Exists('$(WpfRepoRoot)src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/devtools-bridge.js')" />

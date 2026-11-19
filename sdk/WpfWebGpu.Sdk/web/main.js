@@ -6,6 +6,7 @@ import * as wgpuInterop from './wgpu-interop.js'
 import * as wpfBrowserWindow from './browser-window.js'
 import * as wpfBrowserMedia from './browser-media.js'
 import * as wpfBrowserWebView from './browser-webview.js'
+import * as wpfBrowserCodecs from './browser-codecs.js'
 
 const status = document.getElementById('wpf-status');
 
@@ -112,6 +113,7 @@ try {
     setModuleImports('wpfBrowserWindow', wpfBrowserWindow);
     setModuleImports('wpfBrowserMedia', wpfBrowserMedia);
     setModuleImports('wpfBrowserWebView', wpfBrowserWebView);
+    setModuleImports('wpfBrowserCodecs', wpfBrowserCodecs);
 
     Module.FS.mkdirTree(DPAPI_DIR);
     if (dpapi) for (const name of DPAPI_KEYS) Module.FS.writeFile(`${DPAPI_DIR}/${name}`, dpapi[name]);

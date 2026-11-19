@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+
+  <PropertyGroup>
+    <!-- The Media Foundation shim in the browser, on the multithreaded runtime: the source reader's report of the
+         test media (MFSourceReaderProbe's, compiled in), decoded by WebCodecs (Browser/browser-codecs.js), printed to
+         the console between "MF-REPORT-BEGIN" and "MF-REPORT-END" for MFSourceReaderTests to compare with Windows'. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>WgpuInterop.WasmMedia</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <WasmEnableThreads>true</WasmEnableThreads>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <NoWarn>$(NoWarn);CA1416;xUnit1013;xUnit1051;xUnit2013</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
+    <ProjectReference Include="..\..\Browser\WgpuInterop.Browser.csproj" />
+    <PackageReference Include="xunit.v3.extensibility.core" Version="3.0.0" />
+    <PackageReference Include="xunit.v3.assert" Version="3.0.0" />
+    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\MFSourceReaderProbe.cs" Link="MFSourceReaderProbe.cs" />
+    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\Mp4TestFile.cs" Link="Mp4TestFile.cs" />
+    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\MFMediaSourceProbe.cs" Link="MFMediaSourceProbe.cs" />
+    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\MFDecoderTests.cs" Link="MFDecoderTests.cs" />
+  </ItemGroup>
+
+  <Target Name="CopyMediaJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
+    <ItemGroup>
+      <_Media Include="..\WgpuInterop.Tests\MediaFoundation\Media\*" />
+    </ItemGroup>
+    <Copy SourceFiles="..\..\Browser\wgpu-interop.js;..\..\Browser\browser-codecs.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_Media)" DestinationFolder="wwwroot/media" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
