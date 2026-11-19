@@ -8,7 +8,8 @@
 // type; Start (GUID_NULL, VT_EMPTY) at the first read, the source's events taken to MESourceStarted with the
 // streams of MENewStream/MEUpdatedStream; a sample a RequestSample and its MEMediaSample, the end MEEndOfStream;
 // a seek Start at the position; a change of selection Start again where it is; Shutdown with the reader unless
-// MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN.
+// MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN. A stream's MEStreamTick is handed out before the sample still
+// asked for, its MEStreamFormatChanged with the sample after it (ReaderStream: MF_SOURCE_READER_FLAG's flags).
 //
 
 using System;
@@ -139,9 +140,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         }
 
         /// <summary>The next event of an event generator (type, status, the IUnknown of its value AddRef'd), or null when none came in time.</summary>
-        internal static (uint Type, int Status, IntPtr Unknown)? Event(IntPtr gen, out int hr)
+        internal static (uint Type, int Status, IntPtr Unknown)? Event(IntPtr gen, out int hr) => Event(gen, out hr, out _);
+
+        /// <summary>The next event, and its value's VT_I8 (a stream tick's time) where it is one.</summary>
+        internal static (uint Type, int Status, IntPtr Unknown)? Event(IntPtr gen, out int hr, out long i8)
         {
             var sw = Stopwatch.StartNew();
+            i8 = 0;
             while (true)
             {
                 IntPtr e;
@@ -155,6 +160,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     new Span<byte>(pv, MF.PropVariantSize).Clear();
                     ((delegate* unmanaged<IntPtr, byte*, int>)Com.Fn(e, 36))(e, pv);
                     IntPtr unk = *(ushort*)pv == MF.VT_UNKNOWN ? *(IntPtr*)(pv + 8) : IntPtr.Zero;
+                    if (*(ushort*)pv == 20) i8 = *(long*)(pv + 8);                                          // VT_I8
                     if (unk == IntPtr.Zero) Ole.PropVariantClear(pv);
                     Com.Release(e);
                     return (type, status, unk);
@@ -182,6 +188,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private IntPtr _stream;                     // IMFMediaStream, AddRef'd: of the source's MENewStream
         private MFSample? _peek;
         private bool _ended;
+        private long? _tick;                        // MEStreamTick's time, until the reader hands it out
+        private bool _requested;                    // a RequestSample still standing (a tick came before its sample)
+        private MFMediaType? _format, _formatOfPeek;   // MEStreamFormatChanged's type: before the next sample, of the sample peeked
 
         public ForeignFeed(ForeignSource owner, uint id, bool audio, bool video) { _owner = owner; Id = id; _audio = audio; _video = video; }
 
@@ -196,16 +205,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             _stream = stream;
         }
 
-        internal void Drop() { _peek?.Release(); _peek = null; _ended = false; }
+        internal void Drop() { _peek?.Release(); _peek = null; _ended = false; _tick = null; _requested = false; _taken?.Release(); _taken = null; _format?.Release(); _format = null; _formatOfPeek?.Release(); _formatOfPeek = null; }
 
-        public override long NextTime { get { Fill(); return _peek?.Time ?? long.MaxValue; } }
-        public override bool AtEnd { get { Fill(); return _peek == null; } }
+        public override long NextTime { get { Fill(); return _tick ?? _peek?.Time ?? long.MaxValue; } }
+        public override bool AtEnd { get { Fill(); return _peek == null && _tick == null; } }
+
+        public override bool TakeTick(out long time)
+        {
+            Fill();
+            time = _tick ?? 0;
+            if (_tick == null) return false;
+            _tick = null;
+            return true;
+        }
+
+        private MFMediaType? _taken;
+        public override MFMediaType? TakeFormat() { var t = _taken; _taken = null; return t; }
 
         public override MFSample? Take(bool first)
         {
             Fill();
             var s = _peek;
             _peek = null;
+            _taken?.Release(); _taken = _formatOfPeek; _formatOfPeek = null;
             return s;
         }
 
@@ -214,15 +236,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// <summary>The next sample, asked for and waited for.</summary>
         private void Fill()
         {
-            if (_peek != null || _ended) return;
+            if (_peek != null || _ended || _tick != null) return;
             _owner.EnsureStarted();
             if (_stream == IntPtr.Zero) { _ended = true; return; }
-            int hr = ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(_stream, 9))(_stream, IntPtr.Zero);       // RequestSample
-            if (hr == MS.MF_E_END_OF_STREAM) { _ended = true; return; }
-            if (hr < 0) throw new InvalidOperationException($"the media stream's RequestSample: 0x{hr:x8}");
+            int hr;
+            // (a request still standing, of a tick before its sample: not asked again)
+            if (!_requested)
+            {
+                hr = ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(_stream, 9))(_stream, IntPtr.Zero);       // RequestSample
+                if (hr == MS.MF_E_END_OF_STREAM) { _ended = true; return; }
+                if (hr < 0) throw new InvalidOperationException($"the media stream's RequestSample: 0x{hr:x8}");
+            }
+            _requested = false;
             while (true)
             {
-                var e = ForeignSource.Event(_stream, out hr);
+                var e = ForeignSource.Event(_stream, out hr, out long i8);
                 if (e == null) throw new InvalidOperationException($"the media stream sent no sample: 0x{hr:x8}");
                 var (type, status, unk) = e.Value;
                 try
@@ -233,15 +261,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                         case MS.MEMediaSample:
                             if (unk == IntPtr.Zero) continue;
                             _peek = Import(unk);
+                            _formatOfPeek = _format; _format = null;
                             return;
                         case MS.MEEndOfStream:
                             _ended = true;
                             return;
                         case MS.MEStreamTick:
-                            D3DLog.Once("mf-foreign-tick", "Media Foundation: a media source's stream ticks are not passed on by the source reader");
-                            break;
+                            // a gap: handed out before the next sample (the request still stands)
+                            _tick = i8;
+                            _requested = true;
+                            return;
                         case MS.MEStreamFormatChanged:
-                            D3DLog.Once("mf-foreign-format", "Media Foundation: a media source's change of format is not passed on by the source reader");
+                            if (unk != IntPtr.Zero) { _format?.Release(); _format = Mp4Types.Read(unk); }
                             break;
                         case MS.MEError:
                             throw new InvalidOperationException("the media stream's MEError");

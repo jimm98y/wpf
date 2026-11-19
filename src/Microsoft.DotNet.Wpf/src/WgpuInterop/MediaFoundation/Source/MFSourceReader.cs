@@ -454,7 +454,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             try
             {
                 var got = s.Next((control & 1) != 0, out flags);          // MF_SOURCE_READER_CONTROLF_DRAIN
-                if (got == null) return MF.S_OK;
+                if (got == null) { if ((flags & SR.STREAMTICK) != 0) time = s.TickTime; return MF.S_OK; }
                 time = got.Time ?? 0;
                 sample = got.Pointer;
                 return MF.S_OK;

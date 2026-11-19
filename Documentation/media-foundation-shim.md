@@ -424,7 +424,14 @@ MF_SOURCE_READER_MEDIASOURCE gives the source.
   - Start (VT_EMPTY) comes at the first read, with the source's events up to MESourceStarted. A seek is
     a Start at the position; a change of selection, a Start where the source is.
   - Each sample is a RequestSample and its MEMediaSample. MEEndOfStream is the end.
-  - Stream ticks and format changes are not passed on yet.
+  - A stream tick (MEStreamTick) is a read of no sample with MF_SOURCE_READERF_STREAMTICK, of the tick's time, the
+    sample still asked for coming after it; a change of format (MEStreamFormatChanged) is the stream's native type
+    from the next sample on, that sample flagged MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED, and
+    CURRENTMEDIATYPECHANGED where the current type is the native one passed through (a decoder is given the new input
+    type, its own change of output reported as it reports one). This is MF_SOURCE_READER_FLAG's documentation:
+    Windows' reader could not be had to read the probe's scripted source (`MFScriptSourceProbe`: it takes the first
+    sample and hands it out never), so `TheReader_PassesOnASourcesTicksAndFormatChanges` holds the shim's reader to
+    the documentation.
 - The reader's report of every file is Windows' report the three ways: of the URL, of the resolver's
   source, and of that source driven as an application's (`TheReader_DoesWithEachFileWhatWindowsReaderDoes`).
 
@@ -637,7 +644,6 @@ on macOS and in the Ubuntu VM.
   packings, and its scaling filter to the byte.
 - More of the source reader:
   - more containers (ASF);
-  - stream ticks and format changes of an application's media source;
   - the RGB conversion of textures on the GPU (the shim's video processor).
 - The media session, and camera capture (`MFEnumDeviceSources`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder (the test VM has none).

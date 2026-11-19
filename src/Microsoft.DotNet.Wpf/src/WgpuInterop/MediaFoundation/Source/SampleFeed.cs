@@ -28,6 +28,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public abstract void Seek(long hns);
         /// <summary>Back to the sync sample at or before the one next (a decoder starting).</summary>
         public virtual void BackToSync() { }
+        /// <summary>A stream tick the source sent before its next sample (MEStreamTick: a gap, its time), taken.</summary>
+        public virtual bool TakeTick(out long time) { time = 0; return false; }
+        /// <summary>The type the source changed to before the sample last taken (MEStreamFormatChanged), taken; null of none.</summary>
+        public virtual MFMediaType? TakeFormat() => null;
         public virtual void Dispose() { }
     }
 

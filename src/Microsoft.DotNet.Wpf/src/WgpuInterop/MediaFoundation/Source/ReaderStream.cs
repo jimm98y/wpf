@@ -236,7 +236,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private readonly MFSourceReader _reader;
         public readonly int Index;
         public readonly SampleFeed Feed;
-        public readonly MFMediaType Native;
+        public MFMediaType Native { get; private set; }
+        /// <summary>The time of the stream tick last handed out (MF_SOURCE_READERF_STREAMTICK).</summary>
+        public long TickTime;
+        private uint _pendingFlags;                   // of the next sample: a change of the native (and current) type before it
         public MFMediaType Current;
         public bool Selected;
         private bool _discontinuity = true;
@@ -654,8 +657,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         // ---- samples ------------------------------------------------------------------------------------
 
-        /// <summary>The next sample, or null with the end of the stream in the flags.</summary>
+        /// <summary>
+        /// The next sample, or null with the end of the stream in the flags -- or a stream tick (MF_SOURCE_READERF_STREAMTICK,
+        /// of TickTime) where the source sent one; the first sample of a new format of the source's with
+        /// MF_SOURCE_READERF_NATIVEMEDIATYPECHANGED (and CURRENTMEDIATYPECHANGED where the current type follows it), as the
+        /// documentation of MF_SOURCE_READER_FLAG has them.
+        /// </summary>
         public MFSample? Next(bool drain, out uint flags)
+        {
+            if (!Ended && Feed.TakeTick(out long tick)) { flags = SR.STREAMTICK; TickTime = tick; return null; }
+            var s = NextCore(drain, out flags);
+            if (s != null || (flags & SR.ENDOFSTREAM) != 0) { flags |= _pendingFlags; _pendingFlags = 0; }
+            return s;
+        }
+
+        /// <summary>The source's new type: the stream's native type; a decoder's input; where it is passed through, the current type.</summary>
+        private void NativeChanged(MFMediaType t)
+        {
+            var old = Native;
+            Native = t;
+            _pendingFlags |= SR.NATIVEMEDIATYPECHANGED;
+            if (Decoder != null) Mft.SetInputType(Decoder.Pointer, t.Pointer);
+            else if (Current.Subtype == t.Subtype) { Replace(t.Clone()); _pendingFlags |= SR.CURRENTMEDIATYPECHANGED; }
+            old.Release();
+        }
+
+        private MFSample? NextCore(bool drain, out uint flags)
         {
             flags = 0;
             if (Ended) { flags = SR.ENDOFSTREAM; return null; }
@@ -881,6 +908,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         {
             if (Feed.AtEnd) return null;
             var s = Feed.Take(_discontinuity);
+            if (Feed.TakeFormat() is { } changed) NativeChanged(changed);
             if (s == null) return null;
             if (_discontinuity && (Decoder == null || Audio)) _discontinuity = false;
             return s;
