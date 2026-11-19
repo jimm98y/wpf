@@ -291,7 +291,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 }
                 return r;
             }
-            var w = Clean(File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SinkByteStream.windows.txt")));
+            var w = Clean(File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "SinkByteStream.windows.txt")));
             var o = Clean(ByteStreamReport());
             for (int i = 0; i < Math.Max(w.Count, o.Count); i++)
                 Assert.True(i < w.Count && i < o.Count && w[i] == o[i], $"line {i}: Windows '{(i < w.Count ? w[i] : "(none)")}', ours '{(i < o.Count ? o[i] : "(none)")}'");
@@ -347,7 +347,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 foreach (var l in report.Where(l => l.StartsWith("create") || l.StartsWith("add") || l.EndsWith(" input 0x00000000") || l.StartsWith("begin") || l.StartsWith("finalize")))
                     Assert.Contains("0x00000000", l);
                 var boxes = Boxes(File.ReadAllBytes(path)).Select(Shape).ToList();
-                var windows = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SinkWriter.windows.txt")).Select(Shape).ToList();
+                var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "SinkWriter.windows.txt")).Select(Shape).ToList();
                 Assert.Equal(string.Join("\n", windows), string.Join("\n", boxes));
                 // read back: ten frames, each of its time
                 var back = report.SkipWhile(l => l != "---- read back").ToList();

@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The desktop's Media Foundation tests on Android and iOS: compiled in, run by reflection (../WasmMedia/MediaTests.cs),
+    each test's line printed (logcat on Android, the app's stdout on iOS). The Windows fixtures and the media are the
+    app's assets, copied out where MF_TEST_ROOT names. Built with the repo's .dotnet, which has the Android and iOS packs.
+  -->
+
+  <PropertyGroup>
+    <TargetFrameworks>net10.0-android;net10.0-ios</TargetFrameworks>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>WgpuInterop.MobileMedia</AssemblyName>
+    <RootNamespace>MobileMedia</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>false</ImplicitUsings>
+    <ApplicationId>net.dot.wpf.mobilemedia</ApplicationId>
+    <ApplicationTitle>MF tests</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <NoWarn>$(NoWarn);CA1416;CA1825;CA1861;CS0618;xUnit1013;xUnit1051;xUnit2013</NoWarn>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <!-- the tests are found by reflection: kept whole -->
+    <TrimMode>partial</TrimMode>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <SupportedOSPlatformVersion>28</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>android-arm64</RuntimeIdentifier>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <RunAOTCompilation>false</RunAOTCompilation>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
+    <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <RuntimeIdentifier>iossimulator-arm64</RuntimeIdentifier>
+    <UseInterpreter>true</UseInterpreter>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../WgpuInterop.csproj" />
+    <TrimmerRootAssembly Include="WgpuInterop.MobileMedia" RootMode="All" />
+    <TrimmerRootAssembly Include="xunit.v3.core" RootMode="All" />
+    <TrimmerRootAssembly Include="xunit.v3.assert" RootMode="All" />
+    <PackageReference Include="xunit.v3.extensibility.core" Version="3.0.0" />
+    <PackageReference Include="xunit.v3.assert" Version="3.0.0" />
+    <Compile Include="../WgpuInterop.Tests/MediaFoundation/*.cs" LinkBase="MediaFoundation" />
+    <Compile Include="../WasmMedia/MediaTests.cs" Link="MediaTests.cs" />
+    <Compile Include="../WasmMedia/Harness.cs" Link="Harness.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <AndroidAsset Include="../WgpuInterop.Tests/MediaFoundation/*.windows.txt" Link="MediaFoundation/%(Filename)%(Extension)" />
+    <AndroidAsset Include="../WgpuInterop.Tests/MediaFoundation/Media/*" Link="MediaFoundation/Media/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
+    <BundleResource Include="../WgpuInterop.Tests/MediaFoundation/*.windows.txt" Link="MediaFoundation/%(Filename)%(Extension)" />
+    <BundleResource Include="../WgpuInterop.Tests/MediaFoundation/Media/*" Link="MediaFoundation/Media/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Platforms/**" />
+    <Compile Include="Platforms/Android/**/*.cs" Condition="'$(TargetFramework)' == 'net10.0-android'" />
+    <Compile Include="Platforms/iOS/**/*.cs" Condition="'$(TargetFramework)' == 'net10.0-ios'" />
+  </ItemGroup>
+
+</Project>

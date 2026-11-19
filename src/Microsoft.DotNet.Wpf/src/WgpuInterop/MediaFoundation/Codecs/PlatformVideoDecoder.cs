@@ -45,7 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             if (OperatingSystem.IsBrowser()) return new WebCodecsVideoDecoder(codec, lowLatency, width, height);
 #endif
             if (Apple) return new AppleVideoDecoder(codec, lowLatency);
-            if (OperatingSystem.IsAndroid()) return new AndroidDecoder(codec, lowLatency, width == 0 ? 1920 : width, height == 0 ? 1088 : height);
+            if (OperatingSystem.IsAndroid()) return new AndroidDecoder(codec, lowLatency, width, height);
             if (OperatingSystem.IsLinux()) return new GStreamerDecoder(codec, lowLatency);
             return null;
         }
@@ -191,33 +191,60 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         }
     }
 
-    /// <summary>MediaCodec's (Android): the NDK's, frames through an image reader of the input type's size.</summary>
+    /// <summary>
+    /// MediaCodec's (Android): the NDK's, frames through an image reader of the input type's size -- or, where the type
+    /// names none, made at the stream's first SPS of its coded size (H.264), 1920x1088 of other codecs. Each frame is its
+    /// image's crop rectangle, the picture.
+    /// </summary>
     internal sealed unsafe class AndroidDecoder : PlatformVideoDecoder
     {
-        private readonly AndroidVideoDecoder _d;
-        private byte[] _buffer;
+        private readonly VideoCodec _codec;
+        private readonly bool _lowLatency;
+        private readonly uint _width, _height;
+        private AndroidVideoDecoder? _d;
+        private byte[] _buffer = Array.Empty<byte>();
 
         public AndroidDecoder(VideoCodec codec, bool lowLatency, uint width, uint height)
         {
-            _d = new AndroidVideoDecoder(codec, new VideoDecoderOptions { Width = width, Height = height, LowLatency = lowLatency });
+            _codec = codec; _lowLatency = lowLatency; _width = width; _height = height;
+            if (width > 0 && height > 0) Make(width, height);
+        }
+
+        private void Make(uint w, uint h)
+        {
+            _d = new AndroidVideoDecoder(_codec, new VideoDecoderOptions { Width = w, Height = h, LowLatency = _lowLatency });
             _d.Initialize();
             _buffer = new byte[_d.OutputSize];
         }
 
-        public override void Push(ReadOnlySpan<byte> data, long time) => _d.ProcessInput(data, time);
+        public override void Push(ReadOnlySpan<byte> data, long time)
+        {
+            if (_d == null)
+            {
+                if (_codec == VideoCodec.H264) { if (H264Sps.CodedSize(data) is not { } s) return; Make((uint)s.W, (uint)s.H); }
+                else Make(1920, 1088);
+            }
+            _d!.ProcessInput(data, time);
+        }
 
         public override bool TryTake(out DecodedFrame? frame)
         {
             frame = null;
-            if (!_d.ProcessOutput(ref _buffer, out _, out long time)) return false;
-            frame = new BytesFrame(_buffer.AsSpan(0, (int)_d.OutputSize).ToArray(), (int)_d.Width, (int)_d.Height, time);
+            if (_d == null || !_d.ProcessOutput(ref _buffer, out _, out long time)) return false;
+            int w = (int)_d.Width, h = (int)_d.Height, pw = Math.Min(_d.PictureWidth, w), ph = Math.Min(_d.PictureHeight, h);
+            if (pw <= 0 || ph <= 0 || (pw == w && ph == h)) { frame = new BytesFrame(_buffer.AsSpan(0, (int)_d.OutputSize).ToArray(), w, h, time); return true; }
+            // the picture alone: its rows of luma, then of chroma, each of its width
+            var pic = new byte[pw * ph + pw * ((ph + 1) / 2)];
+            for (int r = 0; r < ph; r++) _buffer.AsSpan(r * w, pw).CopyTo(pic.AsSpan(r * pw));
+            for (int r = 0; r < (ph + 1) / 2; r++) _buffer.AsSpan(w * h + r * w, pw).CopyTo(pic.AsSpan(pw * ph + r * pw));
+            frame = new BytesFrame(pic, pw, ph, time);
             return true;
         }
 
-        public override void BeginDrain() => _d.BeginDrain();
-        public override void EndDrain() => _d.EndDrain();
-        public override void Flush() => _d.Flush();
-        public override void Dispose() => _d.Dispose();
+        public override void BeginDrain() => _d?.BeginDrain();
+        public override void EndDrain() => _d?.EndDrain();
+        public override void Flush() => _d?.Flush();
+        public override void Dispose() => _d?.Dispose();
     }
 
     /// <summary>A frame held as contiguous NV12 of its own size.</summary>

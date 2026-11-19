@@ -77,7 +77,7 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         private static void Compare(List<string>? given = null)
         {
-            var windows = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SourceReader.windows.txt"));
+            var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "SourceReader.windows.txt"));
             var ours = given ?? Report();
             CompareLines(windows, ours);
         }

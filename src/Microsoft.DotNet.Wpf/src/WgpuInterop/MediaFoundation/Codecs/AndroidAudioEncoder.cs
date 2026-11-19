@@ -278,6 +278,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         public void BeginDrain()
         {
             ThrowIfNotInitialized();
+            // AAC: the last frame filled, and a frame more, of silence -- MediaCodec's encoder holds back at the end of the stream
+            // what does not fill a frame, which Windows' encoder hands out (the MFT takes no more packets than the input's)
+            if (_codec == AudioCodec.AAC && _samplesIn > 0)
+            {
+                long pad = (1024 - _samplesIn % 1024) % 1024 + 1024;
+                ProcessInput(new byte[pad * Channels * 2], _samplesIn * 1_000_000 / SampleRate);
+            }
             _draining = true;
             _flac?.End();
             var stopwatch = Stopwatch.StartNew();

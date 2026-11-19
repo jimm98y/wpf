@@ -271,7 +271,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows' sink writer is the fixture");
             Assert.SkipUnless(Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs.PlatformVideoEncoder.Supports(Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs.VideoCodec.H264)
                 && Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs.PlatformAudioEncoder.Supports(Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs.AudioCodec.AAC), "this system has no H.264 and AAC encoders");
-            var windows = Clean(File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SinkTransform.windows.txt")));
+            var windows = Clean(File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "SinkTransform.windows.txt")));
             var ours = Clean(Report());
             for (int i = 0; i < Math.Max(windows.Count, ours.Count); i++)
                 Assert.True(i < windows.Count && i < ours.Count && windows[i] == ours[i], $"line {i}: Windows '{(i < windows.Count ? windows[i] : "(none)")}', ours '{(i < ours.Count ? ours[i] : "(none)")}'");

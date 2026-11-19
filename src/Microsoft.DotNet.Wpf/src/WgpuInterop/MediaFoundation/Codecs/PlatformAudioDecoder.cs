@@ -70,8 +70,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         /// <summary>The frames of Opus's start the decoder leaves out itself (AudioToolbox 120, as measured), of the pre-skip to leave out.</summary>
         public static uint OpusDropsItself => OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() || OperatingSystem.IsTvOS() || OperatingSystem.IsMacCatalyst() ? 120u : 0u;
 
-        /// <summary>Whether the decoder leaves MP3's delay (529 samples) out itself, as AudioToolbox does; GStreamer's and MediaCodec's keep it.</summary>
-        public bool DropsMp3Delay => _apple != null;
+        /// <summary>
+        /// Whether the decoder leaves MP3's delay (529 samples) out itself: AudioToolbox does, and so does MediaCodec's (AOSP's
+        /// software decoder, as measured on the emulator); GStreamer's keeps it.
+        /// </summary>
+        public bool DropsMp3Delay => _apple != null || _android != null;
 
 #pragma warning disable CA1416
 #if WGPU_BROWSER

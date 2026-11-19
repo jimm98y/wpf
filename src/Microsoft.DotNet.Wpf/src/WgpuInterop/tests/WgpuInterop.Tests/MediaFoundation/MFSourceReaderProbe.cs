@@ -614,7 +614,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         /// <summary>The audio file's path: of the media folder, or (the WAV) written here: the tone as 16-bit stereo PCM.</summary>
         internal static string AudioPath(string name)
         {
-            if (name != "tone.wav") return System.IO.Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Media", name);
+            if (name != "tone.wav") return System.IO.Path.Combine(TestFiles.Root, "MediaFoundation", "Media", name);
             string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"wpfmf-tone-{Environment.ProcessId}.wav");
             const int rate = 44100, frames = rate / 2;
             using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));

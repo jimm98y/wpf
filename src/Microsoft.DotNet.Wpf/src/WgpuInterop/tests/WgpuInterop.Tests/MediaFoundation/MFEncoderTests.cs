@@ -172,7 +172,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         [Fact]
         public void TheEncoders_DoWhatWindowsEncodersDo()
         {
-            var windows = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Encoder.windows.txt")).ToList();
+            var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "Encoder.windows.txt")).ToList();
             var ours = MFEncoderProbe.Details().Concat(MFEncoderProbe.Dumps()).ToList();
             // a system without an encoder of its own lists none, as Windows would without one
             Assert.SkipWhen(ours.Any(l => l.StartsWith("==== H.264 encoder none")) && !OperatingSystem.IsWindows(), "no H.264 encoder here");

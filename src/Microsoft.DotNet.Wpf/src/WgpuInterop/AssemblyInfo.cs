@@ -12,6 +12,7 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("DirectWriteForwarder")]
 [assembly: InternalsVisibleTo("WgpuInterop.SmokeTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.WasmMedia")]
+[assembly: InternalsVisibleTo("WgpuInterop.MobileMedia")]
 [assembly: InternalsVisibleTo("WgpuInterop.AdapterProbe")]
 [assembly: InternalsVisibleTo("WaylandSpike")]
 [assembly: InternalsVisibleTo("IosSpike")]

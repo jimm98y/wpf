@@ -43,6 +43,11 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - VideoToolbox on Apple's systems, the GPU's decoder where there is one.
   - GStreamer on Linux: decodebin picks the best decoder installed, a GPU's (VA-API, V4L2) before the software ones. It is the system's library, loaded at run time and never bundled. The codecs come from the distribution's plugins (`gstreamer1.0-libav`, `-plugins-bad`, `-ugly`).
   - MediaCodec on Android, through the NDK, with frames through an image reader sized to the input type.
+    Where the type has no size, the decoder is made at the first SPS, of its coded size (other codecs:
+    1920x1088), and each frame is its image's crop rectangle, the picture. MediaCodec's MP3 decoder
+    leaves out its 529 frames of delay itself, as AudioToolbox does; the shim puts them back, as
+    Windows' decoder has them. At the end, MediaCodec's AAC encoder holds back what doesn't fill a
+    frame, so the last frame is filled with silence, and a frame more.
   - **WebCodecs in the browser** (`Codecs/WebCodecs.cs`, `Browser/browser-codecs.js`, the `wpfBrowserCodecs`
     module that `main.js` registers). It needs the multithreaded runtime: the shim runs on a worker and the
     decoders on the page's thread. Each JS call is a round trip to the page, and the shim waits for what the
@@ -70,6 +75,11 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
     - The source reader's report of every test file in headless Chrome (`tests/WasmMedia`, its lines checked by
       `TheBrowsersReader_DoesWithEachFileWhatWindowsReaderDoes`) is Windows', under the desktop's
       tolerances.
+    - `tests/MobileMedia` runs the same tests on Android and iOS, with the same runner
+      (`tests/WasmMedia/MediaTests.cs`). On Android the fixtures and media are assets, copied to the
+      app's files, and `MF_TEST_ROOT` names them; each line goes to logcat under `MFTEST`. Started with
+      `adb shell am start -n net.dot.wpf.mobilemedia/mobilemedia.MainActivity -e filter MF`. On the
+      emulator (Android 15) every test that can run there passes.
     - `tests/WasmMedia` also runs the desktop's Media Foundation tests in the page: it compiles them in and
       runs each by reflection (`index.html?filter=<name>`). It prints `MF-TEST <name>: passed|skipped|failed`
       for each and `MF-TESTS` with the totals. Tests of textures, devices, HTTP and the probes are skipped.
@@ -484,7 +494,8 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- Android's decoders are in but not yet run on a device or emulator.
+- iOS: `tests/MobileMedia` has its simulator entry, not yet built or run (Xcode 27.2's license is to be
+  accepted, and .NET for iOS 26.5 asks for Xcode 26.6).
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
   (`MF_SINK_WRITER_MEDIASINK`); transforms registered by the application (`MFTRegisterLocal`).
 - More of the source reader:

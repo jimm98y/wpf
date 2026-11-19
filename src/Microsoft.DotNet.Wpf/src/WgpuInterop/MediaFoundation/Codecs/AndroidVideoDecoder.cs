@@ -74,6 +74,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         public uint OriginalHeight { get; }
         public uint Width { get; }
         public uint Height { get; }
+
+        /// <summary>The last frame's picture: its image's crop rectangle.</summary>
+        public int PictureWidth { get; private set; }
+        public int PictureHeight { get; private set; }
         public uint OutputSize { get; }
         public Guid InputFormat => MediaFormats.Of(_codec);
         public Guid OutputFormat => MediaFormats.NV12;
@@ -312,8 +316,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
                 {
                     byte[] nv12 = _pool.Count > 0 ? _pool.Pop() : new byte[OutputSize];
                     AImage_getTimestamp(image, out long ns);
-                    if (CopyNV12(image, nv12, Width, Height, out _, out _))
+                    if (CopyNV12(image, nv12, Width, Height, out int pw, out int ph))
                     {
+                        PictureWidth = pw; PictureHeight = ph;
                         // after every frame of a time no later than its own
                         long time = ns / 100;
                         int at = _frames.Count;

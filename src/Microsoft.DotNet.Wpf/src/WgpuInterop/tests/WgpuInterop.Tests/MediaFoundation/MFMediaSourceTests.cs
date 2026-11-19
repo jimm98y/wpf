@@ -25,7 +25,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         [Fact]
         public void TheSources_DoWithEachFileWhatWindowsSourcesDo()
         {
-            var windows = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "MediaSource.windows.txt"));
+            var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "MediaSource.windows.txt"));
             var ours = MFMediaSourceProbe.All();
             static List<string> Clean(IEnumerable<string> lines)
             {

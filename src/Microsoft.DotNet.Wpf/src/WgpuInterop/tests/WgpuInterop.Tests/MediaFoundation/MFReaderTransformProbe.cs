@@ -239,7 +239,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         [Fact]
         public void TheReader_TakesTheApplicationsTransformsAsWindowsReaderDoes()
         {
-            var windows = System.IO.File.ReadAllLines(System.IO.Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "ReaderTransform.windows.txt"));
+            var windows = System.IO.File.ReadAllLines(System.IO.Path.Combine(TestFiles.Root, "MediaFoundation", "ReaderTransform.windows.txt"));
             var ours = Report();
             static List<string> Clean(IEnumerable<string> lines)
             {
