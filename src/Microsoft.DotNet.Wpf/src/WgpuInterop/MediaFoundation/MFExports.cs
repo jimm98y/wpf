@@ -94,14 +94,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// the shim's (synchronous) decoders of what this system decodes. MFT_ENUM_FLAG: SYNCMFT 1, and 0
         /// meaning the default set (SYNCMFT | LOCALMFT | SORTANDFILTER).
         /// </summary>
+        // ---- transforms of the application's, registered in the process (LocalTransforms.cs) ----
+
+        [Win32Export("MFTRegisterLocal")]
+        public static int MFTRegisterLocal(IntPtr factory, Guid* category, char* name, uint flags, uint inputs, MFT_REGISTER_TYPE_INFO* inTypes, uint outputs, MFT_REGISTER_TYPE_INFO* outTypes)
+            => LocalTransforms.Register(factory, null, category, name, inputs, inTypes, outputs, outTypes);
+
+        [Win32Export("MFTRegisterLocalByCLSID")]
+        public static int MFTRegisterLocalByCLSID(Guid* clsid, Guid* category, char* name, uint flags, uint inputs, MFT_REGISTER_TYPE_INFO* inTypes, uint outputs, MFT_REGISTER_TYPE_INFO* outTypes)
+            => clsid == null ? MF.E_POINTER : LocalTransforms.Register(IntPtr.Zero, *clsid, category, name, inputs, inTypes, outputs, outTypes);
+
+        [Win32Export("MFTUnregisterLocal")]
+        public static int MFTUnregisterLocal(IntPtr factory) => LocalTransforms.Unregister(factory);
+
+        [Win32Export("MFTUnregisterLocalByCLSID")]
+        public static int MFTUnregisterLocalByCLSID(Guid clsid) => LocalTransforms.UnregisterClsid(clsid);
+
         [Win32Export("MFTEnumEx")]
         public static int MFTEnumEx(Guid category, uint flags, MFT_REGISTER_TYPE_INFO* input, MFT_REGISTER_TYPE_INFO* output, IntPtr** activates, uint* count)
         {
             if (activates == null || count == null) return MF.E_POINTER;
             *activates = null;
             *count = 0;
-            var found = new List<MFActivate>();
-            bool sync = flags == 0 || (flags & 1) != 0;
+            // the application's own first, where the flags take them (0, or MFT_ENUM_FLAG_LOCALMFT); flags of no kind of transform
+            // (synchronous 1, asynchronous 2, hardware 4) are of synchronous ones, as Windows lists them
+            var found = flags == 0 || (flags & LocalTransforms.MFT_ENUM_FLAG_LOCALMFT) != 0 ? LocalTransforms.Find(category, input, output) : new List<MFActivate>();
+            bool sync = (flags & 7) == 0 || (flags & 1) != 0;
             if (sync && category == MF.MFT_CATEGORY_VIDEO_DECODER)
                 foreach (var info in MFVideoDecoder.Registered)
                 {

@@ -704,15 +704,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return vt;
         }
 
-        private readonly Func<ComObject> _make;
+        private readonly Func<ComObject>? _make;
         private ComObject? _made;
 
+        // of a transform made elsewhere (an application's class factory, a CLSID): its IUnknown, made once; what ShutdownObject answers
+        private readonly Func<(int Hr, IntPtr Unknown)>? _makeForeign;
+        private IntPtr _foreign;
+        private readonly int _shutdownHr;
+        private readonly Action? _onRelease;
+
         public MFActivate(Func<ComObject> make) : base(s_vt) { _make = make; }
+
+        /// <summary>An activate of an object made elsewhere: <paramref name="make"/> gives its IUnknown (AddRef'd) or the failure.</summary>
+        public MFActivate(Func<(int Hr, IntPtr Unknown)> make, int shutdownHr, Action? onRelease = null) : base(s_vt) { _makeForeign = make; _shutdownHr = shutdownHr; _onRelease = onRelease; }
 
         protected override void OnFinalRelease()
         {
             _made?.Release();
             _made = null;
+            Com.Release(_foreign);
+            _foreign = IntPtr.Zero;
+            _onRelease?.Invoke();
             base.OnFinalRelease();
         }
 
@@ -721,7 +733,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             if (From<MFActivate>(self) is not { } a || riid == null || ppv == null) return MF.E_POINTER;
             *ppv = IntPtr.Zero;
-            try { a._made ??= a._make(); }
+            if (a._makeForeign != null)
+            {
+                if (a._foreign == IntPtr.Zero)
+                {
+                    var (mhr, unk) = a._makeForeign();
+                    if (mhr < 0) return mhr;
+                    a._foreign = unk;
+                }
+                int fhr = Com.QueryInterface(a._foreign, *riid, out var fp);
+                *ppv = fp;
+                return fhr;
+            }
+            try { a._made ??= a._make!(); }
             catch (Exception e) { D3DLog.Error("IMFActivate.ActivateObject", e); return MF.E_FAIL; }
             int hr = Com.QueryInterface(a._made.Pointer, *riid, out var p);
             *ppv = p;
@@ -731,7 +755,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         [UnmanagedCallersOnly]
         private static int ShutdownObject(IntPtr self)
         {
-            if (From<MFActivate>(self) is { } a && a._made is { } m) { (m as MFTransform)?.Shutdown(); m.Release(); a._made = null; }
+            if (From<MFActivate>(self) is not { } a) return MF.E_POINTER;
+            if (a._makeForeign != null)
+            {
+                // as Windows' local activates: of a class factory E_NOTIMPL (the object kept), of a CLSID the object let go
+                if (a._shutdownHr >= 0) { Com.Release(a._foreign); a._foreign = IntPtr.Zero; }
+                return a._shutdownHr;
+            }
+            if (a._made is { } m) { (m as MFTransform)?.Shutdown(); m.Release(); a._made = null; }
             return MF.S_OK;
         }
 
@@ -739,6 +770,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private static int DetachObject(IntPtr self)
         {
             if (From<MFActivate>(self) is { } a && a._made is { } m) { m.Release(); a._made = null; }
+            if (From<MFActivate>(self) is { } f && f._foreign != IntPtr.Zero) { Com.Release(f._foreign); f._foreign = IntPtr.Zero; }
             return MF.S_OK;
         }
     }

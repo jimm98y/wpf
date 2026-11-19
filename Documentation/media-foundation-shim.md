@@ -364,6 +364,33 @@ MF_SOURCE_READER_MEDIASOURCE gives the source.
 - The reader's report of every file is Windows' report the three ways: of the URL, of the resolver's
   source, and of that source driven as an application's (`TheReader_DoesWithEachFileWhatWindowsReaderDoes`).
 
+## Transforms of the application's
+
+`MFTRegisterLocal` and `MFTRegisterLocalByCLSID` register a transform in the process (`LocalTransforms.cs`), as
+Windows keeps them. The probe is `MFLocalTransformProbe`, with a `SpyTransform` over the system's encoder and decoder;
+its report is `LocalTransform.windows.txt`.
+- **Registering:** a name must be given (E_POINTER without one), a class factory need not. Unregistering what is not
+  registered gives HRESULT_FROM_WIN32(ERROR_NOT_FOUND); `MFTUnregisterLocal(NULL)` takes them all away.
+- **Listing:** `MFTEnumEx` lists them before the system's, in the order they were registered, when its flags are 0
+  or have MFT_ENUM_FLAG_LOCALMFT. Flags that name no kind of transform (synchronous, asynchronous, hardware) are of
+  synchronous ones, so MFT_ENUM_FLAG_LOCALMFT alone lists the system's too.
+  - The activates hold MFT_PROCESS_LOCAL (1), MF_TRANSFORM_FLAGS (SYNCMFT), the category, and of a CLSID (or of no
+    factory: GUID_NULL) MFT_TRANSFORM_CLSID. They hold no name.
+- **Activating:** the factory is asked for IUnknown, once; activating again gives the same object.
+  `ShutdownObject` answers E_NOTIMPL of a factory's and S_OK of a CLSID's. Without a factory: REGDB_E_CLASSNOTREG.
+  - A CLSID is made of the shim's own transforms of it: the H.264 and AAC encoders, the decoders. Windows' color
+    converter DSP and video processor are not classes here (REGDB_E_CLASSNOTREG).
+  - (On Windows, activating the H.264 encoder's own CLSID registered locally crashes the process.)
+- **The writer and the reader take them first:** the sink writer an encoder of the target's subtype, the source
+  reader a decoder of the stream's (not with a device manager), each where it takes the types, the shim's own
+  otherwise. They drive it as Windows' do:
+  - The writer sets the input type first, and where the encoder refuses it, the output and then the input. At the
+    end it drains, flushes, and tells of the end of the stream and of streaming.
+  - The reader tells a decoder of streaming at the first read, and flushes it only once it has had samples. At the
+    end it drains and flushes it, then tells of the end of the stream and of streaming, and flushes again.
+  - A transform's own types and samples are read through their vtables and copied.
+  - Local audio decoders are not taken yet.
+
 ## The encoders
 
 `MFTEnumEx` lists Windows' "H264 Encoder MFT" (`6ca50344-…`) and "Microsoft AAC Audio Encoder MFT"
@@ -509,7 +536,8 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
-  (`MF_SINK_WRITER_MEDIASINK`); transforms registered by the application (`MFTRegisterLocal`).
+  (`MF_SINK_WRITER_MEDIASINK`); the application's local audio decoders in the reader.
+- Windows' color converter DSP and video processor MFT as classes an application can create by CLSID.
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;

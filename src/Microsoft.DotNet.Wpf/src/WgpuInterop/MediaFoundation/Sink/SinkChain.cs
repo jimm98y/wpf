@@ -33,7 +33,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
 
         /// <summary>The transforms in order, each AddRef'd: the converter (where there is one), then the encoder.</summary>
         public readonly List<(Guid Category, IntPtr Transform)> Transforms = new();
-        public readonly IntPtr Encoder;
+        public IntPtr Encoder { get; private set; }
         private readonly bool _video;
 
         // video: the input's subtype and size, the converter's subtype and the target's size
@@ -71,7 +71,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
         {
             chain = null;
             bool video = target.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == MF.MFMediaType_Video;
-            MFEncoder encoder = video ? new MFH264Encoder() : new MFAacEncoder();
+            var category = video ? MFEncoder.MFT_CATEGORY_VIDEO_ENCODER : MFEncoder.MFT_CATEGORY_AUDIO_ENCODER;
+            // an encoder the application registered in the process before the shim's own (as Windows' writer takes it)
+            IntPtr local = LocalTransforms.First(category, video ? MF.MFMediaType_Video : SR.MFMediaType_Audio, Guid.Empty, target.Subtype);
+            IntPtr encoder = IntPtr.Zero;
             MFMediaType? convIn = null, convOut = null, encIn;
             SinkChain c;
             if (video)
@@ -90,7 +93,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     encIn = convOut.Clone();
                 }
                 else encIn = input.Clone();
-                c = new SinkChain(true, encoder.Pointer, input.Subtype, to, (int)iw, (int)ih, (int)w, (int)h, null, 0, 0);
+                c = new SinkChain(true, IntPtr.Zero, input.Subtype, to, (int)iw, (int)ih, (int)w, (int)h, null, 0, 0);
             }
             else
             {
@@ -107,7 +110,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     conv = new AudioConverter(fl, (int)bits, (int)ch, (int)rate, false, 16, (int)ch, (int)trate);
                 }
                 else encIn = input.Clone();
-                c = new SinkChain(false, encoder.Pointer, Guid.Empty, Guid.Empty, 0, 0, 0, 0, conv, (int)trate, (int)ch);
+                c = new SinkChain(false, IntPtr.Zero, Guid.Empty, Guid.Empty, 0, 0, 0, 0, conv, (int)trate, (int)ch);
             }
             // H.264: Baseline where the target names no profile, the least level of its size, rate and bit rate where it names none
             var outType = target.Clone();
@@ -125,14 +128,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             {
                 // SetInputMediaType's encoding parameters: the encoder's ICodecAPI values, set before its types (Windows' encoder
                 // takes a mean bit rate then, and not between its types and its first frame)
-                if (parameters != IntPtr.Zero) Configure(encoder.Pointer, parameters);
                 // the output first, as Windows' writer sets them (H.264's encoder takes no input before it)
-                int hr = Mft.SetOutputType(encoder.Pointer, outType.Pointer);
-                if (hr >= 0) hr = Mft.SetInputType(encoder.Pointer, encIn.Pointer);
-                if (hr < 0) { encoder.Release(); convIn?.Release(); convOut?.Release(); return hr; }
+                int Set(IntPtr e)
+                {
+                    if (parameters != IntPtr.Zero) Configure(e, parameters);
+                    // the input first; an encoder that takes none before its output (H.264's) given the output, then the input
+                    if (Mft.SetInputType(e, encIn.Pointer) >= 0) return Mft.SetOutputType(e, outType.Pointer);
+                    int h = Mft.SetOutputType(e, outType.Pointer);
+                    return h >= 0 ? Mft.SetInputType(e, encIn.Pointer) : h;
+                }
+                int hr = -1;
+                if (local != IntPtr.Zero) { hr = Set(local); if (hr >= 0) encoder = local; else Com.Release(local); }
+                if (encoder == IntPtr.Zero)
+                {
+                    MFEncoder own = video ? new MFH264Encoder() : new MFAacEncoder();
+                    hr = Set(own.Pointer);
+                    if (hr < 0) { own.Release(); convIn?.Release(); convOut?.Release(); return hr; }
+                    encoder = own.Pointer;
+                }
+                c.Encoder = encoder;
                 if (convIn != null)
                     c.Transforms.Add((video ? ReaderEffects.MFT_CATEGORY_VIDEO_PROCESSOR : ReaderEffects.MFT_CATEGORY_AUDIO_EFFECT, new MFConverterStandIn(convIn, convOut!).Pointer));
-                c.Transforms.Add((video ? MFEncoder.MFT_CATEGORY_VIDEO_ENCODER : MFEncoder.MFT_CATEGORY_AUDIO_ENCODER, encoder.Pointer));          // the encoder's own reference
+                c.Transforms.Add((category, encoder));          // the encoder's own reference
                 convIn?.Release(); convOut?.Release();
                 chain = c;
                 return MF.S_OK;
@@ -285,9 +302,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
         public void Drain()
         {
             if (_audio != null) { _pending.AddRange(_audio.Drain()); Chunks(true); }
-            Mft.ProcessMessage(Encoder, MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
+            // as Windows' writer ends it: drained, then flushed, the end of the stream and of streaming told
             Mft.ProcessMessage(Encoder, MFT_MESSAGE_COMMAND_DRAIN, 0);
             Collect();
+            Mft.ProcessMessage(Encoder, 0, 0);                                   // MFT_MESSAGE_COMMAND_FLUSH
+            Mft.ProcessMessage(Encoder, MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
+            Mft.ProcessMessage(Encoder, 0x10000001, 0);                          // MFT_MESSAGE_NOTIFY_END_STREAMING
         }
 
         /// <summary>NV12 to another size, each plane bilinearly.</summary>

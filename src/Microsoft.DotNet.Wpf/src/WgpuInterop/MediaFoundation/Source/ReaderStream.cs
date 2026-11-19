@@ -247,7 +247,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private bool _inputDone, _drainSent;
 
         // decoding
-        public MFTransform? Decoder;
+        public TransformRef? Decoder;
         private Guid _decoderOut;              // the decoder's subtype
         private Guid _rgb;                     // the RGB type after it, or empty
         private bool _firstOut = true;
@@ -326,28 +326,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 bool rgb = Array.IndexOf(s_rgb, sub) >= 0;
                 if (Array.IndexOf(s_decoderOutputs, sub) < 0 && !rgb) return MF.MF_E_INVALIDMEDIATYPE;
                 if (rgb && !_reader.VideoProcessing) return MF.MF_E_INVALIDMEDIATYPE;
+                // a decoder the application registered in the process before the shim's own (as Windows' reader takes it)
+                Guid decSub0 = rgb ? MF.MFVideoFormat_NV12 : sub;
+                TransformRef? dec = null;
+                if (_reader.Manager == IntPtr.Zero && LocalTransforms.First(SR.MFT_CATEGORY_VIDEO_DECODER, MF.MFMediaType_Video, Native.Subtype, Guid.Empty) is var local && local != IntPtr.Zero)
+                {
+                    if (Mft.SetInputType(local, Native.Pointer) >= 0 && Mft.SetOutputOf(local, decSub0) >= 0) dec = new TransformRef(local);
+                    else Com.Release(local);
+                }
+                if (dec != null)
+                {
+                    DropDecoder();
+                    Decoder = dec;
+                    _decoderOut = decSub0;
+                    _rgb = rgb ? sub : Guid.Empty;
+                    _firstOut = true;
+                    _streaming = false;
+                    var (lw, lh) = MF.Unpack(Native.Attributes.U64(MF.MF_MT_FRAME_SIZE));
+                    Replace(Decoded(sub, lw, lh, null));
+                    RestartAtSync();
+                    return MF.S_OK;
+                }
                 var info = MFVideoDecoder.Registered.FirstOrDefault(i => Array.IndexOf(i.Inputs, Native.Subtype) >= 0);
                 if (info == null || !PlatformVideoDecoder.Supports(info.Codec)) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
-                var dec = new MFVideoDecoder(info);
-                IntPtr p = dec.Pointer;
+                var own = new MFVideoDecoder(info);
+                IntPtr p = own.Pointer;
                 if (_reader.Manager != IntPtr.Zero)
                 {
                     int mhr = Mft.ProcessMessage(p, 2, (nuint)_reader.Manager);                // MFT_MESSAGE_SET_D3D_MANAGER
-                    if (mhr < 0) { dec.Shutdown(); dec.Release(); return mhr; }
+                    if (mhr < 0) { own.Shutdown(); own.Release(); return mhr; }
                 }
                 int hr = Mft.SetInputType(p, Native.Pointer);
-                if (hr < 0) { dec.Shutdown(); dec.Release(); return SR.MF_E_TOPO_CODEC_NOT_FOUND; }
+                if (hr < 0) { own.Shutdown(); own.Release(); return SR.MF_E_TOPO_CODEC_NOT_FOUND; }
                 Guid decSub = rgb ? MF.MFVideoFormat_NV12 : sub;
-                if (_reader.Manager != IntPtr.Zero && decSub != MF.MFVideoFormat_NV12 && !rgb) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                if (_reader.Manager != IntPtr.Zero && decSub != MF.MFVideoFormat_NV12 && !rgb) { own.Shutdown(); own.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 hr = Mft.SetOutputOf(p, decSub);
-                if (hr < 0) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                if (hr < 0) { own.Shutdown(); own.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 DropDecoder();
-                Decoder = dec;
+                Decoder = new TransformRef(own);
                 _decoderOut = decSub;
                 _rgb = rgb ? sub : Guid.Empty;
                 _firstOut = true;
-                Mft.ProcessMessage(p, 0x10000000, 0);                                       // MFT_MESSAGE_NOTIFY_BEGIN_STREAMING
-                Mft.ProcessMessage(p, 0x10000003, 0);                                       // MFT_MESSAGE_NOTIFY_START_OF_STREAM
+                _streaming = false;
                 var (w, h) = MF.Unpack(Native.Attributes.U64(MF.MF_MT_FRAME_SIZE));
                 Replace(Decoded(sub, w, h, null));
                 // reading goes on from the next sync sample
@@ -408,7 +428,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 decCh = use.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, decCh);
                 if (Mft.SetOutputType(p, use.Pointer) < 0) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 DropDecoder();
-                Decoder = dec;
+                Decoder = new TransformRef(dec);
+                _streaming = false;
                 bool convert = exact == null || wantRate != decRate || wantCh != decCh;
                 _conv = convert ? new AudioConverter(use.Subtype == MediaFormats.Float, (int)use.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, 16), (int)decCh, (int)decRate, fl, (int)bits, (int)wantCh, (int)wantRate) : null;
                 _convFrames = 0; _convT0 = null; _convDrained = false;
@@ -592,6 +613,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public void Flush() => Restart();
 
+        /// <summary>Whether the decoder has been given a sample since it was last flushed.</summary>
+        private bool _fed;
+
+        /// <summary>Whether the decoder has been told of streaming: at the first read, as Windows' reader tells it.</summary>
+        private bool _streaming = true;
+
         private void Restart()
         {
             _discontinuity = true;
@@ -600,7 +627,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             Ended = false;
             _inputDone = false;
             _drainSent = false;
-            if (Decoder != null) Mft.ProcessMessage(Decoder.Pointer, 0, 0);               // MFT_MESSAGE_COMMAND_FLUSH
+            // a decoder given samples flushed; an application's given none is sent no flush, as Windows' reader sends it none (the
+            // shim's own flushed whatever, as they were: over WebCodecs, without it, the first frame of a file was refused)
+            if (Decoder != null && (_fed || Decoder.Own != null)) Mft.ProcessMessage(Decoder.Pointer, 0, 0);    // MFT_MESSAGE_COMMAND_FLUSH
+            _fed = false;
             _conv?.Reset(); _convFrames = 0; _convT0 = null; _convDrained = false;
         }
 
@@ -635,6 +665,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 return next;
             }
             var p = Decoder.Pointer;
+            if (!_streaming)
+            {
+                Mft.ProcessMessage(p, 0x10000000, 0);                                       // MFT_MESSAGE_NOTIFY_BEGIN_STREAMING
+                Mft.ProcessMessage(p, 0x10000003, 0);                                       // MFT_MESSAGE_NOTIFY_START_OF_STREAM
+                _streaming = true;
+            }
             while (true)
             {
                 if (_fx is { Any: true } && _fx.TryTake(out var pending))
@@ -682,6 +718,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     if (_fx is { Any: true }) { _fx.Drain(); if (_fx.TryTake(out var last)) { var done = Finish(last!); if (done != null) return done; continue; } }
                     // what the resampler still holds
                     if (_conv != null && !_convDrained) { _convDrained = true; if (ConvertAudio(null, _conv.Drain()) is { } tail) return tail; }
+                    // the decoder drained, flushed (as Windows' reader leaves it at the end)
+                    if (_fed) { Mft.ProcessMessage(p, 0, 0); _fed = false; }
                     Ended = true;
                     flags |= SR.ENDOFSTREAM;
                     return null;
@@ -694,6 +732,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     hr = Mft.ProcessInput(p, c.Pointer);
                     if (hr == MF.MF_E_NOTACCEPTING) { _held = c; c = null; continue; }
                     if (hr < 0) throw new InvalidOperationException($"the decoder's ProcessInput: 0x{hr:x8}");
+                    _fed = true;
                 }
                 finally { c?.Release(); }
                 if (Feed.AtEnd) _inputDone = true;
@@ -905,6 +944,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
     }
 
     /// <summary>An IMFTransform, through its vtable.</summary>
+    /// <summary>A transform the reader holds: one of the shim's, or one of the application's (through its vtable alone).</summary>
+    internal sealed unsafe class TransformRef
+    {
+        public readonly IntPtr Pointer;
+        public readonly MFTransform? Own;
+        public TransformRef(MFTransform own) { Own = own; Pointer = own.Pointer; }
+        public TransformRef(IntPtr foreign) { Pointer = foreign; }
+
+        /// <summary>The end: of the shim's its Shutdown; of the application's, the end of the stream and of streaming, and a flush (as Windows' reader ends it).</summary>
+        public void Shutdown()
+        {
+            if (Own != null) { Own.Shutdown(); return; }
+            Mft.ProcessMessage(Pointer, 0x10000002, 0);              // MFT_MESSAGE_NOTIFY_END_OF_STREAM
+            Mft.ProcessMessage(Pointer, 0x10000001, 0);              // MFT_MESSAGE_NOTIFY_END_STREAMING
+            Mft.ProcessMessage(Pointer, 0, 0);                       // MFT_MESSAGE_COMMAND_FLUSH
+        }
+
+        public void Release() { if (Own != null) Own.Release(); else Com.Release(Pointer); }
+    }
+
     internal static unsafe class Mft
     {
         public static int ProcessMessage(IntPtr t, uint message, nuint param) => ((delegate* unmanaged<IntPtr, uint, nuint, int>)Com.Fn(t, 23))(t, message, param);
@@ -922,7 +981,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 if (hr < 0) return hr;
                 try
                 {
-                    if (ComObject.From<MFMediaType>(type)?.Subtype == sub)
+                    // the type's subtype (IMFAttributes::GetGUID: of ours or of the transform's own)
+                    var k = MF.MF_MT_SUBTYPE; Guid g;
+                    if (((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Com.Fn(type, 10))(type, &k, &g) >= 0 && g == sub)
                         return ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Com.Fn(t, 16))(t, 0, type, 0);
                 }
                 finally { Com.Release(type); }
@@ -934,8 +995,38 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             IntPtr type;
             if (((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(t, 18))(t, 0, &type) < 0) return null;
             var m = ComObject.From<MFMediaType>(type);
-            if (m == null) Com.Release(type);
+            if (m != null) return m;
+            // a transform's own type: a copy of it
+            m = Mp4Types.Read(type);
+            Com.Release(type);
             return m;
+        }
+
+        /// <summary>A sample of a transform's own as one of the shim's: its bytes, times and attributes.</summary>
+        private static MFSample Copy(IntPtr foreign)
+        {
+            var bytes = MFSample.ForeignSampleBytes(foreign);
+            var s = new MFSample();
+            var buf = new MFMemoryBuffer((uint)Math.Max(1, bytes.Length));
+            bytes.CopyTo(new Span<byte>(buf.LockBytes(true), bytes.Length));
+            buf.CurrentLength = (uint)bytes.Length;
+            s.SetBuffer(buf.Pointer);
+            buf.Release();
+            long v;
+            if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(foreign, 35))(foreign, &v) >= 0) s.Time = v;
+            if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(foreign, 37))(foreign, &v) >= 0) s.Duration = v;
+            uint n;
+            ((delegate* unmanaged<IntPtr, uint*, int>)Com.Fn(foreign, 30))(foreign, &n);
+            var pv = stackalloc byte[24];
+            for (uint i = 0; i < n; i++)
+            {
+                new Span<byte>(pv, 24).Clear();
+                Guid k;
+                if (((delegate* unmanaged<IntPtr, uint, Guid*, byte*, int>)Com.Fn(foreign, 31))(foreign, i, &k, pv) < 0) continue;
+                if (MFAttributeStore.Read(pv) is { } val) s.Attributes.Set(k, val);
+                Ole.PropVariantClear(pv);
+            }
+            return s;
         }
 
         /// <summary>ProcessOutput: a sample (the decoder's own, or one made here of its size), or a change of format.</summary>
@@ -966,7 +1057,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (provides)
             {
                 sample = ComObject.From<MFSample>(got);
-                if (sample == null) Com.Release(got);
+                if (sample == null && got != IntPtr.Zero) { sample = Copy(got); Com.Release(got); }
             }
             else sample = mine;
             return hr;
