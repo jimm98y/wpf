@@ -179,6 +179,25 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         [SupportedOSPlatform("android28.0")]
         private static extern IntPtr AMediaCodec_getInputFormat(IntPtr codec);
 
+        [System.Runtime.InteropServices.DllImport("libmediandk.so")]
+        [SupportedOSPlatform("android26.0")]
+        private static extern int AMediaCodec_setParameters(IntPtr codec, IntPtr parameters);
+
+        /// <summary>The bit rate changed while encoding: MediaCodec's video-bitrate parameter (Android 8 on).</summary>
+        public void SetBitrate(uint bitrate)
+        {
+            _options.Bitrate = bitrate;
+            if (_codecHandle == IntPtr.Zero || !OperatingSystem.IsAndroidVersionAtLeast(26)) return;
+            IntPtr p = AMediaFormat_new();
+            try
+            {
+                AMediaFormat_setInt32(p, "video-bitrate", (int)bitrate);
+                int status = AMediaCodec_setParameters(_codecHandle, p);
+                if (status != 0) Log.Warn($"MediaCodec: the bit rate not changed ({status})");
+            }
+            finally { AMediaFormat_delete(p); }
+        }
+
         public bool ProcessInput(byte[] data, long timestamp) => ProcessInput(new ReadOnlySpan<byte>(data), timestamp);
 
         /// <summary>One NV12 frame in, of <see cref="Width"/> by <see cref="Height"/>, and its time.</summary>

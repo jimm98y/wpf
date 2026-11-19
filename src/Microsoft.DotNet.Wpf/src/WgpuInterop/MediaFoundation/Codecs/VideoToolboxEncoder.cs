@@ -208,6 +208,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
                 _unapplied.Add($"{setting}: {(name == IntPtr.Zero ? "not supported" : "rejected")} by the encoder");
         }
 
+        /// <summary>The bit rate changed while encoding (ICodecAPI's mean bit rate, set once frames have come): of the mode's property.</summary>
+        public void SetBitrate(uint bitrate)
+        {
+            _options.Bitrate = bitrate;
+            if (_session == IntPtr.Zero) return;
+            if (_options.RateControl == RateControlMode.ConstantBitrate) SetNumber("kVTCompressionPropertyKey_ConstantBitRate", (int)bitrate, nameof(_options.Bitrate));
+            else if (_options.RateControl is RateControlMode.Default or RateControlMode.VariableBitrate) SetNumber("kVTCompressionPropertyKey_AverageBitRate", (int)bitrate, nameof(_options.Bitrate));
+        }
+
         private void SetNumber(string key, int value, string setting)
         {
             IntPtr number = CreateNumber(value);

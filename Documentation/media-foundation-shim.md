@@ -403,12 +403,49 @@ H.264 of NV12 and AAC of PCM.
 
 - **Streams:**
   - A stream's target type is H.264, HEVC or AAC.
-  - Its input is that type itself (written as it comes), or what the system's encoder is given.
-  - Video converts from NV12, I420, IYUV, YV12, YUY2, RGB32 and ARGB32; audio converts float and other
-    bit depths to 16-bit PCM.
-  - The encoders are the system's (`Codecs/PlatformEncoders.cs`, SharpMediaFoundationInterop's,
-    adapted): VideoToolbox and AudioToolbox, GStreamer, MediaCodec. H.264 is Baseline where the type
-    names no profile, as Windows' encoder makes it.
+  - Its input is that type itself (written as it comes), or one the stream converts and encodes.
+- **The transforms** (`Sink/SinkChain.cs`) are chained as Windows' writer chains them. The probe is
+  `MFSinkTransformProbe`, its report `SinkTransform.windows.txt`.
+  - H.264 and AAC go through the encoder MFTs (`MFEncoders.cs`), driven through their vtables. The
+    writer sets the output type first, then the input.
+  - Where the encoder doesn't take the input as it is, a converter comes first:
+    - Video: a video processor gives the first type the H.264 encoder takes (IYUV, YV12, NV12, YUY2)
+      that is not of the input's own layout. So I420 becomes YV12, and RGB32 becomes IYUV. NV12 of
+      another size also becomes IYUV, scaled. The input may be NV12, I420, IYUV, YV12, YUY2, RGB32 or
+      ARGB32.
+    - Audio: an audio effect (Windows' resampler) takes float, other bit depths or another rate to
+      16-bit PCM of the target's rate. Its output comes in samples of 1024 frames. Its types are those
+      of a WAVEFORMATEX, of float WAVEFORMATEXTENSIBLE's, with the speakers.
+    - The converters are the shim's own; `GetTransformForStream` lists them as stand-ins of their types.
+  - `GetTransformForStream` gives the chain in order, with each transform's category.
+  - `GetServiceForStream` (GUID_NULL) hands out the encoder's interfaces, such as `ICodecAPI` and
+    `IMFTransform`. A stream written as it comes has no transform (MF_E_INVALIDINDEX) and no service
+    (MF_E_UNSUPPORTED_SERVICE).
+  - H.264 is Baseline where the target names no profile. Where it names no level, the level is the
+    least of H.264's Table A-1 that holds the picture's macroblocks, their rate and the bit rate (never
+    1b). A profile or level the target names is kept.
+  - The encoder's mean bit rate is taken when Windows' encoder takes it:
+    - The encoder alone takes it before its types are set (over the type's bit rate), or once frames
+      have come, as a change of the running encoder. Set in between, it is not taken.
+    - So through the writer it comes from `SetInputMediaType`'s encoding parameters: each 32- or
+      64-bit attribute is set as the `ICodecAPI` value of its key, before the encoder's types.
+    - Set through the service before `BeginWriting`, it is not taken. Set just after it, Windows'
+      writer takes it or not, depending on whether its own queue has started the encoder; the shim's
+      does not.
+    - The system's encoders change their bit rate while encoding: VideoToolbox's property, GStreamer's
+      element property, MediaCodec's `video-bitrate`, WebCodecs' `configure` again.
+  - HEVC has no encoder MFT here. It goes to the system's encoder (`Codecs/PlatformEncoders.cs`) of
+    NV12, the input converted, and lists no transforms.
+  - The encoders under the MFTs are the system's: VideoToolbox and AudioToolbox, GStreamer, MediaCodec,
+    WebCodecs.
+- **The rest of the writer, as Windows' answers it:**
+  - `BeginWriting` without a stream gives MF_E_INVALIDREQUEST.
+  - `Finalize` with no sample written gives MF_E_SINK_NO_SAMPLES_PROCESSED, and so does every call
+    after it.
+  - `GetStatistics` gives MF_E_INVALIDREQUEST before `BeginWriting`. After it, the counts and last
+    times of the samples received, encoded and processed, of one stream or of all of them. Windows'
+    writer encodes on a queue of its own, so its counts of samples encoded lag while writing; the
+    shim's encode at once.
 - **The file is laid out as Windows' MPEG-4 sink lays it out** (`Sink/Mp4Muxer.cs`; the box tree is
   `SinkWriter.windows.txt`):
   - `ftyp` mp42 (mp41, isom); a `uuid` box of Media Foundation's version; a 64-bit `mdat`; then
@@ -448,7 +485,8 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - Android's decoders are in but not yet run on a device or emulator.
-- The sink writer through the encoder MFTs (it uses the system's encoders directly).
+- An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
+  (`MF_SINK_WRITER_MEDIASINK`); transforms registered by the application (`MFTRegisterLocal`).
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;

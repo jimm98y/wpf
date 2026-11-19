@@ -760,7 +760,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             lock (e.Lock)
             {
                 if (g == AVEncCommonRateControlMode) e._rateControl = u;
-                else if (g == AVEncCommonMeanBitRate) e._meanBitrate = u;
+                else if (g == AVEncCommonMeanBitRate)
+                {
+                    // as Windows' encoder (MFSinkTransformProbe's): of the configuration before the types are set (over the type's
+                    // bit rate), a change of the running encoder once frames have come; between the two, not taken
+                    if (e.Out == IntPtr.Zero) e._meanBitrate = u;
+                    else if (e._encoder != null) { e._meanBitrate = u; e._encoder.SetBitrate(u); }
+                }
                 else if (g == AVEncCommonQuality) e._quality = u;
                 else if (g == AVEncCommonQualityVsSpeed) e._qualityVsSpeed = u;
                 else if (g == AVEncMPVGOPSize) e._gop = u;

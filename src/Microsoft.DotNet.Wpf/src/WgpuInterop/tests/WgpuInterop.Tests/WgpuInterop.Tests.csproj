@@ -64,6 +64,7 @@
     <None Include="Direct3D/Corpus/known-gaps.txt" Link="DxbcCorpus/known-gaps.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <None Include="MediaFoundation/SourceReader.windows.txt" Link="MediaFoundation/SourceReader.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/SinkWriter.windows.txt" Link="MediaFoundation/SinkWriter.windows.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="MediaFoundation/SinkTransform.windows.txt" Link="MediaFoundation/SinkTransform.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/MediaSource.windows.txt" Link="MediaFoundation/MediaSource.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/Encoder.windows.txt" Link="MediaFoundation/Encoder.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/ReaderTransform.windows.txt" Link="MediaFoundation/ReaderTransform.windows.txt" CopyToOutputDirectory="PreserveNewest" />

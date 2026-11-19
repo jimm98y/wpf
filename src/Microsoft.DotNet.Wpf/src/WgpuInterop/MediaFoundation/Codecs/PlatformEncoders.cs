@@ -63,6 +63,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
 #endif
             if (_apple != null) _apple.ProcessInput(nv12, time); else if (_gst != null) _gst.ProcessInput(nv12, time); else _android!.ProcessInput(nv12, time); }
 
+        /// <summary>The bit rate changed while encoding.</summary>
+        public void SetBitrate(uint bitrate)
+        {
+#if WGPU_BROWSER
+            _web?.SetBitrate(bitrate);
+#endif
+            _apple?.SetBitrate(bitrate); _gst?.SetBitrate(bitrate); _android?.SetBitrate(bitrate);
+        }
+
         public bool TryTake(ref byte[] buffer, out uint length, out long time)
         {
 #if WGPU_BROWSER

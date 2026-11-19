@@ -306,6 +306,14 @@ export function createVideoEncoder(codec, width, height, bitrate, framerate, mod
 }
 
 /** An NV12 picture (its bytes copied) encoded: its time in microseconds, a key frame where asked for. */
+/** The bit rate changed while encoding: configured again (the frames after it of the new rate). */
+export function setEncoderBitrate(handle, bitrate) {
+    const d = decoders.get(handle);
+    if (!d || d.dec.state !== 'configured') return 2;
+    try { d.config.bitrate = bitrate; d.dec.configure(d.config); return 0; }
+    catch (e) { d.error = String(e); return 1; }
+}
+
 export function encodeVideo(handle, nv12, width, height, timestamp, key) {
     const d = decoders.get(handle);
     if (!d || d.dec.state === 'closed') return 2;

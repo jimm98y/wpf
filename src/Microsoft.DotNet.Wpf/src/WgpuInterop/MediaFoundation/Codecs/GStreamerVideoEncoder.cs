@@ -114,6 +114,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             _pipeline.Play();
         }
 
+        /// <summary>The bit rate changed while encoding: the encoder's properties set again (those of the bit rate taking it at once).</summary>
+        public void SetBitrate(uint bitrate)
+        {
+            _options.Bitrate = bitrate;
+            if (_pipeline == null) return;
+            IntPtr encoder = _pipeline.Get("enc");
+            try { ApplySettings(encoder); }
+            finally { Gst.gst_object_unref(encoder); }
+        }
+
         /// <summary>
         /// The options, as the properties of the encoder there is - each its own names and units for them. What it has no
         /// property of, or none of the mode asked for, is reported in <see cref="UnappliedSettings"/>.

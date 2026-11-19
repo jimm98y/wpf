@@ -36,6 +36,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         [JSImport("supportsVideoEncoder", M)] internal static partial int SupportsVideoEncoder(string codec, int width, int height);
         [JSImport("supportsAudioEncoder", M)] internal static partial int SupportsAudioEncoder(string codec, int sampleRate, int channels);
         [JSImport("createVideoEncoder", M)] internal static partial int CreateVideoEncoder(string codec, int width, int height, double bitrate, double framerate, string mode);
+        [JSImport("setEncoderBitrate", M)] internal static partial int SetEncoderBitrate(int handle, double bitrate);
         [JSImport("encodeVideo", M)] internal static partial int EncodeVideo(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> nv12, int width, int height, double timestamp, bool key);
         [JSImport("createAudioEncoder", M)] internal static partial int CreateAudioEncoder(string codec, int sampleRate, int channels, double bitrate);
         [JSImport("encodeAudio", M)] internal static partial int EncodeAudio(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> pcm, int frames, double timestamp);
@@ -558,6 +559,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             _h = WebCodecsJs.CreateVideoEncoder(codec, (int)_o.Width, (int)_o.Height, _o.Bitrate, fps, mode);
             if (_h == 0) throw new NotSupportedException($"WebCodecs' VideoEncoder takes no {codec} of {_o.Width}x{_o.Height}");
             _q = new WebCodecsQueue(_h);
+        }
+
+        /// <summary>The bit rate changed while encoding: the encoder configured again of it.</summary>
+        public void SetBitrate(uint bitrate)
+        {
+            _o.Bitrate = bitrate;
+            if (_h != 0 && WebCodecsJs.SetEncoderBitrate(_h, bitrate) != 0) Log.Warn("WebCodecs' VideoEncoder: " + WebCodecsJs.LastError(_h));
         }
 
         public void ProcessInput(ReadOnlySpan<byte> nv12, long time)
