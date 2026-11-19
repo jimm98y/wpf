@@ -29,6 +29,9 @@ namespace WgpuInterop.Tests.Browser
         private static string Root => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
         private static string Dll => Path.Combine(Root, "Browser", "bin", "Release", "net10.0", "Microsoft.Wpf.Interop.WebGpu.dll");
         private static string Declarations => Path.Combine(Root, "Browser", "CalliSignatures.cs");
+        // the browser's test runner (the desktop's MF tests compiled in): the signatures of its own calls the stack's declare not
+        private static string TestsDll => Path.Combine(Root, "tests", "WasmMedia", "bin", "Release", "net10.0", "WgpuInterop.WasmMedia.dll");
+        private static string TestsDeclarations => Path.Combine(Root, "tests", "WasmMedia", "CalliSignatures.cs");
 
         /// <summary>A type as Mono's trampoline signatures write it; '?' of a struct by value (no trampoline: not to be used).</summary>
         private sealed class Letters : ISignatureTypeProvider<char, object?>
@@ -135,7 +138,7 @@ namespace WgpuInterop.Tests.Browser
         private static string CsType(char c) => c switch { 'I' => "int", 'L' => "long", 'F' => "float", 'D' => "double", _ => "void" };
 
         /// <summary>The declarations' file: a P/Invoke of each signature, never called, never bound.</summary>
-        internal static string File_(IEnumerable<string> sigs)
+        internal static string File_(IEnumerable<string> sigs, string ns = "Microsoft.Wpf.Interop.WebGpu.Browser", bool ifdef = true)
         {
             var b = new StringBuilder();
             b.AppendLine("// Licensed to the .NET Foundation under one or more agreements.");
@@ -149,10 +152,10 @@ namespace WgpuInterop.Tests.Browser
             b.AppendLine("// 64-bit, F, D, V void), the return's first.");
             b.AppendLine("//");
             b.AppendLine();
-            b.AppendLine("#if WGPU_BROWSER");
+            if (ifdef) b.AppendLine("#if WGPU_BROWSER");
             b.AppendLine("using System.Runtime.InteropServices;");
             b.AppendLine();
-            b.AppendLine("namespace Microsoft.Wpf.Interop.WebGpu.Browser");
+            b.AppendLine($"namespace {ns}");
             b.AppendLine("{");
             b.AppendLine("    internal static class CalliSignatures");
             b.AppendLine("    {");
@@ -163,7 +166,7 @@ namespace WgpuInterop.Tests.Browser
             }
             b.AppendLine("    }");
             b.AppendLine("}");
-            b.AppendLine("#endif");
+            if (ifdef) b.AppendLine("#endif");
             return b.ToString();
         }
 
@@ -179,6 +182,25 @@ namespace WgpuInterop.Tests.Browser
                 : new HashSet<string>();
             var missing = sigs.Where(s => !declared.Contains(s)).ToList();
             Assert.True(missing.Count == 0, $"Browser/CalliSignatures.cs lacks {missing.Count} signatures ({string.Join(" ", missing)}): build the browser flavor, run this test with MF_WRITE_CALLI=1, build again");
+        }
+
+        private static HashSet<string> Declared(string file) => File.Exists(file)
+            ? File.ReadAllLines(file).Where(l => l.Contains(" Sig_")).Select(l => l[(l.IndexOf(" Sig_") + 5)..l.IndexOf('(', l.IndexOf(" Sig_"))]).ToHashSet()
+            : new HashSet<string>();
+
+        /// <summary>The browser's test runner's own calls (its probes': the desktop's tests compiled in), of signatures the stack declares not, declared in tests/WasmMedia/CalliSignatures.cs.</summary>
+        [Fact]
+        public void TheBrowserTestRunner_DeclaresEveryCalliSignatureItCalls()
+        {
+            Assert.SkipWhen(!File.Exists(TestsDll), $"the browser's test runner is not built ({TestsDll})");
+            var sigs = Signatures(TestsDll, out var unsupported);
+            Assert.True(unsupported.Count == 0, "calls through function pointers with a struct by value or generics, which no trampoline takes in the browser:\n" + string.Join("\n", unsupported));
+            var own = Declared(Declarations);
+            var needed = sigs.Where(s => !own.Contains(s)).ToList();
+            if (Environment.GetEnvironmentVariable("MF_WRITE_CALLI") == "1") File.WriteAllText(TestsDeclarations, File_(needed, "WgpuInterop.WasmMedia", false));
+            var declared = Declared(TestsDeclarations);
+            var missing = needed.Where(s => !declared.Contains(s)).ToList();
+            Assert.True(missing.Count == 0, $"tests/WasmMedia/CalliSignatures.cs lacks {missing.Count} signatures ({string.Join(" ", missing)}): build WasmMedia, run this test with MF_WRITE_CALLI=1, build again");
         }
     }
 }

@@ -30,6 +30,7 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         public static IntPtr Fn(IntPtr o, int slot) => (*(IntPtr**)o)[slot];
         public static void Release(IntPtr o) { if (o != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)Fn(o, 2))(o); }
+        public static void AddRef(IntPtr o) { if (o != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)Fn(o, 1))(o); }
 
         public static IntPtr Attributes()
         {

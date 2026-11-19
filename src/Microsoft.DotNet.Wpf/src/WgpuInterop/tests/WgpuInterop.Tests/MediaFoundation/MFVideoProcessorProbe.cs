@@ -291,15 +291,13 @@ namespace WgpuInterop.Tests.MediaFoundation
         /// The shim's video processor, as an application makes it by CLSID, is Windows' (VideoProcessor.windows.txt): its
         /// interfaces, streams, attributes, types, the outputs it takes, and its pictures to the byte -- but of the upscaled
         /// RGB, whose first pixels are Windows' and whose bytes are within 1 of Windows' on average (Windows' sampling of an
-        /// upscale is its own). The color converter alike, to the byte, of its own arithmetic -- but for its IMediaObject (the
-        /// DMO), which the shim's has not.
+        /// upscale is its own). The color converter alike, to the byte, of its own arithmetic.
         /// </summary>
         [Fact]
         public void TheVideoProcessorAndColorConverter_AreWindows()
         {
             Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows' video processor is the fixture");
-            // (the color converter's IMediaObject, which the shim's has not: E_NOINTERFACE)
-            var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "VideoProcessor.windows.txt")).Select(l => l == "  IMediaObject 0x00000000" ? "  IMediaObject 0x80004002" : l).ToList();
+            var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "VideoProcessor.windows.txt")).ToList();
             var ours = Report();
             Assert.Equal(windows.Count, ours.Count);
             for (int i = 0; i < windows.Count; i++)

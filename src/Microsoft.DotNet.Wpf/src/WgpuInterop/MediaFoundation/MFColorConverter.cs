@@ -9,8 +9,8 @@
 // MF_E_TRANSFORM_TYPE_NOT_SET before the types, aligned to 1; IPropertyStore (empty) and IMFGetService beside. Its own
 // arithmetic, unlike the video processor's (Picture.AsRgbConverter, AsYuvConverter): truncated lookup terms to RGB, the
 // chroma repeated, alpha 0; rounded from RGB, a block's top-left chroma; RGB of no stride top-down. It does not scale:
-// an output of another size is refused (Windows' crashes the process at one). Not here: its IMediaObject (the DMO), the
-// palette's RGB8, V216, V410, the 4:1:1 packings and YVU9 (listed, refused).
+// an output of another size is refused (Windows' crashes the process at one). Its IMediaObject (the DMO) besides
+// (MFColorConverterDmo.cs). Not here: the palette's RGB8, V216, V410, the 4:1:1 packings and YVU9 (listed, refused).
 //
 
 using System;
@@ -21,7 +21,7 @@ using Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs;
 
 namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 {
-    internal sealed unsafe class MFColorConverter : MFEncoder
+    internal sealed unsafe partial class MFColorConverter : MFEncoder
     {
         public static readonly Guid Clsid = new("98230571-0087-4204-b020-3282538e57d3");
         private static readonly Guid IID_IPropertyStore = new("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), IID_IMFGetService = new("fa993888-4383-415a-a930-dd472a8cf6f7");
@@ -43,10 +43,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// <summary>Windows' halftone palette of RGB8's type (MF_MT_PALETTE, 256 RGBQUADs).</summary>
         private static readonly byte[] s_palette = System.Convert.FromHexString("00000000000080000080000000808000800000008000800080800000c0c0c000c0dcc000f0caa600010101000101330001016600010199000101cc000101fe00013301000133330001336600013399000133cc000133fe00016601000166330001666600016699000166cc000166fe00019901000199330001996600019999000199cc000199fe0001cc010001cc330001cc660001cc990001cccc0001ccfe0001fe010001fe330001fe660001fe990001fecc0001fefe00330101003301330033016600330199003301cc003301fe00333301003333330033336600333399003333cc003333fe00336601003366330033666600336699003366cc003366fe00339901003399330033996600339999003399cc003399fe0033cc010033cc330033cc660033cc990033cccc0033ccfe0033fe010033fe330033fe660033fe990033fecc0033fefe00660101006601330066016600660199006601cc006601fe00663301006633330066336600663399006633cc006633fe00666601006666330066666600666699006666cc006666fe00669901006699330066996600669999006699cc006699fe0066cc010066cc330066cc660066cc990066cccc0066ccfe0066fe010066fe330066fe660066fe990066fecc0066fefe00990101009901330099016600990199009901cc009901fe00993301009933330099336600993399009933cc009933fe00996601009966330099666600996699009966cc009966fe00999901009999330099996600999999009999cc009999fe0099cc010099cc330099cc660099cc990099cccc0099ccfe0099fe010099fe330099fe660099fe990099fecc0099fefe00cc010100cc013300cc016600cc019900cc01cc00cc01fe00cc330100cc333300cc336600cc339900cc33cc00cc33fe00cc660100cc663300cc666600cc669900cc66cc00cc66fe00cc990100cc993300cc996600cc999900cc99cc00cc99fe00cccc0100cccc3300cccc6600cccc9900cccccc00ccccfe00ccfe0100ccfe3300ccfe6600ccfe9900ccfecc00ccfefe00fe010100fe013300fe016600fe019900fe01cc00fe01fe00fe330100fe333300fe336600fe339900fe33cc00fe33fe00fe660100fe663300fe666600fe669900fe66cc00fe66fe00fe990100fe993300fe996600fe999900fe99cc00fe99fe00fecc0100fecc3300fecc6600fecc9900fecccc00feccfe00fefe0100fefe3300fefe6600fefe9900fefecc00fefefe00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
 
-        private static readonly Vtable s_store = BuildStore(), s_service = BuildService();
+        private static readonly Vtable s_store = BuildStore(), s_service = BuildService(), s_dmo = BuildDmo();
         private IntPtr _held;
 
-        public MFColorConverter() : base(new[] { s_store, s_service }) { }
+        public MFColorConverter() : base(new[] { s_store, s_service, s_dmo }) { }
 
         public override void Shutdown() { Com.Release(_held); _held = IntPtr.Zero; }
         protected override bool HasAttributes => false;

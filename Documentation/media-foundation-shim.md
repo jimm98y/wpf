@@ -314,7 +314,14 @@ the real ole32 makes Windows' own. A local transform registered by such a CLSID 
   - Its own arithmetic, to the byte: to RGB, sums of truncated terms (1.164383 (Y - 16), 2.017232 (U - 128), 1.596027
     (V - 128), 0.391762 (U - 128), 0.812968 (V - 128)), the chroma repeated, alpha 0; from RGB, BT.601 in 16-bit fixed
     point, rounded, a block's top-left chroma; RGB of no stride top-down; samples not clean points.
-  - Not here: its IMediaObject (the DMO); RGB8, V216, V410, the 4:1:1 packings and YVU9 (listed, refused).
+  - Its IMediaObject (the DMO; `MFColorConverterDmo.cs`, `MFColorConverterDmoProbe`, `ColorConverterDmo.windows.txt`),
+    over the transform itself, Windows' line for line: one stream each way; its 20 input types of DirectShow's RGB
+    subtypes, of no format; its 16 outputs, once there is an input, of a VIDEOINFOHEADER of the input's size and frame
+    time (565's bitfields, 555's masks, RGB8's palette after it); a type of a VIDEOINFOHEADER(2) or MFVIDEOFORMAT set as
+    the transform's (its stride of the height's sign), read back as set, a type the transform was given read back as
+    MFVIDEOFORMAT; a buffer in (DMO_E_NOTACCEPTING while one is held), its picture out of the input's time, length and
+    sync point, S_FALSE of none.
+  - Not here: RGB8, V216, V410, the 4:1:1 packings and YVU9 (listed, refused).
 
 ## Transforms of the application's
 
@@ -626,7 +633,7 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- The color converter's IMediaObject; the video processor's formats of more than 8 bits, palettes and the rarer
+- The video processor's formats of more than 8 bits, palettes and the rarer
   packings, and its scaling filter to the byte.
 - More of the source reader:
   - more containers (ASF);
