@@ -1,0 +1,60 @@
+==== no URL, no container type
+create 0x80070057
+  calls: 
+==== no URL, MPEG-4 container type
+create 0x00000000
+  calls: 
+add 0x00000000, input 0x00000000
+begin 0x00000000
+  calls: GetCapabilities
+  calls while writing: 0 writes
+finalize 0x00000000
+  calls: BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, GetCurrentPosition, SetCurrentPosition 63, BeginWrite n at n, EndWrite, GetCurrentPosition, SetCurrentPosition 5757, BeginWrite n at n, EndWrite, GetCurrentPosition, Close
+  calls at the release: 
+  bytes True, boxes: ftyp uuid mdat moov
+==== URL x.mp4
+create 0x00000000
+  calls: 
+add 0x00000000, input 0x00000000
+begin 0x00000000
+  calls: GetCapabilities
+  calls while writing: 0 writes
+finalize 0x00000000
+  calls: BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, BeginWrite n at n, EndWrite, GetCurrentPosition, GetCurrentPosition, SetCurrentPosition 63, BeginWrite n at n, EndWrite, GetCurrentPosition, SetCurrentPosition 5757, BeginWrite n at n, EndWrite, GetCurrentPosition, Close
+  calls at the release: 
+  bytes True, boxes: ftyp uuid mdat moov
+==== URL x.wmv
+create 0x00000000
+  calls: GetCapabilities, GetCapabilities, GetCapabilities, GetLength
+add 0x00000000, input 0x00000000
+begin 0x00000000
+  calls: 
+  calls while writing: 0 writes
+finalize 0x00000000
+  calls: SetCurrentPosition 8084, Read 57452 at 8084, SetCurrentPosition 0, BeginWrite n at n, Flush, EndWrite, SetCurrentPosition 1834, Read 63702 at 1834, SetCurrentPosition 0, BeginWrite n at n, SetCurrentPosition 0, Read 8084 at 0, SetCurrentPosition 8170, Read 57366 at 8170, SetCurrentPosition 0, BeginWrite n at n, Flush, Flush, SetLength 8170, Close, EndWrite, EndWrite
+  calls at the release: 
+  bytes True, boxes: ?f?
+==== read only
+create 0x00000000
+  calls: 
+add 0x00000000, input 0x00000000
+begin 0x80070057
+  calls: GetCapabilities
+write 0 0xc00d36b2
+  calls while writing: 0 writes
+finalize 0xc00d36b2
+  calls: 
+  calls at the release: 
+  bytes False, boxes: 
+==== not seekable
+create 0x00000000
+  calls: 
+add 0x00000000, input 0x00000000
+begin 0x80070057
+  calls: GetCapabilities
+write 0 0xc00d36b2
+  calls while writing: 0 writes
+finalize 0xc00d36b2
+  calls: 
+  calls at the release: 
+  bytes False, boxes: 

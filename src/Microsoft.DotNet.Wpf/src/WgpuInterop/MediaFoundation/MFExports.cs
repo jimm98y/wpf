@@ -233,7 +233,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             Source.IByteSource src;
             try
             {
-                src = ComObject.From<Source.MFFileByteStream>(byteStream) is { } f ? new Source.FileByteSource(f.Path) : new Source.ForeignByteSource(byteStream);
+                src = ComObject.From<Source.MFFileByteStream>(byteStream) is { Path: { } fp } ? new Source.FileByteSource(fp) : new Source.ForeignByteSource(byteStream);
             }
             catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
             int hr = Source.MFSourceReader.Create(src, attributes, out var r);
@@ -350,7 +350,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// <summary>Tests: the shim's own sources read as the application's are (of the thread).</summary>
         [ThreadStatic] internal static bool ForceForeignSource;
 
-        /// <summary>A sink writer of an MP4 file (Sink/): of the URL's path, or of the shim's own file byte stream.</summary>
+        private static readonly Guid MF_TRANSCODE_CONTAINERTYPE = new("150ff23f-4abc-478b-ac4f-e1916fba1cca"), MFTranscodeContainerType_MPEG4 = new("dc6cd05d-b9d0-40ef-bd35-fa622c1ab28a");
+
+        /// <summary>
+        /// A sink writer of MP4 (Sink/): of the URL's path, or of a byte stream -- the shim's own file, or the application's (written
+        /// through its IMFByteStream). As Windows': of a byte stream, without a URL the container is MF_TRANSCODE_CONTAINERTYPE's, and
+        /// without either the answer is E_INVALIDARG; MPEG-4 by the container type, else by the URL's extension.
+        /// </summary>
         [Win32Export("MFCreateSinkWriterFromURL")]
         public static int MFCreateSinkWriterFromURL(char* url, IntPtr byteStream, IntPtr attributes, IntPtr* writer)
         {
@@ -358,28 +364,64 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             *writer = IntPtr.Zero;
             try
             {
-                System.IO.FileStream file;
+                Guid container = Guid.Empty;
+                if (attributes != IntPtr.Zero)
+                {
+                    var k = MF_TRANSCODE_CONTAINERTYPE; Guid g;
+                    if (((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Com.Fn(attributes, 10))(attributes, &k, &g) >= 0) container = g;
+                }
+                string? text = url != null ? new string(url) : null;
+                if (container == Guid.Empty)
+                {
+                    if (text == null) return MF.E_INVALIDARG;
+                    string ext = System.IO.Path.GetExtension(text).ToLowerInvariant();
+                    if (ext is not (".mp4" or ".m4v" or ".m4a" or ".mov" or ".3gp")) { D3DLog.Once("mf-sink-ext:" + ext, $"Media Foundation: the sink writer writes MP4 files, not {ext}"); return SR_MF_E_UNSUPPORTED_FORMAT; }
+                }
+                else if (container != MFTranscodeContainerType_MPEG4) { D3DLog.Once("mf-sink-container:" + container, $"Media Foundation: the sink writer writes MPEG-4, not the container {container}"); return SR_MF_E_UNSUPPORTED_FORMAT; }
+                System.IO.Stream target;
                 if (byteStream != IntPtr.Zero)
                 {
-                    if (ComObject.From<Source.MFFileByteStream>(byteStream) is not { } fs) { D3DLog.Once("mf-sink-stream", "Media Foundation: the sink writer writes to files and the shim's own file byte streams"); return MF.E_INVALIDARG; }
-                    file = new System.IO.FileStream(fs.Path, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
+                    if (ComObject.From<Source.MFFileByteStream>(byteStream) is { Path: { } fsp }) target = new System.IO.FileStream(fsp, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
+                    else target = new Sink.ByteStreamWriter(byteStream);
                 }
                 else
                 {
-                    if (url == null) return MF.E_INVALIDARG;
-                    string? path = PathOf(new string(url), out int hr);
+                    string? path = PathOf(text!, out int hr);
                     if (path == null) return hr;
-                    string ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
-                    if (ext is not (".mp4" or ".m4v" or ".m4a" or ".mov" or ".3gp")) { D3DLog.Once("mf-sink-ext:" + ext, $"Media Foundation: the sink writer writes MP4 files, not {ext}"); return SR_MF_E_UNSUPPORTED_FORMAT; }
-                    file = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
+                    target = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
                 }
-                *writer = new Sink.MFSinkWriter(file).Pointer;
+                *writer = new Sink.MFSinkWriter(target).Pointer;
                 return MF.S_OK;
             }
             catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
         }
 
         private const int SR_MF_E_UNSUPPORTED_FORMAT = unchecked((int)0xC00D36C2);
+
+        /// <summary>An IMFByteStream over a COM IStream of the application's.</summary>
+        [Win32Export("MFCreateMFByteStreamOnStream")]
+        public static int MFCreateMFByteStreamOnStream(IntPtr stream, IntPtr* byteStream)
+        {
+            if (stream == IntPtr.Zero || byteStream == null) return MF.E_POINTER;
+            *byteStream = new Source.MFFileByteStream(new Source.ComStream(stream), null).Pointer;
+            return MF.S_OK;
+        }
+
+        /// <summary>A byte stream of a temporary file of its own, deleted when it is closed.</summary>
+        [Win32Export("MFCreateTempFile")]
+        public static int MFCreateTempFile(uint access, uint open, uint flags, IntPtr* byteStream)
+        {
+            if (byteStream == null) return MF.E_POINTER;
+            *byteStream = IntPtr.Zero;
+            try
+            {
+                string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "MFT" + Guid.NewGuid().ToString("N")[..8] + ".tmp");
+                var fs = new System.IO.FileStream(path, System.IO.FileMode.CreateNew, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read, 65536, System.IO.FileOptions.DeleteOnClose);
+                *byteStream = new Source.MFFileByteStream(fs, null).Pointer;
+                return MF.S_OK;
+            }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+        }
 
         [Win32Export("MFCreateFile")]
         public static int MFCreateFile(uint access, uint open, uint flags, char* url, IntPtr* stream)

@@ -14,13 +14,13 @@ using Microsoft.Wpf.Interop.WebGpu.Direct3D;
 
 namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 {
-    /// <summary>IMFByteStream over a FileStream.</summary>
+    /// <summary>IMFByteStream over a Stream: a file's (its path known), or another (an IStream's, a temporary file's).</summary>
     internal sealed unsafe class MFFileByteStream : MFAttributesObject
     {
         public static readonly Guid IID_IMFByteStream = new("ad4c1b00-4bf7-422f-9175-756693d9130d");
         private static readonly Vtable s_vt = Build(), s_attributes = BuildAttributes();
-        public readonly FileStream File;
-        public readonly string Path;
+        public readonly Stream File;
+        public readonly string? Path;
         private readonly object _lock = new();
 
         private static Vtable Build()
@@ -51,11 +51,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             return vt;
         }
 
-        public MFFileByteStream(FileStream file, string path) : base(s_vt, s_attributes)
+        public MFFileByteStream(Stream file, string? path) : base(s_vt, s_attributes)
         {
             File = file;
             Path = path;
             // what Windows' file byte stream says of itself
+            if (path == null) return;
             Attributes.Set(SR.MF_BYTESTREAM_ORIGIN_NAME, MFValue.Of(path));
             Attributes.Set(SR.MF_BYTESTREAM_LAST_MODIFIED_TIME, MFValue.Of(BitConverter.GetBytes(System.IO.File.GetLastWriteTimeUtc(path).ToFileTimeUtc())));
         }

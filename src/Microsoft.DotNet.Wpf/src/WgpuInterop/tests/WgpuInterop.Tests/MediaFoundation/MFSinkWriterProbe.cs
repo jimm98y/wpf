@@ -194,6 +194,116 @@ namespace WgpuInterop.Tests.MediaFoundation
             return log;
         }
 
+        [DllImport("mfreadwrite.dll", EntryPoint = "MFCreateSinkWriterFromURL")] private static extern int WinCreateOn([MarshalAs(UnmanagedType.LPWStr)] string? url, IntPtr stream, IntPtr attributes, IntPtr* writer);
+        private static readonly Guid MF_TRANSCODE_CONTAINERTYPE = new("150ff23f-4abc-478b-ac4f-e1916fba1cca"), MFTranscodeContainerType_MPEG4 = new("dc6cd05d-b9d0-40ef-bd35-fa622c1ab28a");
+
+        private static int CreateOn(string? url, IntPtr stream, IntPtr attributes, out IntPtr writer)
+        {
+            IntPtr w; int hr;
+            if (OperatingSystem.IsWindows()) { MFReader.Startup(); hr = WinCreateOn(url, stream, attributes, &w); }
+            else fixed (char* p = url) hr = MFExports.MFCreateSinkWriterFromURL(url == null ? null : p, stream, attributes, &w);
+            writer = hr >= 0 ? w : IntPtr.Zero;
+            return hr;
+        }
+
+        /// <summary>What the sink writer does with a byte stream of the application's: what it asks of it, what it writes where.</summary>
+        internal static List<string> ByteStreamReport()
+        {
+            var log = new List<string>();
+            var cases = new (string Name, string? Url, uint Caps, bool ContainerType)[]
+            {
+                ("no URL, no container type", null, 7, false),
+                ("no URL, MPEG-4 container type", null, 7, true),
+                ("URL x.mp4", "x.mp4", 7, false),
+                ("URL x.wmv", "x.wmv", 7, false),
+                ("read only", "x.mp4", 1, false),
+                ("not seekable", "x.mp4", 3, false),
+            };
+            foreach (var c in cases)
+            {
+                log.Add($"==== {c.Name}");
+                var spy = new SpyByteStream(c.Caps);
+                IntPtr attrs = IntPtr.Zero;
+                if (c.ContainerType) { attrs = MFReader.Attributes(); MFReader.SetGuid(attrs, MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4); }
+                int hr = CreateOn(c.Url, spy.Pointer, attrs, out var w);
+                MFReader.Release(attrs);
+                log.Add($"create {Hr(hr)}");
+                log.Add($"  calls: {string.Join(", ", spy.Calls)}"); spy.Calls.Clear();
+                if (hr >= 0)
+                {
+                    var vt = Type(Video, H264, (FRAME_SIZE, MF.Pack(128, 96), true), (FRAME_RATE, MF.Pack(25, 1), true), (AVG_BITRATE, 500_000, false), (INTERLACE, 2, false), (PAR, MF.Pack(1, 1), true));
+                    hr = MFWriter.AddStream(w, vt, out uint vi);
+                    MFReader.Release(vt);
+                    var vin = Type(Video, NV12, (FRAME_SIZE, MF.Pack(128, 96), true), (FRAME_RATE, MF.Pack(25, 1), true), (INTERLACE, 2, false), (PAR, MF.Pack(1, 1), true));
+                    log.Add($"add {Hr(hr)}, input {Hr(MFWriter.SetInputMediaType(w, vi, vin))}");
+                    MFReader.Release(vin);
+                    log.Add($"begin {Hr(MFWriter.BeginWriting(w))}");
+                    log.Add($"  calls: {string.Join(", ", spy.Calls)}"); spy.Calls.Clear();
+                    for (int k = 0; k < 5; k++)
+                    {
+                        var smp = MFWriter.Sample(MFDecoderTests.Picture(128, 96, k), k * 400_000L, 400_000);
+                        int h = MFWriter.WriteSample(w, vi, smp);
+                        MFReader.Release(smp);
+                        if (h < 0) { log.Add($"write {k} {Hr(h)}"); break; }
+                    }
+                    log.Add($"  calls while writing: {spy.Calls.Count(x => x.StartsWith("Write") || x.StartsWith("BeginWrite"))} writes");
+                    spy.Calls.Clear();
+                    log.Add($"finalize {Hr(MFWriter.Finalize(w))}");
+                    log.Add($"  calls: {string.Join(", ", spy.Calls.Select(x => x.StartsWith("Write") || x.StartsWith("BeginWrite") ? string.Join(' ', x.Split(' ').Select((wd, i) => i is 1 or 3 ? "n" : wd)) : x))}");
+                    MFReader.Release(w);
+                    log.Add($"  calls at the release: {string.Join(", ", spy.Calls.Skip(spy.Calls.Count))}");
+                    var bytes = spy.Bytes();
+                    log.Add($"  bytes {bytes.Length > 0}, boxes: {string.Join(" ", Boxes(bytes).Where(l => !l.StartsWith(" ")).Select(l => l.Split(' ')[0]))}");
+                }
+                spy.Release();
+            }
+            return log;
+        }
+
+        /// <summary>
+        /// The sink writer on a byte stream of the application's, as Windows': the answers without a URL or container type, of a
+        /// stream it cannot write and seek; what it asks of the stream and when; the file's boxes; Close at the end. The writes'
+        /// count and sizes are the encoder's and the chunks' (Windows' sink writes a sample at a time): a run of them is one.
+        /// Windows writes ASF to a .wmv URL, which the shim does not (MF_E_UNSUPPORTED_FORMAT): that case not compared.
+        /// </summary>
+        [Fact]
+        public void TheSinkWriter_WritesToAByteStreamAsWindowsDoes()
+        {
+            Assert.SkipWhen(!OperatingSystem.IsWindows() && !Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs.PlatformVideoEncoder.Supports(Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs.VideoCodec.H264), "no H.264 encoder here");
+            static List<string> Clean(IEnumerable<string> lines)
+            {
+                var r = new List<string>();
+                bool skip = false;
+                foreach (var l in lines)
+                {
+                    if (l.StartsWith("==== ")) skip = l.Contains("wmv");
+                    if (skip) continue;
+                    if (!l.StartsWith("  calls: ")) { r.Add(l); continue; }
+                    // runs of writes (each BeginWrite, EndWrite, GetCurrentPosition, and the positions asked between) as one
+                    var o = new List<string>();
+                    foreach (var c in l["  calls: ".Length..].Split(", "))
+                    {
+                        string t = c is "EndWrite" or "GetCurrentPosition" ? "" : c.StartsWith("BeginWrite") ? "writes" : c.StartsWith("SetCurrentPosition ") && c != "SetCurrentPosition 63" ? "SetCurrentPosition (the end)" : c;
+                        if (t.Length == 0 || o.Count > 0 && o[^1] == t && t == "writes") continue;
+                        o.Add(t);
+                    }
+                    r.Add("  calls: " + string.Join(", ", o));
+                }
+                return r;
+            }
+            var w = Clean(File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SinkByteStream.windows.txt")));
+            var o = Clean(ByteStreamReport());
+            for (int i = 0; i < Math.Max(w.Count, o.Count); i++)
+                Assert.True(i < w.Count && i < o.Count && w[i] == o[i], $"line {i}: Windows '{(i < w.Count ? w[i] : "(none)")}', ours '{(i < o.Count ? o[i] : "(none)")}'");
+        }
+
+        [Fact]
+        public void ProbeByteStream()
+        {
+            Assert.SkipWhen(Environment.GetEnvironmentVariable("MF_PROBE_SINKBS") is not { Length: > 0 }, "MF_PROBE_SINKBS=<file> writes the report");
+            File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_SINKBS")!, ByteStreamReport());
+        }
+
         /// <summary>
         /// A box's line with what of it is the encoder's or the moment's left out: sizes (of the samples' boxes and their
         /// parents), the samples' own tables, the times of creation, the encoders' configurations.

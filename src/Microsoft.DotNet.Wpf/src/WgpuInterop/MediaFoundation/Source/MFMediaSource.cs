@@ -541,7 +541,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             type = MS.MF_OBJECT_INVALID; obj = IntPtr.Zero;
             if (byteStream == IntPtr.Zero) return MF.E_POINTER;
             IByteSource src;
-            try { src = From<MFFileByteStream>(byteStream) is { } f ? new FileByteSource(f.Path) : new ForeignByteSource(byteStream); }
+            try { src = From<MFFileByteStream>(byteStream) is { Path: { } fp } ? new FileByteSource(fp) : new ForeignByteSource(byteStream); }
             catch (Exception e) { return MFFileByteStream.Hr(e); }
             int hr = MFMediaSource.Create(src, out var source);
             if (hr < 0) return hr;

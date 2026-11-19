@@ -41,7 +41,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
     {
         private readonly Stream _out;
         private readonly List<MuxTrack> _tracks = new();
-        private readonly long _mdatStart;
+        private long _mdatStart = -1;
         private const long ChunkHns = 3_200_000;        // 0.32 s
         private static readonly DateTime s_epoch = new(1904, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         private readonly uint _created = (uint)(DateTime.UtcNow - s_epoch).TotalSeconds;
@@ -49,13 +49,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
         public Mp4Muxer(Stream output)
         {
             _out = output;
-            Write(Box("ftyp", Enc("mp42"), U32(0), Enc("mp41"), Enc("isom")));
-            // Media Foundation's version, as Windows' sink has it
-            var uuid = new byte[] { 0x5c, 0xa7, 0x08, 0xfb, 0x32, 0x8e, 0x42, 0x05, 0xa8, 0x61, 0x65, 0x0e, 0xca, 0x0a, 0x95, 0x96 };
-            Write(Box("uuid", uuid, U32(11), Enc("6.2.09200.0")));
-            _mdatStart = _out.Position;
-            Write(U32(1), Enc("mdat"), U64(16));                       // a 64-bit size, set at the end
         }
+
+        /// <summary>
+        /// ftyp, Media Foundation's version (uuid) and mdat's header -- in one write, when the first chunk is (Windows' sink writes
+        /// nothing before it has samples).
+        /// </summary>
+        private void Header()
+        {
+            if (_mdatStart >= 0) return;
+            var uuid = new byte[] { 0x5c, 0xa7, 0x08, 0xfb, 0x32, 0x8e, 0x42, 0x05, 0xa8, 0x61, 0x65, 0x0e, 0xca, 0x0a, 0x95, 0x96 };
+            var ftyp = Box("ftyp", Enc("mp42"), U32(0), Enc("mp41"), Enc("isom"));
+            var version = Box("uuid", uuid, U32(11), Enc("6.2.09200.0"));
+            long start = _out.Position;
+            _mdatStart = start + ftyp.Length + version.Length;
+            _out.Write(Concat(ftyp, version, U32(1), Enc("mdat"), U64(16)));          // a 64-bit size, set at the end
+        }
+
+
 
         public MuxTrack Add(MuxTrack t) { _tracks.Add(t); return t; }
 
@@ -89,6 +100,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     (o.PendingSamples.Count > 0 ? (o.PendingSamples[0].Time < head.Start || o.PendingSamples[0].Time == head.Start && _tracks.IndexOf(o) < head.Index) : !_ended.Contains(o)));
                 if (wait) return;
                 _ready.Remove(head);
+                Header();
                 long at = _out.Position;
                 _out.Write(head.Data);
                 head.Track.Chunks.Add((at, head.Samples.Count));
@@ -105,9 +117,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             foreach (var t in _tracks) _ended.Add(t);
             foreach (var t in _tracks) Flush(t, ending: false);
             Flush(_tracks[0], ending: true);
+            Header();
             long end = _out.Position;
-            _out.Position = _mdatStart + 8;
-            Write(U64(end - _mdatStart));
+            // mdat's header again, of its size: from its start, as Windows' sink goes back to it
+            _out.Position = _mdatStart;
+            _out.Write(Concat(U32(1), Enc("mdat"), U64(end - _mdatStart)));
             _out.Position = end;
             Write(Moov());
             _out.Flush();

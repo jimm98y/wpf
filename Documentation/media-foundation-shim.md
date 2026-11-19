@@ -19,6 +19,7 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - `MFCreateMemoryBuffer`, `MFCreateAlignedMemoryBuffer`, `MFCreateDXGISurfaceBuffer`;
   - `MFCreateDXGIDeviceManager`, `MFTEnumEx`;
   - `MFCreateSourceReaderFromURL`, `MFCreateSourceReaderFromByteStream`, `MFCreateSourceReaderFromMediaSource`, `MFCreateFile` (mfreadwrite's and mfplat's);
+  - `MFCreateMFByteStreamOnStream` (over a COM IStream, its writability from STATSTG's `grfMode`, as Windows'), `MFCreateTempFile`;
   - `MFCreateSourceResolver`, `MFCreateEventQueue`, `MFCreateMediaEvent`, `MFCreateStreamDescriptor`, `MFCreatePresentationDescriptor`;
   - `MFFrameRateToAverageTimePerFrame`, `MFAverageTimePerFrameToFrameRate`;
   - `MFCalculateImageSize`, `MFGetStrideForBitmapInfoHeader`, `MFCopyImage`.
@@ -337,8 +338,20 @@ synchronous with one stream each way and write the application's output samples.
 
 ## The sink writer
 
-`MFCreateSinkWriterFromURL` (to a path, or to the shim's own file byte stream) gives an `IMFSinkWriterEx`
-writing MP4 (`Sink/`). It was probed by writing H.264 of NV12 and AAC of PCM.
+`MFCreateSinkWriterFromURL` gives an `IMFSinkWriterEx` writing MP4 (`Sink/`). It writes to a path or to a
+byte stream: the shim's own, or the application's (`Sink/ByteStreamWriter.cs`). It was probed by writing
+H.264 of NV12 and AAC of PCM.
+
+- **Byte streams:** as Windows' sink writer treats them (probed with `SpyByteStream`, the report in
+  `SinkByteStream.windows.txt`).
+  - Without a URL, the container is `MF_TRANSCODE_CONTAINERTYPE`'s; with neither, the answer is
+    E_INVALIDARG. A stream that can't be written and sought fails `BeginWriting` with E_INVALIDARG, and
+    later calls give MF_E_INVALIDREQUEST.
+  - Nothing is written before there are samples. Then the header comes in one write; writes are
+    BeginWrite/EndWrite, each followed by GetCurrentPosition. At the end the sink goes back to mdat's
+    start to rewrite its header, writes moov, and closes the stream.
+  - Windows writes a sample at a time and the shim a chunk at a time. Windows writes ASF to a `.wmv`
+    URL, which the shim does not.
 
 - **Streams:**
   - A stream's target type is H.264, HEVC or AAC.

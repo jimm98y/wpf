@@ -42,7 +42,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             public bool ConfigDone;
         }
 
-        private readonly FileStream _file;
+        private readonly System.IO.Stream _file;
         private Mp4Muxer? _mux;
         private readonly List<Stream> _streams = new();
         private bool _begun, _finished;
@@ -66,7 +66,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             return vt;
         }
 
-        public MFSinkWriter(FileStream file) : base(s_vt) { _file = file; }
+        public MFSinkWriter(System.IO.Stream file) : base(s_vt) { _file = file; }
 
         protected override void OnFinalRelease()
         {
@@ -190,6 +190,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                             if (s.Audio == null) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
                         }
                     }
+                    // a byte stream of the application's: one Windows' sink can write and seek, or E_INVALIDARG (and the writer done)
+                    if (w._file is ByteStreamWriter bs && !bs.Writable) { w._finished = true; return MF.E_INVALIDARG; }
                     w._mux = new Mp4Muxer(w._file);
                     foreach (var s in w._streams) w._mux.Add(s.Track);
                     w._begun = true;
