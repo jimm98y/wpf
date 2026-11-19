@@ -45,6 +45,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private readonly Queue<(byte[] Unit, bool Key)> _out = new();
         private readonly Queue<(long Time, long Duration)> _times = new();
         private byte[] _buffer = new byte[65536];
+        private bool _started;                     // a picture out already
 
         // ICodecAPI's settings
         private uint _rateControl, _meanBitrate, _quality = 65, _qualityVsSpeed, _gop, _maxQp = 51, _minQp, _bufferSize, _maxBitrate;
@@ -131,7 +132,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         protected override void TypesChanged()
         {
             _encoder?.Dispose(); _encoder = null;
-            _out.Clear(); _times.Clear();
+            _out.Clear(); _times.Clear(); _started = false;
         }
 
         /// <summary>The output buffer: 1.875 bytes a pixel (Windows' 144000 of 320 x 240).</summary>
@@ -232,12 +233,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             // Windows' encoder has each picture out at once: the system's waited for (made to finish what it holds)
             var sw = System.Diagnostics.Stopwatch.StartNew();
             bool completed = false;
-            while (_out.Count == 0 && _encoder != null && _times.Count > 0 && sw.ElapsedMilliseconds < 500)
+            // (a system's encoder just started may take its time over the first: MediaCodec's on an emulator)
+            int wait = _started ? 500 : 2000;
+            while (_out.Count == 0 && _encoder != null && _times.Count > 0 && sw.ElapsedMilliseconds < wait)
             {
                 if (!completed && sw.ElapsedMilliseconds >= 100) { _encoder.CompleteUntil(_times.Peek().Time); completed = true; }
                 System.Threading.Thread.Sleep(2); Collect();
             }
             if (_out.Count == 0) return MF.MF_E_TRANSFORM_NEED_MORE_INPUT;
+            _started = true;
             var (unit, key) = _out.Peek();
             var (time, dur) = _times.Count > 0 ? _times.Peek() : (0L, 0L);
             var attrs = new List<(Guid, MFValue)>
