@@ -216,6 +216,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         public static List<string> Dump(IntPtr a)
         {
             var lines = new List<string>();
+            if (a == IntPtr.Zero) { lines.Add("(none)"); return lines; }
             uint n;
             ((delegate* unmanaged<IntPtr, uint*, int>)Fn(a, 30))(a, &n);
             for (uint i = 0; i < n; i++)
