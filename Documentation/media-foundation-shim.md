@@ -36,14 +36,17 @@ Direct3D 11 device, and its hardware decoders reach the GPU through the shim's `
     - flush and drain.
   - Without a device manager they write the app's sample. Given one (`MFT_MESSAGE_SET_D3D_MANAGER`), they hand out samples of their own: NV12 textures of the manager's device, from a pool that each sample returns to when the app releases it.
   - `MF_LOW_LATENCY` and `ICodecAPI`'s `CODECAPI_AVLowLatencyMode` make them hand frames out as soon as they are decoded.
-- **The system's decoders** (`PlatformVideoDecoder`): VideoToolbox on Apple's systems (the GPU's decoder where there is one). The other heads' decoders come with them.
+- **The system's decoders** (`PlatformVideoDecoder`):
+  - VideoToolbox on Apple's systems, the GPU's decoder where there is one.
+  - GStreamer on Linux: decodebin picks the best decoder installed, a GPU's (VA-API, V4L2) before the software ones. It is the system's library, loaded at run time and never bundled. The codecs come from the distribution's plugins (`gstreamer1.0-libav`, `-plugins-bad`, `-ugly`).
+  - MediaCodec on Android, through the NDK, with frames through an image reader sized to the input type.
   - The decoders are SharpMediaFoundationInterop's (MIT, by the same author), adapted.
   - VideoToolbox's decoder is made from the stream's own configuration: H.264's and HEVC's parameter sets, the first VP9 key frame, the AV1 sequence header, the headers before the first MPEG-4 picture.
   - Frames are handed out in display order.
 
 ## Tests
 
-`MFDecoderTests` makes an H.264 stream whose pictures are all I_PCM macroblocks (raw samples), so a
+They pass on macOS (VideoToolbox) and in the Ubuntu 26.04 VM (GStreamer: libav's and OpenH264's decoders). `MFDecoderTests` makes an H.264 stream whose pictures are all I_PCM macroblocks (raw samples), so a
 decoder's output is known to the byte. It finds the H.264 decoder with `MFTEnumEx` and drives it
 through its vtables, as an app does:
 - **The app's samples:** six frames, one stream change, each frame identical.
@@ -52,7 +55,7 @@ through its vtables, as an app does:
 
 ## To come
 
-- The other heads' decoders: MediaCodec (Android), GStreamer or VA-API (Linux), WebCodecs (the browser).
+- The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
 - The audio decoders (AAC, MP3, FLAC, ALAC, Opus) and the encoders.
 - The source reader (`MFCreateSourceReaderFromURL`, from a byte stream, from a media source) with an MP4 demuxer of its own, the media session, and camera capture (`MFEnumDeviceSources`).
 - The shim's `ID3D11VideoDecoder` for Windows' Media Foundation.

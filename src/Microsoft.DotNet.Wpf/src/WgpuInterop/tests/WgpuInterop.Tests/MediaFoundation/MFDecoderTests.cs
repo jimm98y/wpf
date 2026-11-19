@@ -275,7 +275,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         [Fact]
         public void TheH264Decoder_DecodesIntoTheApplicationsSamples()
         {
-            Assert.SkipUnless(OperatingSystem.IsMacOS(), "the shim's Media Foundation decodes with VideoToolbox here (Windows has its own)");
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has its own Media Foundation");
             Ok(MFExports.MFStartup(0x20070, 0), "MFStartup");
             IntPtr t = Decoder();
             try
@@ -298,7 +298,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         [Fact]
         public void TheH264Decoder_GivesTheCodedSize_ThePictureInTheAperture()
         {
-            Assert.SkipUnless(OperatingSystem.IsMacOS(), "the shim's Media Foundation decodes with VideoToolbox here (Windows has its own)");
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has its own Media Foundation");
             IntPtr t = Decoder();
             try
             {
@@ -326,7 +326,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         [Fact]
         public void TheH264Decoder_DecodesIntoTexturesOfTheDeviceManagersDevice()
         {
-            Assert.SkipUnless(OperatingSystem.IsMacOS(), "the shim's Media Foundation decodes with VideoToolbox here (Windows has its own)");
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has its own Media Foundation");
             Assert.SkipWhen(WgpuInterop.Tests.Harness.Requirements.GpuUnavailable is not null, WgpuInterop.Tests.Harness.Requirements.GpuUnavailable ?? "");
             IntPtr dev, ctx; uint level;
             Ok(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0x20, null, 0, 7, &dev, &level, &ctx), "D3D11CreateDevice");

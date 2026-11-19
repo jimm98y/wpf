@@ -395,7 +395,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             catch (Exception e) { D3DLog.Error("IMFTransform.ProcessMessage", e); return MF.E_FAIL; }
         }
 
-        private PlatformVideoDecoder? Decoder => _decoder ??= _in != null ? PlatformVideoDecoder.Create(_info.Codec, LowLatency) : null;
+        private PlatformVideoDecoder? Decoder => _decoder ??= _in != null ? PlatformVideoDecoder.Create(_info.Codec, LowLatency, _in.FrameSize.W, _in.FrameSize.H) : null;
 
         private void ResetDecoder()
         {
