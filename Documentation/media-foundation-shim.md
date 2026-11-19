@@ -415,8 +415,8 @@ its report is `LocalTransform.windows.txt`.
     factory: GUID_NULL) MFT_TRANSFORM_CLSID. They hold no name.
 - **Activating:** the factory is asked for IUnknown, once; activating again gives the same object.
   `ShutdownObject` answers E_NOTIMPL of a factory's and S_OK of a CLSID's. Without a factory: REGDB_E_CLASSNOTREG.
-  - A CLSID is made of the shim's own transforms of it: the H.264 and AAC encoders, the decoders. Windows' color
-    converter DSP and video processor are not classes here (REGDB_E_CLASSNOTREG).
+  - A CLSID is made of the shim's own transforms of it: the H.264 and AAC encoders, the decoders, the video processor
+    and the color converter.
   - (On Windows, activating the H.264 encoder's own CLSID registered locally crashes the process.)
 - **The writer and the reader take them first:** the sink writer an encoder of the target's subtype, the source
   reader a decoder of the stream's (not with a device manager), each where it takes the types, the shim's own
