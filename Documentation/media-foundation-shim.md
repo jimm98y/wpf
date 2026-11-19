@@ -490,7 +490,14 @@ The cameras of each system (`Capture/CaptureDevices.cs`), each format as NV12 of
 - **macOS and iOS:** AVFoundation. The cameras come from a discovery session of the built-in, external and Continuity
   cameras (`devicesWithMediaType:` lists none on the newer systems). The output asks for 420f, and AVFoundation
   converts a video-range format to it.
-- The other systems list no cameras yet.
+- **Linux:** Video4Linux2. A size the camera gives as MJPG is captured as MJPG and decoded by GStreamer's jpegdec,
+  as Windows' frame server makes NV12 of an MJPG camera; a USB camera streams its larger sizes only compressed.
+  Otherwise the camera's NV12 or YUYV is used. The buffers are mapped, and the frame times are the buffers'
+  monotonic timestamps. A camera is closed before it is opened again at another format (V4L2's EBUSY).
+- **Android:** the NDK's Camera2, of the YUV_420_888 sizes at their fastest rate, through an AImageReader. It needs
+  the CAMERA permission; without it, Start is E_ACCESSDENIED.
+- **The browser:** getUserMedia, through `browser-codecs.js`, the page asking once. Each format is a usual size up
+  to the camera's largest. The frames are taken when the source is asked for its events.
 
 `TheCaptureSource_BehavesAsWindowsDoes` compares the first camera's report with Windows', with the names, links, sizes
 and times taken out. It is skipped where there is no camera.

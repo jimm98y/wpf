@@ -5,7 +5,8 @@
 // The browser's decoders for the Media Foundation shim (MediaFoundation/Codecs/WebCodecs.cs): WebCodecs'
 // VideoDecoder and AudioDecoder, run on the page's thread. The managed side (a worker) queues chunks and
 // polls: each decoded frame is copied out as NV12 (video) or interleaved PCM (audio) as it comes, in the
-// order it comes, and taken by the managed side when ready. Objects stay here, behind integer handles.
+// order it comes, and taken by the managed side when ready. Objects stay here, behind integer handles. The cameras
+// (MediaFoundation/Capture/WebCapture.cs) the same way: getUserMedia's frames copied as NV12, taken when asked for.
 //
 
 const decoders = new Map();
@@ -360,4 +361,113 @@ export function encoderConfig(handle, buffer) {
     if (!d || !d.description) return 0;
     if (buffer.length >= d.description.length) buffer.set(d.description);
     return d.description.length;
+}
+
+// ---- capture: the page's cameras (MediaFoundation/Capture/WebCapture.cs) ----------------------------
+
+let cameraList = null, cameraAsking = false;
+
+/** The video inputs as JSON ([{ id, name, w, h, minFps, maxFps }]); '' while the page asks for them. */
+export function cameras() {
+    if (cameraList === null && !cameraAsking) {
+        cameraAsking = true;
+        listCameras().then(r => { cameraList = r; cameraAsking = false; }, () => { cameraList = '[]'; cameraAsking = false; });
+    }
+    return cameraList ?? '';
+}
+
+async function listCameras() {
+    const md = navigator.mediaDevices;
+    if (!md || !md.enumerateDevices) return '[]';
+    let devices = await md.enumerateDevices();
+    // their names and capabilities only once the page may use a camera: asked for once
+    if (devices.some(d => d.kind === 'videoinput' && (!d.label || !d.deviceId))) {
+        try { const s = await md.getUserMedia({ video: true }); s.getTracks().forEach(t => t.stop()); } catch { }
+        devices = await md.enumerateDevices();
+    }
+    const out = [];
+    for (const d of devices) {
+        if (d.kind !== 'videoinput' || !d.deviceId) continue;
+        const c = typeof d.getCapabilities === 'function' ? d.getCapabilities() : {};
+        out.push({ id: d.deviceId, name: d.label || 'Camera', w: c.width?.max ?? 640, h: c.height?.max ?? 480, minFps: c.frameRate?.min ?? 1, maxFps: c.frameRate?.max ?? 30 });
+    }
+    return JSON.stringify(out);
+}
+
+const cameraSessions = new Map();
+
+/** A camera opened at the size (its state: 0 opening, 1 running, 2 failed, 3 refused). */
+export function openCamera(id, width, height, fps) {
+    const h = nextHandle++;
+    const s = { state: 0, frames: [], track: null, closed: false, width, height };
+    cameraSessions.set(h, s);
+    runCamera(s, id, width, height, fps).catch(e => { s.state = e && e.name === 'NotAllowedError' ? 3 : 2; s.error = String(e); });
+    return h;
+}
+
+async function runCamera(s, id, width, height, fps) {
+    const md = navigator.mediaDevices;
+    let stream;
+    try { stream = await md.getUserMedia({ video: { deviceId: { exact: id }, width: { exact: width }, height: { exact: height }, frameRate: { ideal: fps } } }); }
+    catch (e) {
+        if (e && e.name === 'NotAllowedError') throw e;
+        stream = await md.getUserMedia({ video: { deviceId: { exact: id }, width: { ideal: width }, height: { ideal: height }, frameRate: { ideal: fps } } });
+    }
+    s.track = stream.getVideoTracks()[0];
+    if (s.closed) { s.track.stop(); return; }
+    s.state = 1;
+    const keep = async frame => {
+        try {
+            let f = frame;
+            // of another size than asked for: drawn at the size
+            if (frame.visibleRect.width !== width || frame.visibleRect.height !== height) {
+                const c = new OffscreenCanvas(width, height);
+                c.getContext('2d').drawImage(frame, 0, 0, width, height);
+                f = new VideoFrame(c, { timestamp: frame.timestamp });
+                frame.close();
+            }
+            const nv12 = (await toNV12(f)).bytes;
+            f.close();
+            s.frames.push(nv12);
+            while (s.frames.length > 3) s.frames.shift();
+        } catch (e) { s.error = String(e); }
+    };
+    if (typeof MediaStreamTrackProcessor !== 'undefined') {
+        const reader = new MediaStreamTrackProcessor({ track: s.track }).readable.getReader();
+        while (!s.closed) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            await keep(value);
+        }
+        reader.releaseLock();
+    } else {
+        const video = document.createElement('video');
+        video.muted = true; video.playsInline = true; video.srcObject = stream;
+        await video.play();
+        const next = () => {
+            if (s.closed) { video.srcObject = null; return; }
+            keep(new VideoFrame(video, { timestamp: performance.now() * 1000 })).then(() => video.requestVideoFrameCallback(next));
+        };
+        video.requestVideoFrameCallback(next);
+    }
+}
+
+export function cameraState(h) { const s = cameraSessions.get(h); return s ? s.state : 2; }
+
+/** The oldest frame kept, as NV12 into the buffer: its length; 0 of none. */
+export function takeCameraFrame(h, buffer) {
+    const s = cameraSessions.get(h);
+    if (!s || s.frames.length === 0) return 0;
+    const f = s.frames.shift();
+    const n = Math.min(f.length, buffer.length);
+    buffer.set(f.subarray(0, n));
+    return n;
+}
+
+export function closeCamera(h) {
+    const s = cameraSessions.get(h);
+    if (!s) return;
+    s.closed = true;
+    if (s.track) s.track.stop();
+    cameraSessions.delete(h);
 }

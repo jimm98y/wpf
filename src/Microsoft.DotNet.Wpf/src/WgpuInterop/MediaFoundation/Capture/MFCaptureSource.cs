@@ -170,6 +170,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             s?.Dispose();
         }
 
+        /// <summary>The frames of a session whose frames are taken (the browser's), taken now.</summary>
+        internal void Pump()
+        {
+            ICaptureSession? s;
+            lock (Lock) s = _state == State.Started ? _session : null;
+            // (under the callers' vtable slots: nothing thrown out of them)
+            try { s?.Pump(); }
+            catch (Exception e) { D3DLog.Error("the camera's frames", e); }
+        }
+
         private void Queue(uint type, MFValue? value = null) => _queue.QueueEvent(type, Guid.Empty, MF.S_OK, value);
 
         /// <summary>A frame of the camera, of the system time of its capture.</summary>
@@ -190,6 +200,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         private static int GetEvent(IntPtr self, uint flags, IntPtr* e)
         {
             if (S(self) is not { } s || e == null) return MF.E_POINTER;
+            s.Pump();
             int hr = s._queue.GetEvent((flags & 1) != 0, out var ev);
             *e = ev;
             return hr;
@@ -241,7 +252,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
 
         private int StartAt(IntPtr pd, Guid* format, byte* position)
         {
-            ICaptureSession? open, close = null;
+            // a camera open at another type closed first (a device opens once at a time: V4L2's EBUSY)
+            ICaptureSession? open, stale = null;
+            lock (Lock)
+            {
+                var want = _sd.Handler.Current ?? _sd.Handler.Types.FirstOrDefault();
+                if (_session != null && !ReferenceEquals(_openAt, want)) { stale = _session; _session = null; _openAt?.Release(); _openAt = null; _generation++; }
+            }
+            stale?.Dispose();
             lock (Lock)
             {
                 if (_state == State.Shutdown) return MF.MF_E_SHUTDOWN;
@@ -258,14 +276,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
                 // the camera at the handler's current type
                 var current = _sd.Handler.Current ?? _sd.Handler.Types.FirstOrDefault();
                 if (current == null) return MF.MF_E_INVALIDMEDIATYPE;
-                if (_session != null && !ReferenceEquals(_openAt, current)) { close = _session; _session = null; _openAt?.Release(); _openAt = null; }
                 if (_session == null && sel != 0)
                 {
                     var f = FormatOf(current);
                     if (f == null) return MF.MF_E_INVALIDMEDIATYPE;
                     int gen = ++_generation;
-                    _session = CaptureDevices.Open(_device, f, (b, t) => OnFrame(b, t, gen));
-                    if (_session == null) return CaptureIds.MF_E_NO_CAPTURE_DEVICES_AVAILABLE;
+                    _session = CaptureDevices.Open(_device, f, (b, t) => OnFrame(b, t, gen), out int ohr);
+                    if (_session == null) return ohr;
                     current.AddRef(); _openAt = current;
                     Stream.Opened(f);
                     resume = false;
@@ -289,7 +306,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
                     Stream.Resume();
                 }
             }
-            close?.Dispose();
             open?.Start();
             return MF.S_OK;
         }
@@ -298,15 +314,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         private void Switch(MFMediaType t)
         {
             ICaptureSession? open = null, close;
+            CaptureFormat? f;
             lock (Lock)
             {
-                if (_session == null || ReferenceEquals(_openAt, t) || FormatOf(t) is not { } f) return;
-                close = _session; _session = null; _openAt?.Release(); _openAt = null;
+                if (_session == null || ReferenceEquals(_openAt, t) || (f = FormatOf(t)) == null) return;
+                close = _session; _session = null; _openAt?.Release(); _openAt = null; _generation++;
+            }
+            // the camera closed before it is opened again (a device opens once at a time)
+            close.Dispose();
+            lock (Lock)
+            {
+                if (_state == State.Shutdown || _session != null) return;
                 int gen = ++_generation;
-                _session = CaptureDevices.Open(_device, f, (b, tm) => OnFrame(b, tm, gen));
+                _session = CaptureDevices.Open(_device, f, (b, tm) => OnFrame(b, tm, gen), out _);
                 if (_session != null) { t.AddRef(); _openAt = t; Stream.Opened(f); open = _session; }
             }
-            close.Dispose();
             if (open != null && Started) open.Start();
         }
 
@@ -336,7 +358,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
                 s.Queue(MS.MESourceStopped);
                 if (s.Stream.Active) s.Stream.Stopped();
             }
-            close?.Dispose();
+            try { close?.Dispose(); }
+            catch (Exception e) { D3DLog.Error("IMFMediaSource.Stop (capture)", e); }
             return MF.S_OK;
         }
 
@@ -359,7 +382,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         private static int ShutdownSlot(IntPtr self)
         {
             if (S(self) is not { } s) return MF.E_POINTER;
-            s.Shutdown();
+            try { s.Shutdown(); }
+            catch (Exception e) { D3DLog.Error("IMFMediaSource.Shutdown (capture)", e); }
             return MF.S_OK;
         }
     }
@@ -497,6 +521,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         private static int GetEvent(IntPtr self, uint flags, IntPtr* e)
         {
             if (M(self) is not { } m || e == null) return MF.E_POINTER;
+            m._source.Pump();
             int hr = m._queue.GetEvent((flags & 1) != 0, out var ev);
             *e = ev;
             return hr;
@@ -543,6 +568,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             if (M(self) is not { } m) return MF.E_POINTER;
             try
             {
+                m._source.Pump();
                 lock (m._source.Lock)
                 {
                     int state = m._source.RequestState;

@@ -12,6 +12,9 @@ using System.IO;
 using Android.App;
 using Android.OS;
 
+// the cameras' tests (MFCaptureProbe): granted by the test run (adb shell pm grant)
+[assembly: UsesPermission(Android.Manifest.Permission.Camera)]
+
 namespace MobileMedia
 {
     [Activity(Label = "MF tests", MainLauncher = true, Name = "mobilemedia.MainActivity")]
