@@ -285,8 +285,14 @@ the real ole32 makes Windows' own. A local transform registered by such a CLSID 
       an upscale's bytes within 1 on average, a downscale's within 4 mostly, to a third within 26).
     - another shape: letterboxed, as Windows' (below); an output of a subsampled subtype must be of whole chroma
       samples (NV12 of 4x3 is refused).
-  - The subtypes of more than 8 bits (but P010 and P016), floats, palettes and the rarer packings are listed but not
-    converted: SetInputType refuses them.
+  - The rarer subtypes (`PictureFormats.cs`, `MFFormatsProbe`, `Formats.windows.txt`): each input and output taken or
+    refused as Windows' takes them, of its matrix (an input's outputs are its own: L8's NV12 but not RGB32, RGB555's
+    RGB32 but not NV12; 420O no input at all; of RGB32 besides the unlisted RGB555, RGB565, I422 and I444); L8, L16 and
+    D16 luma of full range to limited (L8 bottom-up, the 16-bit ones top-down, a YUV output's chroma left as it was);
+    P8 of the halftone palette; 555 and 565 of their fields shifted up; 4:1:1 and YVYU of their chroma repeated; AYUV of
+    BT.601 in floating point. Not matched to the byte: its conversions through its own color pipeline (A2R10G10B10,
+    A16B16G16R16F, P010, P016 in, and those, L8, L16, D16 and ABGR32 of NV12 out: Windows' wide-gamut and float
+    arithmetic) and its RGB to RGB of another format (through YUV) -- the frames come, of Windows' lengths.
   - IMFVideoProcessorControl, applied as Windows' (`MFVideoProcessorControlProbe`, `VideoProcessorControl.windows.txt`:
     an 8x6 picture of every pixel its own through each setting):
     - the order: the input type's `MF_MT_VIDEO_ROTATION` (90 clockwise; SetRotation(ROTATION_NONE) turns it off), then
@@ -323,7 +329,10 @@ the real ole32 makes Windows' own. A local transform registered by such a CLSID 
     the transform's (its stride of the height's sign), read back as set, a type the transform was given read back as
     MFVIDEOFORMAT; a buffer in (DMO_E_NOTACCEPTING while one is held), its picture out of the input's time, length and
     sync point, S_FALSE of none.
-  - Not here: RGB8, V216, V410, the 4:1:1 packings and YVU9 (listed, refused).
+  - The rarer subtypes alike (`MFFormatsProbe`): every input to every output but P8; V410 and v410 of 10-bit fields at
+    bits 2, 12 and 22, V216's of 16-bit words, Y41P, Y41T, Y42T, YVU9; of less chroma, each block's top-left sample;
+    NV11, AYUV, YVYU, V216 and V410 from RGB of BT.601 in floating point; YVYU's RGB32 opaque. Not matched to the byte:
+    RGB8 of a type of no palette and its dithered RGB8 out, and Y41P, Y41T and Y42T (whose NV12 is Windows' garbage).
 
 ## Transforms of the application's
 
@@ -642,9 +651,12 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- The video processor's formats of more than 8 bits, palettes and the rarer
-  packings, and its scaling filter to the byte.
+- The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
+  of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
+  tolerance (by choice).
 - More of the source reader:
-  - more containers (ASF);
+  - more containers (ASF: the container, its compressed samples handed out; WMV and WMA decoders there are none of
+    on any platform);
 - The media session, and camera capture (`MFEnumDeviceSources`).
-- Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder (the test VM has none).
+- Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
+  (the test VM has none).

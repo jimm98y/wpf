@@ -19,8 +19,8 @@
 // destination rectangle (Windows' rounding, worked out in the output's orientation before the rotation and mirror), the
 // letterbox of the border color, the rest of the output sample left as it was.
 //
-// Of the subtypes listed, those of more than 8 bits, of floats, palettes and the rarer packings are not converted here:
-// SetInputType answers MF_E_INVALIDMEDIATYPE of those (logged once).
+// Each input and output taken or refused as Windows' takes them (Takes: MFFormatsProbe's matrix); the rarer subtypes'
+// layouts in PictureFormats.cs.
 //
 
 using System;
@@ -60,6 +60,64 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             F("NV12"), F("YUY2"), F("IYUV"), F("I420"), RGB24, ARGB32, RGB32, F("YV12"), F("AYUV"), F("NV21"), RGB32, ARGB32, ABGR32, A2R10G10B10,
             A16B16G16R16F, F("NV12"), F("P010"), F("P016"), L8, L16, D16,
         };
+
+        /// <summary>Windows' outputs once there is an input, each once, in its order (the columns of Takes).</summary>
+        private static readonly Guid[] OutputsOnce =
+        {
+            F("NV12"), F("YUY2"), F("IYUV"), F("I420"), RGB24, ARGB32, RGB32, F("YV12"), F("AYUV"), F("NV21"), ABGR32, A2R10G10B10, A16B16G16R16F, F("P010"), F("P016"), L8, L16, D16,
+        };
+
+        /// <summary>
+        /// Of each input (Inputs' order), the outputs (OutputsOnce') Windows' takes of it: o taken, x refused; 420O is
+        /// refused as an input (MFFormatsProbe's matrix). Of RGB32 besides, the unlisted RGB555, RGB565, I422 and I444.
+        /// </summary>
+        private static readonly string[] Takes =
+        {
+            "oxxxxoxxxxoooxxoxx",
+            "oxxxxoxxxxooooxxoo",
+            "oxxxxoxxxxooooxxoo",
+            "oooxoooooxxxxxxxxx",
+            "oooooooooxxxxxxxxx",
+            "oooooooooooooooooo",
+            "xxxxxxxxxoxxxxxxxx",
+            "------------------",
+            "oxxxxooxxxoooooxoo",
+            "oxxxxooxxxoooooxxx",
+            "oxooxooooxxxxxxxxx",
+            "oooooooooxxxxxxxxx",
+            "xxxxxxxxxxxxxxxxxx",
+            "xxxxxoxxxxxxoxxxxx",
+            "xoooxoxoxxxxoxxxxx",
+            "oxooxoooxxxxxxxxxx",
+            "ooooxooooxxooxxxxx",
+            "xxxxxoxxxxoxoxxxxx",
+            "oooooooooxooooooxx",
+            "xxxxxxxxxxoxxxxxxx",
+            "oooooooooxoxxxxxxx",
+            "oxxxxooxoxxooooxxx",
+            "xxxxxoxxxxoxoxxxxx",
+            "oxxxxooxoxxooooooo",
+            "ooooooooxxxxxxxxxx",
+            "ooxoooooxxxxxxxxxx",
+            "xxxxxxxxxxxxxxxxxx",
+            "xxxxxxxxxxxxxxxxxx",
+            "oxooxooooxxxxxxxxx",
+            "xxooxoooxxxxxxxxxx",
+            "xxooxoooxxxxxxxxxx",
+            "xxooxoooxxxxxxxxxx",
+            "xxooxxxooxxxxxxxxx",
+            "xxooxxxoxxxxxxxxxx",
+            "xxooxxxoxxxxxxxxxx",
+            "xxooxxxoxxxxxxxxxx",
+        };
+
+        private static bool Taken(Guid input, Guid output)
+        {
+            int i = Array.IndexOf(Inputs, input), o = Array.IndexOf(OutputsOnce, output);
+            if (i < 0) return false;
+            if (o >= 0) return Takes[i][o] == 'o';
+            return input == RGB32 && (output == RGB555 || output == RGB565 || output == F("I422") || output == F("I444"));
+        }
 
         private static readonly Vtable s_control = BuildControl(), s_realtime = BuildRealTime(), s_service = BuildService();
 
@@ -112,14 +170,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             if (t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) != MF.MFMediaType_Video || Array.IndexOf(Inputs, t.Subtype) < 0) return MF.MF_E_INVALIDMEDIATYPE;
             var (w, h) = t.FrameSize;
             if (w == 0 || h == 0) return MF.MF_E_INVALIDMEDIATYPE;
-            if (!Pictures.Reads(t.Subtype)) { D3DLog.Once("vproc-in:" + t.Subtype, $"Media Foundation: the video processor converts not from {t.Subtype}"); return MF.MF_E_INVALIDMEDIATYPE; }
+            if (Takes[Array.IndexOf(Inputs, t.Subtype)][0] == '-') return MF.MF_E_INVALIDMEDIATYPE;          // 420O
             return MF.S_OK;
         }
 
         protected override int CheckOutput(MFMediaType t, bool test, out List<(Guid, MFValue)> fill)
         {
             fill = new();
-            if (t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) != MF.MFMediaType_Video || Array.IndexOf(Outputs, t.Subtype) < 0) return MF.MF_E_INVALIDMEDIATYPE;
+            if (t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) != MF.MFMediaType_Video) return MF.MF_E_INVALIDMEDIATYPE;
+            if (In != IntPtr.Zero) { var it = Read(In); bool taken = Taken(it.Subtype, t.Subtype); it.Release(); if (!taken) return MF.MF_E_INVALIDMEDIATYPE; }
+            else if (Array.IndexOf(Outputs, t.Subtype) < 0) return MF.MF_E_INVALIDMEDIATYPE;
             var (w, h) = t.FrameSize;
             if (w == 0 || h == 0) return MF.MF_E_INVALIDMEDIATYPE;
             // (of a subsampled output, a frame of whole chroma samples)
@@ -175,6 +235,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     var (sx, sy) = Pictures.Subsampling(o.Subtype);
                     dst = dst.Aligned(sx, sy);
                     var picture = Pictures.Decode(bytes, i.Subtype, (int)iw, (int)ih, inUp);
+                    bool lumaOnly = picture.LumaOnly && !Pictures.IsRgb(o.Subtype);
                     if (rot != 0) picture = picture.Rotated(rot);
                     if (mirrored) picture = picture.Mirrored(_mirror == 1);
                     if (src != new Rect(0, 0, pw, ph)) picture = picture.Cropped(src);
@@ -186,19 +247,21 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     byte[] inside = Array.Empty<byte>();
                     if (!content.Empty)
                     {
-                        picture = Pictures.IsRgb(o.Subtype) ? picture.AsRgb() : picture.AsYuv();
+                        // (AYUV of BT.601 in floating point: Windows')
+                        picture = Pictures.IsRgb(o.Subtype) ? picture.AsRgb() : o.Subtype == F("AYUV") ? picture.AsYuvFloat(1, 1) : picture.AsYuv();
                         if (_constriction is { } c && c.W > 0 && c.H > 0 && (c.W < content.W || c.H < content.H)) picture = picture.Scaled(Math.Min(c.W, content.W), Math.Min(c.H, content.H));
                         if (picture.W != content.W || picture.H != content.H) picture = picture.Scaled(content.W, content.H);
                         // (of a mirror Windows' knows not, a picture of no alpha: of RGB32 too)
                         if (unknownMirror) picture.A.AsSpan().Clear();
-                        inside = Pictures.Encode(picture, unknownMirror && o.Subtype == RGB32 ? ARGB32 : o.Subtype, outUp);
+                        // (P8's RGB32 of its palette's alpha, 0, as Windows' writes it)
+                        inside = Pictures.Encode(picture, (unknownMirror || i.Subtype == P8) && o.Subtype == RGB32 ? ARGB32 : o.Subtype, outUp);
                     }
                     var bands = dst.Minus(content);
                     byte[]? border = bands.Count == 0 ? null
                         : Pictures.Encode(Picture.Uniform(w, h, _border), o.Subtype == RGB32 ? ARGB32 : o.Subtype, outUp);   // (the border's alpha, of RGB32 too)
                     hr = WriteInPlace(sample, size, m =>
                     {
-                        Pictures.Copy(inside, content.W, content.H, new Rect(0, 0, content.W, content.H), m, w, h, content, o.Subtype, outUp);
+                        Pictures.Copy(inside, content.W, content.H, new Rect(0, 0, content.W, content.H), m, w, h, content, o.Subtype, outUp, lumaOnly ? Pictures.Planes.Luma : Pictures.Planes.All);
                         foreach (var band in bands)
                         {
                             Pictures.Copy(border!, w, h, band, m, w, h, band, o.Subtype, outUp, Pictures.Planes.Luma);
@@ -355,6 +418,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         public readonly int W, H, SubX, SubY, CW, CH;
         public readonly bool Rgb;
         public readonly byte[] C0, C1, C2, A;        // Y U V (U and V of CW x CH), or R G B
+        /// <summary>Of luma alone (L8, L16, D16): a YUV output's chroma is left as it was (Windows' writes it not).</summary>
+        public bool LumaOnly;
 
         public Picture(int w, int h, bool rgb, int subX = 1, int subY = 1)
         {
@@ -460,7 +525,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         public (int U, int V) Chroma(int x, int y)
         {
             int cy = Math.Min(y / SubY, CH - 1);
-            if (SubX == 1) return (C1[cy * CW + Math.Min(x, CW - 1)], C2[cy * CW + Math.Min(x, CW - 1)]);
+            // (of 4:2:x alone the odd columns' mean; 4:1:1 and YVYU's repeated: Windows')
+            if (SubX != 2 || Repeat) return (C1[cy * CW + Math.Min(x / SubX, CW - 1)], C2[cy * CW + Math.Min(x / SubX, CW - 1)]);
             int cx = Math.Min(x / 2, CW - 1);
             if ((x & 1) == 0) return (C1[cy * CW + cx], C2[cy * CW + cx]);
             int nx = Math.Min(cx + 1, CW - 1);
@@ -528,6 +594,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         /// <summary>Of RGB, YUV 4:4:4 (each pixel converted); of YUV, itself.</summary>
+        /// <summary>
+        /// RGB to YUV of BT.601's coefficients in floating point, rounded (Windows' AYUV, and the color converter's YVYU, NV11
+        /// and V216): Y 16 + 0.257 R + 0.504 G + 0.098 B, U 128 - 0.148 R - 0.291 G + 0.439 B, V 128 + 0.439 R - 0.368 G - 0.071 B;
+        /// of a subsampled output, each block's top-left pixel's chroma.
+        /// </summary>
+        public Picture AsYuvFloat(int subX, int subY)
+        {
+            if (!Rgb) return this;
+            var p = new Picture(W, H, false, subX, subY);
+            for (int i = 0; i < W * H; i++) p.C0[i] = Clamp((int)Math.Round(16 + 0.257 * C0[i] + 0.504 * C1[i] + 0.098 * C2[i]));
+            for (int cy = 0; cy < p.CH; cy++)
+                for (int cx = 0; cx < p.CW; cx++)
+                {
+                    int i = Math.Min(cy * subY, H - 1) * W + Math.Min(cx * subX, W - 1);
+                    int r = C0[i], g = C1[i], b = C2[i];
+                    p.C1[cy * p.CW + cx] = Clamp((int)Math.Round(128 - 0.148 * r - 0.291 * g + 0.439 * b));
+                    p.C2[cy * p.CW + cx] = Clamp((int)Math.Round(128 + 0.439 * r - 0.368 * g - 0.071 * b));
+                }
+            Array.Copy(A, p.A, A.Length);
+            return p;
+        }
+
         public Picture AsYuv()
         {
             if (!Rgb) return this;
@@ -547,9 +635,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// The chroma for an output of the subsampling: the same kept; less of it, the samples it covers averaged (rounded);
         /// more of it, repeated.
         /// </summary>
+        /// <summary>Of YVYU: to RGB, each chroma sample repeated (no mean of the odd columns).</summary>
+        public bool Repeat;
+
+        /// <summary>The color converter's: of less chroma, the sample of each block's top-left pixel (no mean).</summary>
+        public bool TopLeft;
+
         public (byte U, byte V) ChromaFor(int ox, int oy, int sx, int sy)
         {
             if (sx == SubX && sy == SubY) return (C1[Math.Min(oy, CH - 1) * CW + Math.Min(ox, CW - 1)], C2[Math.Min(oy, CH - 1) * CW + Math.Min(ox, CW - 1)]);
+            if (TopLeft)
+            {
+                int ci = Math.Min(Math.Min(oy * sy, H - 1) / SubY, CH - 1) * CW + Math.Min(Math.Min(ox * sx, W - 1) / SubX, CW - 1);
+                return (C1[ci], C2[ci]);
+            }
             // the full-resolution pixels the output's sample covers, each to the source's sample
             int su = 0, sv = 0, n = 0;
             for (int dy = 0; dy < sy; dy++)
@@ -566,7 +665,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
     }
 
     /// <summary>The layouts of the video processor's subtypes: decoded to a picture, encoded from one.</summary>
-    internal static class Pictures
+    internal static partial class Pictures
     {
         private static Guid F(string s) => MediaFormats.FourCC(s);
         private static readonly Guid NV12 = F("NV12"), NV21 = F("NV21"), IYUV = F("IYUV"), I420 = F("I420"), YV12 = F("YV12"), NV11 = F("NV11"), I422 = F("I422"), I444 = F("I444");
@@ -578,7 +677,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 
         public static bool Reads(Guid s) => s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == NV11 || s == I422 || s == I444 || s == YUY2 || s == UYVY
             || s == YVYU || s == AYUV || s == MFVideoProcessor.L8 || s == MFVideoProcessor.RGB32 || s == MFVideoProcessor.ARGB32 || s == MFVideoProcessor.RGB24
-            || s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 || s == MFVideoProcessor.ABGR32 || s == P010 || s == P016;
+            || s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 || s == MFVideoProcessor.ABGR32 || s == P010 || s == P016
+            || s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16 || s == MFVideoProcessor.P8 || s == RGB8 || s == MFVideoProcessor.A2R10G10B10 || s == MFVideoProcessor.A16B16G16R16F
+            || s == P208 || s == Y210 || s == Y216 || s == Y410 || s == Y416 || s == v410 || s == V410 || s == V216 || s == Y41P || s == Y41T || s == Y42T || s == YVU9;
 
         /// <summary>The output's chroma subsampling, across and down (of RGB and 4:4:4, 1 and 1).</summary>
         public static (int X, int Y) Subsampling(Guid s) =>
@@ -612,6 +713,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             if (s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16) { if (luma) Rows(0, w * 2, 2); return o; }
             if (s == AYUV) { if (luma) Rows(0, w * 4, 4); return o; }
             if (s == YUY2 || s == UYVY || s == YVYU) { if (luma) Rows(0, w * 2, 2); return o; }
+            if (s == I422 || s == I444)
+            {
+                // planar, the chroma of each row: U's plane, then V's
+                if (luma) Rows(0, w, 1);
+                if (!chroma) return o;
+                int sx = s == I444 ? 1 : 2, pw = (w + sx - 1) / sx, pl = r.L / sx + shift, pr = Math.Min(pw, (r.R + sx - 1) / sx + shift);
+                if (pl >= pr) return o;
+                for (int plane = 0; plane < 2; plane++)
+                    for (int y = r.T; y < r.B; y++) o.Add((w * h + plane * pw * h + y * pw + pl, pr - pl));
+                return o;
+            }
             bool wide = s == P010 || s == P016;
             if (luma) Rows(0, w * (wide ? 2 : 1), wide ? 2 : 1);
             if (!chroma) return o;
@@ -651,13 +763,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// <summary>RGB is bottom-up where the type has no stride, or a negative one (Windows' video processor's default).</summary>
         public static bool BottomUp(MFMediaType t, bool byDefault = true)
         {
-            if (!IsRgb(t.Subtype)) return false;
+            if (!IsRgb(t.Subtype) && t.Subtype != MFVideoProcessor.L8 && t.Subtype != MFVideoProcessor.P8) return false;
             var s = t.Attributes.Get(MF_MT_DEFAULT_STRIDE);
             return s is not { } v ? byDefault : unchecked((int)(uint)v.U) < 0;
         }
 
         /// <summary>The subtypes the encoder writes.</summary>
-        public static bool Writes(Guid s) => s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == NV11 || s == YUY2 || s == UYVY || s == YVYU || s == AYUV
+        public static bool Writes(Guid s) => s == I422 || s == I444 || s == V216 || s == V410 || s == RGB8 || s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == NV11 || s == YUY2 || s == UYVY || s == YVYU || s == AYUV
             || s == MFVideoProcessor.L8 || s == P010 || s == P016 || s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16 || IsRgb(s);
 
         /// <summary>A row's bytes of the subtype (MF_MT_DEFAULT_STRIDE's, top-down): of the planar ones the luma's.</summary>
@@ -673,9 +785,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 
         public static int Size(Guid s, int w, int h)
         {
+            if (s == Y41P || s == Y41T) return w * h * 3 / 2;
+            if (s == YVU9) return w * h + 2 * ((w + 3) / 4) * ((h + 3) / 4);
+            if (s == P208 || s == Y42T) return w * h * 2;
+            if (s == Y210 || s == Y216 || s == Y410 || s == v410 || s == V410 || s == V216) return w * h * 4;
+            if (s == Y416) return w * h * 8;
+            if (s == MFVideoProcessor.P8 || s == RGB8) return ((w + 3) & ~3) * h;
             if (s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == NV11) return w * h * 3 / 2;
             if (s == P010 || s == P016) return w * h * 3;
-            if (s == I422 || s == YUY2 || s == UYVY || s == YVYU || s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16) return w * h * 2;
+            // (L16's and D16's samples Windows' makes of 4 bytes a pixel, the frame in their first half)
+            if (s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16) return w * h * 4;
+            if (s == I422 || s == YUY2 || s == UYVY || s == YVYU) return w * h * 2;
             if (s == I444) return w * h * 3;
             if (s == MFVideoProcessor.L8) return w * h;
             if (s == MFVideoProcessor.RGB24) return RgbRow(3, w) * h;
@@ -721,7 +841,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             }
             if (s == YUY2 || s == UYVY || s == YVYU)
             {
-                var p = new Picture(w, h, false, 2, 1);
+                var p = new Picture(w, h, false, 2, 1) { Repeat = s == YVYU };
                 for (int y = 0; y < h; y++)
                     for (int x = 0; x < w; x++)
                     {
@@ -740,12 +860,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 for (int i = 0; i < w * h; i++) { p.C2[i] = At(i * 4); p.C1[i] = At(i * 4 + 1); p.C0[i] = At(i * 4 + 2); p.A[i] = At(i * 4 + 3); }
                 return p;
             }
-            if (s == MFVideoProcessor.L8)
+            if (s == MFVideoProcessor.L8 || s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16)
             {
-                var p = new Picture(w, h, false);
-                for (int i = 0; i < w * h; i++) { p.C0[i] = At(i); p.C1[i] = 128; p.C2[i] = 128; }
+                // full-range luma to limited (16 + 219 v / max), rounded; L8 bottom-up as an RGB of no stride, the 16-bit ones top-down
+                var p = new Picture(w, h, false) { LumaOnly = true };
+                bool wide = s != MFVideoProcessor.L8;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int sy = !wide && bottomUp ? h - 1 - y : y, i = sy * w + x;
+                        int v = wide ? At(i * 2) | At(i * 2 + 1) << 8 : At(i);
+                        p.C0[y * w + x] = (byte)((16 * (wide ? 65535 : 255) + 219L * v + (wide ? 32767 : 127)) / (wide ? 65535 : 255));
+                    }
+                p.C1.AsSpan().Fill(128); p.C2.AsSpan().Fill(128);
                 return p;
             }
+            if (DecodeMore(b, s, w, h, bottomUp) is { } more) return more;
             // RGB: rows top-down, or bottom-up
             var r = new Picture(w, h, true);
             int bpp = s == MFVideoProcessor.RGB24 ? 3 : s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 ? 2 : 4, row = RgbRow(bpp, w);
@@ -758,8 +888,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     if (bpp == 2)
                     {
                         int v = At(o) | At(o + 1) << 8;
-                        if (s == MFVideoProcessor.RGB565) { r.C0[i] = (byte)((v >> 11 & 31) * 255 / 31); r.C1[i] = (byte)((v >> 5 & 63) * 255 / 63); r.C2[i] = (byte)((v & 31) * 255 / 31); }
-                        else { r.C0[i] = (byte)((v >> 10 & 31) * 255 / 31); r.C1[i] = (byte)((v >> 5 & 31) * 255 / 31); r.C2[i] = (byte)((v & 31) * 255 / 31); }
+                        // (each field shifted up, its low bits 0: Windows' video processor's and color converter's)
+                        if (s == MFVideoProcessor.RGB565) { r.C0[i] = (byte)((v >> 11 & 31) << 3); r.C1[i] = (byte)((v >> 5 & 63) << 2); r.C2[i] = (byte)((v & 31) << 3); }
+                        else { r.C0[i] = (byte)((v >> 10 & 31) << 3); r.C1[i] = (byte)((v >> 5 & 31) << 3); r.C2[i] = (byte)((v & 31) << 3); }
                     }
                     else if (s == MFVideoProcessor.ABGR32) { r.C0[i] = At(o); r.C1[i] = At(o + 1); r.C2[i] = At(o + 2); r.A[i] = At(o + 3); }
                     else { r.C2[i] = At(o); r.C1[i] = At(o + 1); r.C0[i] = At(o + 2); if (s == MFVideoProcessor.ARGB32) r.A[i] = At(o + 3); }
@@ -771,6 +902,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// <summary>The picture into the output's layout (converted to its kind first: the caller scales after an RGB output's conversion).</summary>
         public static byte[] Encode(Picture p, Guid s, bool bottomUp, bool converter = false)
         {
+            if (EncodeMore(p, s, bottomUp, converter) is { } more) return more;
             int w = p.W, h = p.H, cw = (w + 1) / 2, ch = (h + 1) / 2;
             var o = new byte[Size(s, w, h)];
             if (IsRgb(s))
@@ -811,7 +943,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 }
                 return o;
             }
-            var yv = converter ? p.AsYuvConverter(s == AYUV ? 1 : s == NV11 ? 4 : 2, s == YUY2 || s == UYVY || s == YVYU || s == AYUV || s == NV11 ? 1 : 2) : p.AsYuv();
+            // (the converter's NV11, AYUV and YVYU of the video processor's 8-bit arithmetic: Windows')
+            var yv = s == AYUV ? p.AsYuvFloat(1, 1) : converter && (s == NV11 || s == YVYU) ? p.AsYuvFloat(s == NV11 ? 4 : 2, 1)
+                : converter ? p.AsYuvConverter(s == NV11 ? 4 : 2, s == YUY2 || s == UYVY || s == YVYU || s == NV11 ? 1 : 2) : p.AsYuv();
             if (s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12)
             {
                 Array.Copy(yv.C0, o, w * h);
