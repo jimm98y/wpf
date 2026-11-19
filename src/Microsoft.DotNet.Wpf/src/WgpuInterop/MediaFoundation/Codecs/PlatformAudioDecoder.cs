@@ -51,6 +51,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             return null;
         }
 
+        /// <summary>Whether the decoder leaves MP3's delay (529 samples) out itself, as AudioToolbox does; GStreamer's and MediaCodec's keep it.</summary>
+        public bool DropsMp3Delay => _apple != null;
+
 #pragma warning disable CA1416
         public uint Channels => _apple?.Channels ?? _gst?.Channels ?? _android!.Channels;
         public uint SampleRate => _apple?.SampleRate ?? _gst?.SampleRate ?? _android!.SampleRate;

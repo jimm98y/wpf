@@ -127,7 +127,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     a.Attributes.Set(MF.MFT_FRIENDLY_NAME_Attribute, MFValue.Of(info.Name));
                     a.Attributes.Set(MF.MFT_TRANSFORM_CLSID_Attribute, info.Clsid);
                     a.Attributes.Set(MF.MFT_INPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, info.Inputs)));
-                    a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, new[] { MediaFormats.Float, MediaFormats.PCM })));
+                    // what Windows' decoders say they give: AAC's float and PCM, the others' PCM
+                    a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, info.Codec is AudioCodec.AAC or AudioCodec.Opus ? new[] { MediaFormats.Float, MediaFormats.PCM } : new[] { MediaFormats.PCM })));
                     found.Add(a);
                 }
             if (found.Count == 0) return MF.S_OK;

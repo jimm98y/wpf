@@ -371,9 +371,28 @@ namespace WgpuInterop.Tests.MediaFoundation
             int hr = MFReader.Create(path, IntPtr.Zero, out var r);
             log.Add($"create {Hr(hr)}");
             if (hr < 0) return log;
+            foreach (var k in MFReader.Names.Keys.Where(k => MFReader.Names[k].StartsWith("MF_PD_") || MFReader.Names[k].StartsWith("MF_SOURCE_READER_MEDIASOURCE")))
+                if (MFReader.PresentationAttribute(r, MFReader.MEDIASOURCE, k, out var pv) is var ph && ph >= 0) log.Add($"presentation {MFReader.Name(k)} = {pv}");
+                else log.Add($"presentation {MFReader.Name(k)} {Hr(ph)}");
+            uint streams = 0;
+            while (MFReader.GetStreamSelection(r, streams, out _) >= 0) streams++;
+            log.Add($"streams {streams}");
             MFReader.GetNativeMediaType(r, MFReader.FIRST_AUDIO, 0, out var native);
             log.Add("native:");
             log.AddRange(MFReader.Dump(native).Select(l => "  " + l));
+            // the samples as the source cuts them
+            int nsamples = 0; long total = 0;
+            for (int n = 0; n < 2000; n++)
+            {
+                int h = MFReader.ReadSample(r, MFReader.FIRST_AUDIO, out _, out uint f, out long ts, out var smp);
+                if (h < 0) { log.Add($"  native read {Hr(h)}"); break; }
+                if (smp == IntPtr.Zero) { log.Add($"  native read: flags 0x{f:x} time {ts} no sample"); if ((f & 2) != 0) break; continue; }
+                var b = MFReader.SampleBytes(smp, out uint nb);
+                if (n < 3) { log.Add($"  native read: flags 0x{f:x} time {ts} duration {MFReader.Duration(smp)} buffers {nb} bytes {b.Length} {MFReader.HexOf(b, 8)}"); log.AddRange(MFReader.Dump(smp).Select(l => "      " + l)); }
+                nsamples++; total += b.Length;
+                MFReader.Release(smp);
+            }
+            log.Add($"  native samples {nsamples} bytes {total}");
             MFReader.Release(r);
 
             // the decoders, by themselves
@@ -480,7 +499,21 @@ namespace WgpuInterop.Tests.MediaFoundation
         private static bool AllEnded(IntPtr r, List<string> log) => log.Count(l => l.StartsWith("read:") && l.Contains("no sample")) >= 2;
 
         /// <summary>Audio made with afconvert, macOS's: AAC of a stereo tone of 440 and 660 Hz, ALAC of a mono one.</summary>
-        internal static readonly string[] AudioFiles = { "tone-aac.m4a", "tone-alac.m4a" };
+        internal static readonly string[] AudioFiles = { "tone-aac.m4a", "tone-alac.m4a", "tone.aac", "tone.flac", "tone.mp3", "tone-notag.mp3", "tone.wav" };
+
+        /// <summary>The audio file's path: of the media folder, or (the WAV) written here: the tone as 16-bit stereo PCM.</summary>
+        internal static string AudioPath(string name)
+        {
+            if (name != "tone.wav") return System.IO.Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Media", name);
+            string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"wpfmf-tone-{Environment.ProcessId}.wav");
+            const int rate = 44100, frames = rate / 2;
+            using var w = new System.IO.BinaryWriter(System.IO.File.Create(path));
+            w.Write("RIFF"u8); w.Write(36 + frames * 4); w.Write("WAVE"u8);
+            w.Write("fmt "u8); w.Write(16); w.Write((short)1); w.Write((short)2); w.Write(rate); w.Write(rate * 4); w.Write((short)4); w.Write((short)16);
+            w.Write("data"u8); w.Write(frames * 4);
+            for (int i = 0; i < frames; i++) { w.Write((short)(12000 * Math.Sin(2 * Math.PI * 440 * i / rate))); w.Write((short)(12000 * Math.Sin(2 * Math.PI * 660 * i / rate))); }
+            return path;
+        }
 
         /// <summary>The files of the report (SourceReader.windows.txt is Windows' of them).</summary>
         internal static (string Name, Mp4TestFile File)[] Files() => new[]
@@ -508,7 +541,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             foreach (var m in AudioFiles)
             {
                 all.Add($"==== {m}");
-                try { all.AddRange(AudioReport(System.IO.Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Media", m))); }
+                try { all.AddRange(AudioReport(AudioPath(m))); }
                 catch (Exception e) { all.Add("failed: " + e); }
             }
             System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_OUT")!, all);

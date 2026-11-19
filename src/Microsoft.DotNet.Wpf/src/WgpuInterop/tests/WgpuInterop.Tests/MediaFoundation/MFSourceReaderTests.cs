@@ -56,7 +56,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             foreach (var m in MFSourceReaderProbe.AudioFiles)
             {
                 ours.Add($"==== {m}");
-                ours.AddRange(MFSourceReaderProbe.AudioReport(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "Media", m)));
+                ours.AddRange(MFSourceReaderProbe.AudioReport(MFSourceReaderProbe.AudioPath(m)));
             }
             static List<string> Clean(IEnumerable<string> lines)
             {
@@ -67,9 +67,12 @@ namespace WgpuInterop.Tests.MediaFoundation
                 {
                     if (l.StartsWith("==== ")) file = l;
                     if (s_internal.Any(l.Contains)) continue;
-                    // resampled: the packets are the resampler's filter's, each its own (the signal is compared, below)
-                    if (l.StartsWith("decode to ")) resampled = l.Contains(" Hz");
+                    // resampled, or of a file whose frames the decoder finds itself: the packets are the decoder's and the
+                    // resampler's, each system's own (the signal is compared, below)
+                    if (l.StartsWith("decode to ")) resampled = l.Contains(" Hz") || file is "==== tone.aac" or "==== tone.flac" or "==== tone.mp3" or "==== tone-notag.mp3";
                     if (resampled && l.StartsWith("  read: flags 0x0 ")) continue;
+                    // ADTS has no length of its own: Windows estimates its duration and bitrate from its start, the shim from all of it
+                    if (file == "==== tone.aac" && (l.StartsWith("presentation MF_PD_DURATION") || l.StartsWith("presentation MF_PD_AUDIO_ENCODING_BITRATE") || l.StartsWith("  MF_MT_AUDIO_AVG_BYTES_PER_SECOND"))) continue;
                     // Windows takes no bitrate of an esds whose descriptors' lengths are of four bytes (as Apple's tools write
                     // them), and makes one of its own the shim does not: the esds' is the shim's
                     if (file == "==== tone-aac.m4a" && (l.StartsWith("  MF_MT_AUDIO_AVG_BYTES_PER_SECOND") || l.StartsWith("  MF_MT_AVG_BITRATE"))) continue;

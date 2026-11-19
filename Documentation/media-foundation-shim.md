@@ -64,6 +64,17 @@ Android. The decoders are SharpMediaFoundationInterop's (MIT, by the same author
   are rounded; the others' are rounded down. AAC's samples carry no discontinuity; the others pass on
   the input's.
 - Nothing of the priming is cut: an MP4's iTunSMPB is not read, as on Windows.
+- **Byte streams:** ADTS, MP3 and FLAC input that comes as a byte stream (from Windows' sources of
+  them) is cut into frames in the MFT (`Codecs/Packetizer.cs`). FLAC frames are found by their sync code
+  and header CRC-8.
+- **MP3:**
+  - The output types are float, 16-bit and 8-bit PCM, of the stream's channels and then of one.
+  - A Xing/Info frame decodes as a frame of silence. It is synthesized here, because GStreamer's
+    parser drops the frame.
+  - The decoder's delay of 528 frames is left out at the start (where the system's decoder keeps it)
+    and is not flushed at the end, as Windows' decoder does.
+- **FLAC:** the stream's PCM only, with its channel mask and valid bits, and no clean points.
+- `MFTEnumEx` gives the output types Windows' decoders list: AAC's float and PCM, the others' PCM.
 
 ## The source reader
 
@@ -73,8 +84,17 @@ ground truth (`MFSourceReaderProbe`). Its report on Windows is checked in as
 line, with one exception: the order in which a read of `MF_SOURCE_READER_ANY_STREAM` interleaves the
 streams. The shim gives the earliest sample first; Windows' order follows its pipeline's queues.
 
-- **Files:** ISO base media (.mp4, .m4v, .m4a, .mov), plain with moov before or after mdat, and
-  fragmented. Only box headers and sample tables are read at open; samples are read from the file as
+- **Files:** each read as Windows' source of it hands its samples out (`Source/Containers.cs`):
+  - ISO base media (.mp4, .m4v, .m4a, .mov), plain with moov before or after mdat, and fragmented;
+  - WAV: PCM in tenths of a second, each a clean point;
+  - MP3: whole frames up to 8 KB a sample, the first a clean point. The duration is the file's size
+    over the first frame's bitrate, as Windows estimates it. `MF_MT_USER_DATA` is
+    MPEGLAYER3WAVEFORMAT's tail.
+  - ADTS AAC and FLAC: the file's bytes as they come, 64 KB a sample, with the decoder finding the
+    frames. FLAC has no duration or size (characteristics 6), and its metadata goes in Windows' unnamed
+    attribute `3eadb782-…`.
+  - Known difference: Windows estimates an ADTS file's duration and bitrate from its start, by a rule
+    one file does not show; the shim's are exact. Only box headers and sample tables are read at open; samples are read from the file as
   they are asked for. The source is a file (a path or a `file:` URL), the shim's `MFCreateFile` byte
   stream, or any application `IMFByteStream`, read through its vtable.
 - **Streams:** the audio tracks first, then the video ones, whatever the order of the traks or their

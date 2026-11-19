@@ -44,6 +44,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public static readonly Guid MF_SOURCE_READER_DISABLE_DXVA = new("aa456cfd-3943-4a1e-a77d-1838c0ea2e35"), MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = new("fb394f3d-ccf1-42ee-bbb3-f9b845d5681d");
         public static readonly Guid MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING = new("0f81da2c-b537-4672-a8b2-a681b17307a3"), MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS = new("6d23f5c8-c5d7-4a9b-9971-5d11f8bca880");
         public static readonly Guid MF_PD_DURATION = new("6c990d33-bb8e-477a-8598-0d5d96fcd88a"), MF_PD_TOTAL_FILE_SIZE = new("6c990d34-bb8e-477a-8598-0d5d96fcd88a"), MF_PD_MIME_TYPE = new("6c990d37-bb8e-477a-8598-0d5d96fcd88a");
+        public static readonly Guid MF_PD_AUDIO_ENCODING_BITRATE = new("6c990d35-bb8e-477a-8598-0d5d96fcd88a");
         public static readonly Guid MF_SD_LANGUAGE = new("00af2180-bdc2-423c-abca-f503593bc121");
         public static readonly Guid MF_BYTESTREAM_ORIGIN_NAME = new("fc358288-3cb6-460c-a424-b6681260375a"), MF_BYTESTREAM_LAST_MODIFIED_TIME = new("fc35828b-3cb6-460c-a424-b6681260375a");
         public static readonly Guid MFT_CATEGORY_VIDEO_DECODER = new("d6c02d4b-6833-45b4-971a-05a4b04bab91"), MFT_CATEGORY_VIDEO_PROCESSOR = new("302ea3fc-aa5f-47f9-9f7a-c2188bb16302");
@@ -74,7 +75,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
     internal sealed unsafe class MFSourceReader : ComObject
     {
         private static readonly Vtable s_vt = Build();
-        private readonly Mp4Demuxer _demux;
+        private readonly MediaContainer _demux;
         private readonly List<ReaderStream> _streams = new();
         private readonly object _lock = new();
         private readonly IntPtr _callback;             // IMFSourceReaderCallback, AddRef'd
@@ -106,7 +107,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             return vt;
         }
 
-        private MFSourceReader(Mp4Demuxer demux, IntPtr attributes) : base(s_vt)
+        private MFSourceReader(MediaContainer demux, IntPtr attributes) : base(s_vt)
         {
             _demux = demux;
             _fileSize = demux.Length;
@@ -120,7 +121,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             int index = 0;
             foreach (var t in demux.Tracks.Where(t => t.Audio && t.Samples.Count > 0).Concat(demux.Tracks.Where(t => t.Video && t.Samples.Count > 0)))
             {
-                var native = Mp4Types.Native(t, demux);
+                var native = demux.Native(t);
                 if (native == null) continue;
                 bool first = !_streams.Any(s => s.Track.Handler == t.Handler);
                 _streams.Add(new ReaderStream(this, index++, t, native) { Selected = first });
@@ -130,10 +131,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public static int Create(IByteSource src, IntPtr attributes, out MFSourceReader? reader)
         {
             reader = null;
-            if (!Mp4Demuxer.Sniff(src)) { src.Dispose(); return SR.MF_E_UNSUPPORTED_BYTESTREAM_TYPE; }
-            Mp4Demuxer d;
-            try { d = Mp4Demuxer.Open(src); }
-            catch (Exception e) { src.Dispose(); D3DLog.Once("mf-mp4:" + e.GetType().Name, "Media Foundation: the MPEG-4 file is not read: " + e.Message); return SR.MF_E_UNSUPPORTED_FORMAT; }
+            MediaContainer? d;
+            try { d = MediaContainer.Open(src); }
+            catch (Exception e) { src.Dispose(); D3DLog.Once("mf-file:" + e.GetType().Name, "Media Foundation: the file is not read: " + e.Message); return SR.MF_E_UNSUPPORTED_FORMAT; }
+            if (d == null) { src.Dispose(); return SR.MF_E_UNSUPPORTED_BYTESTREAM_TYPE; }
             reader = new MFSourceReader(d, attributes);
             if (reader._streams.Count == 0) D3DLog.Once("mf-mp4-nostreams", "Media Foundation: the MPEG-4 file has no audio or video the source reader reads");
             return MF.S_OK;
@@ -166,7 +167,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public bool VideoProcessing => _videoProcessing;
         public IntPtr Manager => _manager;
-        public Mp4Demuxer Demuxer => _demux;
+        public MediaContainer Demuxer => _demux;
 
         /// <summary>The stream an index names: a stream's, the first video or audio stream's.</summary>
         private ReaderStream? StreamOf(uint i) => i switch
@@ -319,11 +320,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             {
                 if (i == SR.MEDIASOURCE)
                 {
-                    if (*key == SR.MF_PD_DURATION) v = MFValue.Of((ulong)r.Duration());
-                    else if (*key == SR.MF_PD_TOTAL_FILE_SIZE) v = MFValue.Of((ulong)r._fileSize);
-                    else if (*key == SR.MF_PD_MIME_TYPE) v = MFValue.Of(r._demux.Tracks.Any(t => t.Video) ? "video/mp4" : "audio/mp4");
-                    // MFMEDIASOURCE_CAN_SEEK | CAN_PAUSE | DOES_NOT_USE_NETWORK
-                    else if (*key == SR.MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS) v = MFValue.Of(0x86u);
+                    if (*key == SR.MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS) v = MFValue.Of(r._demux.Characteristics);
+                    else v = r._demux.Presentation(*key);
                 }
                 else
                 {
@@ -333,17 +331,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (v == null) return MF.MF_E_ATTRIBUTENOTFOUND;
             MFAttributeStore.Write(v, value);
             return MF.S_OK;
-        }
-
-        /// <summary>MF_PD_DURATION: the movie's duration (mvhd), else the fragments' (mehd), else the longest track's.</summary>
-        private long Duration()
-        {
-            ulong d = _demux.MovieDuration != 0 ? _demux.MovieDuration : _demux.FragmentDuration;
-            if (d != 0) return (long)((UInt128)d * 10_000_000 / _demux.MovieTimescale);
-            long max = 0;
-            foreach (var t in _demux.Tracks)
-                if (t.Samples.Count > 0) { var last = t.Samples[^1]; max = Math.Max(max, t.Pts(last) + t.Hns(last.Duration)); }
-            return max;
         }
 
         // ---- position --------------------------------------------------------------------------------

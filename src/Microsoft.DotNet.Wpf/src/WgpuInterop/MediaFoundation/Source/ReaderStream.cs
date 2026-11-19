@@ -239,6 +239,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 var major = t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE);
                 var sub = t.Subtype;
                 if (major != Native.Attributes.Guid(MF.MF_MT_MAJOR_TYPE)) return MF.MF_E_INVALIDMEDIATYPE;
+                bool pcmNative = Native.Subtype == MediaFormats.PCM || Native.Subtype == MediaFormats.Float;
+                if (Track.Audio && pcmNative) return SetAudio(t, sub);
                 if (sub == Native.Subtype)
                 {
                     DropDecoder();
@@ -297,6 +299,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         {
             bool fl = sub == MediaFormats.Float;
             if (sub != MediaFormats.PCM && !fl) return MF.MF_E_INVALIDMEDIATYPE;
+            if (Native.Subtype == MediaFormats.PCM || Native.Subtype == MediaFormats.Float) return SetPcm(t, sub);
             var info = MFAudioDecoder.Registered.FirstOrDefault(i => Array.IndexOf(i.Inputs, Native.Subtype) >= 0);
             if (info == null || !PlatformAudioDecoder.Supports(info.Codec)) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
             var dec = new MFAudioDecoder(info);
@@ -322,8 +325,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 if (wantRate is < 1000 or > 384000 || wantCh is < 1 or > 8) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 uint decRate = first.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND), decCh = first.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS);
                 if (fl ? bits != 32 : bits is not (8 or 16 or 24 or 32)) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
-                var exact = types.FirstOrDefault(x => x.Subtype == sub && x.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) == bits);
-                var use = exact ?? first;
+                var exact = types.FirstOrDefault(x => x.Subtype == sub && x.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) == bits && x.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) == wantCh)
+                    ?? types.FirstOrDefault(x => x.Subtype == sub && x.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) == bits && x.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) == decCh);
+                // no type of the decoder's, or another rate: converted from its first (Windows' resampler after it)
+                if (wantRate != decRate) exact = null;
+                var use = exact ?? types[0];
+                decCh = use.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, decCh);
                 if (Mft.SetOutputType(p, use.Pointer) < 0) { dec.Shutdown(); dec.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 DropDecoder();
                 Decoder = dec;
@@ -340,7 +347,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     cur.Attributes.Set(SR.MF_MT_AUDIO_AVG_BYTES_PER_SECOND, block * wantRate);
                     cur.Attributes.Set(SR.MF_MT_AUDIO_NUM_CHANNELS, wantCh);
                     cur.Attributes.Set(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, wantRate);
-                    if (exact == null || fl) cur.Attributes.Delete(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE);
+                    if (use.Subtype != sub || use.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE) != bits) cur.Attributes.Delete(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE);
                     // the speakers, where the count of them changes
                     if (wantCh != decCh) cur.Attributes.Set(MF_MT_AUDIO_CHANNEL_MASK, AudioConverter.Mask((int)wantCh));
                 }
@@ -349,6 +356,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 return MF.S_OK;
             }
             finally { foreach (var x in types) x.Release(); }
+        }
+
+        /// <summary>PCM of the file's own converted (no decoder): its samples' times and durations kept, unless resampled.</summary>
+        private int SetPcm(MFMediaType t, Guid sub)
+        {
+            bool fl = sub == MediaFormats.Float;
+            var na = Native.Attributes;
+            bool nfl = Native.Subtype == MediaFormats.Float;
+            uint nbits = na.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, 16), nrate = na.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND), nch = na.U32(SR.MF_MT_AUDIO_NUM_CHANNELS);
+            uint bits = t.Attributes.U32(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, fl ? 32u : sub == Native.Subtype ? nbits : 16u);
+            uint rate = t.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, nrate), ch = t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, nch);
+            if (fl ? bits != 32 : bits is not (8 or 16 or 24 or 32)) return MF.MF_E_INVALIDMEDIATYPE;
+            if (rate is < 1000 or > 384000 || ch is < 1 or > 8) return MF.MF_E_INVALIDMEDIATYPE;
+            DropDecoder();
+            var cur = Native.Clone();
+            if (fl == nfl && bits == nbits && rate == nrate && ch == nch) { _conv = null; Replace(cur); return MF.S_OK; }
+            _conv = new AudioConverter(nfl, (int)nbits, (int)nch, (int)nrate, fl, (int)bits, (int)ch, (int)rate);
+            _convFrames = 0; _convT0 = null; _convDrained = false;
+            uint block = ch * bits / 8;
+            cur.Attributes.Set(MF.MF_MT_SUBTYPE, sub);
+            cur.Attributes.Set(SR.MF_MT_AUDIO_BITS_PER_SAMPLE, bits);
+            cur.Attributes.Set(SR.MF_MT_AUDIO_BLOCK_ALIGNMENT, block);
+            cur.Attributes.Set(SR.MF_MT_AUDIO_AVG_BYTES_PER_SECOND, block * rate);
+            cur.Attributes.Set(SR.MF_MT_AUDIO_NUM_CHANNELS, ch);
+            cur.Attributes.Set(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+            if (ch != nch) cur.Attributes.Set(MF_MT_AUDIO_CHANNEL_MASK, AudioConverter.Mask((int)ch));
+            Replace(cur);
+            Restart();
+            return MF.S_OK;
         }
 
         /// <summary>The decoder's PCM as the type asked for: its time the decoder's, or (resampled) counted in frames from the first.</summary>
@@ -375,7 +411,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 r.Duration = (frames * 10_000_000 + rate / 2) / rate;
                 _convFrames += frames;
                 if (s != null) foreach (var (k, v) in s.Attributes.All()) r.Attributes.Set(k, MFAttributesObject.Copy(v));
-                else r.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
+                // the resampler's every sample a clean point
+                r.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
                 return r;
             }
             finally { s?.Release(); }
@@ -421,10 +458,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         {
             var s = Track.Samples;
             int at = 0;
+            bool anySync = s.Exists(x => x.Sync);
             for (int i = 0; i < s.Count; i++)
             {
                 if (Track.Pts(s[i]) > hns) break;
-                if (s[i].Sync) at = i;
+                if (s[i].Sync || !anySync) at = i;
             }
             // a fragmented file: from its fragment's first sync sample
             if (s.Count > 0 && s[at].Fragment >= 0)
@@ -451,7 +489,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         private void RestartAtSync()
         {
-            while (_next > 0 && !Track.Samples[Math.Min(_next, Track.Samples.Count - 1)].Sync) _next--;
+            bool anySync = Track.Samples.Exists(x => x.Sync);
+            while (anySync && _next > 0 && !Track.Samples[Math.Min(_next, Track.Samples.Count - 1)].Sync) _next--;
             Restart();
         }
 
@@ -464,6 +503,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (Ended) { flags = SR.ENDOFSTREAM; return null; }
             if (Decoder == null)
             {
+                while (_conv != null)
+                {
+                    if (_next >= Track.Samples.Count)
+                    {
+                        if (!_convDrained) { _convDrained = true; if (ConvertAudio(null, _conv.Drain()) is { } tail) return tail; }
+                        Ended = true; flags = SR.ENDOFSTREAM; return null;
+                    }
+                    if (ConvertAudio(Compressed(Track.Samples[_next++])) is { } c) return c;
+                }
                 if (_next >= Track.Samples.Count || drain) { if (!drain) Ended = true; flags = SR.ENDOFSTREAM; return null; }
                 return Compressed(Track.Samples[_next++]);
             }
@@ -536,15 +584,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             s.SetBuffer(buf.Pointer);
             buf.Release();
             s.Time = Track.Pts(m);
-            s.Duration = Track.Hns(m.Duration);
+            if (m.Duration != uint.MaxValue) s.Duration = Track.Hns(m.Duration);
             if (lengths != null)
             {
                 var blob = new byte[lengths.Length * 4];
                 for (int i = 0; i < lengths.Length; i++) BitConverter.GetBytes(lengths[i]).CopyTo(blob, i * 4);
                 s.Attributes.Set(SR.MFSampleExtension_NALULengthInfo, MFValue.Of(blob));
             }
-            if (m.Sync) s.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
-            if (_discontinuity) { s.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u); if (Decoder == null || Track.Audio) _discontinuity = false; }
+            var (clean, disc) = _reader.Demuxer.SampleFlags(m, _discontinuity);
+            if (clean) s.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
+            if (disc) s.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u);
+            if (_discontinuity && (Decoder == null || Track.Audio)) _discontinuity = false;
             return s;
         }
 

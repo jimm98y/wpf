@@ -94,20 +94,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public long Pts(in Mp4Sample s) => Hns(s.Dts + s.CtsOffset - EditStart);
     }
 
-    internal sealed class Mp4Demuxer : IDisposable
+    internal sealed class Mp4Demuxer : MediaContainer
     {
-        private readonly IByteSource _src;
-        public readonly List<Mp4Track> Tracks = new();
         public uint MovieTimescale = 1000;
         public ulong MovieDuration, FragmentDuration;
         public bool Fragmented;
-        private readonly object _lock = new();
 
-        private Mp4Demuxer(IByteSource src) { _src = src; }
+        private Mp4Demuxer(IByteSource src) : base(src) { }
 
-        public long Length => _src.Length;
+        public override MFMediaType? Native(Mp4Track t) => Mp4Types.Native(t, this);
 
-        public void Dispose() => _src.Dispose();
+        public override MFValue? Presentation(Guid key)
+        {
+            if (key == SR.MF_PD_DURATION) return MFValue.Of((ulong)Duration());
+            if (key == SR.MF_PD_TOTAL_FILE_SIZE) return MFValue.Of((ulong)Length);
+            if (key == SR.MF_PD_MIME_TYPE) return MFValue.Of(Tracks.Any(t => t.Video) ? "video/mp4" : "audio/mp4");
+            return null;
+        }
+
+        /// <summary>MF_PD_DURATION: the movie's duration (mvhd), else the fragments' (mehd), else the longest track's.</summary>
+        private long Duration()
+        {
+            ulong d = MovieDuration != 0 ? MovieDuration : FragmentDuration;
+            if (d != 0) return (long)((UInt128)d * 10_000_000 / MovieTimescale);
+            long max = 0;
+            foreach (var t in Tracks)
+                if (t.Samples.Count > 0) { var last = t.Samples[^1]; max = Math.Max(max, t.Pts(last) + t.Hns(last.Duration)); }
+            return max;
+        }
 
         /// <summary>Whether the bytes begin as an ISO base media file does.</summary>
         public static bool Sniff(IByteSource src)
@@ -126,14 +140,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         }
 
         // ---- boxes ------------------------------------------------------------------------------------
-
-        private byte[] ReadAt(long offset, int n)
-        {
-            var b = new byte[n];
-            int got = _src.Read(offset, b);
-            if (got < n) Array.Resize(ref b, got);
-            return b;
-        }
 
         /// <summary>The boxes of a span: type, payload start, payload length.</summary>
         private static IEnumerable<(string Type, int Start, int Length)> Children(byte[] data, int start, int end)
@@ -154,12 +160,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         private void ReadTop()
         {
-            long at = 0, len = _src.Length;
+            long at = 0, len = Src.Length;
             int fragment = 0;
             Span<byte> h = stackalloc byte[16];
             while (at + 8 <= len)
             {
-                if (_src.Read(at, h) < 8) break;
+                if (Src.Read(at, h) < 8) break;
                 long size = BinaryPrimitives.ReadUInt32BigEndian(h);
                 string type = Encoding.ASCII.GetString(h.Slice(4, 4));
                 int header = 8;
@@ -508,11 +514,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// A sample as Windows' source hands it out: H.264 / H.265 in Annex B, the parameter sets (3-byte start
         /// codes) before a sync sample and each NAL unit after a 4-byte one; with the NAL units' lengths.
         /// </summary>
-        public byte[] Read(Mp4Track t, in Mp4Sample s, out uint[]? nalLengths)
+        public override byte[] Read(Mp4Track t, in Mp4Sample s, out uint[]? nalLengths)
         {
             nalLengths = null;
-            byte[] raw;
-            lock (_lock) raw = ReadAt(s.Offset, s.Size);
+            byte[] raw = ReadAt(s.Offset, s.Size);
             if (!t.AnnexB) return raw;
             var lengths = new List<uint>();
             var o = new List<byte>(raw.Length + 64);

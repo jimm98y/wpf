@@ -63,7 +63,7 @@
     <None Include="Direct3D/Corpus/dxbc/*.dxbc" Link="DxbcCorpus/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <None Include="Direct3D/Corpus/known-gaps.txt" Link="DxbcCorpus/known-gaps.txt" CopyToOutputDirectory="PreserveNewest" Visible="false" />
     <None Include="MediaFoundation/SourceReader.windows.txt" Link="MediaFoundation/SourceReader.windows.txt" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="MediaFoundation/Media/*.m4a" Link="MediaFoundation/Media/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="MediaFoundation/Media/*.*" Link="MediaFoundation/Media/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The native backend, next to the test binary so the loader finds it. -->

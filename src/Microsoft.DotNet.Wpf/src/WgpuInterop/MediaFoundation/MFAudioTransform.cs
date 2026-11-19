@@ -54,6 +54,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private bool _discontinuity;
         private readonly Queue<byte[]> _ready = new();
         private byte[] _scratch = Array.Empty<byte>();
+        private Packetizer? _packets;
+        private long _inFrames, _decodedFrames;           // MP3: the frames pushed (in samples), the samples handed out
+        private long _delayLeft = 528;                     // MP3: the decoder's delay still to leave out
+        private static readonly Guid MF_MT_AUDIO_CHANNEL_MASK = new("55fb5765-644a-4caf-8479-938983bb1588");
 
         public MFAudioDecoder(AudioDecoderInfo info) : base(s_vt) { _info = info; }
 
@@ -114,13 +118,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         [UnmanagedCallersOnly] private static int GetStreamIDs(IntPtr self, uint ni, uint* i, uint no, uint* o) => MF.E_NOTIMPL;
 
         /// <summary>MFT_INPUT_STREAM_INFO: whole samples, one per buffer, of a fixed size, holding none back (flags 0xF, as Windows').</summary>
+        /// <summary>Of FLAC, any bytes, 64 KB at most; of MP3 (a DMO's wrapper) nothing before the output's type is set.</summary>
         [UnmanagedCallersOnly]
         private static int GetInputStreamInfo(IntPtr self, uint id, uint* info)
         {
-            if (info == null) return MF.E_POINTER;
+            if (D(self) is not { } d || info == null) return MF.E_POINTER;
             if (id != 0) return MF.MF_E_INVALIDSTREAMNUMBER;
             new Span<byte>(info, 24).Clear();
-            info[2] = 0xF;
+            lock (d._lock)
+            {
+                if (d._info.Codec == AudioCodec.Mp3 && d._out == null) return MF.MF_E_TRANSFORM_TYPE_NOT_SET;
+                if (d._info.Codec == AudioCodec.Flac) { info[3] = 65536; return MF.S_OK; }
+                if (d._info.Codec != AudioCodec.Mp3) info[2] = 0xF;
+            }
             return MF.S_OK;
         }
 
@@ -166,7 +176,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             var a = _in!.Attributes;
             uint rate = a.U32(MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100), ch = a.U32(MF_MT_AUDIO_NUM_CHANNELS, 2), bits = 16;
-            var cfg = a.Get(MF.MF_MT_USER_DATA)?.B ?? Array.Empty<byte>();
+            var cfg = a.Get(Source.FlacContainer.FlacMetadataAttribute)?.B ?? a.Get(MF.MF_MT_USER_DATA)?.B ?? Array.Empty<byte>();
             if (_info.Codec == AudioCodec.Alac && cfg.Length >= 24) { bits = cfg[5]; ch = cfg[9]; rate = (uint)(cfg[20] << 24 | cfg[21] << 16 | cfg[22] << 8 | cfg[23]); }
             else if (_info.Codec == AudioCodec.Flac && cfg.Length >= 4 + 18)
             {
@@ -180,36 +190,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return (rate, ch, bits);
         }
 
-        /// <summary>An output type, as Windows' decoder of the codec makes it.</summary>
-        private MFMediaType OutputType(bool fl, uint bits)
+        /// <summary>An output type, as Windows' decoder of the codec makes it (of <paramref name="channels"/>, 0: the stream's).</summary>
+        private MFMediaType OutputType(bool fl, uint bits, uint channels = 0)
         {
             var (rate, ch, _) = Format();
+            if (channels != 0) ch = channels;
             var t = new MFMediaType();
             var a = t.Attributes;
             uint block = ch * bits / 8;
-            bool lossless = _info.Codec is AudioCodec.Alac or AudioCodec.Flac;
-            if (!lossless) a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
+            var codec = _info.Codec;
+            bool alac = codec == AudioCodec.Alac, flac = codec == AudioCodec.Flac, mp3 = codec == AudioCodec.Mp3;
+            if (!alac) a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
             a.Set(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, block * rate);
             a.Set(MF_MT_AUDIO_BITS_PER_SAMPLE, bits);
             a.Set(MF_MT_AUDIO_BLOCK_ALIGNMENT, block);
+            // the speakers: FLAC's always, MP3's of its float types
+            if (flac || mp3 && fl) a.Set(MF_MT_AUDIO_CHANNEL_MASK, Source.AudioConverter.Mask((int)ch));
             a.Set(MF_MT_AUDIO_NUM_CHANNELS, ch);
-            if (!lossless) a.Set(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1u);
+            if (!alac && !flac && !(mp3 && fl)) a.Set(MF_MT_AUDIO_PREFER_WAVEFORMATEX, 1u);
             a.Set(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
-            if (lossless && !fl) a.Set(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE, bits);
+            if ((alac || flac) && !fl) a.Set(MF_MT_AUDIO_VALID_BITS_PER_SAMPLE, bits);
             a.Set(MF.MF_MT_MAJOR_TYPE, MFMediaType_Audio);
             a.Set(MF.MF_MT_SUBTYPE, fl ? MediaFormats.Float : MediaFormats.PCM);
             return t;
         }
 
         /// <summary>
-        /// Float, then 16-bit PCM; of FLAC the stream's bits besides; of ALAC the stream's PCM alone (Windows' reader
-        /// converts ALAC to float and to other bits after the decoder, its durations rounded where the decoder's are not).
+        /// The output types in Windows' order. AAC (and Opus): float, 16-bit PCM. MP3: float, 16 and 8-bit PCM, of the
+        /// stream's channels and then of one. FLAC and ALAC: the stream's PCM alone (Windows' reader converts after them).
         /// </summary>
-        private (bool Float, uint Bits)[] Outputs()
+        private (bool Float, uint Bits, uint Channels)[] Outputs()
         {
-            uint bits = Format().Bits;
-            if (_info.Codec == AudioCodec.Alac) return new[] { (false, bits) };
-            return _info.Codec == AudioCodec.Flac && bits != 16 ? new[] { (true, 32u), (false, bits), (false, 16u) } : new[] { (true, 32u), (false, 16u) };
+            var (_, ch, bits) = Format();
+            return _info.Codec switch
+            {
+                AudioCodec.Alac or AudioCodec.Flac => new[] { (false, bits, 0u) },
+                AudioCodec.Mp3 when ch == 2 => new[] { (true, 32u, 0u), (false, 16u, 0u), (false, 8u, 0u), (true, 32u, 1u), (false, 16u, 1u), (false, 8u, 1u) },
+                AudioCodec.Mp3 => new[] { (true, 32u, 0u), (false, 16u, 0u), (false, 8u, 0u) },
+                _ => new[] { (true, 32u, 0u), (false, 16u, 0u) },
+            };
         }
 
         [UnmanagedCallersOnly]
@@ -223,7 +242,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 if (d._in == null) return MF.MF_E_TRANSFORM_TYPE_NOT_SET;
                 var outs = d.Outputs();
                 if (i >= outs.Length) return MF.MF_E_NO_MORE_TYPES;
-                *type = d.OutputType(outs[i].Float, outs[i].Bits).Pointer;
+                *type = d.OutputType(outs[i].Float, outs[i].Bits, outs[i].Channels).Pointer;
             }
             return MF.S_OK;
         }
@@ -244,6 +263,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 d._in?.Release(); d._in = t;
                 d._out?.Release(); d._out = null;
                 d.Reset();
+                // a byte stream (Windows' ADTS, MP3 and FLAC sources), not packets: the frames found here
+                d._packets = d._info.Codec switch
+                {
+                    AudioCodec.AAC when t.Attributes.U32(Source.SR.MF_MT_AAC_PAYLOAD_TYPE) == 1 => new Packetizer(Packetizer.Kind.Adts),
+                    AudioCodec.Mp3 => new Packetizer(Packetizer.Kind.Mpeg),
+                    AudioCodec.Flac when t.Attributes.Get(Source.FlacContainer.FlacMetadataAttribute) != null => new Packetizer(Packetizer.Kind.Flac),
+                    _ => null,
+                };
             }
             return MF.S_OK;
         }
@@ -262,13 +289,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 bool fl = t.Subtype == MediaFormats.Float;
                 uint bits = t.Attributes.U32(MF_MT_AUDIO_BITS_PER_SAMPLE, fl ? 32u : 16u);
                 var (rate, ch, _) = d.Format();
-                bool ok = t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == MFMediaType_Audio && Array.Exists(d.Outputs(), o => o.Float == fl && o.Bits == bits)
-                    && t.Attributes.U32(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate) == rate && t.Attributes.U32(MF_MT_AUDIO_NUM_CHANNELS, ch) == ch;
+                uint och = t.Attributes.U32(MF_MT_AUDIO_NUM_CHANNELS, ch);
+                bool ok = t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == MFMediaType_Audio && Array.Exists(d.Outputs(), o => o.Float == fl && o.Bits == bits && (o.Channels == 0 ? ch : o.Channels) == och)
+                    && t.Attributes.U32(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate) == rate;
                 t.Release();
                 if (!ok) return MF.MF_E_INVALIDMEDIATYPE;
                 if (test) return MF.S_OK;
                 d._out?.Release();
-                d._out = d.OutputType(fl, bits);
+                d._out = d.OutputType(fl, bits, och);
+                d._conv = null;
             }
             return MF.S_OK;
         }
@@ -323,7 +352,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             {
                 if (_decoder != null || _in == null) return _decoder;
                 var (rate, ch, _) = Format();
-                var cfg = _in.Attributes.Get(MF.MF_MT_USER_DATA)?.B ?? Array.Empty<byte>();
+                var cfg = _in.Attributes.Get(Source.FlacContainer.FlacMetadataAttribute)?.B ?? _in.Attributes.Get(MF.MF_MT_USER_DATA)?.B ?? Array.Empty<byte>();
                 // AAC's user data: HEAACWAVEINFO's 12 bytes, then the AudioSpecificConfig
                 if (_info.Codec == AudioCodec.AAC) cfg = cfg.Length > 12 ? cfg.AsSpan(12).ToArray() : cfg;
                 _decoder = PlatformAudioDecoder.Create(_info.Codec, new AudioDecoderOptions { Channels = ch, SampleRate = rate, Config = cfg.Length > 0 ? cfg : null });
@@ -355,10 +384,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 {
                     case 0:                                   // MFT_MESSAGE_COMMAND_FLUSH
                         d._decoder?.Flush();
+                        d._packets?.Reset();
+                        d._inFrames = d._decodedFrames = 0; d._delayLeft = 528;
                         d._ready.Clear();
                         d._t0 = null; d._frames = 0; d._draining = false;
                         return MF.S_OK;
                     case 1:                                   // MFT_MESSAGE_COMMAND_DRAIN
+                        if (d._packets != null && d._decoder != null) foreach (var frame in d._packets.Push(ReadOnlySpan<byte>.Empty, end: true)) d._decoder.Push(frame, 0);
                         d._decoder?.BeginDrain();
                         d._draining = true;
                         return MF.S_OK;
@@ -397,7 +429,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                         if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(sample, 35))(sample, &t) >= 0) time = t;
                     }
                     d._t0 ??= time;
-                    dec.Push(bytes, time);
+                    if (d._packets != null)
+                        foreach (var frame in d._packets.Push(bytes))
+                        {
+                            if (d._info.Codec == AudioCodec.Mp3 && Source.Mp3Container.Header(frame, out _, out _, out int fch, out _, out int spf))
+                            {
+                                d._inFrames += spf;
+                                // a Xing / Info frame (an encoder's header, no sound): Windows decodes it as a frame of silence; some
+                                // decoders (GStreamer's) drop it, so it is silence here, whichever the decoder
+                                if (IsXing(frame, fch))
+                                {
+                                    if (d._channels == 0) { d._channels = dec.Channels; d._rate = dec.SampleRate; d._bits = dec.BitsPerSample; }
+                                    d._ready.Enqueue(new byte[spf * d._channels * d._bits / 8]);
+                                    continue;
+                                }
+                            }
+                            dec.Push(frame, time);
+                        }
+                    else dec.Push(bytes, time);
                 }
                 return MF.S_OK;
             }
@@ -423,13 +472,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     IntPtr sample = *(IntPtr*)(buffers + IntPtr.Size);
                     if (sample == IntPtr.Zero) return MF.E_INVALIDARG;
                     var pcm = d._ready.Dequeue();
+                    // MP3: Windows' decoder hands out 528 frames fewer than the frames hold: its delay, left out at the start and
+                    // not flushed at the end (where the decoder keeps it, the first 528 are dropped here)
+                    if (d._info.Codec == AudioCodec.Mp3 && d._channels > 0)
+                    {
+                        int fb = (int)(d._channels * d._bits / 8);
+                        if (d._decoder is { DropsMp3Delay: false } && d._delayLeft > 0)
+                        {
+                            int cut = (int)Math.Min(d._delayLeft, pcm.Length / fb);
+                            pcm = pcm.AsSpan(cut * fb).ToArray();
+                            d._delayLeft -= cut;
+                            if (pcm.Length == 0) return MF.MF_E_TRANSFORM_NEED_MORE_INPUT;
+                        }
+                        long room = Math.Max(0, d._inFrames - 528 - d._decodedFrames);
+                        long have = pcm.Length / fb;
+                        if (have > room) pcm = pcm.AsSpan(0, (int)(room * fb)).ToArray();
+                        d._decodedFrames += Math.Min(have, room);
+                        if (pcm.Length == 0) return d.Pending() ? MF.MF_E_TRANSFORM_NEED_MORE_INPUT : MF.MF_E_TRANSFORM_NEED_MORE_INPUT;
+                    }
                     var bytes = d.Convert(pcm, out long frames);
                     long rate = d._rate == 0 ? 44100 : d._rate;
                     long t = d._t0 ?? 0;
                     long time = t + d._frames * 10_000_000 / rate;
                     long duration = d._info.Codec == AudioCodec.AAC ? (frames * 10_000_000 + rate / 2) / rate : frames * 10_000_000 / rate;
                     d._frames += frames;
-                    int hr = Write(sample, bytes, time, duration, d._discontinuity && d._info.Codec != AudioCodec.AAC);
+                    int hr = Write(sample, bytes, time, duration, d._discontinuity && d._info.Codec != AudioCodec.AAC, d._info.Codec != AudioCodec.Flac);
                     d._discontinuity = false;
                     return hr;
                 }
@@ -437,35 +504,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             catch (Exception e) { D3DLog.Error("IMFTransform.ProcessOutput (audio)", e); return MF.E_FAIL; }
         }
 
-        /// <summary>The decoder's PCM as the output type: 16 or 24 bit integers, or 32-bit float.</summary>
+        /// <summary>The decoder's PCM as the output type: its sample format and channels.</summary>
         private byte[] Convert(byte[] pcm, out long frames)
         {
             bool fromFloat = _bits == 32 && _info.Codec == AudioCodec.Opus;
-            int inBytes = (int)_bits / 8;
-            int n = pcm.Length / inBytes;
-            frames = n / Math.Max(1, (int)_channels);
+            frames = pcm.Length / Math.Max(1, (int)(_channels * _bits / 8));
             bool toFloat = _out!.Subtype == MediaFormats.Float;
-            uint outBits = _out.Attributes.U32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
-            if (toFloat == fromFloat && outBits == _bits) return pcm;
-            var o = new byte[n * (int)outBits / 8];
-            for (int i = 0; i < n; i++)
-            {
-                double v = fromFloat ? BitConverter.ToSingle(pcm, i * 4)
-                    : inBytes == 2 ? BitConverter.ToInt16(pcm, i * 2) / 32768.0
-                    : inBytes == 3 ? (pcm[i * 3] | pcm[i * 3 + 1] << 8 | (sbyte)pcm[i * 3 + 2] << 16) / 8388608.0
-                    : BitConverter.ToInt32(pcm, i * 4) / 2147483648.0;
-                if (toFloat) BitConverter.TryWriteBytes(o.AsSpan(i * 4), (float)v);
-                else if (outBits == 16) BitConverter.TryWriteBytes(o.AsSpan(i * 2), (short)Math.Clamp(Math.Round(v * 32768), -32768, 32767));
-                else
-                {
-                    int x = (int)Math.Clamp(Math.Round(v * 8388608), -8388608, 8388607);
-                    o[i * 3] = (byte)x; o[i * 3 + 1] = (byte)(x >> 8); o[i * 3 + 2] = (byte)(x >> 16);
-                }
-            }
-            return o;
+            uint outBits = _out.Attributes.U32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16), outCh = _out.Attributes.U32(MF_MT_AUDIO_NUM_CHANNELS, _channels);
+            if (toFloat == fromFloat && outBits == _bits && outCh == _channels) return pcm;
+            _conv ??= new Source.AudioConverter(fromFloat, (int)_bits, (int)_channels, (int)_rate, toFloat, (int)outBits, (int)outCh, (int)_rate);
+            return _conv.Convert(pcm);
         }
 
-        private static int Write(IntPtr sample, byte[] bytes, long time, long duration, bool discontinuity)
+        private Source.AudioConverter? _conv;
+
+        /// <summary>Whether an MPEG audio frame is a Xing or Info header: the tag after the side information.</summary>
+        private static bool IsXing(byte[] f, int channels)
+        {
+            bool mpeg1 = ((f[1] >> 3) & 3) == 3;
+            int side = mpeg1 ? (channels == 1 ? 17 : 32) : (channels == 1 ? 9 : 17);
+            int at = 4 + side;
+            if (at + 4 > f.Length) return false;
+            var tag = f.AsSpan(at, 4);
+            return tag.SequenceEqual("Xing"u8) || tag.SequenceEqual("Info"u8);
+        }
+
+        private static int Write(IntPtr sample, byte[] bytes, long time, long duration, bool discontinuity, bool cleanPoint = true)
         {
             IntPtr buf;
             int hr = ((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(sample, 40))(sample, 0, &buf);
@@ -487,7 +551,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             ((delegate* unmanaged<IntPtr, long, int>)Com.Fn(sample, 36))(sample, time);
             ((delegate* unmanaged<IntPtr, long, int>)Com.Fn(sample, 38))(sample, duration);
             var key = MF.MFSampleExtension_CleanPoint;
-            ((delegate* unmanaged<IntPtr, Guid*, uint, int>)Com.Fn(sample, 21))(sample, &key, 1);
+            if (cleanPoint) ((delegate* unmanaged<IntPtr, Guid*, uint, int>)Com.Fn(sample, 21))(sample, &key, 1);
             if (discontinuity) { key = MF.MFSampleExtension_Discontinuity; ((delegate* unmanaged<IntPtr, Guid*, uint, int>)Com.Fn(sample, 21))(sample, &key, 1); }
             return MF.S_OK;
         }
