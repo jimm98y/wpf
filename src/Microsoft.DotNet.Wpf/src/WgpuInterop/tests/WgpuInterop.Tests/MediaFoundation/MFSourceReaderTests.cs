@@ -43,8 +43,18 @@ namespace WgpuInterop.Tests.MediaFoundation
         /// The report of each file, as Windows' (in SourceReader.windows.txt) without its pipeline's own attributes: every line the
         /// same, and the samples each stream gives in the same order -- the order of a read of any stream between them aside.
         /// </summary>
-        [Fact]
-        public void TheReader_DoesWithEachFileWhatWindowsReaderDoes()
+        [Theory]
+        [InlineData("Url")]
+        [InlineData("Source")]
+        [InlineData("AppSource")]
+        public void TheReader_DoesWithEachFileWhatWindowsReaderDoes(string via)
+        {
+            MFReader.Via = Enum.Parse<MFReader.Way>(via);
+            try { Compare(); }
+            finally { MFReader.Via = MFReader.Way.Url; }
+        }
+
+        private static void Compare()
         {
             var windows = File.ReadAllLines(Path.Combine(AppContext.BaseDirectory, "MediaFoundation", "SourceReader.windows.txt"));
             var ours = new List<string>();

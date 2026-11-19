@@ -366,6 +366,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public override uint Characteristics => 0x6;
 
+        /// <summary>The source's streams in the file's order.</summary>
+        public override IEnumerable<Mp4Track> SourceOrder => Tracks.Where(t => (t.Audio || t.Video) && t.Samples.Count > 0);
+
+        public static readonly Guid MF_SD_MKV_UNKNOWN = new("1913678b-fc0f-44da-8f43-1ba3b526f4ae");
+        public override void Describe(Mp4Track t, MFAttributeStore a) => a.Set(MF_SD_MKV_UNKNOWN, 0u);
+
+        /// <summary>FLAC's header, a sample of its own, again after a seek.</summary>
+        public override int? SeekPrelude(Mp4Track t) => t.Samples.Count > 1 && t.Samples[1].Fragment == -2 ? 0 : null;
+
+        /// <summary>
+        /// From the video's key frame at or before the position (the position itself, of a file of no video): the video
+        /// from it, every other stream from its first sample at or after it.
+        /// </summary>
+        public override int SeekIndex(Mp4Track t, long hns)
+        {
+            long key = hns;
+            if (Tracks.FirstOrDefault(x => x.Video && x.Samples.Count > 0) is { } v)
+            {
+                key = v.Pts(v.Samples[0]);
+                foreach (var s in v.Samples) { long p = v.Pts(s); if (p > hns) break; if (s.Sync) key = p; }
+            }
+            if (t.Video) return base.SeekIndex(t, key);
+            int i = t.Samples.FindIndex(s => t.Pts(s) >= key);
+            return i < 0 ? t.Samples.Count : i;
+        }
+
         /// <summary>Matroska's blocks: a key frame a clean point; the discontinuity on the first, and on FLAC's first frame after its header.</summary>
         public override (bool CleanPoint, bool Discontinuity) SampleFlags(in Mp4Sample s, bool first) => (s.Sync, first || s.Fragment == -2);
     }

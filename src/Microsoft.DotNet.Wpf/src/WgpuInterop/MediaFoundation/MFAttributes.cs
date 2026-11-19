@@ -172,7 +172,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             switch (v.Type)
             {
                 case MF.VT_UI4: *(uint*)(pv + 8) = (uint)v.U; break;
-                case MF.VT_UI8: *(ulong*)(pv + 8) = v.U; break;
+                case MF.VT_UI8: case 20: *(ulong*)(pv + 8) = v.U; break;            // VT_I8 too (an event's time)
                 case MF.VT_R8: *(double*)(pv + 8) = v.D; break;
                 case MF.VT_CLSID:
                 {

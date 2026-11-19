@@ -18,7 +18,8 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - `MFCreateAttributes`, `MFCreateMediaType`, `MFCreateSample`;
   - `MFCreateMemoryBuffer`, `MFCreateAlignedMemoryBuffer`, `MFCreateDXGISurfaceBuffer`;
   - `MFCreateDXGIDeviceManager`, `MFTEnumEx`;
-  - `MFCreateSourceReaderFromURL`, `MFCreateSourceReaderFromByteStream`, `MFCreateFile` (mfreadwrite's and mfplat's);
+  - `MFCreateSourceReaderFromURL`, `MFCreateSourceReaderFromByteStream`, `MFCreateSourceReaderFromMediaSource`, `MFCreateFile` (mfreadwrite's and mfplat's);
+  - `MFCreateSourceResolver`, `MFCreateEventQueue`, `MFCreateMediaEvent`, `MFCreateStreamDescriptor`, `MFCreatePresentationDescriptor`;
   - `MFFrameRateToAverageTimePerFrame`, `MFAverageTimePerFrameToFrameRate`;
   - `MFCalculateImageSize`, `MFGetStrideForBitmapInfoHeader`, `MFCopyImage`.
 - **Objects:**
@@ -187,15 +188,72 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
 
 ## Media sources
 
-What a media source is described and talks by (`MFSourceObjects.cs`), for sources of the shim's own and of
-the application's: `MFCreateEventQueue` (`IMFMediaEventQueue`: events in order, waited for or handed to an
-`IMFAsyncCallback` as they come, one BeginGetEvent at a time, MF_E_SHUTDOWN after Shutdown),
-`MFCreateMediaEvent`, `MFCreateStreamDescriptor` (with its `IMFMediaTypeHandler`: the stream's types, a
-current type among them), `MFCreatePresentationDescriptor` (the streams, selected or not; a clone of its
-own selection). Their behaviour is Media Foundation's documented one, tested
-(`MFSourceObjectsProbe`); Windows' own could not be probed from the test process (its
-`QueueEventParamVar` and `QueueEventParamUnk`, and an unmatched `IsMediaTypeSupported`, fault when called so
-on ARM64).
+**The objects they are described and talk by** (`MFSourceObjects.cs`), for the shim's own sources and the
+application's:
+- `MFCreateEventQueue` (`IMFMediaEventQueue`): events in order, waited for or handed to an
+  `IMFAsyncCallback` as they come, one BeginGetEvent at a time, MF_E_SHUTDOWN after Shutdown;
+- `MFCreateMediaEvent`;
+- `MFCreateStreamDescriptor`, with its `IMFMediaTypeHandler`: the stream's types, a current type among them;
+- `MFCreatePresentationDescriptor`: the streams, selected or not; a clone of its own selection.
+
+These behave as Media Foundation documents (`MFSourceObjectsProbe`). Windows' own could not be probed from
+the test process: its `QueueEventParamVar` and `QueueEventParamUnk`, and an unmatched `IsMediaTypeSupported`,
+fault when called so on ARM64.
+
+**The source resolver and the sources of files** (`Source/MFMediaSource.cs`). Windows' were probed
+(`MFMediaSourceProbe`, the report in `MediaSource.windows.txt`); the shim's give the same report.
+- `MFCreateSourceResolver`: a media source of a URL (a file, http(s)) or of a byte stream; the byte stream
+  itself where only that is asked for (`MF_RESOLUTION_BYTESTREAM`). Failures are Windows' (0x80070002,
+  MF_E_UNSUPPORTED_BYTESTREAM_TYPE, MF_E_UNSUPPORTED_SCHEME), the object type left as it was.
+- **The presentation descriptor:** a copy each time it is asked for.
+  - MPEG-4: the audio streams first, numbered 1, 2, … in that order. Matroska: the file's order and
+    track numbers. FLAC's one stream is 0.
+  - Each stream has the reader's native type, current; ADTS's and WAV's have none current. ALAC has
+    its type again with the `WAVE_FORMAT_ALAC` subtype.
+  - The stream descriptors' attributes: an AAC file's iTunSMPB encoder delay and padding (0 of other
+    audio with iTunSMPB, and of WAV and FLAC), `MF_SD_LANGUAGE` of mdhd (a Macintosh code of English is
+    "en", "und" none), and an unnamed attribute of Matroska's.
+  - The presentation's attributes: those the reader gives, the MP3 file's time of last writing,
+    and an unnamed attribute of a fragmented MPEG-4 file's.
+- **Start:**
+  - On the source: MENewStream (or MEUpdatedStream) of each selected stream, then MESourceStarted.
+    It is MESourceSeeked when the source has been started already and Start gives a position.
+  - On each stream: MEStreamStarted (or MEStreamSeeked). Requests held while paused are answered then.
+  - The events carry the position, except MP3's source events and FLAC's events.
+- **RequestSample:**
+  - MEMediaSample with the sample; its token goes in `MFSampleExtension_Token`, which is set (empty) on
+    every sample except Matroska's.
+  - MPEG-4's H.264 and HEVC come in a buffer of the parameter sets, then a buffer for each NAL unit's
+    start code and one for its rest. The reader gives them as one buffer, as Windows' does.
+  - MEEndOfStream answers the request after the last sample. MP3 and FLAC send it with the last sample
+    and refuse requests beyond it. MEEndOfPresentation comes once every selected stream has ended.
+  - When a source restarts at the end, ADTS, MP3 and FLAC send MEEndOfStream again.
+- **Seeking:**
+  - MPEG-4 goes to the sync sample decoded at or before the position (by decode time, which matters
+    with B-frames).
+  - MP3 goes by bytes at the bitrate: the frame at or before that byte, its time taken from its offset.
+  - ADTS goes to the frame at or after the position, timed from the position.
+  - Matroska goes to the video's key frame at or before the position; the other streams resume from
+    their first sample at or after it, and FLAC's header comes again first.
+  - FLAC's source starts only at the beginning (MF_E_INVALIDREQUEST).
+- **Stop and Shutdown:** a request while stopped is MF_E_MEDIA_SOURCE_WRONGSTATE (MF_E_END_OF_STREAM
+  for MP3 and Matroska), and a deselected stream's is MF_E_SHUTDOWN (Matroska: MF_E_END_OF_STREAM). After
+  Shutdown everything gives MF_E_SHUTDOWN; a second Shutdown succeeds, except FLAC's and Matroska's.
+
+**The reader of a media source** (`MFCreateSourceReaderFromMediaSource`): the source's streams in its
+presentation descriptor's order. Windows' reader keeps that order, so the reader of a URL has it too; a
+Matroska file's video comes first. The reader shuts the source down when it is released, unless
+`MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN` is set. `GetServiceForStream` of
+MF_SOURCE_READER_MEDIASOURCE gives the source.
+- A source of the shim's own is read through its file.
+- An application's source is driven as Windows' reader drives one (`Source/ForeignSource.cs`):
+  - The handler's current type of each stream is its native type.
+  - Start (VT_EMPTY) comes at the first read, with the source's events up to MESourceStarted. A seek is
+    a Start at the position; a change of selection, a Start where the source is.
+  - Each sample is a RequestSample and its MEMediaSample. MEEndOfStream is the end.
+  - Stream ticks and format changes are not passed on yet.
+- The reader's report of every file is Windows' report the three ways: of the URL, of the resolver's
+  source, and of that source driven as an application's (`TheReader_DoesWithEachFileWhatWindowsReaderDoes`).
 
 ## The sink writer
 
@@ -253,8 +311,8 @@ on macOS and in the Ubuntu VM.
   Audio Encoder MFT"; the sink writer uses the system's encoders directly), and writing to an
   application's byte stream.
 - More of the source reader:
-  - more containers (WAV, MP3, ADTS, WebM/Matroska, ASF);
-  - reading from a media source (`MFCreateSourceReaderFromMediaSource`);
+  - more containers (ASF);
+  - stream ticks and format changes of an application's media source;
   - the application's transforms;
   - the RGB conversion of textures on the GPU (the shim's video processor).
 - The media session, and camera capture (`MFEnumDeviceSources`).

@@ -44,7 +44,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public static readonly Guid MF_SOURCE_READER_DISABLE_DXVA = new("aa456cfd-3943-4a1e-a77d-1838c0ea2e35"), MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING = new("fb394f3d-ccf1-42ee-bbb3-f9b845d5681d");
         public static readonly Guid MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING = new("0f81da2c-b537-4672-a8b2-a681b17307a3"), MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS = new("6d23f5c8-c5d7-4a9b-9971-5d11f8bca880");
         public static readonly Guid MF_PD_DURATION = new("6c990d33-bb8e-477a-8598-0d5d96fcd88a"), MF_PD_TOTAL_FILE_SIZE = new("6c990d34-bb8e-477a-8598-0d5d96fcd88a"), MF_PD_MIME_TYPE = new("6c990d37-bb8e-477a-8598-0d5d96fcd88a");
-        public static readonly Guid MF_PD_AUDIO_ENCODING_BITRATE = new("6c990d35-bb8e-477a-8598-0d5d96fcd88a");
+        public static readonly Guid MF_PD_AUDIO_ENCODING_BITRATE = new("6c990d35-bb8e-477a-8598-0d5d96fcd88a"), MF_PD_LAST_MODIFIED_TIME = new("6c990d38-bb8e-477a-8598-0d5d96fcd88a");
         public static readonly Guid MF_SD_LANGUAGE = new("00af2180-bdc2-423c-abca-f503593bc121");
         public static readonly Guid MF_BYTESTREAM_ORIGIN_NAME = new("fc358288-3cb6-460c-a424-b6681260375a"), MF_BYTESTREAM_LAST_MODIFIED_TIME = new("fc35828b-3cb6-460c-a424-b6681260375a");
         public static readonly Guid MFT_CATEGORY_VIDEO_DECODER = new("d6c02d4b-6833-45b4-971a-05a4b04bab91"), MFT_CATEGORY_VIDEO_PROCESSOR = new("302ea3fc-aa5f-47f9-9f7a-c2188bb16302");
@@ -77,13 +77,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
     internal sealed unsafe class MFSourceReader : ComObject
     {
         private static readonly Vtable s_vt = Build();
-        private readonly MediaContainer _demux;
+        private readonly ReaderSource _source;
         private readonly List<ReaderStream> _streams = new();
         private readonly object _lock = new();
         private readonly IntPtr _callback;             // IMFSourceReaderCallback, AddRef'd
         private readonly IntPtr _manager;              // IMFDXGIDeviceManager, AddRef'd
         private readonly bool _videoProcessing;
-        private readonly long _fileSize;
         private bool _shutdown;
         private Thread? _worker;
         private readonly Queue<Action> _work = new();
@@ -109,26 +108,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             return vt;
         }
 
-        private MFSourceReader(MediaContainer demux, IntPtr attributes) : base(s_vt)
+        private MFSourceReader(ReaderSource source, IntPtr attributes) : base(s_vt)
         {
-            _demux = demux;
-            _fileSize = demux.Length;
+            _source = source;
             if (attributes != IntPtr.Zero)
             {
                 _callback = Unknown(attributes, SR.MF_SOURCE_READER_ASYNC_CALLBACK);
                 if (U32(attributes, SR.MF_SOURCE_READER_DISABLE_DXVA) == 0) _manager = Unknown(attributes, SR.MF_SOURCE_READER_D3D_MANAGER);
                 _videoProcessing = U32(attributes, SR.MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING) != 0 || U32(attributes, SR.MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING) != 0;
             }
-            // the audio tracks first, then the video ones; the first of each kind selected
             int index = 0;
-            foreach (var t in demux.Tracks.Where(t => t.Audio && t.Samples.Count > 0).Concat(demux.Tracks.Where(t => t.Video && t.Samples.Count > 0)))
-            {
-                var native = demux.Native(t);
-                if (native == null) continue;
-                bool first = !_streams.Any(s => s.Track.Handler == t.Handler);
-                _streams.Add(new ReaderStream(this, index++, t, native) { Selected = first });
-            }
+            foreach (var (feed, native, selected) in source.Streams())
+                _streams.Add(new ReaderStream(this, index++, feed, native) { Selected = selected });
         }
+
+        /// <summary>A reader of the source (its own from here on).</summary>
+        public static MFSourceReader Over(ReaderSource source, IntPtr attributes) => new(source, attributes);
 
         public static int Create(IByteSource src, IntPtr attributes, out MFSourceReader? reader)
         {
@@ -137,7 +132,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             try { d = MediaContainer.Open(src); }
             catch (Exception e) { src.Dispose(); D3DLog.Once("mf-file:" + e.GetType().Name, "Media Foundation: the file is not read: " + e.Message); return SR.MF_E_UNSUPPORTED_FORMAT; }
             if (d == null) { src.Dispose(); return SR.MF_E_UNSUPPORTED_BYTESTREAM_TYPE; }
-            reader = new MFSourceReader(d, attributes);
+            reader = new MFSourceReader(new ContainerSource(d), attributes);
             if (reader._streams.Count == 0) D3DLog.Once("mf-mp4-nostreams", "Media Foundation: the MPEG-4 file has no audio or video the source reader reads");
             return MF.S_OK;
         }
@@ -151,7 +146,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             }
             _worker?.Join(2000);
             foreach (var s in _streams) s.Dispose();
-            _demux.Dispose();
+            _source.Dispose();
             Com.Release(_callback);
             Com.Release(_manager);
         }
@@ -169,13 +164,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public bool VideoProcessing => _videoProcessing;
         public IntPtr Manager => _manager;
-        public MediaContainer Demuxer => _demux;
 
         /// <summary>The stream an index names: a stream's, the first video or audio stream's.</summary>
         private ReaderStream? StreamOf(uint i) => i switch
         {
-            SR.FIRST_VIDEO => _streams.FirstOrDefault(s => s.Track.Video),
-            SR.FIRST_AUDIO => _streams.FirstOrDefault(s => s.Track.Audio),
+            SR.FIRST_VIDEO => _streams.FirstOrDefault(s => s.Video),
+            SR.FIRST_AUDIO => _streams.FirstOrDefault(s => s.Audio),
             _ => i < _streams.Count ? _streams[(int)i] : null,
         };
 
@@ -199,9 +193,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (R(self) is not { } r) return MF.E_POINTER;
             lock (r._lock)
             {
-                if (i is SR.ANY or SR.MEDIASOURCE) { foreach (var s in r._streams) s.Selected = selected != 0; return MF.S_OK; }
+                if (i is SR.ANY or SR.MEDIASOURCE) { foreach (var s in r._streams) { s.Selected = selected != 0; r._source.Select(s.Index, s.Selected); } return MF.S_OK; }
                 if (r.StreamOf(i) is not { } st) return MF.MF_E_INVALIDSTREAMNUMBER;
                 st.Selected = selected != 0;
+                r._source.Select(st.Index, st.Selected);
             }
             return MF.S_OK;
         }
@@ -290,7 +285,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             {
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
                 if (n != 0 || s.Decoder == null) return MF.MF_E_INVALIDINDEX;
-                if (category != null) *category = s.Track.Audio ? MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER : SR.MFT_CATEGORY_VIDEO_DECODER;
+                if (category != null) *category = s.Audio ? MFAudioDecoder.MFT_CATEGORY_AUDIO_DECODER : SR.MFT_CATEGORY_VIDEO_DECODER;
                 *transform = s.Decoder.AddRefPointer();
             }
             return MF.S_OK;
@@ -303,7 +298,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             *obj = IntPtr.Zero;
             lock (r._lock)
             {
-                if (i == SR.MEDIASOURCE) return MF.E_NOINTERFACE;
+                if (i == SR.MEDIASOURCE)
+                {
+                    // the media source itself (GUID_NULL), where the reader is of one
+                    if (service != null && *service != Guid.Empty || r._source.MediaSource == IntPtr.Zero) return MF.E_NOINTERFACE;
+                    int h = Com.QueryInterface(r._source.MediaSource, *riid, out var src);
+                    *obj = src;
+                    return h;
+                }
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
                 // GUID_NULL: the object itself, the stream's decoder
                 if (service != null && *service != Guid.Empty || s.Decoder == null) return MF.E_NOINTERFACE;
@@ -322,8 +324,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             {
                 if (i == SR.MEDIASOURCE)
                 {
-                    if (*key == SR.MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS) v = MFValue.Of(r._demux.Characteristics);
-                    else v = r._demux.Presentation(*key);
+                    if (*key == SR.MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS) v = MFValue.Of(r._source.Characteristics);
+                    else v = r._source.Presentation(*key);
                 }
                 else
                 {
@@ -347,6 +349,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             lock (r._lock)
             {
                 if (r._pending > 0) return SR.MF_E_INVALIDREQUEST;                       // asynchronous reads not yet answered
+                int sh = r._source.Seek(t);
+                if (sh < 0) return sh;
                 foreach (var s in r._streams) s.Seek(t);
             }
             return MF.S_OK;

@@ -15,6 +15,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs;
@@ -71,6 +72,47 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// <summary>MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS: CAN_SEEK | CAN_PAUSE | DOES_NOT_USE_NETWORK.</summary>
         public virtual uint Characteristics => 0x86;
 
+        /// <summary>The streams of the file's media source, in its order: the audio first, then the video.</summary>
+        public virtual IEnumerable<Mp4Track> SourceOrder => Tracks.Where(t => t.Audio && t.Samples.Count > 0).Concat(Tracks.Where(t => t.Video && t.Samples.Count > 0));
+
+        /// <summary>A stream's identifier in the source's presentation descriptor.</summary>
+        public virtual uint StreamId(Mp4Track t, int index) => t.Id;
+
+        /// <summary>A stream descriptor's attributes.</summary>
+        public virtual void Describe(Mp4Track t, MFAttributeStore a) { }
+
+        /// <summary>The types of a stream besides its native one.</summary>
+        public virtual IEnumerable<MFMediaType> MoreTypes(Mp4Track t, MFMediaType native) { yield break; }
+
+        /// <summary>The source's type handlers have the type current (not ADTS's and WAV's: MF_E_NOT_INITIALIZED).</summary>
+        public virtual bool TypeCurrent => true;
+
+        /// <summary>The sample to go on from at a position: the sync sample at or before it (in a fragmented file, its fragment's first).</summary>
+        public virtual int SeekIndex(Mp4Track t, long hns)
+        {
+            var s = t.Samples;
+            int at = 0;
+            bool anySync = s.Exists(x => x.Sync);
+            for (int i = 0; i < s.Count; i++)
+            {
+                if (t.Pts(s[i]) > hns) break;
+                if (s[i].Sync || !anySync) at = i;
+            }
+            if (s.Count > 0 && s[at].Fragment >= 0)
+            {
+                int f = s[at].Fragment;
+                int first = s.FindIndex(x => x.Fragment == f && x.Sync);
+                if (first >= 0) at = first;
+            }
+            return at;
+        }
+
+        /// <summary>A sample a seek hands out before the one it goes on from (Matroska's FLAC header), or none.</summary>
+        public virtual int? SeekPrelude(Mp4Track t) => null;
+
+        /// <summary>Of a file on disk, its last write: MF_PD_LAST_MODIFIED_TIME's FILETIME.</summary>
+        protected MFValue? LastWrite() => Src is FileByteSource f && File.Exists(f.Path) ? MFValue.Of(BitConverter.GetBytes(File.GetLastWriteTimeUtc(f.Path).ToFileTimeUtc())) : null;
+
         /// <summary>What a sample carries: a clean point, a discontinuity (the first, and the first after a seek).</summary>
         public virtual (bool CleanPoint, bool Discontinuity) SampleFlags(in Mp4Sample s, bool first) => (s.Sync, first);
 
@@ -96,6 +138,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
     internal sealed class WavContainer : MediaContainer
     {
+        public override void Describe(Mp4Track t, MFAttributeStore a) { a.Set(Mp4Demuxer.MF_SD_AUDIO_ENCODER_PADDING, 0u); a.Set(Mp4Demuxer.MF_SD_AUDIO_ENCODER_DELAY, 0u); }
+        public override bool TypeCurrent => false;
+
         private readonly Mp4Track _t;
         private readonly int _block, _rate, _channels, _bits;
         private readonly ushort _tag;
@@ -170,8 +215,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
     internal sealed class Mp3Container : MediaContainer
     {
+        private static readonly Guid MF_PD_MP3_UNKNOWN = new("33026ee0-e387-4582-ae0a-34a2ad3baa18");
+
         private int _rate, _channels, _bitrate, _firstSize;
         private long _audioEnd;
+        private readonly List<(long Offset, int Length)> _frames = new();
+        private long _frameHns = 1;
 
         private Mp3Container(IByteSource src) : base(src) { }
 
@@ -205,10 +254,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             var tag = end >= 128 ? c.ReadAt(end - 128, 3) : Array.Empty<byte>();
             if (tag.AsSpan().SequenceEqual("TAG"u8)) end -= 128;
             c._audioEnd = end;
-            // the frames: whole frames to 8 KB a sample, each sample's frames counted
+            // the frames
             Mp4Track? t = null;
-            long sampleAt = at, frames = 0, dts = 0;
-            int sampleSize = 0, frameSamples = 1152;
             while (at + 4 <= end)
             {
                 var h = c.ReadAt(at, 4);
@@ -218,18 +265,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     t = c.AudioTrack(".mp3", rate, ch, 16); c._rate = rate; c._channels = ch; c._bitrate = br; c._firstSize = len;
                     // times in 100 ns units: each frame's duration rounded down, summed (as Windows' MP3 source counts them)
                     t.Timescale = 10_000_000;
-                    frameSamples = (int)((long)ns * 10_000_000 / rate);
+                    c._frameHns = (long)ns * 10_000_000 / rate;
                 }
-                if (sampleSize + len > 8192 && sampleSize > 0)
-                {
-                    t.Samples.Add(new Mp4Sample { Offset = sampleAt, Size = sampleSize, Dts = dts, Duration = (uint)(frames * frameSamples), Sync = t.Samples.Count == 0, Fragment = -1 });
-                    dts += frames * frameSamples; sampleAt = at; sampleSize = 0; frames = 0;
-                }
-                sampleSize += len; frames++; at += len;
+                c._frames.Add((at, len));
+                at += len;
             }
             if (t == null) { c.Dispose(); return null; }
-            if (sampleSize > 0) t.Samples.Add(new Mp4Sample { Offset = sampleAt, Size = sampleSize, Dts = dts, Duration = (uint)(frames * frameSamples), Sync = t.Samples.Count == 0, Fragment = -1 });
+            c.Chunk(t, 0, 0);
             return c;
+        }
+
+        /// <summary>The samples from a frame on: whole frames to 8 KB a sample, the first a clean point.</summary>
+        private void Chunk(Mp4Track t, int first, long dts)
+        {
+            t.Samples.Clear();
+            long sampleAt = first < _frames.Count ? _frames[first].Offset : 0, frames = 0;
+            int sampleSize = 0;
+            for (int i = first; i < _frames.Count; i++)
+            {
+                var (off, len) = _frames[i];
+                if (sampleSize + len > 8192 && sampleSize > 0)
+                {
+                    t.Samples.Add(new Mp4Sample { Offset = sampleAt, Size = sampleSize, Dts = dts, Duration = (uint)(frames * _frameHns), Sync = t.Samples.Count == 0, Fragment = -1 });
+                    dts += frames * _frameHns; sampleAt = off; sampleSize = 0; frames = 0;
+                }
+                sampleSize += len; frames++;
+            }
+            if (sampleSize > 0) t.Samples.Add(new Mp4Sample { Offset = sampleAt, Size = sampleSize, Dts = dts, Duration = (uint)(frames * _frameHns), Sync = t.Samples.Count == 0, Fragment = -1 });
+        }
+
+        /// <summary>
+        /// Windows' MP3 source seeks by bytes: the frame at or before the position's byte at the bitrate, its time its
+        /// bytes from the first frame at the bitrate; the samples from it chunked anew.
+        /// </summary>
+        public override int SeekIndex(Mp4Track t, long hns)
+        {
+            int k = 0;
+            if (hns > 0 && _frames.Count > 0)
+            {
+                long first = _frames[0].Offset, target = first + (long)((Int128)hns * _bitrate / 8 / 10_000_000);
+                while (k + 1 < _frames.Count && _frames[k + 1].Offset <= target) k++;
+            }
+            long dts = k == 0 ? 0 : (long)((Int128)(_frames[k].Offset - _frames[0].Offset) * 8 * 10_000_000 / Math.Max(1, _bitrate));
+            Chunk(t, k, dts);
+            return 0;
         }
 
         public override MFMediaType? Native(Mp4Track t)
@@ -256,6 +335,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (key == SR.MF_PD_TOTAL_FILE_SIZE) return MFValue.Of((ulong)Length);
             if (key == SR.MF_PD_MIME_TYPE) return MFValue.Of("audio/mpeg");
             if (key == SR.MF_PD_AUDIO_ENCODING_BITRATE) return MFValue.Of((uint)_bitrate);
+            if (key == MF_PD_MP3_UNKNOWN) return MFValue.Of(0u);
+            if (key == SR.MF_PD_LAST_MODIFIED_TIME) return LastWrite();
             return null;
         }
 
@@ -282,8 +363,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
     internal sealed class AdtsContainer : RawContainer
     {
+        public override bool TypeCurrent => false;
+
         private readonly int _rate, _channels, _profile, _frames;
-        private readonly long _bytes;
+        private readonly long _bytes, _perFrame;
+        private readonly List<long> _starts;
         private readonly byte[] _asc;
         private static readonly int[] s_rates = { 96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350 };
 
@@ -312,8 +396,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             var t = AudioTrack("adts", _rate, _channels, 16);
             // times in 100 ns units: each frame's duration rounded down, summed (as Windows' ADTS source counts them)
             t.Timescale = 10_000_000;
-            long perFrame = 1024L * 10_000_000 / _rate;
-            Chunks(t, 0, o => { int i = starts.BinarySearch(o); return (i >= 0 ? i : ~i) * perFrame; }, true);
+            _perFrame = 1024L * 10_000_000 / _rate;
+            _starts = starts;
+            Chunks(t, 0, o => { int i = starts.BinarySearch(o); return (i >= 0 ? i : ~i) * _perFrame; }, true);
+        }
+
+        /// <summary>Windows' ADTS source seeks to the frame at or after the position, the samples' time from the position.</summary>
+        public override int SeekIndex(Mp4Track t, long hns)
+        {
+            int k = hns <= 0 ? 0 : (int)Math.Min(_starts.Count, (hns + _perFrame - 1) / _perFrame);
+            t.Samples.Clear();
+            if (k >= _starts.Count) return 0;
+            long t0 = k == 0 ? 0 : hns;
+            Chunks(t, _starts[k], o => { int i = _starts.BinarySearch(o); return t0 + ((i >= 0 ? i : ~i) - k) * _perFrame; }, true);
+            return 0;
         }
 
         private uint Bitrate => _frames == 0 ? 0 : (uint)((Int128)_bytes * 8 * _rate / (_frames * 1024L));
@@ -350,6 +446,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
     internal sealed class FlacContainer : RawContainer
     {
+        public override void Describe(Mp4Track t, MFAttributeStore a) { a.Set(Mp4Demuxer.MF_SD_AUDIO_ENCODER_PADDING, 0u); a.Set(Mp4Demuxer.MF_SD_AUDIO_ENCODER_DELAY, 0u); }
+        public override uint StreamId(Mp4Track t, int index) => 0;
+
         private readonly int _rate, _channels, _bits, _maxBlock;
         private readonly byte[] _metadata;
         public static readonly Guid MF_MT_AUDIO_FLAC_MAX_BLOCK_SIZE = new("8b81adae-4b5a-4d40-8022-f38d09ca3c5c");

@@ -169,29 +169,33 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return url;
         }
 
-        [Win32Export("MFCreateSourceReaderFromURL")]
-        public static int MFCreateSourceReaderFromURL(char* url, IntPtr attributes, IntPtr* reader)
+        /// <summary>The bytes of a URL: an http(s): one as Windows' network byte stream reads it, else a file's.</summary>
+        internal static int OpenUrl(string text, out Source.IByteSource? src)
         {
-            if (reader == null || url == null) return MF.E_POINTER;
-            *reader = IntPtr.Zero;
-            string text = new string(url);
-            Source.IByteSource src;
+            src = null;
             int hr;
-            // http: and https: as Windows' network byte stream reads them
             if (Uri.TryCreate(text, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
             {
                 hr = Source.HttpByteSource.Open(u, out var web);
                 if (hr < 0) return hr;
                 src = web!;
+                return MF.S_OK;
             }
-            else
-            {
-                string? path = PathOf(text, out hr);
-                if (path == null) return hr;
-                try { src = new Source.FileByteSource(path); }
-                catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
-            }
-            hr = Source.MFSourceReader.Create(src, attributes, out var r);
+            string? path = PathOf(text, out hr);
+            if (path == null) return hr;
+            try { src = new Source.FileByteSource(path); }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateSourceReaderFromURL")]
+        public static int MFCreateSourceReaderFromURL(char* url, IntPtr attributes, IntPtr* reader)
+        {
+            if (reader == null || url == null) return MF.E_POINTER;
+            *reader = IntPtr.Zero;
+            int hr = OpenUrl(new string(url), out var src);
+            if (hr < 0) return hr;
+            hr = Source.MFSourceReader.Create(src!, attributes, out var r);
             if (hr >= 0) *reader = r!.Pointer;
             return hr;
         }
@@ -274,14 +278,52 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return MF.S_OK;
         }
 
+        [Win32Export("MFCreateSourceResolver")]
+        public static int MFCreateSourceResolver(IntPtr* resolver)
+        {
+            if (resolver == null) return MF.E_POINTER;
+            *resolver = new Source.MFSourceResolver().Pointer;
+            return MF.S_OK;
+        }
+
+        /// <summary>
+        /// A source reader of a media source: of the shim's own, over its file (shut down with the reader unless
+        /// MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN); of the application's, through its streams' events.
+        /// </summary>
         [Win32Export("MFCreateSourceReaderFromMediaSource")]
         public static int MFCreateSourceReaderFromMediaSource(IntPtr source, IntPtr attributes, IntPtr* reader)
         {
-            if (reader == null) return MF.E_POINTER;
+            if (reader == null || source == IntPtr.Zero) return MF.E_POINTER;
             *reader = IntPtr.Zero;
-            D3DLog.Once("mf-reader-source", "Media Foundation: MFCreateSourceReaderFromMediaSource takes no media source yet");
-            return MF.E_NOTIMPL;
+            bool disconnect = false;
+            if (attributes != IntPtr.Zero)
+            {
+                var k = Source.MS.MF_SOURCE_READER_DISCONNECT_MEDIASOURCE_ON_SHUTDOWN;
+                uint v;
+                disconnect = ((delegate* unmanaged<IntPtr, Guid*, uint*, int>)Com.Fn(attributes, 7))(attributes, &k, &v) >= 0 && v != 0;
+            }
+            try
+            {
+                Source.ReaderSource rs;
+                if (ComObject.From<Source.MFMediaSource>(source) is { } ours && !ForceForeignSource)
+                {
+                    if (ours.IsShutdown) return MF.MF_E_SHUTDOWN;
+                    rs = new Source.ContainerSource(ours.Container, ours, disconnect);
+                }
+                else
+                {
+                    int hr = Source.ForeignSource.Create(source, disconnect, out var fs);
+                    if (hr < 0) return hr;
+                    rs = fs!;
+                }
+                *reader = Source.MFSourceReader.Over(rs, attributes).Pointer;
+                return MF.S_OK;
+            }
+            catch (Exception e) { D3DLog.Error("MFCreateSourceReaderFromMediaSource", e); return MF.E_FAIL; }
         }
+
+        /// <summary>Tests: the shim's own sources read as the application's are (of the thread).</summary>
+        [ThreadStatic] internal static bool ForceForeignSource;
 
         /// <summary>A sink writer of an MP4 file (Sink/): of the URL's path, or of the shim's own file byte stream.</summary>
         [Win32Export("MFCreateSinkWriterFromURL")]

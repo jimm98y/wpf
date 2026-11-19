@@ -55,10 +55,33 @@ namespace WgpuInterop.Tests.MediaFoundation
             WinMFStartup(0x20070, 0);
         }
 
+        /// <summary>How Create makes a reader: of the URL; of the resolver's media source of it; of that source as of the application's (the shim's).</summary>
+        public enum Way { Url, Source, AppSource }
+        [ThreadStatic] public static Way Via;
+
+        [DllImport("mfreadwrite.dll", EntryPoint = "MFCreateSourceReaderFromMediaSource")] private static extern int WinReaderOfSource(IntPtr source, IntPtr attributes, IntPtr* reader);
+
         public static int Create(string path, IntPtr attributes, out IntPtr reader)
         {
             IntPtr r;
             int hr;
+            if (Via != Way.Url)
+            {
+                reader = IntPtr.Zero;
+                hr = MFMediaSourceProbe.CreateResolver(out var res);
+                if (hr < 0) return hr;
+                hr = MFMediaSourceProbe.FromUrl(res, path, 1, out _, out var obj);
+                Release(res);
+                if (hr < 0) return hr;
+                try
+                {
+                    MFExports.ForceForeignSource = Via == Way.AppSource;
+                    hr = OperatingSystem.IsWindows() ? WinReaderOfSource(obj, attributes, &r) : MFExports.MFCreateSourceReaderFromMediaSource(obj, attributes, &r);
+                }
+                finally { MFExports.ForceForeignSource = false; Release(obj); }
+                reader = hr >= 0 ? r : IntPtr.Zero;
+                return hr;
+            }
             if (OperatingSystem.IsWindows())
             {
                 CoInitializeEx(IntPtr.Zero, 0);

@@ -30,7 +30,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
     internal sealed class FileByteSource : IByteSource
     {
         private readonly Microsoft.Win32.SafeHandles.SafeFileHandle _file;
-        public FileByteSource(string path) { _file = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); Length = RandomAccess.GetLength(_file); }
+        public FileByteSource(string path) { _file = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); Length = RandomAccess.GetLength(_file); Path = path; }
+        public string Path { get; }
         public long Length { get; }
         public int Read(long offset, Span<byte> into)
         {
@@ -78,6 +79,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public uint EsdsBitrate;
         public int Channels, SampleRate, SampleBits;
         public int NalLength = 4;
+        /// <summary>mdhd's language: ISO 639-2/T packed, or (below 0x400) a Macintosh language code.</summary>
+        public ushort Language = 0x55C4;
+        /// <summary>iTunSMPB's encoder delay and padding (the file's, where it has one).</summary>
+        public (uint Delay, uint Padding)? Smpb;
         /// <summary>H.264's and H.265's parameter sets, without start codes, in order.</summary>
         public readonly List<byte[]> ParameterSets = new();
         public readonly List<Mp4Sample> Samples = new();
@@ -105,11 +110,95 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public override MFMediaType? Native(Mp4Track t) => Mp4Types.Native(t, this);
 
+        private (uint, uint)? _smpb;
+
+        /// <summary>iTunSMPB's delay and padding: " 00000000 DDDDDDDD PPPPPPPP ..." in a data box after the name.</summary>
+        private static (uint, uint)? ITunSmpb(ReadOnlySpan<byte> udta)
+        {
+            int i = udta.IndexOf("iTunSMPB"u8);
+            if (i < 0) return null;
+            int d = udta.Slice(i).IndexOf("data"u8);
+            if (d < 0 || i + d + 12 > udta.Length) return null;
+            int len = (int)BinaryPrimitives.ReadUInt32BigEndian(udta.Slice(i + d - 4)) - 16;
+            if (len <= 0 || i + d + 12 + len > udta.Length) return null;
+            var words = Encoding.ASCII.GetString(udta.Slice(i + d + 12, len)).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length < 3) return null;
+            try { return (Convert.ToUInt32(words[1], 16), Convert.ToUInt32(words[2], 16)); }
+            catch (FormatException) { return null; }
+        }
+
+        /// <summary>The source numbers its streams 1, 2, ... in its order (the audio first).</summary>
+        public override uint StreamId(Mp4Track t, int index) => (uint)index + 1;
+
+        /// <summary>
+        /// MF_SD_LANGUAGE of mdhd's language ("und" none; a Macintosh code of its language); with iTunSMPB, the encoder
+        /// delay and padding of AAC (0 of others).
+        /// </summary>
+        public override void Describe(Mp4Track t, MFAttributeStore a)
+        {
+            if (!t.Audio || _smpb is not { } smpb) return;
+            bool aac = t.Format == "mp4a" && t.ObjectType == 0x40;
+            a.Set(MF_SD_AUDIO_ENCODER_PADDING, aac ? smpb.Item2 : 0u);
+            a.Set(MF_SD_AUDIO_ENCODER_DELAY, aac ? smpb.Item1 : 0u);
+            if (LanguageOf(t.Language) is { } lang) a.Set(SR.MF_SD_LANGUAGE, MFValue.Of(lang));
+        }
+
+        public static readonly Guid MF_SD_AUDIO_ENCODER_PADDING = new("529c7f2c-ac4b-4e3f-bfc3-0902194982cb"), MF_SD_AUDIO_ENCODER_DELAY = new("8e85422c-73de-403f-9a35-550ad6e8b951");
+
+        private static readonly string[] s_mac = { "en", "fr", "de", "it", "nl", "sv", "es", "da", "pt", "no", "he", "ja", "ar", "fi", "el", "is", "mt", "tr", "hr", "zh" };
+        private static readonly Dictionary<string, string> s_iso = new()
+        {
+            ["eng"] = "en", ["fra"] = "fr", ["fre"] = "fr", ["deu"] = "de", ["ger"] = "de", ["ita"] = "it", ["nld"] = "nl", ["dut"] = "nl", ["swe"] = "sv", ["spa"] = "es",
+            ["dan"] = "da", ["por"] = "pt", ["nor"] = "no", ["heb"] = "he", ["jpn"] = "ja", ["ara"] = "ar", ["fin"] = "fi", ["ell"] = "el", ["gre"] = "el", ["tur"] = "tr",
+            ["zho"] = "zh", ["chi"] = "zh", ["rus"] = "ru", ["kor"] = "ko", ["pol"] = "pl", ["ces"] = "cs", ["cze"] = "cs", ["hun"] = "hu",
+        };
+
+        private static string? LanguageOf(ushort code)
+        {
+            if (code < 0x400) return code < s_mac.Length ? s_mac[code] : null;
+            var s = new string(new[] { (char)(((code >> 10) & 31) + 0x60), (char)(((code >> 5) & 31) + 0x60), (char)((code & 31) + 0x60) });
+            if (s == "und") return null;
+            return s_iso.TryGetValue(s, out var two) ? two : s;
+        }
+
+        /// <summary>The MPEG-4 source seeks by decode time: the sync sample decoded at or before the position.</summary>
+        public override int SeekIndex(Mp4Track t, long hns)
+        {
+            var s = t.Samples;
+            int at = 0;
+            bool anySync = s.Exists(x => x.Sync);
+            for (int i = 0; i < s.Count; i++)
+            {
+                if (t.Hns(s[i].Dts) > hns) break;
+                if (s[i].Sync || !anySync) at = i;
+            }
+            if (s.Count > 0 && s[at].Fragment >= 0)
+            {
+                int f = s[at].Fragment;
+                int first = s.FindIndex(x => x.Fragment == f && x.Sync);
+                if (first >= 0) at = first;
+            }
+            return at;
+        }
+
+        /// <summary>ALAC: its type again with the WAVE_FORMAT_ALAC subtype.</summary>
+        public override IEnumerable<MFMediaType> MoreTypes(Mp4Track t, MFMediaType native)
+        {
+            if (t.Format != "alac") yield break;
+            var alt = native.Clone();
+            alt.Attributes.Set(MF.MF_MT_SUBTYPE, new Guid("00006c61-0000-0010-8000-00aa00389b71"));
+            yield return alt;
+        }
+
+        /// <summary>An attribute of the presentation of a fragmented file (probed: its value a GUID of Windows').</summary>
+        public static readonly Guid MF_PD_FRAGMENTED = new("8910e321-4bbf-4c25-a760-6191b6f087c4");
+
         public override MFValue? Presentation(Guid key)
         {
             if (key == SR.MF_PD_DURATION) return MFValue.Of((ulong)Duration());
             if (key == SR.MF_PD_TOTAL_FILE_SIZE) return MFValue.Of((ulong)Length);
             if (key == SR.MF_PD_MIME_TYPE) return MFValue.Of(Tracks.Any(t => t.Video) ? "video/mp4" : "audio/mp4");
+            if (key == MF_PD_FRAGMENTED && Fragmented) return MFValue.Of(new Guid("9ba876f1-419f-4b77-a1e0-35959d9d4004"));
             return null;
         }
 
@@ -192,6 +281,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     if (MovieDuration == (v == 1 ? ulong.MaxValue : uint.MaxValue)) MovieDuration = 0;
                     if (MovieTimescale == 0) MovieTimescale = 1000;
                 }
+                else if (type == "udta") _smpb = ITunSmpb(m.AsSpan(s, n));
                 else if (type == "trak") Trak(m, s, s + n);
                 else if (type == "mvex")
                     foreach (var (t2, s2, n2) in Children(m, s, s + n))
@@ -257,6 +347,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 if (t.MediaDuration == (v == 1 ? ulong.MaxValue : uint.MaxValue)) t.MediaDuration = 0;
                 if (t.Timescale == 0) t.Timescale = 1;
             }
+            if (Find(m, s, e, "mdia", "mdhd") is { } ml) t.Language = BinaryPrimitives.ReadUInt16BigEndian(m.AsSpan(ml.Item2 + (m[ml.Item2] == 1 ? 32 : 20)));
             if (Find(m, s, e, "mdia", "hdlr") is { } hd) t.Handler = Encoding.ASCII.GetString(m, hd.Item2 + 8, 4);
             if (Find(m, s, e, "mdia", "minf", "stbl") is not { } stbl) return;
             int ss = stbl.Item2, se = stbl.Item2 + stbl.Item3;

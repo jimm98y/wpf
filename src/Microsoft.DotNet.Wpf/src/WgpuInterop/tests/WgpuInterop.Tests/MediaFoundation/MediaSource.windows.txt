@@ -1,0 +1,1581 @@
+==== plain
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 2780000 (0:2780000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 29157 (0:29157)
+  streams 2
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 0
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 128000
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[91] 0000005b7374736400000000000000010000004b6d703461000000000000000100000000000000000002001000000000ac440000000000276573647300000000...
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0000000000000000000000001210
+    current 0x00000000 MFAudioFormat_AAC
+  sd 1: id 2 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      8f020eea-1508-471f-9da6-507d7cfa40db = UI4 1
+      MF_MT_AVG_BITRATE = UI4 928000
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 274877906992 (64:48)
+      MF_MT_INTERLACE_MODE = UI4 7
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 66
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[132] 00000084737473640000000000000001000000746176633100000000000000010000000000000000000000000000000000400030004800000048000000000000...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[17] 0000016742c01eda11e400000168ce3c80
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      MF_MT_VIDEO_ROTATION = UI4 0
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 MFVideoFormat_H264
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=232199 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=464399 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 9 more samples, 81 bytes, last t=2554195, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 3 more samples, 13971 bytes, last t=2000000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2089795 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+  stream 2: request while stopped 0xc00d3e9b
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e85
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== fragmented
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd 8910e321-4bbf-4c25-a760-6191b6f087c4 = GUID 9ba876f1-419f-4b77-a1e0-35959d9d4004
+  pd MF_PD_DURATION = UI8 2780000 (0:2780000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 29653 (0:29653)
+  streams 2
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 0
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 128000
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[91] 0000005b7374736400000000000000010000004b6d703461000000000000000100000000000000000002001000000000ac440000000000276573647300000000...
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0000000000000000000000001210
+    current 0x00000000 MFAudioFormat_AAC
+  sd 1: id 2 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      8f020eea-1508-471f-9da6-507d7cfa40db = UI4 1
+      MF_MT_AVG_BITRATE = UI4 267050
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 274877906992 (64:48)
+      MF_MT_INTERLACE_MODE = UI4 7
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 66
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[132] 00000084737473640000000000000001000000746176633100000000000000010000000000000000000000000000000000400030004800000048000000000000...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[17] 0000016742c01eda11e400000168ce3c80
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      MF_MT_VIDEO_ROTATION = UI4 0
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 MFVideoFormat_H264
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=232199 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=464399 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 9 more samples, 81 bytes, last t=2553968, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 3 more samples, 13971 bytes, last t=2000000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1625170 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=1600000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857369 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+  stream 2: request while stopped 0xc00d3e9b
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e85
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== audio-trak-first
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 2780000 (0:2780000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 29157 (0:29157)
+  streams 2
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 0
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 128000
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[91] 0000005b7374736400000000000000010000004b6d703461000000000000000100000000000000000002001000000000ac440000000000276573647300000000...
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0000000000000000000000001210
+    current 0x00000000 MFAudioFormat_AAC
+  sd 1: id 2 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      8f020eea-1508-471f-9da6-507d7cfa40db = UI4 1
+      MF_MT_AVG_BITRATE = UI4 928000
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 274877906992 (64:48)
+      MF_MT_INTERLACE_MODE = UI4 7
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 66
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[132] 00000084737473640000000000000001000000746176633100000000000000010000000000000000000000000000000000400030004800000048000000000000...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[17] 0000016742c01eda11e400000168ce3c80
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      MF_MT_VIDEO_ROTATION = UI4 0
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 MFVideoFormat_H264
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=232199 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=464399 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 9 more samples, 81 bytes, last t=2554195, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 3 more samples, 13971 bytes, last t=2000000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2089795 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+  stream 2: request while stopped 0xc00d3e9b
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e85
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== audio-id-1
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 2780000 (0:2780000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 29157 (0:29157)
+  streams 2
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 0
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 128000
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[91] 0000005b7374736400000000000000010000004b6d703461000000000000000100000000000000000002001000000000ac440000000000276573647300000000...
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0000000000000000000000001210
+    current 0x00000000 MFAudioFormat_AAC
+  sd 1: id 2 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      8f020eea-1508-471f-9da6-507d7cfa40db = UI4 1
+      MF_MT_AVG_BITRATE = UI4 928000
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 274877906992 (64:48)
+      MF_MT_INTERLACE_MODE = UI4 7
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 66
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[132] 00000084737473640000000000000001000000746176633100000000000000010000000000000000000000000000000000400030004800000048000000000000...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[17] 0000016742c01eda11e400000168ce3c80
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      MF_MT_VIDEO_ROTATION = UI4 0
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 MFVideoFormat_H264
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=232199 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=464399 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 9 more samples, 81 bytes, last t=2554195, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 3 more samples, 13971 bytes, last t=2000000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2089795 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+  stream 2: request while stopped 0xc00d3e9b
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e85
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== audio-first-id-1
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 2780000 (0:2780000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 29157 (0:29157)
+  streams 2
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 0
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 128000
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[91] 0000005b7374736400000000000000010000004b6d703461000000000000000100000000000000000002001000000000ac440000000000276573647300000000...
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0000000000000000000000001210
+    current 0x00000000 MFAudioFormat_AAC
+  sd 1: id 2 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      8f020eea-1508-471f-9da6-507d7cfa40db = UI4 1
+      MF_MT_AVG_BITRATE = UI4 928000
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 274877906992 (64:48)
+      MF_MT_INTERLACE_MODE = UI4 7
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 66
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[132] 00000084737473640000000000000001000000746176633100000000000000010000000000000000000000000000000000400030004800000048000000000000...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[17] 0000016742c01eda11e400000168ce3c80
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      MF_MT_VIDEO_ROTATION = UI4 0
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 MFVideoFormat_H264
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=232199 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=464399 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 9 more samples, 81 bytes, last t=2554195, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 3 more samples, 13971 bytes, last t=2000000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=4657 buffers=3 0000016742c01eda11e40000... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[12] 0a0000000700000020120000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2089795 d=232199 size=9 buffers=1 210049900219002380 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+  stream 2: request while stopped 0xc00d3e9b
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e85
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== tone-aac.m4a
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 5572789 (0:5572789)
+  pd MF_PD_MIME_TYPE = STR "audio/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 7894 (0:7894)
+  streams 1
+  sd 0: id 1 selected 1
+    sd 529c7f2c-ac4b-4e3f-bfc3-0902194982cb = UI4 414
+    sd 8e85422c-73de-403f-9a35-550ad6e8b951 = UI4 2112
+    sd MF_SD_LANGUAGE = STR "en"
+    handler major MFMediaType_Audio types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 0
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 456
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 3648
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[118] 00000076737473640000000000000001000000666d703461000000000000000100000000000000000002001000000000ac440000000000336573647300000000...
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0000000000000000000000001210
+    current 0x00000000 MFAudioFormat_AAC
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=232199 size=6 buffers=1 21200340681c [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=232199 d=232199 size=218 buffers=1 214eeefff87ffd187e2e4452... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=464399 d=232199 size=232 buffers=1 216c08000bfffffffcc5990b... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 21 more samples, 3342 bytes, last t=5340589, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=232199 size=145 buffers=1 210c0810007ffffffc6d9c88... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2089795 d=232199 size=134 buffers=1 210c0810007ffffffc759920... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== tone-alac.m4a
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 2500000 (0:2500000)
+  pd MF_PD_MIME_TYPE = STR "audio/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 8755 (0:8755)
+  streams 1
+  sd 0: id 1 selected 1
+    sd 529c7f2c-ac4b-4e3f-bfc3-0902194982cb = UI4 0
+    sd 8e85422c-73de-403f-9a35-550ad6e8b951 = UI4 0
+    sd MF_SD_LANGUAGE = STR "en"
+    handler major MFMediaType_Audio types 2
+    type 0:
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 133764
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 1070112
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[88] 0000005873747364000000000000000100000048616c6163000000000000000100000000000000000002001000000000ac44000000000024616c616300000000...
+      MF_MT_SUBTYPE = GUID 616c6163-767a-494d-b478-f29d25dc9037
+      MF_MT_USER_DATA = BLOB[24] 000010000010280a0e0100ff000006be00020a840000ac44
+    type 1:
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 133764
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_AVG_BITRATE = UI4 1070112
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[88] 0000005873747364000000000000000100000048616c6163000000000000000100000000000000000002001000000000ac44000000000024616c616300000000...
+      MF_MT_SUBTYPE = GUID 00006c61-0000-0010-8000-00aa00389b71
+      MF_MT_USER_DATA = BLOB[24] 000010000010280a0e0100ff000006be00020a840000ac44
+    current 0x00000000 616c6163-767a-494d-b478-f29d25dc9037
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=928798 size=1716 buffers=1 000000000013080a0df93600... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=928798 d=928798 size=1726 buffers=1 000000000013080a0df93600... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=642403 size=1217 buffers=1 00001000001622000013080a... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 0 more samples, 0 bytes, last t=-1, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1857596 d=642403 size=1217 buffers=1 00001000001622000013080a... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEEndOfStream 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== tone.aac
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_AUDIO_ENCODING_BITRATE = UI4 50681
+  pd MF_PD_DURATION = UI8 6260457 (0:6260457)
+  pd MF_PD_MIME_TYPE = STR "audio/vnd.dlna.adts"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 3966 (0:3966)
+  streams 1
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 254
+      MF_MT_AAC_PAYLOAD_TYPE = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 6335
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      MF_MT_USER_DATA = BLOB[14] 0100fe0000000000000000001210
+    current 0xc00d36b6
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0xc00d3e84
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=5572776 size=3966 buffers=1 fff950a001a0002120034068... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: MEEndOfStream 0x00000000
+  stream 1: 0 more samples, 0 bytes, last t=-1, then request 0xc00d3e84
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=3482985 size=2646 buffers=1 fff950a011a000210c081000... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEEndOfStream 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== tone.flac
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x6
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 0 (0:0)
+  pd MF_PD_MIME_TYPE = STR "audio/flac"
+  streams 1
+  sd 0: id 0 selected 1
+    sd 529c7f2c-ac4b-4e3f-bfc3-0902194982cb = UI4 0
+    sd 8e85422c-73de-403f-9a35-550ad6e8b951 = UI4 0
+    handler major MFMediaType_Audio types 1
+    type 0:
+      3eadb782-73df-4c6c-bf3a-e31977954435 = BLOB[96] 0000002212001200000cdd000f6b0ac442f00000562295b15a7e3768b963e745f8fd410f595b84000036050000004170706c6501000000250000005741564546...
+      8b81adae-4b5a-4d40-8022-f38d09ca3c5c = UI4 4608
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 0
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID 0000f1ac-0000-0010-8000-00aa00389b71
+    current 0x00000000 0000f1ac-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 0
+  source: MESourceStarted 0x00000000
+  stream 0: MEStreamStarted 0x00000000
+  stream 0: request 0x00000000
+  stream 0: request 0xc00d3e84
+  stream 0: request 0xc00d3e84
+  stream 0: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=-1 size=18677 buffers=1 664c61430000002212001200... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_Discontinuity = UI4 1]
+  stream 0: MEEndOfStream 0x00000000
+  stream 0: 0 more samples, 0 bytes, last t=-1, then request 0xc00d3e84
+  stream 0: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0xc00d36b2
+  stream 0: request 0xc00d3e84
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 0: MEStreamPaused 0x00000000
+  stream 0: request while paused 0xc00d3e84
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 0
+  source: MESourceStarted 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  stream 0: MEStreamStarted 0x00000000
+  stream 0: MEEndOfStream 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 0: MEStreamStopped 0x00000000
+  stream 0: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0xc00d3e85
+  stream 0: request 0xc00d3e85, event 0xc00d3e85
+  stream 0: source 0xc00d3e85
+==== tone.mp3
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd 33026ee0-e387-4582-ae0a-34a2ad3baa18 = UI4 0
+  pd 6c990d38-bb8e-477a-8598-0d5d96fcd88a = BLOB[8] c228b8b8c777dd01
+  pd MF_PD_AUDIO_ENCODING_BITRATE = UI4 128000
+  pd MF_PD_DURATION = UI8 5746250 (0:5746250)
+  pd MF_PD_MIME_TYPE = STR "audio/mpeg"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 9194 (0:9194)
+  streams 1
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID 00000055-0000-0010-8000-00aa00389b71
+      MF_MT_USER_DATA = BLOB[12] 010000000000a10100000000
+    current 0x00000000 00000055-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0xc00d3e84
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=4963256 size=7940 buffers=1 fffb90640000000000000000... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=4963256 d=783672 size=1254 buffers=1 fffb9244f108d24e09454bbf... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: MEEndOfStream 0x00000000
+  stream 1: 0 more samples, 0 bytes, last t=-1, then request 0xc00d3e84
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000
+  stream 1: MEStreamSeeked 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1827500 d=3918360 size=6270 buffers=1 fffb92446808823808c4bbbf... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+pause 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEEndOfStream 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0xc00d3e84
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEEndOfStream 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e84
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== tone-notag.mp3
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd 33026ee0-e387-4582-ae0a-34a2ad3baa18 = UI4 0
+  pd 6c990d38-bb8e-477a-8598-0d5d96fcd88a = BLOB[8] c24802bbc777dd01
+  pd MF_PD_AUDIO_ENCODING_BITRATE = UI4 128000
+  pd MF_PD_DURATION = UI8 5485625 (0:5485625)
+  pd MF_PD_MIME_TYPE = STR "audio/mpeg"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 8777 (0:8777)
+  streams 1
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Audio types 1
+    type 0:
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID 00000055-0000-0010-8000-00aa00389b71
+      MF_MT_USER_DATA = BLOB[12] 010000000000a10100000000
+    current 0x00000000 00000055-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0xc00d3e84
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=4963256 size=7941 buffers=1 fffb9044000002a911ce1569... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=4963256 d=522448 size=836 buffers=1 fffb9264f200056d2543cd7f... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: MEEndOfStream 0x00000000
+  stream 1: 0 more samples, 0 bytes, last t=-1, then request 0xc00d3e84
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000
+  stream 1: MEStreamSeeked 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1828125 d=3657136 size=5852 buffers=1 fffb92448c88828720c40bbf... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+pause 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEEndOfStream 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0xc00d3e84
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  source: MEEndOfPresentation 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEEndOfStream 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e84
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== tone.wav
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_AUDIO_ENCODING_BITRATE = UI4 1411200
+  pd MF_PD_DURATION = UI8 5000000 (0:5000000)
+  pd MF_PD_MIME_TYPE = STR "audio/wav"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 88244 (0:88244)
+  streams 1
+  sd 0: id 1 selected 1
+    sd 529c7f2c-ac4b-4e3f-bfc3-0902194982cb = UI4 0
+    sd 8e85422c-73de-403f-9a35-550ad6e8b951 = UI4 0
+    handler major MFMediaType_Audio types 1
+    type 0:
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+    current 0xc00d36b6
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=1000000 size=17640 buffers=1 00000000ef026604dc05c308... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1000000 d=1000000 size=17640 buffers=1 00000000ef026604dc05c308... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=1000000 size=17640 buffers=1 00000000ef026604dc05c308... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 2 more samples, 35280 bytes, last t=4000000, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=1000000 size=17640 buffers=1 00000000ef026604dc05c308... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=3000000 d=1000000 size=17640 buffers=1 00000000ef026604dc05c308... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== clip-vp9.mp4
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 3200000 (0:3200000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 8726 (0:8726)
+  streams 1
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      MF_MT_AVG_BITRATE = UI4 197400
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+      MF_MT_INTERLACE_MODE = UI4 2
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[168] 000000a8737473640000000000000001000000987670303900000000000000010000000000000000000000000000000000800060004800000048000000000000...
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SUBTYPE = GUID 30395056-0000-0010-8000-00aa00389b71
+      MF_MT_TRANSFER_FUNCTION = UI4 5
+      MF_MT_VIDEO_CHROMA_SITING = UI4 2
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 0
+      MF_MT_VIDEO_ROTATION = UI4 0
+    current 0x00000000 30395056-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=2764 buffers=1 824983420007f005f6063824... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=622 buffers=1 86004092f0412500004077e0... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=320 buffers=1 86004092f0514880001c7686... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: 5 more samples, 4190 bytes, last t=2800000, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1600000 d=400000 size=2833 buffers=1 824983420007f005f6063824... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=352 buffers=1 860040929c105260000570a9... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== clip-av1.mp4
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 3200000 (0:3200000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 6776 (0:6776)
+  streams 1
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      MF_MT_AVG_BITRATE = UI4 147925
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+      MF_MT_INTERLACE_MODE = UI4 2
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[173] 000000ad7374736400000000000000010000009d6176303100000000000000010000000000000000000000000000000000800060004800000048000000000000...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[13] 0a0b0200000559bfdf00be0010
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID 31305641-0000-0010-8000-00aa00389b71
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+      MF_MT_VIDEO_ROTATION = UI4 0
+    current 0x00000000 31305641-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=1659 buffers=1 0a0b0200000559bfdf1abe60... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=862 buffers=1 328e042802004000003d1f80... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=3 buffers=1 1a0198 [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: 5 more samples, 3393 bytes, last t=2800000, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1600000 d=400000 size=1621 buffers=1 0a0b0200000559bfdf1abe60... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=967 buffers=1 3280052806004000003d1ec0... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== clip-hevc.mp4
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x86
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 3200000 (0:3200000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 6445 (0:6445)
+  streams 1
+  sd 0: id 1 selected 1
+    handler major MFMediaType_Video types 1
+    type 0:
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID e06d80e3-db46-11cf-b4d1-00805f6cbbea
+      MF_MT_AVG_BITRATE = UI4 135625
+      MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+      MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+      MF_MT_INTERLACE_MODE = UI4 2
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MINIMUM_DISPLAY_APERTURE = BLOB[16] 00000000000000008000000060000000
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 1
+      MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = UI4 0
+      MF_MT_MPEG4_SAMPLE_DESCRIPTION = BLOB[250] 000000fa687663310000000000000001000000000000000000000000000000000080006000480000004800000000000000010c4c617663206c69627832363500...
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[84] 0000000140010c01ffff01600000030090000003000003001e9590090000000142010101600000030090000003000003001ea01020616595924932bc05a02000...
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SAMPLE_SIZE = UI4 1
+      MF_MT_SUBTYPE = GUID 43564548-0000-0010-8000-00aa00389b71
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+      MF_MT_VIDEO_ROTATION = UI4 0
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 43564548-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=800000 d=400000 size=1589 buffers=3 0000000140010c01ffff0160... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[16] 1c0000002d0000000b000000e1050000; 73a954d4-09e2-4861-befc-94bd97c08e6e = UI8 0 (0:0); 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1200000 d=400000 size=489 buffers=2 000000010201d0097e10c63b... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[4] e9010000; 73a954d4-09e2-4861-befc-94bd97c08e6e = UI8 400000 (0:400000); 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2400000 d=400000 size=1769 buffers=3 0000000140010c01ffff0160... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[16] 1c0000002d0000000b00000095060000; 73a954d4-09e2-4861-befc-94bd97c08e6e = UI8 800000 (0:800000); 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 5 more samples, 1746 bytes, last t=2800000, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2400000 d=400000 size=1769 buffers=3 0000000140010c01ffff0160... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[16] 1c0000002d0000000b00000095060000; 73a954d4-09e2-4861-befc-94bd97c08e6e = UI8 800000 (0:800000); 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=265 buffers=2 000000011201e06697fd4612... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[4] 09010000; 73a954d4-09e2-4861-befc-94bd97c08e6e = UI8 1200000 (0:1200000); 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN]
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e9b
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0x00000000
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+==== clip.webm
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x6
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 3280000 (0:3280000)
+  pd MF_PD_MIME_TYPE = STR "video/x-matroska"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 12428 (0:12428)
+  streams 2
+  sd 0: id 1 selected 1
+    sd 1913678b-fc0f-44da-8f43-1ba3b526f4ae = UI4 0
+    handler major MFMediaType_Video types 1
+    type 0:
+      9668dde5-c869-4d6a-b02e-463b7c231b53 = STR "V_VP9"
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 0
+      MF_MT_AVG_BITRATE = UI4 0
+      MF_MT_COMPRESSED = UI4 1
+      MF_MT_FRAME_RATE = UI8 536870912010 (125:10)
+      MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SUBTYPE = GUID 30395056-0000-0010-8000-00aa00389b71
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+    current 0x00000000 30395056-0000-0010-8000-00aa00389b71
+  sd 1: id 2 selected 1
+    sd 1913678b-fc0f-44da-8f43-1ba3b526f4ae = UI4 0
+    handler major MFMediaType_Audio types 1
+    type 0:
+      9668dde5-c869-4d6a-b02e-463b7c231b53 = STR "A_OPUS"
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_FLOAT_SAMPLES_PER_SECOND = R8 48000
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 48000
+      MF_MT_COMPRESSED = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID 0000704f-0000-0010-8000-00aa00389b71
+      MF_MT_USER_DATA = BLOB[19] 4f707573486561640102380180bb0000000000
+    current 0x00000000 0000704f-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=2764 buffers=1 824983420007f005f6063824... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=622 buffers=1 86004092f0412500004077e0... []
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=800000 d=400000 size=320 buffers=1 86004092f0514880001c7686... []
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=200000 size=316 buffers=1 fc7acbea4fb5cc2d88249a64... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=210000 d=200000 size=210 buffers=1 fcc583ec899861085d1d3d89... [MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=410000 d=200000 size=203 buffers=1 fcc2db91cb506efd4703aaac... [MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 5 more samples, 4190 bytes, last t=2800000, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 14 more samples, 2934 bytes, last t=3210000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1600000 d=400000 size=2833 buffers=1 824983420007f005f6063824... [MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=1610000 d=200000 size=197 buffers=1 fcc0db1e5b5b2fe30fb33ca0... [MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=2000000 d=400000 size=352 buffers=1 860040929c105260000570a9... []
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e84
+  stream 2: request while stopped 0xc00d3e84
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e84
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0xc00d3e85
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== clip.mkv
+resolver 0x00000000
+url 0x00000000 type 0
+characteristics 0x00000000 0x6
+pd 0x00000000
+  pd MF_PD_DURATION = UI8 3200000 (0:3200000)
+  pd MF_PD_MIME_TYPE = STR "video/x-matroska"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 15841 (0:15841)
+  streams 2
+  sd 0: id 1 selected 1
+    sd 1913678b-fc0f-44da-8f43-1ba3b526f4ae = UI4 0
+    handler major MFMediaType_Video types 1
+    type 0:
+      9668dde5-c869-4d6a-b02e-463b7c231b53 = STR "V_MPEGH/ISO/HEVC"
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 0
+      MF_MT_AVG_BITRATE = UI4 0
+      MF_MT_COMPRESSED = UI4 1
+      MF_MT_FRAME_RATE = UI8 536870912010 (125:10)
+      MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_MPEG2_LEVEL = UI4 30
+      MF_MT_MPEG2_PROFILE = UI4 1
+      MF_MT_MPEG_SEQUENCE_HEADER = BLOB[84] 0000000140010c01ffff01600000030090000003000003001e9590090000000142010101600000030090000003000003001ea01020616595924932bc05a02000...
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+      MF_MT_SUBTYPE = GUID 43564548-0000-0010-8000-00aa00389b71
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+      a7911d53-12a4-4965-ae70-6eadd6ff0551 = UI4 1
+    current 0x00000000 43564548-0000-0010-8000-00aa00389b71
+  sd 1: id 2 selected 1
+    sd 1913678b-fc0f-44da-8f43-1ba3b526f4ae = UI4 0
+    handler major MFMediaType_Audio types 1
+    type 0:
+      9668dde5-c869-4d6a-b02e-463b7c231b53 = STR "A_FLAC"
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 26604
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+      MF_MT_AUDIO_FLOAT_SAMPLES_PER_SECOND = R8 44100
+      MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+      MF_MT_COMPRESSED = UI4 1
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID 0000f1ac-0000-0010-8000-00aa00389b71
+    current 0x00000000 0000f1ac-0000-0010-8000-00aa00389b71
+pd again: same object False
+event before start: 0xc00d3e80
+start 0x00000000
+  source: MENewStream 0x00000000 UNKNOWN stream 1
+  source: MENewStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: MEStreamStarted 0x00000000 I8 0
+  stream 2: MEStreamStarted 0x00000000 I8 0
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=400000 size=1589 buffers=1 0000000140010c01ffff0160... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[16] 1c0000002d0000000b000000e1050000; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=400000 d=400000 size=489 buffers=1 000000010201d0097e10c63b... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[4] e9010000]
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1600000 d=400000 size=1769 buffers=1 0000000140010c01ffff0160... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[16] 1c0000002d0000000b00000095060000; MFSampleExtension_CleanPoint = UI4 1]
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN token ours sample t=0 d=0 size=42 buffers=1 664c61438000002210001000... [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=0 d=928798 size=2467 buffers=1 fff8c91800c24a000002ef05... [MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=930000 d=928798 size=2747 buffers=1 fff8c91801c54cdd42df4ce1... [MFSampleExtension_CleanPoint = UI4 1]
+  stream 1: 5 more samples, 1746 bytes, last t=2000000, then MEEndOfStream 0x00000000
+  stream 1: request after the end 0xc00d3e84
+  stream 2: 2 more samples, 4278 bytes, last t=2790000, then MEEndOfStream 0x00000000
+  stream 2: request after the end 0xc00d3e84
+  source: MEEndOfPresentation 0x00000000
+start at 0.2 s 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceSeeked 0x00000000 I8 2000000
+  stream 1: MEStreamSeeked 0x00000000 I8 2000000
+  stream 1: request 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1600000 d=400000 size=1769 buffers=1 0000000140010c01ffff0160... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[16] 1c0000002d0000000b00000095060000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+  stream 2: MEStreamSeeked 0x00000000 I8 2000000
+  stream 2: request 0x00000000
+  stream 2: MEMediaSample 0x00000000 UNKNOWN sample t=0 d=0 size=42 buffers=1 664c61438000002210001000... [MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1]
+pause 0x00000000
+  source: MESourcePaused 0x00000000
+  stream 1: MEStreamPaused 0x00000000
+  stream 2: MEStreamPaused 0x00000000
+  stream 1: request while paused 0x00000000
+start from the pause 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 1
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000
+  stream 1: MEStreamStarted 0x00000000
+  stream 1: MEMediaSample 0x00000000 UNKNOWN sample t=1200000 d=400000 size=265 buffers=1 000000011201e06697fd4612... [19124e7c-ad4b-465f-bb18-20186287b6af = BLOB[4] 09010000]
+  stream 2: MEStreamStarted 0x00000000
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 1: MEStreamStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+  stream 1: request while stopped 0xc00d3e84
+  stream 2: request while stopped 0xc00d3e84
+start with sd 0 deselected 0x00000000
+  source: MEUpdatedStream 0x00000000 UNKNOWN stream 2
+  source: MESourceStarted 0x00000000 I8 0
+  stream 1: request, deselected 0xc00d3e84
+  stream 2: MEStreamStarted 0x00000000 I8 0
+stop 0x00000000
+  source: MESourceStopped 0x00000000
+  stream 2: MEStreamStopped 0x00000000
+shutdown 0x00000000
+  characteristics 0xc00d3e85
+  pd 0xc00d3e85
+  start 0xc00d3e85
+  event 0xc00d3e85
+  shutdown again 0xc00d3e85
+  stream 1: request 0xc00d3e85, event 0xc00d3e85
+  stream 1: source 0xc00d3e85
+  stream 2: request 0xc00d3e85, event 0xc00d3e85
+  stream 2: source 0xc00d3e85
+==== reader of the source: plain
+reader of the source 0x00000000
+  stream 0: MFMediaType_Audio MFAudioFormat_AAC selected True read 0x00000000 actual 0 flags 0x0 time 0 bytes 9 buffers 1
+  stream 1: MFMediaType_Video MFVideoFormat_H264 selected True read 0x00000000 actual 1 flags 0x0 time 0 bytes 4657 buffers 1
+  stream 2: 0xc00d36b3
+  service of the source 0x00000000 same True
+  source after the reader's release: characteristics 0xc00d3e85
+==== reader of the source: audio-trak-first
+reader of the source 0x00000000
+  stream 0: MFMediaType_Audio MFAudioFormat_AAC selected True read 0x00000000 actual 0 flags 0x0 time 0 bytes 9 buffers 1
+  stream 1: MFMediaType_Video MFVideoFormat_H264 selected True read 0x00000000 actual 1 flags 0x0 time 0 bytes 4657 buffers 1
+  stream 2: 0xc00d36b3
+  service of the source 0x00000000 same True
+  source after the reader's release: characteristics 0xc00d3e85
+==== reader of the source: clip.webm
+reader of the source 0x00000000
+  stream 0: MFMediaType_Video 30395056-0000-0010-8000-00aa00389b71 selected True read 0x00000000 actual 0 flags 0x0 time 0 bytes 2764 buffers 1
+  stream 1: MFMediaType_Audio 0000704f-0000-0010-8000-00aa00389b71 selected True read 0x00000000 actual 1 flags 0x0 time 0 bytes 316 buffers 1
+  stream 2: 0xc00d36b3
+  service of the source 0x00000000 same True
+  source after the reader's release: characteristics 0xc00d3e85
+==== reader of the source: clip.mkv
+reader of the source 0x00000000
+  stream 0: MFMediaType_Video 43564548-0000-0010-8000-00aa00389b71 selected True read 0x00000000 actual 0 flags 0x0 time 0 bytes 1589 buffers 1
+  stream 1: MFMediaType_Audio 0000f1ac-0000-0010-8000-00aa00389b71 selected True read 0x00000000 actual 1 flags 0x0 time 0 bytes 42 buffers 1
+  stream 2: 0xc00d36b3
+  service of the source 0x00000000 same True
+  source after the reader's release: characteristics 0xc00d3e85
+==== reader of the source: tone.mp3
+reader of the source 0x00000000
+  stream 0: MFMediaType_Audio 00000055-0000-0010-8000-00aa00389b71 selected True read 0x00000000 actual 0 flags 0x0 time 0 bytes 7940 buffers 1
+  stream 1: 0xc00d36b3
+  service of the source 0x00000000 same True
+  source after the reader's release: characteristics 0xc00d3e85
+==== resolver
+url as byte stream 0x00000000 type 1 byte stream True
+url, no flags 0x00000000 type 0
+not media 0xc00d36c4 type 99
+missing 0x80070002 type 99
+unknown scheme 0xc00d36c3 type 99
+MFCreateFile 0x00000000
+byte stream, no URL 0x00000000 type 0
+  pd MF_PD_DURATION = UI8 3200000 (0:3200000)
+  pd MF_PD_MIME_TYPE = STR "video/mp4"
+  pd MF_PD_TOTAL_FILE_SIZE = UI8 8726 (0:8726)

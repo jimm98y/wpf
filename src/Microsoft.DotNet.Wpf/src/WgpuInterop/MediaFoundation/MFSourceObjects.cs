@@ -62,11 +62,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             if (E(self) is not { } e || pv == null) return MF.E_POINTER;
             new Span<byte>(pv, MF.PropVariantSize).Clear();
-            if (e.Value != null)
-            {
-                if (e.Value.Type == MF.VT_UNKNOWN) Com.AddRef(e.Value.Unknown);
-                MFAttributeStore.Write(e.Value, pv);
-            }
+            if (e.Value != null) MFAttributeStore.Write(e.Value, pv);           // an IUnknown AddRef'd by Write: the caller's
             return MF.S_OK;
         }
 

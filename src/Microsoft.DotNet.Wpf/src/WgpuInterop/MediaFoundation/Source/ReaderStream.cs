@@ -235,12 +235,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
     {
         private readonly MFSourceReader _reader;
         public readonly int Index;
-        public readonly Mp4Track Track;
+        public readonly SampleFeed Feed;
         public readonly MFMediaType Native;
         public MFMediaType Current;
         public bool Selected;
-        private int _next;
         private bool _discontinuity = true;
+        private MFSample? _held;               // a sample the decoder did not take yet
         /// <summary>Every sample read (and decoded); the end told.</summary>
         public bool Ended;
         private bool _inputDone, _drainSent;
@@ -251,15 +251,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private Guid _rgb;                     // the RGB type after it, or empty
         private bool _firstOut = true;
 
-        public ReaderStream(MFSourceReader reader, int index, Mp4Track track, MFMediaType native)
+        public ReaderStream(MFSourceReader reader, int index, SampleFeed feed, MFMediaType native)
         {
-            _reader = reader; Index = index; Track = track; Native = native;
+            _reader = reader; Index = index; Feed = feed; Native = native;
             Current = native.Clone();
         }
 
         public void Dispose()
         {
             DropDecoder();
+            _held?.Release(); _held = null;
+            Feed.Dispose();
             Native.Release();
             Current.Release();
         }
@@ -275,7 +277,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         }
 
         /// <summary>The time of what comes next (to order the streams of an ANY read).</summary>
-        public long NextTime => _next < Track.Samples.Count ? Track.Pts(Track.Samples[_next]) : long.MaxValue;
+        public long NextTime => _held?.Time ?? Feed.NextTime;
+        public bool Audio => Feed.Audio;
+        public bool Video => Feed.Video;
 
         // ---- the current type ---------------------------------------------------------------------------
 
@@ -290,14 +294,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 var sub = t.Subtype;
                 if (major != Native.Attributes.Guid(MF.MF_MT_MAJOR_TYPE)) return MF.MF_E_INVALIDMEDIATYPE;
                 bool pcmNative = Native.Subtype == MediaFormats.PCM || Native.Subtype == MediaFormats.Float;
-                if (Track.Audio && pcmNative) return SetAudio(t, sub);
+                if (Audio && pcmNative) return SetAudio(t, sub);
                 if (sub == Native.Subtype)
                 {
                     DropDecoder();
                     Replace(Native.Clone());
                     return MF.S_OK;
                 }
-                if (Track.Audio) return SetAudio(t, sub);
+                if (Audio) return SetAudio(t, sub);
                 bool rgb = Array.IndexOf(s_rgb, sub) >= 0;
                 if (Array.IndexOf(s_decoderOutputs, sub) < 0 && !rgb) return MF.MF_E_INVALIDMEDIATYPE;
                 if (rgb && !_reader.VideoProcessing) return MF.MF_E_INVALIDMEDIATYPE;
@@ -561,22 +565,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public void Seek(long hns)
         {
-            var s = Track.Samples;
-            int at = 0;
-            bool anySync = s.Exists(x => x.Sync);
-            for (int i = 0; i < s.Count; i++)
-            {
-                if (Track.Pts(s[i]) > hns) break;
-                if (s[i].Sync || !anySync) at = i;
-            }
-            // a fragmented file: from its fragment's first sync sample
-            if (s.Count > 0 && s[at].Fragment >= 0)
-            {
-                int f = s[at].Fragment;
-                int first = s.FindIndex(x => x.Fragment == f && x.Sync);
-                if (first >= 0) at = first;
-            }
-            _next = at;
+            Feed.Seek(hns);
             Restart();
         }
 
@@ -585,6 +574,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private void Restart()
         {
             _discontinuity = true;
+            _held?.Release(); _held = null;
             Ended = false;
             _inputDone = false;
             _drainSent = false;
@@ -594,8 +584,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         private void RestartAtSync()
         {
-            bool anySync = Track.Samples.Exists(x => x.Sync);
-            while (anySync && _next > 0 && !Track.Samples[Math.Min(_next, Track.Samples.Count - 1)].Sync) _next--;
+            Feed.BackToSync();
             Restart();
         }
 
@@ -610,15 +599,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             {
                 while (_conv != null)
                 {
-                    if (_next >= Track.Samples.Count)
+                    var raw = Compressed();
+                    if (raw == null)
                     {
                         if (!_convDrained) { _convDrained = true; if (ConvertAudio(null, _conv.Drain()) is { } tail) return tail; }
                         Ended = true; flags = SR.ENDOFSTREAM; return null;
                     }
-                    if (ConvertAudio(Compressed(Track.Samples[_next++])) is { } c) return c;
+                    if (ConvertAudio(raw) is { } c) return c;
                 }
-                if (_next >= Track.Samples.Count || drain) { if (!drain) Ended = true; flags = SR.ENDOFSTREAM; return null; }
-                return Compressed(Track.Samples[_next++]);
+                if (drain) { flags = SR.ENDOFSTREAM; return null; }
+                var next = Compressed();
+                if (next == null) { Ended = true; flags = SR.ENDOFSTREAM; return null; }
+                return next;
             }
             var p = Decoder.Pointer;
             while (true)
@@ -641,7 +633,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 }
                 if (hr >= 0 && got != null)
                 {
-                    if (Track.Audio)
+                    if (Audio)
                     {
                         if (_conv == null) return got;
                         var converted = ConvertAudio(got);
@@ -653,60 +645,39 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     return outSample;
                 }
                 if (hr != MF.MF_E_TRANSFORM_NEED_MORE_INPUT) throw new InvalidOperationException($"the decoder's ProcessOutput: 0x{hr:x8}");
-                if (_inputDone || drain || _next >= Track.Samples.Count)
+                if (_inputDone || drain || _held == null && Feed.AtEnd)
                 {
                     if (!_drainSent) { Mft.ProcessMessage(p, 1, 0); _drainSent = true; continue; }    // MFT_MESSAGE_COMMAND_DRAIN
-                    if (drain && !_inputDone && _next < Track.Samples.Count) { _drainSent = false; flags |= SR.ENDOFSTREAM; return null; }
+                    if (drain && !_inputDone && (_held != null || !Feed.AtEnd)) { _drainSent = false; flags |= SR.ENDOFSTREAM; return null; }
                     // what the resampler still holds
                     if (_conv != null && !_convDrained) { _convDrained = true; if (ConvertAudio(null, _conv.Drain()) is { } tail) return tail; }
                     Ended = true;
                     flags |= SR.ENDOFSTREAM;
                     return null;
                 }
-                var c = Compressed(Track.Samples[_next++]);
+                MFSample? c = _held ?? Compressed();
+                _held = null;
+                if (c == null) { _inputDone = true; continue; }
                 try
                 {
                     hr = Mft.ProcessInput(p, c.Pointer);
-                    if (hr == MF.MF_E_NOTACCEPTING) { _next--; continue; }
+                    if (hr == MF.MF_E_NOTACCEPTING) { _held = c; c = null; continue; }
                     if (hr < 0) throw new InvalidOperationException($"the decoder's ProcessInput: 0x{hr:x8}");
                 }
-                finally { c.Release(); }
-                if (_next >= Track.Samples.Count) _inputDone = true;
+                finally { c?.Release(); }
+                if (Feed.AtEnd) _inputDone = true;
             }
         }
 
-        /// <summary>A sample as the source hands it out.</summary>
-        private MFSample Compressed(in Mp4Sample m)
+        /// <summary>The next sample as the source hands it out; null at the end.</summary>
+        private MFSample? Compressed()
         {
-            var bytes = _reader.Demuxer.Read(Track, m, out var lengths);
-            if (Track.Format == "twos") Swap16(bytes);
-            var buf = new MFMemoryBuffer((uint)Math.Max(1, bytes.Length));
-            byte* d = buf.LockBytes(true);
-            bytes.CopyTo(new Span<byte>(d, bytes.Length));
-            buf.UnlockBytes();
-            buf.CurrentLength = (uint)bytes.Length;
-            var s = new MFSample();
-            s.SetBuffer(buf.Pointer);
-            buf.Release();
-            s.Time = Track.Pts(m);
-            if (m.CtsOffset != 0) s.Attributes.Set(MFSampleExtension_DecodeTimestamp, MFValue.Of((ulong)Track.Hns(m.Dts)));
-            if (m.Duration != uint.MaxValue) s.Duration = Track.Hns(m.Duration);
-            if (lengths != null)
-            {
-                var blob = new byte[lengths.Length * 4];
-                for (int i = 0; i < lengths.Length; i++) BitConverter.GetBytes(lengths[i]).CopyTo(blob, i * 4);
-                s.Attributes.Set(SR.MFSampleExtension_NALULengthInfo, MFValue.Of(blob));
-            }
-            var (clean, disc) = _reader.Demuxer.SampleFlags(m, _discontinuity);
-            if (clean) s.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
-            if (disc) s.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u);
-            if (_discontinuity && (Decoder == null || Track.Audio)) _discontinuity = false;
+            if (Feed.AtEnd) return null;
+            var s = Feed.Take(_discontinuity);
+            if (s == null) return null;
+            if (_discontinuity && (Decoder == null || Audio)) _discontinuity = false;
             return s;
         }
-
-        private static readonly Guid MFSampleExtension_DecodeTimestamp = new("73a954d4-09e2-4861-befc-94bd97c08e6e");
-
-        private static void Swap16(byte[] b) { for (int i = 0; i + 1 < b.Length; i += 2) (b[i], b[i + 1]) = (b[i + 1], b[i]); }
 
         // ---- RGB ----------------------------------------------------------------------------------------
 
