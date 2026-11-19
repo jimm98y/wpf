@@ -18,6 +18,7 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - `MFCreateAttributes`, `MFCreateMediaType`, `MFCreateSample`;
   - `MFCreateMemoryBuffer`, `MFCreateAlignedMemoryBuffer`, `MFCreateDXGISurfaceBuffer`;
   - `MFCreateDXGIDeviceManager`, `MFTEnumEx`;
+  - `MFCreateSourceReaderFromURL`, `MFCreateSourceReaderFromByteStream`, `MFCreateFile` (mfreadwrite's and mfplat's);
   - `MFFrameRateToAverageTimePerFrame`, `MFAverageTimePerFrameToFrameRate`;
   - `MFCalculateImageSize`, `MFGetStrideForBitmapInfoHeader`, `MFCopyImage`.
 - **Objects:**
@@ -44,6 +45,61 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
   - VideoToolbox's decoder is made from the stream's own configuration: H.264's and HEVC's parameter sets, the first VP9 key frame, the AV1 sequence header, the headers before the first MPEG-4 picture.
   - Frames are handed out in display order.
 
+## The source reader
+
+`IMFSourceReaderEx` over a demuxer of the shim's own (`Source/`). Windows' reader was probed for
+ground truth (`MFSourceReaderProbe`). Its report on Windows is checked in as
+`tests/.../MediaFoundation/SourceReader.windows.txt`. The shim's reader gives the same report line for
+line, with one exception: the order in which a read of `MF_SOURCE_READER_ANY_STREAM` interleaves the
+streams. The shim gives the earliest sample first; Windows' order follows its pipeline's queues.
+
+- **Files:** ISO base media (.mp4, .m4v, .m4a, .mov), plain with moov before or after mdat, and
+  fragmented. Only box headers and sample tables are read at open; samples are read from the file as
+  they are asked for. The source is a file (a path or a `file:` URL), the shim's `MFCreateFile` byte
+  stream, or any application `IMFByteStream`, read through its vtable.
+- **Streams:** the audio tracks first, then the video ones, whatever the order of the traks or their
+  ids, as Windows orders them. The first stream of each kind is selected.
+- **Native types are those of Windows' MPEG-4 source.**
+  - Video: H.264, HEVC, VP9, AV1, MPEG-4 Part 2, H.263, MJPEG.
+    - The frame size is the SPS's cropped picture, not the tkhd's.
+    - The frame rate is the timescale over the first sample's duration.
+    - `MF_MT_VIDEO_ROTATION` comes from the tkhd matrix.
+    - The sequence header uses 3-byte start codes.
+    - `MF_MT_MPEG4_SAMPLE_DESCRIPTION` is the stsd box.
+    - The bitrate is that of the samples known at open. In a fragmented file that is only the first
+      fragment, over the movie's duration.
+  - Audio: AAC with `MF_MT_USER_DATA` (HEAACWAVEINFO's tail and the AudioSpecificConfig), MP3, PCM,
+    FLAC, ALAC, Opus, AC-3 and E-AC-3.
+- **Samples:**
+  - H.264 and H.265 come in Annex B: the parameter sets before every sync sample, then each NAL unit
+    after a 4-byte start code, with `MFSampleExtension_NALULengthInfo`.
+  - Times are in 100 ns units, rounded down. In a fragmented file the tfdt goes to 100 ns units and back
+    to ticks, each rounded down, so the audio can be a tick early, as on Windows.
+  - Clean points are marked, and a discontinuity on the first sample and after a seek.
+  - The end of a stream is a null sample with `MF_SOURCE_READERF_ENDOFSTREAM`.
+- **Decoding** (`SetCurrentMediaType`):
+  - NV12, YV12, IYUV, I420 and YUY2 come through the shim's decoder MFTs.
+  - With `MF_SOURCE_READER_ENABLE_(ADVANCED_)VIDEO_PROCESSING`, RGB32, ARGB32 and RGB24 are also
+    available. They are converted from NV12 as Windows' video processor does it: BT.601 (BT.709 from 720
+    lines), limited range, one chroma sample per 2x2 pixels, in 8-bit fixed point (298·C ± k·D ± k'·E +
+    128) >> 8. RGB32's fourth byte is 0. Without video processing, an RGB type gives
+    MF_E_INVALIDMEDIATYPE.
+  - The decoded type has the picture's size at first. When the decoder reports the coded size, the next
+    sample carries `MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED`, and the new type has the picture in its
+    apertures and `MF_MT_VIDEO_NOMINAL_RANGE`.
+  - With `MF_SOURCE_READER_D3D_MANAGER`, the frames are textures of the manager's device: NV12, and for
+    RGB a B8G8R8X8 / B8G8R8A8 texture. The conversion to RGB still runs on the CPU.
+  - Audio is not decoded yet: setting PCM or float on a compressed stream gives
+    MF_E_TOPO_CODEC_NOT_FOUND.
+- **Seeking** (`SetCurrentPosition`) goes to the sync sample at or before the position. In a fragmented
+  file it goes to the first sync sample of the fragment, as Windows does.
+- **Presentation attributes:** `MF_PD_DURATION` (the mvhd's), `MF_PD_TOTAL_FILE_SIZE`,
+  `MF_PD_MIME_TYPE`, `MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS` (0x86).
+- **Asynchronous mode:** with `MF_SOURCE_READER_ASYNC_CALLBACK`, reads are answered in order on a
+  thread of the reader's own through `OnReadSample`, and a flush drops the waiting reads and then calls
+  `OnFlush`.
+- `IMFSourceReaderEx.AddTransformForStream` is not implemented.
+
 ## Tests
 
 They pass on macOS (VideoToolbox) and in the Ubuntu 26.04 VM (GStreamer: libav's and OpenH264's decoders). `MFDecoderTests` makes an H.264 stream whose pictures are all I_PCM macroblocks (raw samples), so a
@@ -53,9 +109,19 @@ through its vtables, as an app does:
 - **The coded size:** a 56x40 picture in 64x48 of macroblocks gives an output type of 64x48, the picture in its aperture.
 - **The device manager's device:** each frame an NV12 texture of the device behind `IMFDXGIBuffer`, each identical when read back.
 
+`MFSourceReaderTests` compares the reader's report with Windows'. It also decodes the I_PCM files to NV12
+and to RGB32 (exact to the byte), through the callback, into the device manager's textures, and from a
+byte stream. On Windows the same tests drive Windows' own reader, and they pass there too. They also pass
+on macOS and in the Ubuntu VM.
+
 ## To come
 
 - The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
 - The audio decoders (AAC, MP3, FLAC, ALAC, Opus) and the encoders.
-- The source reader (`MFCreateSourceReaderFromURL`, from a byte stream, from a media source) with an MP4 demuxer of its own, the media session, and camera capture (`MFEnumDeviceSources`).
+- More of the source reader:
+  - more containers (WAV, MP3, ADTS, WebM/Matroska, ASF);
+  - reading from a media source (`MFCreateSourceReaderFromMediaSource`) and from network URLs;
+  - the application's transforms;
+  - the RGB conversion of textures on the GPU (the shim's video processor).
+- The media session, and camera capture (`MFEnumDeviceSources`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder (the test VM has none).

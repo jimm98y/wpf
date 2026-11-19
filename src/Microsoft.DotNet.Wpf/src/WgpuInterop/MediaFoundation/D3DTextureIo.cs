@@ -65,5 +65,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 Com.Release(dev);
             }
         }
+
+        /// <summary>
+        /// A B8G8R8A8 (or B8G8R8X8) texture of the device <paramref name="like"/> is of, holding the pixels; as a media
+        /// buffer, AddRef'd once.
+        /// </summary>
+        public static IntPtr CreateBgraBuffer(MFDxgiBuffer like, int w, int h, byte[] pixels, bool alpha)
+        {
+            var (dev, ctx) = DeviceOf(like.Texture);
+            IntPtr tex = IntPtr.Zero;
+            try
+            {
+                var d = new D3D11_TEXTURE2D_DESC
+                {
+                    Width = (uint)w, Height = (uint)h, MipLevels = 1, ArraySize = 1, Format = alpha ? (DXGI_FORMAT)87 : (DXGI_FORMAT)88,
+                    SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = (D3D11_BIND)0x8,       // shader resource
+                };
+                fixed (byte* p = pixels)
+                {
+                    var init = new D3D11_SUBRESOURCE_DATA { pSysMem = p, SysMemPitch = (uint)w * 4 };
+                    int hr = ((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Com.Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &d, &init, &tex);
+                    if (hr < 0) throw new InvalidOperationException($"RGB texture: 0x{hr:x8}");
+                }
+                return new MFDxgiBuffer(tex, 0).Pointer;
+            }
+            finally
+            {
+                Com.Release(tex);
+                Com.Release(ctx);
+                Com.Release(dev);
+            }
+        }
     }
 }

@@ -68,7 +68,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return r.ToArray();
         }
 
-        private static byte[] Sps(int mbW, int mbH, int cropRight, int cropBottom)
+        internal static byte[] Sps(int mbW, int mbH, int cropRight, int cropBottom)
         {
             var b = new Bits();
             b.U(8, 66); b.U(8, 0xC0); b.U(8, 30);       // baseline, constraint sets 0 and 1, level 3
@@ -85,7 +85,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return Nal(0x67, b.Done());
         }
 
-        private static byte[] Pps()
+        internal static byte[] Pps()
         {
             var b = new Bits();
             b.Ue(0); b.Ue(0);                            // pps id, sps id
@@ -99,7 +99,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         /// <summary>An IDR picture of I_PCM macroblocks holding the NV12 frame (w x h, multiples of 16).</summary>
-        private static byte[] Idr(byte[] nv12, int w, int h, int idrId)
+        internal static byte[] Idr(byte[] nv12, int w, int h, int idrId)
         {
             var b = new Bits();
             b.Ue(0); b.Ue(7); b.Ue(0);                   // first MB, all I slices, pps
@@ -122,7 +122,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         /// <summary>A frame of gradients, every value in 16..235.</summary>
-        private static byte[] Picture(int w, int h, int k)
+        internal static byte[] Picture(int w, int h, int k)
         {
             var f = new byte[w * h * 3 / 2];
             for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) f[y * w + x] = (byte)(16 + (x * 3 + y * 5 + k * 17) % 200);

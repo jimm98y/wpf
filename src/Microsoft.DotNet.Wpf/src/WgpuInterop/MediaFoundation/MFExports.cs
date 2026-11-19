@@ -135,6 +135,75 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return b;
         }
 
+        // ---- the source reader (Source/) -----------------------------------------------------------------
+
+        /// <summary>A file's path from a URL: a path as it is, or a file: URL.</summary>
+        private static string? PathOf(string url, out int hr)
+        {
+            hr = MF.S_OK;
+            if (url.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Uri.TryCreate(url, UriKind.Absolute, out var u) && u.IsFile) return u.LocalPath;
+                hr = MF.E_INVALIDARG;
+                return null;
+            }
+            int colon = url.IndexOf("://", StringComparison.Ordinal);
+            if (colon > 1) { hr = Source.SR.MF_E_UNSUPPORTED_SCHEME; D3DLog.Once("mf-scheme:" + url[..colon], $"Media Foundation: the source reader reads files only, not {url[..colon]}: URLs"); return null; }
+            return url;
+        }
+
+        [Win32Export("MFCreateSourceReaderFromURL")]
+        public static int MFCreateSourceReaderFromURL(char* url, IntPtr attributes, IntPtr* reader)
+        {
+            if (reader == null || url == null) return MF.E_POINTER;
+            *reader = IntPtr.Zero;
+            string? path = PathOf(new string(url), out int hr);
+            if (path == null) return hr;
+            Source.IByteSource src;
+            try { src = new Source.FileByteSource(path); }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+            hr = Source.MFSourceReader.Create(src, attributes, out var r);
+            if (hr >= 0) *reader = r!.Pointer;
+            return hr;
+        }
+
+        [Win32Export("MFCreateSourceReaderFromByteStream")]
+        public static int MFCreateSourceReaderFromByteStream(IntPtr byteStream, IntPtr attributes, IntPtr* reader)
+        {
+            if (reader == null || byteStream == IntPtr.Zero) return MF.E_POINTER;
+            *reader = IntPtr.Zero;
+            Source.IByteSource src;
+            try
+            {
+                src = ComObject.From<Source.MFFileByteStream>(byteStream) is { } f ? new Source.FileByteSource(f.Path) : new Source.ForeignByteSource(byteStream);
+            }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+            int hr = Source.MFSourceReader.Create(src, attributes, out var r);
+            if (hr >= 0) *reader = r!.Pointer;
+            return hr;
+        }
+
+        /// <summary>MF_FILE_ACCESSMODE: read 1, write 2, both 3. MF_FILE_OPENMODE: fail if none 0, fail if one 1, reset 2, append 3, delete 4.</summary>
+        [Win32Export("MFCreateFile")]
+        public static int MFCreateFile(uint access, uint open, uint flags, char* url, IntPtr* stream)
+        {
+            if (stream == null || url == null) return MF.E_POINTER;
+            *stream = IntPtr.Zero;
+            string? path = PathOf(new string(url), out int hr);
+            if (path == null) return hr;
+            var fa = access switch { 1 => System.IO.FileAccess.Read, 2 => System.IO.FileAccess.Write, _ => System.IO.FileAccess.ReadWrite };
+            var fm = open switch { 0 => System.IO.FileMode.Open, 1 => System.IO.FileMode.CreateNew, 2 => System.IO.FileMode.OpenOrCreate, 3 => System.IO.FileMode.OpenOrCreate, 4 => System.IO.FileMode.Create, _ => System.IO.FileMode.Open };
+            try
+            {
+                var fs = new System.IO.FileStream(path, fm, fa, System.IO.FileShare.Read | ((flags & 1) != 0 ? System.IO.FileShare.Write : 0));
+                if (open == 2 && fa != System.IO.FileAccess.Read) fs.SetLength(0);
+                if (open == 3) fs.Seek(0, System.IO.SeekOrigin.End);
+                *stream = new Source.MFFileByteStream(fs, System.IO.Path.GetFullPath(path)).Pointer;
+                return MF.S_OK;
+            }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+        }
+
         [Win32Export("MFFrameRateToAverageTimePerFrame")]
         public static int MFFrameRateToAverageTimePerFrame(uint numerator, uint denominator, ulong* average)
         {
