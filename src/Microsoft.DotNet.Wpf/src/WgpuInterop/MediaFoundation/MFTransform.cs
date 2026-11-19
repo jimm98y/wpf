@@ -223,7 +223,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             if (_in?.Attributes.Get(MF.MF_MT_PIXEL_ASPECT_RATIO) is { } par) a.Set(MF.MF_MT_PIXEL_ASPECT_RATIO, MFAttributesObject.Copy(par));
             // the picture, where it is smaller than the coded size: MFVideoArea { offset x, offset y (MFOffset), cx, cy }
             var (pw, ph) = _sizeKnown ? _picture : (_in?.FrameSize ?? (0, 0));
-            if (pw > 0 && ph > 0 && (pw != w || ph != h))
+            // (Windows' HEVC decoder gives the apertures whatever the sizes)
+            if (pw > 0 && ph > 0 && (pw != w || ph != h || _info.Codec == VideoCodec.H265 && _sizeKnown))
             {
                 var area = new byte[16];
                 BitConverter.GetBytes(pw).CopyTo(area, 8);

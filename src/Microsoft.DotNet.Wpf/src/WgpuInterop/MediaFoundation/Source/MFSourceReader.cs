@@ -64,6 +64,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public static readonly Guid MF_MT_MPEG2_PROFILE = new("ad76a80b-2d5c-4e0b-b375-64e520137036"), MF_MT_MPEG2_LEVEL = new("96f66574-11c5-4015-8666-bff516436da7");
         public static readonly Guid MF_MT_MPEG4_SAMPLE_DESCRIPTION = new("261e9d83-9529-4b8f-a111-8b9c950a81a9"), MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY = new("9aa7e155-b64a-4c1d-a500-455d600b6560");
         public static readonly Guid MF_MT_VIDEO_ROTATION = new("c380465d-2271-428c-9b83-ecea3b4a85c1"), MF_MT_PAN_SCAN_APERTURE = new("79614dde-9187-48fb-b8c7-4d52689de649");
+        public static readonly Guid MF_MT_TRANSFER_FUNCTION = new("5fb0fce9-be5c-4935-a811-ec838f8eed93"), MF_MT_VIDEO_CHROMA_SITING = new("65df2370-c773-4c33-aa64-843e068efb0c");
+        public static readonly Guid MF_MT_VIDEO_PRIMARIES = new("dbfbe4d7-0740-4ee0-8192-850ab0e21935");
         public static readonly Guid MF_MT_YUV_MATRIX = new("3e23d450-2c75-4d25-a00e-b91670d12327");
         public static readonly Guid MF_MT_AUDIO_NUM_CHANNELS = new("37e48bf5-645e-4c5b-89de-ada9e29b696a"), MF_MT_AUDIO_SAMPLES_PER_SECOND = new("5faeeae7-0290-4c31-9e8a-c534f68d9dba");
         public static readonly Guid MF_MT_AUDIO_AVG_BYTES_PER_SECOND = new("1aab75c8-cfef-451c-ab95-ac034b8e1731"), MF_MT_AUDIO_BLOCK_ALIGNMENT = new("322de230-9eeb-43bd-ab7a-ff412251541d");

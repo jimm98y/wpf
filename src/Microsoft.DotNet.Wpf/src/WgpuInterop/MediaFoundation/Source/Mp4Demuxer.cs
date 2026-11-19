@@ -91,7 +91,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// <summary>A time of the track's timescale in 100 ns units.</summary>
         public long Hns(long t) => (long)((Int128)t * 10_000_000 / Timescale);
 
-        public long Pts(in Mp4Sample s) => Hns(s.Dts + s.CtsOffset - EditStart);
+        /// <summary>The presentation time: the edit list not applied (Windows' MPEG-4 source applies none).</summary>
+        public long Pts(in Mp4Sample s) => Hns(s.Dts + s.CtsOffset);
     }
 
     internal sealed class Mp4Demuxer : MediaContainer
@@ -285,7 +286,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                         {
                             case "avcC": t.Config = payload; AvcC(t, payload); break;
                             case "hvcC": t.Config = payload; HvcC(t, payload); break;
-                            case "vpcC": case "av1C": t.Config = payload; break;
+                            case "vpcC": t.Config = payload.Length > 4 ? payload.AsSpan(4).ToArray() : payload; break;   // a full box
+                            case "av1C": t.Config = payload; break;
                             case "esds": Esds(t, payload); break;
                             case "pasp": t.ParW = BinaryPrimitives.ReadUInt32BigEndian(payload); t.ParH = BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(4)); break;
                         }
@@ -521,8 +523,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (!t.AnnexB) return raw;
             var lengths = new List<uint>();
             var o = new List<byte>(raw.Length + 64);
+            // the parameter sets: H.264's after 3-byte start codes, HEVC's after 4-byte ones (as Windows has them)
+            byte[] sc = t.Hevc ? new byte[] { 0, 0, 0, 1 } : new byte[] { 0, 0, 1 };
             if (s.Sync)
-                foreach (var p in t.ParameterSets) { o.AddRange(new byte[] { 0, 0, 1 }); o.AddRange(p); lengths.Add((uint)p.Length + 3); }
+                foreach (var p in t.ParameterSets) { o.AddRange(sc); o.AddRange(p); lengths.Add((uint)(p.Length + sc.Length)); }
             int at = 0, L = t.NalLength;
             while (at + L <= raw.Length)
             {
@@ -539,11 +543,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             return o.ToArray();
         }
 
-        /// <summary>The parameter sets as MF_MT_MPEG_SEQUENCE_HEADER has them: each after a 3-byte start code.</summary>
+        /// <summary>The parameter sets as MF_MT_MPEG_SEQUENCE_HEADER has them: each after a start code (H.264's of 3 bytes, HEVC's of 4).</summary>
         public static byte[] SequenceHeader(Mp4Track t)
         {
             var o = new List<byte>();
-            foreach (var p in t.ParameterSets) { o.AddRange(new byte[] { 0, 0, 1 }); o.AddRange(p); }
+            foreach (var p in t.ParameterSets) { o.AddRange(t.Hevc ? new byte[] { 0, 0, 0, 1 } : new byte[] { 0, 0, 1 }); o.AddRange(p); }
             return o.ToArray();
         }
 

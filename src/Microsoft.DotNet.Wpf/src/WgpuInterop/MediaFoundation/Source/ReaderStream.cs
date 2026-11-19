@@ -39,22 +39,63 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 var (w, h) = Mp4Demuxer.PictureSize(t) ?? (t.Width, t.Height);
                 a.Set(MF.MF_MT_MAJOR_TYPE, MF.MFMediaType_Video);
                 a.Set(MF.MF_MT_SUBTYPE, sub.Value);
-                if (t.AnnexB) a.Set(SR.MF_MT_AM_FORMAT_TYPE, SR.FORMAT_MPEG2Video);
                 a.Set(MF.MF_MT_FRAME_SIZE, MF.Pack((uint)w, (uint)h));
                 if (FrameRate(t) is { } fr) a.Set(MF.MF_MT_FRAME_RATE, MF.Pack(fr.N, fr.D));
                 a.Set(MF.MF_MT_PIXEL_ASPECT_RATIO, MF.Pack(t.ParW == 0 ? 1 : t.ParW, t.ParH == 0 ? 1 : t.ParH));
-                a.Set(MF.MF_MT_INTERLACE_MODE, 7u);                                  // MFVideoInterlace_MixedInterlaceOrProgressive
-                if (!t.Hevc && t.AnnexB) a.Set(SR.MF_PROGRESSIVE_CODING_CONTENT, Mp4Demuxer.H264FramesOnly(t) ? 1u : 0u);
-                if (t.AnnexB) a.Set(SR.MF_NALU_LENGTH_SET, 1u);
                 a.Set(SR.MF_MT_AVG_BITRATE, Bitrate(t, d));
-                if (t.AnnexB && Mp4Demuxer.ProfileLevel(t) is { } pl) { a.Set(SR.MF_MT_MPEG2_PROFILE, pl.Profile); a.Set(SR.MF_MT_MPEG2_LEVEL, pl.Level); }
-                if (t.AnnexB && t.ParameterSets.Count > 0) a.Set(MF.MF_MT_MPEG_SEQUENCE_HEADER, MFValue.Of(Mp4Demuxer.SequenceHeader(t)));
-                else if (t.Format == "mp4v" && t.Config.Length > 0) a.Set(MF.MF_MT_MPEG_SEQUENCE_HEADER, MFValue.Of(t.Config));
-                else if (t.Config.Length > 0) a.Set(MF.MF_MT_USER_DATA, MFValue.Of(t.Config));
                 a.Set(SR.MF_MT_MPEG4_SAMPLE_DESCRIPTION, MFValue.Of(t.SampleDescription));
                 a.Set(SR.MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY, 0u);
-                a.Set(MF.MF_MT_SAMPLE_SIZE, 1u);
                 a.Set(SR.MF_MT_VIDEO_ROTATION, (uint)t.Rotation);
+                switch (t.Format)
+                {
+                    case "avc1" or "avc3":
+                        a.Set(SR.MF_MT_AM_FORMAT_TYPE, SR.FORMAT_MPEG2Video);
+                        a.Set(MF.MF_MT_INTERLACE_MODE, 7u);                          // MFVideoInterlace_MixedInterlaceOrProgressive
+                        a.Set(SR.MF_PROGRESSIVE_CODING_CONTENT, Mp4Demuxer.H264FramesOnly(t) ? 1u : 0u);
+                        a.Set(SR.MF_NALU_LENGTH_SET, 1u);
+                        if (Mp4Demuxer.ProfileLevel(t) is { } pl) { a.Set(SR.MF_MT_MPEG2_PROFILE, pl.Profile); a.Set(SR.MF_MT_MPEG2_LEVEL, pl.Level); }
+                        if (t.ParameterSets.Count > 0) a.Set(MF.MF_MT_MPEG_SEQUENCE_HEADER, MFValue.Of(Mp4Demuxer.SequenceHeader(t)));
+                        a.Set(MF.MF_MT_SAMPLE_SIZE, 1u);
+                        break;
+                    case "hvc1" or "hev1":
+                        // as Windows has HEVC: progressive, the picture in its aperture, the sample entry (not the stsd) its description
+                        a.Set(SR.MF_MT_MPEG4_SAMPLE_DESCRIPTION, MFValue.Of(t.SampleDescription.Length > 16 ? t.SampleDescription.AsSpan(16).ToArray() : t.SampleDescription));
+                        a.Set(SR.MF_MT_AM_FORMAT_TYPE, SR.FORMAT_MPEG2Video);
+                        a.Set(MF.MF_MT_INTERLACE_MODE, 2u);
+                        a.Set(MF.MF_MT_MINIMUM_DISPLAY_APERTURE, MFValue.Of(Area((uint)w, (uint)h)));
+                        if (Mp4Demuxer.ProfileLevel(t) is { } hl) { a.Set(SR.MF_MT_MPEG2_LEVEL, hl.Level); a.Set(SR.MF_MT_MPEG2_PROFILE, hl.Profile); }
+                        if (t.ParameterSets.Count > 0) a.Set(MF.MF_MT_MPEG_SEQUENCE_HEADER, MFValue.Of(Mp4Demuxer.SequenceHeader(t)));
+                        a.Set(MF.MF_MT_SAMPLE_SIZE, 1u);
+                        a.Set(MF.MF_MT_VIDEO_NOMINAL_RANGE, 2u);
+                        a.Set(SR.MF_NALU_LENGTH_SET, 1u);
+                        break;
+                    case "vp09":
+                        // vpcC: profile, level, bit depth / chroma / full range, primaries, transfer, matrix
+                        a.Set(MF.MF_MT_INTERLACE_MODE, 2u);
+                        if (t.Config.Length >= 6)
+                        {
+                            var c = t.Config;                                          // after the full box's version and flags
+                            int chroma = (c[2] >> 1) & 7, full = c[2] & 1, transfer = c[4];
+                            a.Set(SR.MF_MT_TRANSFER_FUNCTION, transfer switch { 8 => 1u, 16 => 15u, 18 => 16u, _ => 5u });
+                            a.Set(SR.MF_MT_VIDEO_CHROMA_SITING, chroma == 0 ? 1u : 2u);
+                            a.Set(MF.MF_MT_VIDEO_NOMINAL_RANGE, full != 0 ? 1u : 0u);
+                        }
+                        break;
+                    case "av01":
+                        // av1C: four bytes of its own, then the configuration OBUs (the sequence header)
+                        a.Set(SR.MF_MT_AM_FORMAT_TYPE, SR.FORMAT_MPEG2Video);
+                        a.Set(MF.MF_MT_INTERLACE_MODE, 2u);
+                        if (t.Config.Length > 4) a.Set(MF.MF_MT_MPEG_SEQUENCE_HEADER, MFValue.Of(t.Config.AsSpan(4).ToArray()));
+                        a.Set(MF.MF_MT_SAMPLE_SIZE, 1u);
+                        a.Set(MF.MF_MT_VIDEO_NOMINAL_RANGE, 2u);
+                        break;
+                    default:
+                        a.Set(MF.MF_MT_INTERLACE_MODE, 2u);
+                        if (t.Format == "mp4v" && t.Config.Length > 0) a.Set(MF.MF_MT_MPEG_SEQUENCE_HEADER, MFValue.Of(t.Config));
+                        else if (t.Config.Length > 0) a.Set(MF.MF_MT_USER_DATA, MFValue.Of(t.Config));
+                        a.Set(MF.MF_MT_SAMPLE_SIZE, 1u);
+                        break;
+                }
                 return mt;
             }
             Guid? asub = t.Format switch
@@ -120,6 +161,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             a.Set(SR.MF_MT_MPEG4_SAMPLE_DESCRIPTION, MFValue.Of(t.SampleDescription));
             a.Set(SR.MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY, 0u);
             return mt;
+        }
+
+        /// <summary>An MFVideoArea of the size, at 0, 0.</summary>
+        internal static byte[] Area(uint w, uint h)
+        {
+            var area = new byte[16];
+            BitConverter.GetBytes(w).CopyTo(area, 8);
+            BitConverter.GetBytes(h).CopyTo(area, 12);
+            return area;
         }
 
         /// <summary>The track's rate: its timescale over its first sample's duration, reduced.</summary>
@@ -418,27 +468,80 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             finally { s?.Release(); }
         }
 
-        /// <summary>A decoded type as Windows' reader makes it, of the size; the picture's apertures from the decoder where it gives them.</summary>
+        /// <summary>
+        /// A decoded type as Windows' reader makes it of each codec (probed), of the size; the picture's apertures from the
+        /// decoder where it gives them. H.264's and the others' the reader's own; HEVC's, VP9's and AV1's their decoders'.
+        /// </summary>
         private MFMediaType Decoded(Guid sub, uint w, uint h, MFMediaType? fromDecoder)
         {
             var t = new MFMediaType();
             var a = t.Attributes;
+            var n = Native.Attributes;
             bool rgb = Array.IndexOf(s_rgb, sub) >= 0;
+            void Copy(Guid k) { if (n.Get(k) is { } v) a.Set(k, MFAttributesObject.Copy(v)); }
+            var ap = fromDecoder?.Attributes.Get(MF.MF_MT_MINIMUM_DISPLAY_APERTURE);
+            if (!rgb && Native.Subtype == MF.MFVideoFormat_HEVC)
+            {
+                a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
+                a.Set(MF.MF_MT_DEFAULT_STRIDE, (uint)Stride(sub, w));
+                a.Set(MF.MF_MT_FIXED_SIZE_SAMPLES, 1u);
+                Copy(MF.MF_MT_FRAME_RATE);
+                a.Set(MF.MF_MT_FRAME_SIZE, MF.Pack(w, h));
+                if (ap != null) a.Set(MF.MF_MT_GEOMETRIC_APERTURE, MFAttributesObject.Copy(ap));
+                Copy(MF.MF_MT_INTERLACE_MODE);
+                a.Set(MF.MF_MT_MAJOR_TYPE, MF.MFMediaType_Video);
+                if (ap != null) a.Set(MF.MF_MT_MINIMUM_DISPLAY_APERTURE, MFAttributesObject.Copy(ap));
+                a.Set(MF_MT_ORIGINAL_4CC, (uint)BitConverter.ToInt32(Native.Subtype.ToByteArray(), 0));
+                if (ap != null) a.Set(SR.MF_MT_PAN_SCAN_APERTURE, MFAttributesObject.Copy(ap));
+                Copy(MF.MF_MT_PIXEL_ASPECT_RATIO);
+                a.Set(MF.MF_MT_SAMPLE_SIZE, ImageSize(sub, w, h));
+                a.Set(MF.MF_MT_SUBTYPE, sub);
+                a.Set(MF.MF_MT_VIDEO_NOMINAL_RANGE, 2u);
+                Copy(SR.MF_MT_VIDEO_ROTATION);
+                return t;
+            }
+            if (!rgb && Native.Subtype == MediaFormats.VP90)
+            {
+                var area = MFValue.Of(Mp4Types.Area(w, h));
+                a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
+                a.Set(MF.MF_MT_COMPRESSED, 0u);
+                Copy(MF.MF_MT_FRAME_RATE);
+                a.Set(MF.MF_MT_FRAME_SIZE, MF.Pack(w, h));
+                a.Set(MF.MF_MT_GEOMETRIC_APERTURE, MFAttributesObject.Copy(area));
+                a.Set(MF.MF_MT_MAJOR_TYPE, MF.MFMediaType_Video);
+                a.Set(MF.MF_MT_MINIMUM_DISPLAY_APERTURE, MFAttributesObject.Copy(area));
+                a.Set(SR.MF_MT_PAN_SCAN_APERTURE, area);
+                a.Set(MF.MF_MT_SUBTYPE, sub);
+                a.Set(SR.MF_MT_VIDEO_PRIMARIES, 2u);                                     // MFVideoPrimaries_BT709
+                Copy(SR.MF_MT_VIDEO_ROTATION);
+                return t;
+            }
+            if (!rgb && Native.Subtype == MediaFormats.AV1)
+            {
+                // the native type, decoded: its sample description gone
+                foreach (var (k, v) in n.All())
+                    if (k != SR.MF_MT_MPEG4_SAMPLE_DESCRIPTION && k != SR.MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY) a.Set(k, MFAttributesObject.Copy(v));
+                a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
+                a.Set(MF.MF_MT_COMPRESSED, 0u);
+                a.Set(MF.MF_MT_FRAME_SIZE, MF.Pack(w, h));
+                a.Set(MF.MF_MT_SUBTYPE, sub);
+                return t;
+            }
             a.Set(SR.MF_MT_AVG_BIT_ERROR_RATE, 0u);
             a.Set(MF.MF_MT_ALL_SAMPLES_INDEPENDENT, 1u);
-            a.Set(SR.MF_MT_AVG_BITRATE, Native.Attributes.U32(SR.MF_MT_AVG_BITRATE));
+            a.Set(SR.MF_MT_AVG_BITRATE, n.U32(SR.MF_MT_AVG_BITRATE));
             a.Set(MF.MF_MT_COMPRESSED, 0u);
             a.Set(MF.MF_MT_DEFAULT_STRIDE, (uint)Stride(sub, w));
             a.Set(MF.MF_MT_FIXED_SIZE_SAMPLES, 1u);
-            if (Native.Attributes.Get(MF.MF_MT_FRAME_RATE) is { } rate) a.Set(MF.MF_MT_FRAME_RATE, MFAttributesObject.Copy(rate));
+            Copy(MF.MF_MT_FRAME_RATE);
             a.Set(MF.MF_MT_FRAME_SIZE, MF.Pack(w, h));
-            a.Set(MF.MF_MT_INTERLACE_MODE, rgb ? 2u : Native.Attributes.U32(MF.MF_MT_INTERLACE_MODE, 2));
+            a.Set(MF.MF_MT_INTERLACE_MODE, rgb ? 2u : n.U32(MF.MF_MT_INTERLACE_MODE, 2));
             a.Set(MF.MF_MT_MAJOR_TYPE, MF.MFMediaType_Video);
-            if (Native.Attributes.Get(MF.MF_MT_PIXEL_ASPECT_RATIO) is { } par) a.Set(MF.MF_MT_PIXEL_ASPECT_RATIO, MFAttributesObject.Copy(par));
+            Copy(MF.MF_MT_PIXEL_ASPECT_RATIO);
             a.Set(MF.MF_MT_SAMPLE_SIZE, ImageSize(sub, w, h));
             a.Set(MF.MF_MT_SUBTYPE, sub);
-            a.Set(SR.MF_MT_VIDEO_ROTATION, Native.Attributes.U32(SR.MF_MT_VIDEO_ROTATION));
-            if (fromDecoder?.Attributes.Get(MF.MF_MT_MINIMUM_DISPLAY_APERTURE) is { } ap)
+            a.Set(SR.MF_MT_VIDEO_ROTATION, n.U32(SR.MF_MT_VIDEO_ROTATION));
+            if (ap != null)
             {
                 a.Set(MF.MF_MT_GEOMETRIC_APERTURE, MFAttributesObject.Copy(ap));
                 a.Set(MF.MF_MT_MINIMUM_DISPLAY_APERTURE, MFAttributesObject.Copy(ap));
@@ -447,6 +550,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             }
             return t;
         }
+
+        private static readonly Guid MF_MT_ORIGINAL_4CC = new("d7be3fe0-2bc7-492d-b843-61a1919b70c3");
 
         private static int Stride(Guid sub, uint w) => sub == SR.MFVideoFormat_RGB32 || sub == SR.MFVideoFormat_ARGB32 ? (int)w * 4 : sub == SR.MFVideoFormat_RGB24 ? (int)((w * 3 + 3) & ~3u) : MFVideoDecoder.Stride(sub, w);
 
@@ -584,6 +689,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             s.SetBuffer(buf.Pointer);
             buf.Release();
             s.Time = Track.Pts(m);
+            if (m.CtsOffset != 0) s.Attributes.Set(MFSampleExtension_DecodeTimestamp, MFValue.Of((ulong)Track.Hns(m.Dts)));
             if (m.Duration != uint.MaxValue) s.Duration = Track.Hns(m.Duration);
             if (lengths != null)
             {
@@ -597,6 +703,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (_discontinuity && (Decoder == null || Track.Audio)) _discontinuity = false;
             return s;
         }
+
+        private static readonly Guid MFSampleExtension_DecodeTimestamp = new("73a954d4-09e2-4861-befc-94bd97c08e6e");
 
         private static void Swap16(byte[] b) { for (int i = 0; i + 1 < b.Length; i += 2) (b[i], b[i + 1]) = (b[i + 1], b[i]); }
 

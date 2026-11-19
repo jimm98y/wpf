@@ -488,6 +488,80 @@ namespace WgpuInterop.Tests.MediaFoundation
             return log;
         }
 
+        /// <summary>Clips made with ffmpeg (testsrc2, 128x96, 8 frames, a key frame every 4): their decoding is exact, VP9's, AV1's and HEVC's alike.</summary>
+        internal static readonly string[] VideoFiles = { "clip-vp9.mp4", "clip-av1.mp4", "clip-hevc.mp4" };
+
+        /// <summary>A video file: its native type, its first samples, its frames decoded to NV12 (a hash of each).</summary>
+        internal static List<string> VideoReport(string path)
+        {
+            var log = new List<string>();
+            int hr = MFReader.Create(path, IntPtr.Zero, out var r);
+            log.Add($"create {Hr(hr)}");
+            if (hr < 0) return log;
+            foreach (var k in MFReader.Names.Keys.Where(k => MFReader.Names[k].StartsWith("MF_PD_") || MFReader.Names[k].StartsWith("MF_SOURCE_READER_MEDIASOURCE")))
+                if (MFReader.PresentationAttribute(r, MFReader.MEDIASOURCE, k, out var pv) is var ph && ph >= 0) log.Add($"presentation {MFReader.Name(k)} = {pv}");
+                else log.Add($"presentation {MFReader.Name(k)} {Hr(ph)}");
+            MFReader.GetNativeMediaType(r, MFReader.FIRST_VIDEO, 0, out var native);
+            log.Add("native:");
+            log.AddRange(MFReader.Dump(native).Select(l => "  " + l));
+            MFReader.Release(native);
+            for (int n = 0; n < 40; n++)
+            {
+                int h = MFReader.ReadSample(r, MFReader.FIRST_VIDEO, out _, out uint f, out long ts, out var smp);
+                if (h < 0) { log.Add($"  native read {Hr(h)}"); break; }
+                if (smp == IntPtr.Zero) { log.Add($"  native read: flags 0x{f:x} time {ts} no sample"); if ((f & 2) != 0) break; continue; }
+                var b = MFReader.SampleBytes(smp, out uint nb);
+                log.Add($"  native read: flags 0x{f:x} time {ts} duration {MFReader.Duration(smp)} bytes {b.Length} {MFReader.HexOf(b, 12)}");
+                log.AddRange(MFReader.Dump(smp).Select(l => "      " + l));
+                MFReader.Release(smp);
+            }
+            MFReader.Release(r);
+            MFReader.Create(path, IntPtr.Zero, out r);
+            var t = MFReader.MediaType();
+            MFReader.SetGuid(t, new Guid("48eba18e-f8c9-4687-bf11-0a74c9f96a8f"), new Guid("73646976-0000-0010-8000-00aa00389b71"));
+            MFReader.SetGuid(t, new Guid("f7e34c9a-42e8-4714-b74b-cb29d72c35e5"), new Guid("3231564e-0000-0010-8000-00aa00389b71"));
+            hr = MFReader.SetCurrentMediaType(r, MFReader.FIRST_VIDEO, t);
+            MFReader.Release(t);
+            log.Add($"decode to NV12: {Hr(hr)}");
+            if (hr >= 0)
+            {
+                MFReader.GetCurrentMediaType(r, MFReader.FIRST_VIDEO, out var c);
+                log.Add("  current:");
+                log.AddRange(MFReader.Dump(c).Select(l => "    " + l));
+                MFReader.Release(c);
+                for (int n = 0; n < 40; n++)
+                {
+                    int h = MFReader.ReadSample(r, MFReader.FIRST_VIDEO, out _, out uint f, out long ts, out var smp);
+                    if (h < 0) { log.Add($"  read {Hr(h)}"); break; }
+                    if (smp == IntPtr.Zero) { log.Add($"  read: flags 0x{f:x} time {ts} no sample"); if ((f & 2) != 0) break; continue; }
+                    var b = MFReader.SampleBytes(smp, out _);
+                    // the picture's 128x96 of the decoder's (maybe larger) frame
+                    MFReader.GetCurrentMediaType(r, MFReader.FIRST_VIDEO, out c);
+                    ulong fs = MFReader.U64(c, new Guid("1652c33d-d6b2-4012-b834-72030849a37d"));
+                    MFReader.Release(c);
+                    int w = (int)(fs >> 32), hh = (int)(uint)fs;
+                    var pic = new byte[128 * 96 * 3 / 2];
+                    if (w >= 128 && hh >= 96 && b.Length >= w * hh * 3 / 2)
+                    {
+                        for (int y = 0; y < 96; y++) Array.Copy(b, y * w, pic, y * 128, 128);
+                        for (int y = 0; y < 48; y++) Array.Copy(b, w * hh + y * w, pic, 128 * 96 + y * 128, 128);
+                    }
+                    var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pic)).ToLowerInvariant()[..16];
+                    log.Add($"  read: flags 0x{f:x} time {ts} duration {MFReader.Duration(smp)} bytes {b.Length} frame {w}x{hh} picture {hash}");
+                    if ((f & 0x20) != 0)
+                    {
+                        MFReader.GetCurrentMediaType(r, MFReader.FIRST_VIDEO, out c);
+                        log.Add("  current now:");
+                        log.AddRange(MFReader.Dump(c).Select(l => "    " + l));
+                        MFReader.Release(c);
+                    }
+                    MFReader.Release(smp);
+                }
+            }
+            MFReader.Release(r);
+            return log;
+        }
+
         private static List<string> Native(IntPtr r, uint i)
         {
             MFReader.GetNativeMediaType(r, i, 0, out var t);
@@ -542,6 +616,12 @@ namespace WgpuInterop.Tests.MediaFoundation
             {
                 all.Add($"==== {m}");
                 try { all.AddRange(AudioReport(AudioPath(m))); }
+                catch (Exception e) { all.Add("failed: " + e); }
+            }
+            foreach (var m in VideoFiles)
+            {
+                all.Add($"==== {m}");
+                try { all.AddRange(VideoReport(AudioPath(m))); }
                 catch (Exception e) { all.Add("failed: " + e); }
             }
             System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_OUT")!, all);

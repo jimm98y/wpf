@@ -58,6 +58,11 @@ namespace WgpuInterop.Tests.MediaFoundation
                 ours.Add($"==== {m}");
                 ours.AddRange(MFSourceReaderProbe.AudioReport(MFSourceReaderProbe.AudioPath(m)));
             }
+            foreach (var m in MFSourceReaderProbe.VideoFiles)
+            {
+                ours.Add($"==== {m}");
+                ours.AddRange(MFSourceReaderProbe.VideoReport(MFSourceReaderProbe.AudioPath(m)));
+            }
             static List<string> Clean(IEnumerable<string> lines)
             {
                 var r = new List<string>();

@@ -100,7 +100,18 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
 - **Streams:** the audio tracks first, then the video ones, whatever the order of the traks or their
   ids, as Windows orders them. The first stream of each kind is selected.
 - **Native types are those of Windows' MPEG-4 source.**
-  - Video: H.264, HEVC, VP9, AV1, MPEG-4 Part 2, H.263, MJPEG.
+  - Video: H.264, HEVC, VP9, AV1, MPEG-4 Part 2, H.263, MJPEG. Each codec's native and decoded types are
+    Windows' own (probed with ffmpeg-made clips, whose decoding is exact):
+    - H.264 is interlace mode 7, with 3-byte start codes in its sequence header.
+    - HEVC is progressive: the picture in `MF_MT_MINIMUM_DISPLAY_APERTURE`, 4-byte start codes, the hvc1
+      entry (not the stsd) as its sample description. Its decoder reports the apertures on the first frame
+      with `CURRENTMEDIATYPECHANGED`.
+    - VP9 has no AM format type. Its transfer function, chroma siting and range come from vpcC. Its
+      decoded type has the apertures and BT.709 primaries from the start.
+    - AV1's sequence header is av1C's configuration OBUs. Its decoded type is its native type as NV12.
+  - The edit list is not applied, as Windows' MPEG-4 source applies none: the first presentation time
+    of a stream with B-frames is its composition offset. `MFSampleExtension_DecodeTimestamp` is given
+    where the decode time is not the presentation time.
     - The frame size is the SPS's cropped picture, not the tkhd's.
     - The frame rate is the timescale over the first sample's duration.
     - `MF_MT_VIDEO_ROTATION` comes from the tkhd matrix.
