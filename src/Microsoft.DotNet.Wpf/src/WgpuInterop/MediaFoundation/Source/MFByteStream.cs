@@ -197,6 +197,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         protected override void OnFinalRelease() { Com.Release(_object); Com.Release(_callback); Com.Release(_state); }
 
+        /// <summary>IMFAsyncCallback::Invoke (slot 4) on this thread; the result is released after.</summary>
+        public void InvokeNow()
+        {
+            try { ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(_callback, 4))(_callback, Pointer); }
+            finally { Release(); }
+        }
+
         /// <summary>IMFAsyncCallback::Invoke (slot 4) on the thread pool; the result is released after.</summary>
         public void InvokeLater()
         {

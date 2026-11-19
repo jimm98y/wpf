@@ -388,6 +388,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 
         private static readonly Guid MF_TRANSCODE_CONTAINERTYPE = new("150ff23f-4abc-478b-ac4f-e1916fba1cca"), MFTranscodeContainerType_MPEG4 = new("dc6cd05d-b9d0-40ef-bd35-fa622c1ab28a");
 
+        /// <summary>The output of a sink of an IMFByteStream: the shim's own file's path rewritten, the application's written through it.</summary>
+        private static System.IO.Stream SinkOutput(IntPtr byteStream)
+            => ComObject.From<Source.MFFileByteStream>(byteStream) is { Path: { } fsp }
+                ? new System.IO.FileStream(fsp, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read)
+                : new Sink.ByteStreamWriter(byteStream);
+
+        /// <summary>Windows' MPEG-4 media sink (Sink/MFMpeg4Sink.cs) of the byte stream: a stream sink of each type given.</summary>
+        [Win32Export("MFCreateMPEG4MediaSink")]
+        public static int MFCreateMPEG4MediaSink(IntPtr byteStream, IntPtr video, IntPtr audio, IntPtr* sink)
+        {
+            if (sink == null) return MF.E_POINTER;
+            *sink = IntPtr.Zero;
+            if (byteStream == IntPtr.Zero) return MF.E_INVALIDARG;
+            try
+            {
+                var v = video != IntPtr.Zero ? Source.Mp4Types.Read(video) : null;
+                var a = audio != IntPtr.Zero ? Source.Mp4Types.Read(audio) : null;
+                try { *sink = Sink.MFMpeg4Sink.Create(SinkOutput(byteStream), v, a).Pointer; }
+                finally { v?.Release(); a?.Release(); }
+                return MF.S_OK;
+            }
+            catch (Exception e) { return Source.MFFileByteStream.Hr(e); }
+        }
+
+        /// <summary>A sink writer of a media sink (the shim's MPEG-4 sink, or the application's own): its streams the sink's.</summary>
+        [Win32Export("MFCreateSinkWriterFromMediaSink")]
+        public static int MFCreateSinkWriterFromMediaSink(IntPtr mediaSink, IntPtr attributes, IntPtr* writer)
+        {
+            if (writer == null) return MF.E_POINTER;
+            *writer = IntPtr.Zero;
+            if (mediaSink == IntPtr.Zero) return MF.E_INVALIDARG;
+            var iid = Sink.MFMpeg4Sink.IID_IMFMediaSink; IntPtr sink;
+            int hr = ((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)Com.Fn(mediaSink, 0))(mediaSink, &iid, &sink);
+            if (hr < 0) return hr;
+            try { *writer = new Sink.MFSinkWriter(sink).Pointer; }
+            finally { Com.Release(sink); }
+            return MF.S_OK;
+        }
+
         /// <summary>
         /// A sink writer of MP4 (Sink/): of the URL's path, or of a byte stream -- the shim's own file, or the application's (written
         /// through its IMFByteStream). As Windows': of a byte stream, without a URL the container is MF_TRANSCODE_CONTAINERTYPE's, and
@@ -415,11 +454,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 }
                 else if (container != MFTranscodeContainerType_MPEG4) { D3DLog.Once("mf-sink-container:" + container, $"Media Foundation: the sink writer writes MPEG-4, not the container {container}"); return SR_MF_E_UNSUPPORTED_FORMAT; }
                 System.IO.Stream target;
-                if (byteStream != IntPtr.Zero)
-                {
-                    if (ComObject.From<Source.MFFileByteStream>(byteStream) is { Path: { } fsp }) target = new System.IO.FileStream(fsp, System.IO.FileMode.Create, System.IO.FileAccess.ReadWrite, System.IO.FileShare.Read);
-                    else target = new Sink.ByteStreamWriter(byteStream);
-                }
+                if (byteStream != IntPtr.Zero) target = SinkOutput(byteStream);
                 else
                 {
                     string? path = PathOf(text!, out int hr);

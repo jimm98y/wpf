@@ -32,7 +32,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
         {
             public MFMediaType Target = null!;
             public MFMediaType? Input;
-            public MuxTrack Track = null!;
+            public bool Video;
+            public int Channels;
+            public IntPtr StreamSink;                     // IMFStreamSink, AddRef'd: from BeginWriting (of a sink of the application's, from the start)
             public SinkChain? Chain;                      // the encoder MFT, a converter before it
             public long Received, LastReceived;
             public bool Passthrough;
@@ -41,8 +43,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             public bool ConfigDone;
         }
 
-        private readonly System.IO.Stream _file;
-        private Mp4Muxer? _mux;
+        private System.IO.Stream? _file;                  // of a writer of a URL or byte stream: the file its MPEG-4 sink writes, made at BeginWriting
+        private IntPtr _sink;                             // IMFMediaSink, AddRef'd
+        private readonly bool _sinkGiven;                 // the application's (MFCreateSinkWriterFromMediaSink)
+        private MFPresentationClock? _clock;
         private readonly List<Stream> _streams = new();
         private bool _begun, _finished;
         private int _failed;
@@ -68,10 +72,44 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
 
         public MFSinkWriter(System.IO.Stream file) : base(s_vt) { _file = file; }
 
+        /// <summary>A writer of a media sink of the application's: its streams the sink's stream sinks, of their current types.</summary>
+        public MFSinkWriter(IntPtr sink) : base(s_vt)
+        {
+            Com.AddRef(sink); _sink = sink; _sinkGiven = true;
+            uint n;
+            if (((delegate* unmanaged<IntPtr, uint*, int>)Com.Fn(sink, 6))(sink, &n) < 0) n = 0;
+            for (uint i = 0; i < n; i++)
+            {
+                IntPtr ss;
+                if (((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(sink, 7))(sink, i, &ss) < 0) continue;
+                var t = StreamType(ss);
+                if (t == null) { Com.Release(ss); continue; }
+                _streams.Add(new Stream { Target = t, StreamSink = ss, Video = t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == MF.MFMediaType_Video, Channels = (int)t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, 2) });
+            }
+        }
+
+        /// <summary>A stream sink's type: its handler's current one, or its first.</summary>
+        private static MFMediaType? StreamType(IntPtr streamSink)
+        {
+            IntPtr h;
+            if (((delegate* unmanaged<IntPtr, IntPtr*, int>)Com.Fn(streamSink, 9))(streamSink, &h) < 0) return null;
+            try
+            {
+                IntPtr t;
+                if (((delegate* unmanaged<IntPtr, IntPtr*, int>)Com.Fn(h, 7))(h, &t) < 0 && ((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(h, 5))(h, 0, &t) < 0) return null;
+                var m = Mp4Types.Read(t);
+                Com.Release(t);
+                return m;
+            }
+            finally { Com.Release(h); }
+        }
+
         protected override void OnFinalRelease()
         {
-            foreach (var s in _streams) { s.Chain?.Dispose(); s.Target.Release(); s.Input?.Release(); }
-            if (!_finished) _file.Dispose();
+            foreach (var s in _streams) { s.Chain?.Dispose(); s.Target.Release(); s.Input?.Release(); Com.Release(s.StreamSink); }
+            if (_sink != IntPtr.Zero) { ((delegate* unmanaged<IntPtr, int>)Com.Fn(_sink, 11))(_sink); Com.Release(_sink); _sink = IntPtr.Zero; }
+            _clock?.Release();
+            if (_file != null && !_begun) _file.Dispose();
         }
 
         private static MFSinkWriter? W(IntPtr self) => From<MFSinkWriter>(self);
@@ -95,31 +133,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     D3DLog.Once("mf-sink-type:" + sub, $"Media Foundation: the sink writer writes H.264, HEVC and AAC to MP4, not {sub}");
                     return MF.MF_E_INVALIDMEDIATYPE;
                 }
-                var track = new MuxTrack { Video = video };
-                if (video)
+                if (MFMpeg4Sink.TrackOf(t) == null) { t.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                var stream = new Stream { Target = t, Video = video, Channels = (int)t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, 2) };
+                // of a sink of the application's: a stream sink of it, of the next identifier
+                if (w._sinkGiven)
                 {
-                    var (fw, fh) = t.FrameSize;
-                    var (rn, rd) = MF.Unpack(t.Attributes.U64(MF.MF_MT_FRAME_RATE, MF.Pack(30, 1)));
-                    if (fw == 0 || fh == 0 || rn == 0 || rd == 0) { t.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
-                    track.Format = sub == MF.MFVideoFormat_HEVC ? "hvc1" : "avc1";
-                    track.Width = (int)fw; track.Height = (int)fh;
-                    // the frame rate times 1000 (25 fps: 25000), where that is whole; else the rate's numerator
-                    track.Timescale = rn * 1000UL % rd == 0 ? (uint)(rn * 1000UL / rd) : rn;
-                    var (pw, ph) = MF.Unpack(t.Attributes.U64(MF.MF_MT_PIXEL_ASPECT_RATIO, MF.Pack(1, 1)));
-                    track.ParW = pw; track.ParH = ph;
+                    IntPtr ss;
+                    int ahr = ((delegate* unmanaged<IntPtr, uint, IntPtr, IntPtr*, int>)Com.Fn(w._sink, 4))(w._sink, (uint)w._streams.Count + 1, t.Pointer, &ss);
+                    if (ahr < 0) { t.Release(); return ahr; }
+                    stream.StreamSink = ss;
                 }
-                else
-                {
-                    track.Format = "mp4a";
-                    track.Channels = (int)t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS, 2);
-                    track.SampleRate = (int)t.Attributes.U32(SR.MF_MT_AUDIO_SAMPLES_PER_SECOND, 44100);
-                    track.Timescale = (uint)track.SampleRate;
-                    track.SampleBits = 16;
-                    uint bytes = t.Attributes.U32(SR.MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 16000);
-                    track.Bitrate = track.MaxBitrate = bytes * 8;
-                    track.BufferSize = 6144;                                   // Windows' encoder's (an AAC frame's largest)
-                }
-                w._streams.Add(new Stream { Target = t, Track = track });
+                w._streams.Add(stream);
                 *index = (uint)(w._streams.Count - 1);
             }
             return MF.S_OK;
@@ -140,17 +164,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                 // the target itself: written as it comes
                 if (t.Subtype == s.Target.Subtype) { s.Chain?.Dispose(); s.Chain = null; s.Input?.Release(); s.Input = t; s.Passthrough = true; return MF.S_OK; }
                 bool hevc = s.Target.Subtype == MF.MFVideoFormat_HEVC;
-                if (s.Track.Video)
+                if (s.Video)
                 {
                     if (Array.IndexOf(s_videoInputs, t.Subtype) < 0 || hevc && t.FrameSize != s.Target.FrameSize) { t.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 }
                 else
                 {
                     bool pcm = t.Subtype == MediaFormats.PCM || t.Subtype == MediaFormats.Float;
-                    if (!pcm || t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) != s.Track.Channels) { t.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
+                    if (!pcm || t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) != s.Channels) { t.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 }
                 int hr = SinkChain.Create(s.Target, t, encodingParameters, out var chain);
                 if (hr < 0) { t.Release(); return hr; }
+                // a stream sink of the application's sink: of the encoder's output type, as Windows' writer sets it
+                if (w._sinkGiven && Mft.OutputType(chain!.Encoder) is { } eo)
+                {
+                    IntPtr h;
+                    if (((delegate* unmanaged<IntPtr, IntPtr*, int>)Com.Fn(s.StreamSink, 9))(s.StreamSink, &h) >= 0)
+                    {
+                        ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(h, 6))(h, eo.Pointer);
+                        Com.Release(h);
+                    }
+                    eo.Release();
+                }
                 s.Chain?.Dispose(); s.Chain = chain;
                 s.Input?.Release(); s.Input = t; s.Passthrough = false;
             }
@@ -167,27 +202,32 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                 if (w._streams.Count == 0) return SR.MF_E_INVALIDREQUEST;              // as Windows', of no streams
                 try
                 {
+                    // a byte stream of the application's: one Windows' sink can write and seek, or E_INVALIDARG (and the writer done)
+                    if (w._file is ByteStreamWriter bs && !bs.Writable) { w._finished = true; return MF.E_INVALIDARG; }
                     foreach (var s in w._streams)
                     {
                         if (s.Input == null) { s.Input = s.Target.Clone(); s.Passthrough = true; }
-                        if (s.Passthrough) continue;
-                        if (s.Chain != null)
-                        {
-                            s.Chain.Begin();
-                            // AAC's AudioSpecificConfig: of the encoder's output type (HEAACWAVEINFO's tail, then the configuration)
-                            if (!s.Track.Video && Mft.OutputType(s.Chain.Encoder) is { } eo)
-                            {
-                                if (eo.Attributes.Get(MF.MF_MT_USER_DATA)?.B is { Length: > 12 } ud) s.Track.Config = ud.AsSpan(12).ToArray();
-                                eo.Release();
-                            }
-                            if (s.Track.Video) { var (rn0, rd0) = MF.Unpack(s.Target.Attributes.U64(MF.MF_MT_FRAME_RATE, MF.Pack(30, 1))); s.FrameDuration = 10_000_000L * rd0 / rn0; }
-                            continue;
-                        }
+                        if (s.Video) { var (rn0, rd0) = MF.Unpack(s.Target.Attributes.U64(MF.MF_MT_FRAME_RATE, MF.Pack(30, 1))); s.FrameDuration = rn0 == 0 ? 0 : 10_000_000L * rd0 / rn0; }
+                        s.Chain?.Begin();
                     }
-                    // a byte stream of the application's: one Windows' sink can write and seek, or E_INVALIDARG (and the writer done)
-                    if (w._file is ByteStreamWriter bs && !bs.Writable) { w._finished = true; return MF.E_INVALIDARG; }
-                    w._mux = new Mp4Muxer(w._file);
-                    foreach (var s in w._streams) w._mux.Add(s.Track);
+                    // the MPEG-4 sink of the file: a stream sink each, of the encoder's output type (or the target's), identifiers from 1
+                    if (!w._sinkGiven)
+                    {
+                        var sink = MFMpeg4Sink.Create(w._file!, null, null);
+                        for (int i = 0; i < w._streams.Count; i++)
+                        {
+                            var s = w._streams[i];
+                            var type = s.Chain != null ? Mft.OutputType(s.Chain.Encoder) ?? s.Target.Clone() : s.Target.Clone();
+                            sink.Add((uint)i + 1, type, out var ss);
+                            type.Release();
+                            s.StreamSink = ss!.AddRefPointer();
+                        }
+                        w._sink = sink.Pointer;
+                    }
+                    // its clock, started
+                    w._clock = new MFPresentationClock();
+                    ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(w._sink, 9))(w._sink, w._clock.Pointer);
+                    w._clock.Start(0);
                     w._begun = true;
                 }
                 catch (Exception e) { D3DLog.Error("IMFSinkWriter.BeginWriting", e); return MF.E_FAIL; }
@@ -210,8 +250,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     var s = w._streams[(int)i];
                     var (bytes, time, duration, clean) = Read(sample);
                     s.Received++; s.LastReceived = time;
-                    if (s.Chain != null) { s.Chain.Push(bytes, time, duration > 0 ? duration : s.FrameDuration); w.TakeChain(s); return MF.S_OK; }
-                    w.Mux(s, bytes, time, duration > 0 ? duration : s.FrameDuration, clean || !s.Track.Video);
+                    if (s.Chain != null) { s.Chain.Push(bytes, time, duration > 0 ? duration : s.FrameDuration); return w.TakeChain(s); }
+                    return Process(s.StreamSink, sample);
                 }
                 return MF.S_OK;
             }
@@ -230,112 +270,28 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             return (b, t, d, clean != 0);
         }
 
-        /// <summary>The encoder MFT's samples into the track: H.264's of their times and key frames, AAC's packets.</summary>
-        private void TakeChain(Stream s)
+        /// <summary>IMFStreamSink::ProcessSample.</summary>
+        private static int Process(IntPtr streamSink, IntPtr sample) => ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(streamSink, 10))(streamSink, sample);
+
+        /// <summary>The encoder MFT's samples to the stream sink: of their times, durations and clean points.</summary>
+        private int TakeChain(Stream s)
         {
             while (s.Chain!.TryTake(out var o))
             {
-                if (s.Track.Video) Mux(s, o.Data, o.Time, o.Duration > 0 ? o.Duration : s.FrameDuration, o.Clean || IsKey(o.Data, false));
-                else _mux!.Write(s.Track, o.Data, o.Time, o.Duration, true);
+                var sample = new MFSample();
+                var buf = new MFMemoryBuffer((uint)Math.Max(1, o.Data.Length));
+                o.Data.CopyTo(new Span<byte>(buf.LockBytes(true), o.Data.Length));
+                buf.CurrentLength = (uint)o.Data.Length;
+                sample.SetBuffer(buf.Pointer);
+                buf.Release();
+                sample.Time = o.Time;
+                sample.Duration = o.Duration > 0 ? o.Duration : s.FrameDuration;
+                sample.Attributes.Set(MF.MFSampleExtension_CleanPoint, MFValue.Of(o.Clean || !s.Video ? 1u : 0u));
+                int hr = Process(s.StreamSink, sample.Pointer);
+                sample.Release();
+                if (hr < 0) return hr;
             }
-        }
-
-        /// <summary>A sample into its track: H.264 and HEVC from Annex B to length-prefixed NAL units, the parameter sets to the configuration.</summary>
-        private void Mux(Stream s, byte[] data, long time, long duration, bool sync)
-        {
-            if (!s.Track.Video) { if (s.Track.Config.Length == 0 && s.Target.Attributes.Get(MF.MF_MT_USER_DATA)?.B is { Length: > 12 } ud) s.Track.Config = ud.AsSpan(12).ToArray(); _mux!.Write(s.Track, data, time, duration, true); return; }
-            bool hevc = s.Track.Format == "hvc1";
-            var o = new MemoryStream(data.Length);
-            var sets = new List<byte[]>();
-            foreach (var nal in Nals(data))
-            {
-                int type = hevc ? (nal[0] >> 1) & 0x3F : nal[0] & 0x1F;
-                bool parameterSet = hevc ? type is 32 or 33 or 34 : type is 7 or 8;
-                if (parameterSet) { sets.Add(nal); continue; }
-                o.Write(new[] { (byte)(nal.Length >> 24), (byte)(nal.Length >> 16), (byte)(nal.Length >> 8), (byte)nal.Length });
-                o.Write(nal);
-            }
-            if (s.Track.Config.Length == 0 && sets.Count > 0) s.Track.Config = hevc ? HvcC(sets) : AvcC(sets);
-            _mux!.Write(s.Track, o.ToArray(), time, duration, sync);
-        }
-
-        private static IEnumerable<byte[]> Nals(byte[] b)
-        {
-            int i = 0, start = -1;
-            while (i + 3 <= b.Length)
-            {
-                if (b[i] == 0 && b[i + 1] == 0 && (b[i + 2] == 1 || i + 3 < b.Length && b[i + 2] == 0 && b[i + 3] == 1))
-                {
-                    int sc = b[i + 2] == 1 ? 3 : 4;
-                    if (start >= 0) yield return Trim(b, start, i);
-                    i += sc; start = i;
-                    continue;
-                }
-                i++;
-            }
-            if (start >= 0 && start < b.Length) yield return Trim(b, start, b.Length);
-        }
-
-        private static byte[] Trim(byte[] b, int from, int to) { while (to > from && b[to - 1] == 0) to--; return b.AsSpan(from, to - from).ToArray(); }
-
-        private static bool IsKey(byte[] au, bool hevc)
-        {
-            foreach (var nal in Nals(au))
-            {
-                int type = hevc ? (nal[0] >> 1) & 0x3F : nal[0] & 0x1F;
-                if (hevc ? type is >= 16 and <= 23 : type == 5) return true;
-            }
-            return false;
-        }
-
-        private static byte[] AvcC(List<byte[]> sets)
-        {
-            var sps = sets.Where(n => (n[0] & 0x1F) == 7).ToList();
-            var pps = sets.Where(n => (n[0] & 0x1F) == 8).ToList();
-            if (sps.Count == 0) return Array.Empty<byte>();
-            var o = new List<byte> { 1, sps[0][1], sps[0][2], sps[0][3], 0xFF, (byte)(0xE0 | sps.Count) };
-            foreach (var p in sps) { o.Add((byte)(p.Length >> 8)); o.Add((byte)p.Length); o.AddRange(p); }
-            o.Add((byte)pps.Count);
-            foreach (var p in pps) { o.Add((byte)(p.Length >> 8)); o.Add((byte)p.Length); o.AddRange(p); }
-            return o.ToArray();
-        }
-
-        /// <summary>hvcC of the parameter sets: the SPS's profile, tier and level; 4:2:0, 8 bits; lengths of 4 bytes; VPS, SPS, PPS arrays.</summary>
-        private static byte[] HvcC(List<byte[]> sets)
-        {
-            var sps = sets.FirstOrDefault(n => ((n[0] >> 1) & 0x3F) == 33);
-            var o = new List<byte> { 1 };
-            // profile_tier_level of the SPS: after its 2-byte header and 1 byte (vps id, sub-layers, nesting), 12 bytes
-            var ptl = new byte[12];
-            if (sps != null && sps.Length >= 15)
-            {
-                var rbsp = Unescape(sps.AsSpan(2).ToArray());
-                if (rbsp.Length >= 13) Array.Copy(rbsp, 1, ptl, 0, 12);
-            }
-            o.AddRange(ptl);                                            // profile space/tier/idc, compat flags, constraints, level
-            o.AddRange(new byte[] { 0xF0, 0x00, 0xFC, 0xFD, 0xF8, 0xF8, 0x00, 0x00, 0x0F });
-            var groups = new[] { 32, 33, 34 }.Select(type => (type, sets.Where(n => ((n[0] >> 1) & 0x3F) == type).ToList())).Where(g => g.Item2.Count > 0).ToList();
-            o.Add((byte)groups.Count);
-            foreach (var (type, nals) in groups)
-            {
-                o.Add((byte)(0x80 | type));
-                o.Add((byte)(nals.Count >> 8)); o.Add((byte)nals.Count);
-                foreach (var n in nals) { o.Add((byte)(n.Length >> 8)); o.Add((byte)n.Length); o.AddRange(n); }
-            }
-            return o.ToArray();
-        }
-
-        private static byte[] Unescape(byte[] b)
-        {
-            var o = new List<byte>(b.Length);
-            int zeros = 0;
-            foreach (var x in b)
-            {
-                if (zeros >= 2 && x == 3) { zeros = 0; continue; }
-                o.Add(x);
-                zeros = x == 0 ? zeros + 1 : 0;
-            }
-            return o.ToArray();
+            return MF.S_OK;
         }
 
         // ---- conversions ----------------------------------------------------------------------------------
@@ -392,18 +348,45 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     if (w._failed < 0) return w._failed;
                     if (!w._begun || w._finished) return SR.MF_E_INVALIDREQUEST;
                     // nothing written: Windows' sink has no file to finish, and the writer is done with that error
-                    if (w._streams.All(s => s.Received == 0)) { w._failed = MF_E_SINK_NO_SAMPLES_PROCESSED; w._finished = true; w._file.Dispose(); return w._failed; }
-                    foreach (var s in w._streams)
+                    if (w._streams.All(s => s.Received == 0))
                     {
-                        if (s.Chain != null) { s.Chain.Drain(); w.TakeChain(s); }
+                        w._failed = MF_E_SINK_NO_SAMPLES_PROCESSED; w._finished = true;
+                        if (!w._sinkGiven) ((delegate* unmanaged<IntPtr, int>)Com.Fn(w._sink, 11))(w._sink);
+                        return w._failed;
                     }
-                    w._mux!.Finish();
+                    foreach (var s in w._streams)
+                        if (s.Chain != null) { s.Chain.Drain(); int th = w.TakeChain(s); if (th < 0) return th; }
+                    int hr = FinalizeSink(w._sink);
+                    w._clock?.Stop();
                     w._finished = true;
-                    w._file.Dispose();
+                    if (hr < 0) return hr;
                 }
                 return MF.S_OK;
             }
             catch (Exception e) { D3DLog.Error("IMFSinkWriter.Finalize", e); return MF.E_FAIL; }
+        }
+
+        /// <summary>
+        /// The sink finalized: IMFFinalizableMediaSink's BeginFinalize, waited for, and EndFinalize (a sink not finalizable,
+        /// told nothing more).
+        /// </summary>
+        private static int FinalizeSink(IntPtr sink)
+        {
+            var iid = MFMpeg4Sink.IID_IMFFinalizableMediaSink; IntPtr f;
+            if (((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)Com.Fn(sink, 0))(sink, &iid, &f) < 0) return MF.S_OK;
+            try
+            {
+                var done = new MFWaitCallback();
+                try
+                {
+                    int hr = ((delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)Com.Fn(f, 12))(f, done.Pointer, IntPtr.Zero);
+                    if (hr < 0) return hr;
+                    if (!done.Done.Wait(TimeSpan.FromSeconds(60))) return MF.E_FAIL;
+                    return ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(f, 13))(f, done.Result);
+                }
+                finally { done.Release(); }
+            }
+            finally { Com.Release(f); }
         }
 
         /// <summary>The stream's encoder (of GUID_NULL, the service of the transform itself), as its interface asked for; of a stream written as it comes, none.</summary>
@@ -414,7 +397,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             *obj = IntPtr.Zero;
             lock (w._lock)
             {
-                if (i == MF_SINK_WRITER_MEDIASINK) return MF_E_UNSUPPORTED_SERVICE;
+                // the media sink: of a writer of a URL or byte stream once writing has begun (Windows' makes it then), of the application's always
+                if (i == MF_SINK_WRITER_MEDIASINK)
+                {
+                    if (w._sink == IntPtr.Zero) return MF_E_UNSUPPORTED_SERVICE;
+                    IntPtr q;
+                    int qhr = ((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)Com.Fn(w._sink, 0))(w._sink, riid, &q);
+                    if (qhr >= 0) *obj = q;
+                    return qhr;
+                }
                 if (i >= w._streams.Count) return MF.MF_E_INVALIDSTREAMNUMBER;
                 var c = w._streams[(int)i].Chain;
                 if (c == null || service != null && *service != Guid.Empty) return MF_E_UNSUPPORTED_SERVICE;
@@ -475,6 +466,36 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                 *t = x;
                 return MF.S_OK;
             }
+        }
+    }
+
+    /// <summary>An IMFAsyncCallback that keeps its result and sets an event (the sink writer waits on it for its sink's finalizing).</summary>
+    /// <remarks>Of the namespace, not nested: the browser's entry points of [UnmanagedCallersOnly] methods are found by namespace and name.</remarks>
+    internal sealed unsafe class MFWaitCallback : ComObject
+    {
+        private static readonly Vtable s_cb = BuildCallback();
+        public readonly System.Threading.ManualResetEventSlim Done = new();
+        public IntPtr Result;
+        public MFWaitCallback() : base(s_cb) { }
+        protected override void OnFinalRelease() { Com.Release(Result); Done.Dispose(); }
+
+        private static Vtable BuildCallback()
+        {
+            var vt = new Vtable("IMFAsyncCallback", 5, new Guid("a27003cf-2354-4f2a-8d6a-ab7cff15437e"));
+            vt.Set(3, (delegate* unmanaged<IntPtr, uint*, uint*, int>)&GetParameters);
+            vt.Set(4, (delegate* unmanaged<IntPtr, IntPtr, int>)&Invoke);
+            return vt;
+        }
+
+        [UnmanagedCallersOnly] private static int GetParameters(IntPtr self, uint* flags, uint* queue) => MF.E_NOTIMPL;
+
+        [UnmanagedCallersOnly]
+        private static int Invoke(IntPtr self, IntPtr result)
+        {
+            if (From<MFWaitCallback>(self) is not { } c) return MF.E_POINTER;
+            Com.AddRef(result); c.Result = result;
+            c.Done.Set();
+            return MF.S_OK;
         }
     }
 }

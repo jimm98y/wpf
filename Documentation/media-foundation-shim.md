@@ -560,6 +560,26 @@ H.264 of NV12 and AAC of PCM.
     hvcC).
   - The encoders under the MFTs are the system's: VideoToolbox and AudioToolbox, GStreamer, MediaCodec,
     WebCodecs.
+- **The media sink** (`Sink/MFMpeg4Sink.cs`, `MFMediaSinkProbe`, `MediaSink.windows.txt`): the writer writes
+  through Windows' MPEG-4 media sink, as Windows' does, its samples to the stream sinks' `ProcessSample`:
+  - A writer of a URL or byte stream makes it at `BeginWriting`, a stream sink of each stream (identifiers from 1)
+    of the encoder's output type, and gives it a presentation clock (`Sink/MFPresentationClock.cs`), started.
+    `GetServiceForStream(MF_SINK_WRITER_MEDIASINK)` hands it out from then on, after `Finalize` too
+    (MF_E_UNSUPPORTED_SERVICE before).
+  - `MFCreateMPEG4MediaSink` makes one of an application's byte stream: a stream sink of the video type (1) and of
+    the audio type (2, of `MF_MT_AAC_PAYLOAD_TYPE` 0 where it has none), each of the type as given; of no clock
+    (MF_E_NO_CLOCK) until one is set. `AddStreamSink` takes any identifier; `RemoveStreamSink` of one there is not
+    gives MF_E_INVALIDSTREAMNUMBER; an index past the last MF_E_INVALIDINDEX; after `Shutdown`, MF_E_SHUTDOWN.
+  - The sink: `IMFFinalizableMediaSink`, `IMFClockStateSink`, `IMFMediaEventGenerator`, `IMFGetService`,
+    `IMFAttributes`; rateless. A stream sink: `IMFStreamSink`, its own `IMFMediaTypeHandler` (its one type),
+    `IMFMediaEventGenerator`; told of the clock's start, stop and pause (MEStreamSinkStarted, ...), of a marker
+    (MEStreamSinkMarker) at once.
+  - `MFCreateSinkWriterFromMediaSink` makes a writer of a sink (the shim's or the application's own): its streams the
+    sink's stream sinks, of their current types; `AddStream` adds a stream sink of the next identifier;
+    `SetInputMediaType` puts an encoder before a stream sink and sets the stream sink's type to the encoder's
+    output; the media sink handed out at once. At `Finalize` the writer drains the encoders and finalizes the sink
+    (`BeginFinalize`, `EndFinalize`); the sink finishes the file and closes its byte stream, and answers on.
+  - A stream of no samples is an empty track, as Windows' sink writes it.
 - **The rest of the writer, as Windows' answers it:**
   - `BeginWriting` without a stream gives MF_E_INVALIDREQUEST.
   - `Finalize` with no sample written gives MF_E_SINK_NO_SAMPLES_PROCESSED, and so does every call
@@ -606,7 +626,6 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- The writer's media sink (`MF_SINK_WRITER_MEDIASINK`).
 - The color converter's IMediaObject; the video processor's formats of more than 8 bits, palettes and the rarer
   packings, and its scaling filter to the byte.
 - More of the source reader:

@@ -1,0 +1,259 @@
+==== the sink writer's media sink
+  create 0x00000000
+  service, no streams: 0xc00d36ba
+  add 0x00000000 0x00000000, inputs 0x00000000 0x00000000
+  service, before writing: 0xc00d36ba
+  begin 0x00000000
+  service, writing: 0x00000000
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0x00000000 set
+    streams 0x00000000 2
+      stream 0: identifier 0x00000000 1, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Video, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AVG_BITRATE = UI4 500000
+          MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+          MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+          MF_MT_INTERLACE_MODE = UI4 2
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+          MF_MT_MPEG2_LEVEL = UI4 13
+          MF_MT_MPEG2_PROFILE = UI4 66
+          MF_MT_MPEG_SEQUENCE_HEADER = BLOB[35] 000000016742c00d95b0836c0440000003004000000c83682211b80000000168ca8f20
+          MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+          MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      stream 1: identifier 0x00000000 2, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Audio, types 0x00000000 1
+        current 0x00000000
+          73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+          MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 41
+          MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+          MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+          MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+          MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+          MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+          MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+          MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+          MF_MT_AVG_BITRATE = UI4 128000
+          MF_MT_COMPRESSED = UI4 1
+          MF_MT_FIXED_SIZE_SAMPLES = UI4 0
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+          MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+          MF_MT_USER_DATA = BLOB[14] 0000290000000000000000001210
+  written
+  service, written: 0x00000000 the same True
+  finalize 0x00000000
+  service, finalized: 0x00000000
+  the sink kept, finalized:
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0x00000000 set
+    streams 0x00000000 2
+      stream 0: identifier 0x00000000 1, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Video, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AVG_BITRATE = UI4 500000
+          MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+          MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+          MF_MT_INTERLACE_MODE = UI4 2
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+          MF_MT_MPEG2_LEVEL = UI4 13
+          MF_MT_MPEG2_PROFILE = UI4 66
+          MF_MT_MPEG_SEQUENCE_HEADER = BLOB[35] 000000016742c00d95b0836c0440000003004000000c83682211b80000000168ca8f20
+          MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+          MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      stream 1: identifier 0x00000000 2, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Audio, types 0x00000000 1
+        current 0x00000000
+          73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+          MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 41
+          MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+          MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+          MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+          MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+          MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+          MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+          MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+          MF_MT_AVG_BITRATE = UI4 128000
+          MF_MT_COMPRESSED = UI4 1
+          MF_MT_FIXED_SIZE_SAMPLES = UI4 0
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+          MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+          MF_MT_USER_DATA = BLOB[14] 0000290000000000000000001210
+  file True, tracks 1:vide:5 2:soun:87
+==== the application's MPEG-4 sink
+  video and audio: create 0x00000000
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0xc00d36d7
+    streams 0x00000000 2
+      stream 0: identifier 0x00000000 1, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Video, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AVG_BITRATE = UI4 500000
+          MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+          MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+          MF_MT_INTERLACE_MODE = UI4 2
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+          MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+          MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      stream 1: identifier 0x00000000 2, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Audio, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+          MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+          MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+          MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+          MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+          MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+    add a stream: 0x00000000
+    remove stream 1: 0x00000000
+    stream by identifier 7: 0xc00d36b3
+    stream by index 5: 0xc00d36bf
+    shutdown 0x00000000
+    characteristics, shut down 0xc00d3e85
+  video: create 0x00000000
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0xc00d36d7
+    streams 0x00000000 1
+      stream 0: identifier 0x00000000 1, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Video, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AVG_BITRATE = UI4 500000
+          MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+          MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+          MF_MT_INTERLACE_MODE = UI4 2
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+          MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+          MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+    add a stream: 0x00000000
+    remove stream 1: 0x00000000
+    stream by identifier 7: 0xc00d36b3
+    stream by index 5: 0xc00d36bf
+    shutdown 0x00000000
+    characteristics, shut down 0xc00d3e85
+  audio: create 0x00000000
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0xc00d36d7
+    streams 0x00000000 1
+      stream 0: identifier 0x00000000 2, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Audio, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+          MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+          MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+          MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+          MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+          MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+    add a stream: 0x00000000
+    remove stream 1: 0xc00d36b3
+    stream by identifier 7: 0xc00d36b3
+    stream by index 5: 0xc00d36bf
+    shutdown 0x00000000
+    characteristics, shut down 0xc00d3e85
+  neither: create 0x00000000
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0xc00d36d7
+    streams 0x00000000 0
+    add a stream: 0x00000000
+    remove stream 1: 0xc00d36b3
+    stream by identifier 7: 0xc00d36b3
+    stream by index 5: 0xc00d36bf
+    shutdown 0x00000000
+    characteristics, shut down 0xc00d3e85
+  a writer of it, a stream added: sink 0x00000000
+    writer 0x00000000
+    service: 0x00000000 the sink given True
+    add a stream: 0x00000000 2
+    stream 2 input 0x00000000
+    characteristics 0x00000000 0x4
+    interfaces: IMFFinalizableMediaSink yes IMFClockStateSink yes IMFMediaEventGenerator yes IMFGetService yes IMFMediaSinkPreroll 0x80004002 IMFAttributes yes IMFPresentationTimeSource 0x80004002 IPropertyStore 0x80004002
+    clock 0xc00d36d7
+    streams 0x00000000 3
+      stream 0: identifier 0x00000000 1, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Video, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AVG_BITRATE = UI4 500000
+          MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+          MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+          MF_MT_INTERLACE_MODE = UI4 2
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+          MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+          MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+      stream 1: identifier 0x00000000 2, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Audio, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+          MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+          MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+          MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+          MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+          MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+      stream 2: identifier 0x00000000 3, its sink 0x00000000 the same True
+        by identifier 0x00000000 the same True
+        interfaces: IMFMediaTypeHandler yes IMFGetService 0x80004002 IMFAttributes 0x80004002 IMFMediaEventGenerator yes
+        handler: major 0x00000000 MFMediaType_Video, types 0x00000000 1
+        current 0x00000000
+          MF_MT_AVG_BITRATE = UI4 500000
+          MF_MT_FRAME_RATE = UI8 107374182401 (25:1)
+          MF_MT_FRAME_SIZE = UI8 549755813984 (128:96)
+          MF_MT_INTERLACE_MODE = UI4 2
+          MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+          MF_MT_MPEG2_LEVEL = UI4 13
+          MF_MT_MPEG2_PROFILE = UI4 66
+          MF_MT_MPEG_SEQUENCE_HEADER = BLOB[35] 000000016742c00d95b0836c0440000003004000000c83682211b80000000168ca8f20
+          MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+          MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+    inputs 0x00000000 0x00000000
+    stream 0 transform 0: 0x00000000 f79eac7d-e545-4387-bdee-d647d7bde42a
+    stream 1 transform 0: 0x00000000 91c64bd0-f91e-4d8c-9276-db248279d975
+    begin 0x00000000
+    written
+    finalize 0x00000000
+    the sink's characteristics, finalized 0x00000000
+    file True, tracks 1:vide:5 2:soun:87 3:vide:0
+    read back 0x00000000
+      stream 0: 0x00000000 MFAudioFormat_AAC
+      stream 1: 0x00000000 MFVideoFormat_H264
+      stream 2: 0xc00d36b3
+  a writer of it: sink 0x00000000
+    writer 0x00000000
+    service: 0x00000000 the sink given True
+    inputs 0x00000000 0x00000000
+    stream 0 transform 0: 0x00000000 f79eac7d-e545-4387-bdee-d647d7bde42a
+    stream 1 transform 0: 0x00000000 91c64bd0-f91e-4d8c-9276-db248279d975
+    begin 0x00000000
+    written
+    finalize 0x00000000
+    the sink's characteristics, finalized 0x00000000
+    file True, tracks 1:vide:5 2:soun:87
+    read back 0x00000000
+      stream 0: 0x00000000 MFAudioFormat_AAC
+      stream 1: 0x00000000 MFVideoFormat_H264
+      stream 2: 0xc00d36b3

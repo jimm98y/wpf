@@ -69,6 +69,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
 
 
         public MuxTrack Add(MuxTrack t) { _tracks.Add(t); return t; }
+        public bool Has(MuxTrack t) => _tracks.Contains(t);
 
         public void Dispose() => _out.Dispose();
 
