@@ -8,8 +8,8 @@ objects are COM objects built the way the Direct3D shim's are: a vtable per inte
 the order the Windows metadata gives.
 
 On Windows the app keeps Windows' own Media Foundation. That Media Foundation is handed the shim's
-Direct3D 11 device, and its hardware decoders reach the GPU through the shim's `ID3D11VideoDecoder`
-(section "Decoding on Windows", to come).
+Direct3D 11 device, and its hardware decoders reach the GPU through the shim's `ID3D11VideoDecoder`,
+which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-shim.md, section 8, video).
 
 ## What there is
 
@@ -58,4 +58,4 @@ through its vtables, as an app does:
 - The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
 - The audio decoders (AAC, MP3, FLAC, ALAC, Opus) and the encoders.
 - The source reader (`MFCreateSourceReaderFromURL`, from a byte stream, from a media source) with an MP4 demuxer of its own, the media session, and camera capture (`MFEnumDeviceSources`).
-- The shim's `ID3D11VideoDecoder` for Windows' Media Foundation.
+- Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder (the test VM has none).

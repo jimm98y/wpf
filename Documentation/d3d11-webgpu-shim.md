@@ -310,13 +310,26 @@ primitive, `ExternalImage`, that names a WebGPU texture, a version and a dirty r
   - SharpMediaPlayer, Big Buck Bunny (480p H.264, 24 fps): 24.1 fps, 0.36 cores, both ways (the frame is
     small); the frames are identical.
 
-**Video (2026-10-19).** WebGPU has no video decode. The shim's device answers
-`ID3D11VideoDevice` and its context `ID3D11VideoContext` as a **video processor only**:
-- No decoder profiles. Media Foundation's H.264 decoder, handed such a device through
-  `IMFDXGIDeviceManager`, refuses it (`MFT_MESSAGE_SET_D3D_MANAGER`: E_NOINTERFACE without the video
-  interfaces, E_FAIL with no profiles or no H.264 one; `MediaFoundationProbeTests`), and decodes on the
-  CPU to system memory; the app then uploads the frames. Reporting a profile would mean decoding
-  DXVA's bitstream buffers ourselves.
+**Video (2026-10-19; the decoder 2026-11-19).** WebGPU has no video decode. The shim's device answers
+`ID3D11VideoDevice` and its context `ID3D11VideoContext` with a video processor of its own and, on
+Windows, the GPU's decoder:
+- **The decoder** (D3DVideoDecoder.cs) is the GPU's own, reached through Windows' Direct3D 11: a device
+  of System32's `d3d11.dll`, made for it alone (`D3D11_CREATE_DEVICE_VIDEO_SUPPORT`, multithread
+  protected).
+  - Profiles, formats and configurations are the GPU's; `CreateVideoDecoder` wraps the GPU's decoder.
+  - An output view is of a texture of the shim's (Media Foundation's NV12 or P010 array). A texture of the
+    same shape on Windows' device mirrors it, and the GPU's view is of that.
+  - `GetDecoderBuffer`, `ReleaseDecoderBuffer`, `DecoderBeginFrame`, `SubmitDecoderBuffers` go to the
+    GPU's decoder unchanged. `DecoderEndFrame` then copies the decoded slice into the shim's texture
+    (staging, `Map`, `UpdateSubresource`), where the video processor, shaders and copies find it.
+  - `DecoderExtension` goes through when it names no resources (E_NOTIMPL otherwise).
+  - Off Windows, and where Windows has no such device, there are no profiles. Media Foundation is then
+    the shim's own off Windows (media-foundation-shim.md), and on Windows it decodes on the CPU.
+  - Where the GPU has no decoder, Windows' H.264 decoder refuses the shim's device
+    (`MFT_MESSAGE_SET_D3D_MANAGER`: E_FAIL) exactly as it refuses Windows' own device.
+    `MFDecoderTests.WindowsH264Decoder_DecodesIntoTheShimsTextures` checks this first, then decodes I_PCM
+    frames, which are known to the byte, into the shim's textures. In the test VM (Parallels, no decoder
+    profiles) only the refusal could be checked. Decoding on a GPU with DXVA is still to be run.
 - NV12, P010 and P016 textures are stored as their bytes lie in memory (`D3DTexture2D.PlaneRows`: the
   luma rows, then the interleaved chroma rows), so `Map`, `UpdateSubresource` and
   `CopySubresourceRegion` (a box in luma texels covers both planes) are D3D's layout.

@@ -2,7 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 //
-// The shim's Media Foundation (off Windows): its H.264 decoder MFT, found with MFTEnumEx and driven
+// The shim's Media Foundation (off Windows), and Windows' own on the shim's device: the H.264 decoder MFT, found with MFTEnumEx and driven
 // through its vtables as an application drives Windows' -- input type, the first frame's stream change,
 // the output type set again, ProcessInput / ProcessOutput, the drain -- over the system's decoder.
 //
@@ -135,10 +135,34 @@ namespace WgpuInterop.Tests.MediaFoundation
             return f;
         }
 
+        // ---- Windows' Media Foundation on Windows, the shim's elsewhere ------------------------------------
+
+        [System.Runtime.InteropServices.DllImport("mfplat.dll", EntryPoint = "MFStartup")] private static extern int WinMFStartup(uint version, uint flags);
+        [System.Runtime.InteropServices.DllImport("mfplat.dll", EntryPoint = "MFCreateMediaType")] private static extern int WinMFCreateMediaType(IntPtr* t);
+        [System.Runtime.InteropServices.DllImport("mfplat.dll", EntryPoint = "MFCreateMemoryBuffer")] private static extern int WinMFCreateMemoryBuffer(uint size, IntPtr* b);
+        [System.Runtime.InteropServices.DllImport("mfplat.dll", EntryPoint = "MFCreateSample")] private static extern int WinMFCreateSample(IntPtr* s);
+        [System.Runtime.InteropServices.DllImport("mfplat.dll", EntryPoint = "MFCreateDXGIDeviceManager")] private static extern int WinMFCreateDXGIDeviceManager(uint* token, IntPtr* m);
+        [System.Runtime.InteropServices.DllImport("ole32.dll")] private static extern int CoInitializeEx(IntPtr reserved, uint flags);
+        [System.Runtime.InteropServices.DllImport("ole32.dll")] private static extern int CoCreateInstance(Guid* clsid, IntPtr outer, uint context, Guid* iid, IntPtr* ppv);
+        private static readonly Guid CLSID_MSH264DecoderMFT = new("62CE7E72-4C71-4d20-B15D-452831A87D9D");
+
+        private static int CreateMediaType(IntPtr* t) => OperatingSystem.IsWindows() ? WinMFCreateMediaType(t) : MFExports.MFCreateMediaType(t);
+        private static int CreateMemoryBuffer(uint size, IntPtr* b) => OperatingSystem.IsWindows() ? WinMFCreateMemoryBuffer(size, b) : MFExports.MFCreateMemoryBuffer(size, b);
+        private static int CreateSample(IntPtr* s) => OperatingSystem.IsWindows() ? WinMFCreateSample(s) : MFExports.MFCreateSample(s);
+        private static int CreateDXGIDeviceManager(uint* token, IntPtr* m) => OperatingSystem.IsWindows() ? WinMFCreateDXGIDeviceManager(token, m) : MFExports.MFCreateDXGIDeviceManager(token, m);
+
         // ---- driving the decoder ----------------------------------------------------------------------
 
         private static IntPtr Decoder()
         {
+            if (OperatingSystem.IsWindows())
+            {
+                CoInitializeEx(IntPtr.Zero, 0);
+                Ok(WinMFStartup(0x20070, 0), "MFStartup");
+                var clsid = CLSID_MSH264DecoderMFT; var tid = IID_IMFTransform; IntPtr w;
+                Ok(CoCreateInstance(&clsid, IntPtr.Zero, 1, &tid, &w), "CoCreateInstance(the H.264 decoder)");
+                return w;
+            }
             var input = new MFT_REGISTER_TYPE_INFO { guidMajorType = MFMediaType_Video, guidSubtype = MFVideoFormat_H264 };
             IntPtr* activates; uint count;
             Ok(MFExports.MFTEnumEx(MFT_CATEGORY_VIDEO_DECODER, 1 | 4, &input, null, &activates, &count), "MFTEnumEx");
@@ -161,7 +185,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         private static IntPtr MediaType(Guid subtype, uint w, uint h)
         {
             IntPtr t;
-            Ok(MFExports.MFCreateMediaType(&t), "MFCreateMediaType");
+            Ok(CreateMediaType(&t), "MFCreateMediaType");
             var k1 = MF_MT_MAJOR_TYPE; var v1 = MFMediaType_Video; var k2 = MF_MT_SUBTYPE; var v2 = subtype; var k3 = MF_MT_FRAME_SIZE;
             ((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Fn(t, 24))(t, &k1, &v1);
             ((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Fn(t, 24))(t, &k2, &v2);
@@ -172,7 +196,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         private static IntPtr Sample(byte[] data, long time)
         {
             IntPtr buf, s;
-            Ok(MFExports.MFCreateMemoryBuffer((uint)Math.Max(1, data.Length), &buf), "MFCreateMemoryBuffer");
+            Ok(CreateMemoryBuffer((uint)Math.Max(1, data.Length), &buf), "MFCreateMemoryBuffer");
             if (data.Length > 0)
             {
                 byte* p; uint max, cur;
@@ -181,7 +205,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 ((delegate* unmanaged<IntPtr, int>)Fn(buf, 4))(buf);
                 ((delegate* unmanaged<IntPtr, uint, int>)Fn(buf, 6))(buf, (uint)data.Length);
             }
-            Ok(MFExports.MFCreateSample(&s), "MFCreateSample");
+            Ok(CreateSample(&s), "MFCreateSample");
             ((delegate* unmanaged<IntPtr, IntPtr, int>)Fn(s, 42))(s, buf);
             Release(buf);
             ((delegate* unmanaged<IntPtr, long, int>)Fn(s, 36))(s, time);
@@ -327,21 +351,64 @@ namespace WgpuInterop.Tests.MediaFoundation
         public void TheH264Decoder_DecodesIntoTexturesOfTheDeviceManagersDevice()
         {
             Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows has its own Media Foundation");
+            DecodeIntoTextures(64, 48);
+        }
+
+        /// <summary>
+        /// Windows' own H.264 decoder given the shim's device decodes into the shim's textures: with the GPU's
+        /// decoder, through the shim's ID3D11VideoDecoder (D3DVideoDecoder.cs), where the GPU has one, and on the
+        /// CPU where it has none.
+        /// </summary>
+        [Fact]
+        public void WindowsH264Decoder_DecodesIntoTheShimsTextures()
+        {
+            Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows' Media Foundation");
+            Assert.SkipWhen(WgpuInterop.Tests.Harness.Requirements.GpuUnavailable is not null, WgpuInterop.Tests.Harness.Requirements.GpuUnavailable ?? "");
+            // Windows' own device first: where the GPU has no decoder, Windows' decoder refuses it, and the shim's alike
+            if (VideoDecoderBackend.Available)
+            {
+                int real = SetManager(VideoDecoderBackend.Device);
+                IntPtr dev, ctx; uint level;
+                Ok(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0x20, null, 0, 7, &dev, &level, &ctx), "D3D11CreateDevice");
+                int shim = SetManager(dev);
+                Release(ctx); Release(dev);
+                Assert.Equal($"0x{real:x8}", $"0x{shim:x8}");
+                Assert.SkipWhen(real < 0, $"this GPU has no video decoder ({VideoDecoderBackend.Profiles} profiles): Windows' H.264 decoder refuses its device (0x{real:x8}) as it does the shim's");
+            }
+            int before = D3DVideoDecoder.Created;
+            DecodeIntoTextures(256, 144);
+            if (VideoDecoderBackend.Profiles > 0) Assert.True(D3DVideoDecoder.Created > before, "Windows' decoder did not use the shim's ID3D11VideoDecoder");
+        }
+
+        /// <summary>What Windows' H.264 decoder answers MFT_MESSAGE_SET_D3D_MANAGER with, of a manager of the device.</summary>
+        private static int SetManager(IntPtr device)
+        {
+            IntPtr manager; uint token;
+            Ok(CreateDXGIDeviceManager(&token, &manager), "MFCreateDXGIDeviceManager");
+            Ok(((delegate* unmanaged<IntPtr, IntPtr, uint, int>)Fn(manager, 7))(manager, device, token), "ResetDevice");
+            IntPtr t = Decoder();
+            int hr = ((delegate* unmanaged<IntPtr, uint, nuint, int>)Fn(t, 23))(t, 2, (nuint)manager);
+            Release(t); Release(manager);
+            return hr;
+        }
+
+        private static void DecodeIntoTextures(int w, int h)
+        {
             Assert.SkipWhen(WgpuInterop.Tests.Harness.Requirements.GpuUnavailable is not null, WgpuInterop.Tests.Harness.Requirements.GpuUnavailable ?? "");
             IntPtr dev, ctx; uint level;
             Ok(Exports.CreateDevicePointer(IntPtr.Zero, 1, IntPtr.Zero, 0x20, null, 0, 7, &dev, &level, &ctx), "D3D11CreateDevice");
             IntPtr manager; uint token;
-            Ok(MFExports.MFCreateDXGIDeviceManager(&token, &manager), "MFCreateDXGIDeviceManager");
+            Ok(CreateDXGIDeviceManager(&token, &manager), "MFCreateDXGIDeviceManager");
             Ok(((delegate* unmanaged<IntPtr, IntPtr, uint, int>)Fn(manager, 7))(manager, dev, token), "ResetDevice");
             IntPtr t = Decoder();
             try
             {
                 Ok(((delegate* unmanaged<IntPtr, uint, nuint, int>)Fn(t, 23))(t, 2, (nuint)manager), "MFT_MESSAGE_SET_D3D_MANAGER");
-                IntPtr inType = MediaType(MFVideoFormat_H264, 64, 48);
+                IntPtr inType = MediaType(MFVideoFormat_H264, (uint)w, (uint)h);
                 Ok(((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Fn(t, 15))(t, 0, inType, 0), "SetInputType");
                 Release(inType);
                 SetOutput(t);
-                var units = Stream(64, 48, 4, out var pictures);
+                var units = Stream(w, h, 4, out var pictures);
                 int textures = 0;
                 var frames = Decode(t, units, s =>
                 {
@@ -360,6 +427,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                     return SampleBytes(s);
                 }, out _, out _);
                 Assert.Equal(4, textures);
+                Assert.Equal(4, frames.Count);
                 for (int k = 0; k < frames.Count; k++) Assert.True(pictures[k].AsSpan().SequenceEqual(frames[k].AsSpan(0, pictures[k].Length)), $"frame {k} differs");
             }
             finally

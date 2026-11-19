@@ -370,7 +370,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         {
             var vt = new Vtable("ID3D11VideoContext", Vtbl.ID3D11VideoContext.SlotCount, Vtbl.ID3D11VideoContext.IID);
             FillDeviceChild(vt);
-            vt.Set(Vtbl.ID3D11VideoContext.GetDecoderBuffer, (delegate* unmanaged<IntPtr, IntPtr, uint, uint*, void**, int>)&VcNoDecoderBuffer);
+            FillVideoDecoding(vt);
             vt.Set(Vtbl.ID3D11VideoContext.VideoProcessorSetOutputTargetRect, (delegate* unmanaged<IntPtr, IntPtr, int, D3D11_RECT_V*, void>)&VcSetOutputTargetRect);
             vt.Set(Vtbl.ID3D11VideoContext.VideoProcessorSetOutputBackgroundColor, (delegate* unmanaged<IntPtr, IntPtr, int, float*, void>)&VcSetOutputBackground);
             vt.Set(Vtbl.ID3D11VideoContext.VideoProcessorSetOutputColorSpace, (delegate* unmanaged<IntPtr, IntPtr, uint*, void>)&VcSetOutputColorSpace);
@@ -400,9 +400,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         }
 
         private static D3DVideoProcessor? Vp(IntPtr p) => From<D3DVideoProcessor>(p);
-
-        [UnmanagedCallersOnly]
-        private static int VcNoDecoderBuffer(IntPtr self, IntPtr decoder, uint type, uint* size, void** buffer) { if (buffer != null) *buffer = null; return HResult.E_INVALIDARG; }
 
         [UnmanagedCallersOnly]
         private static void VcSetOutputTargetRect(IntPtr self, IntPtr p, int enable, D3D11_RECT_V* r)
