@@ -67,6 +67,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         /// <summary>
+        /// The RGB of an NV12 texture of the shim's, on its device's GPU (D3DContext.Nv12ToBgra): a B8G8R8A8 (or B8G8R8X8)
+        /// texture of the same size, as a media buffer, AddRef'd once; zero where the texture is not one of the shim's NV12.
+        /// </summary>
+        public static IntPtr ConvertNv12(MFDxgiBuffer nv12, int w, int h, bool alpha, bool bt709)
+        {
+            if (ComObject.From<D3DTexture2D>(nv12.Texture) is not { } src || src.Desc.Format != (DXGI_FORMAT)103 || src.Gpu == IntPtr.Zero) return IntPtr.Zero;
+            var (dev, ctx) = DeviceOf(nv12.Texture);
+            IntPtr tex = IntPtr.Zero;
+            try
+            {
+                if (ComObject.From<D3DContext>(ctx) is not { } context) return IntPtr.Zero;
+                var d = new D3D11_TEXTURE2D_DESC
+                {
+                    Width = (uint)w, Height = (uint)h, MipLevels = 1, ArraySize = 1, Format = alpha ? (DXGI_FORMAT)87 : (DXGI_FORMAT)88,
+                    SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 }, Usage = D3D11_USAGE.DEFAULT, BindFlags = (D3D11_BIND)(0x8 | 0x20),     // shader resource, render target
+                };
+                int hr = ((delegate* unmanaged<IntPtr, D3D11_TEXTURE2D_DESC*, D3D11_SUBRESOURCE_DATA*, IntPtr*, int>)Com.Fn(dev, Vtbl.ID3D11Device.CreateTexture2D))(dev, &d, null, &tex);
+                if (hr < 0 || ComObject.From<D3DTexture2D>(tex) is not { } dst) return IntPtr.Zero;
+                uint slice = nv12.Subresource / Math.Max(1, src.Desc.MipLevels);
+                context.Nv12ToBgra(src, slice, dst, (uint)h, bt709, alpha ? (byte)255 : (byte)0);
+                return new MFDxgiBuffer(tex, 0).Pointer;
+            }
+            finally
+            {
+                Com.Release(tex);
+                Com.Release(ctx);
+                Com.Release(dev);
+            }
+        }
+
+        /// <summary>
         /// A B8G8R8A8 (or B8G8R8X8) texture of the device <paramref name="like"/> is of, holding the pixels; as a media
         /// buffer, AddRef'd once.
         /// </summary>

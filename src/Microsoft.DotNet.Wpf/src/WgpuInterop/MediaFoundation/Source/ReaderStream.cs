@@ -919,27 +919,40 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         /// <summary>
         /// The decoder's NV12 frame as the RGB type, of the same size: BT.601 below 720 lines and BT.709 from there
         /// (or the stream's MF_MT_YUV_MATRIX), limited range, each chroma sample for its 2x2 pixels -- as Windows'
-        /// video processor converts it. RGB32's fourth byte 0, ARGB32's 255. Of a texture, a texture of the device.
+        /// video processor converts it. RGB32's fourth byte 0, ARGB32's 255. Of a texture, a texture of the device, converted
+        /// on its GPU (D3DContext.Nv12ToBgra: the same integers).
         /// </summary>
         private MFSample ToRgb(MFSample nv12)
         {
             try
             {
                 var (w, h) = Current.FrameSize;
-                var src = nv12.Bytes();
-                int stride = Stride(_rgb, w);
-                var rgb = new byte[stride * h];
                 uint matrix = Native.Attributes.U32(SR.MF_MT_YUV_MATRIX, h >= 720 ? 1u : 2u);   // MFVideoTransferMatrix_BT709 1, BT601 2
-                Nv12ToRgb(src, (int)w, (int)h, rgb, stride, _rgb == SR.MFVideoFormat_RGB24 ? 3 : 4, _rgb == SR.MFVideoFormat_ARGB32 ? (byte)255 : (byte)0, matrix == 1);
                 var s = new MFSample();
+                // a texture: converted on its device's GPU, read back never (the CPU's of a texture not of the shim's)
+                IntPtr gpu = IntPtr.Zero;
                 if (nv12.Buffers.Count > 0 && From<MFDxgiBuffer>(nv12.Buffers[0]) is { } tex && _rgb != SR.MFVideoFormat_RGB24)
                 {
-                    IntPtr b = D3DTextureIo.CreateBgraBuffer(tex, (int)w, (int)h, rgb, _rgb == SR.MFVideoFormat_ARGB32);
-                    s.SetBuffer(b);
-                    Com.Release(b);
+                    gpu = D3DTextureIo.ConvertNv12(tex, (int)w, (int)h, _rgb == SR.MFVideoFormat_ARGB32, matrix == 1);
+                    if (gpu == IntPtr.Zero)
+                    {
+                        D3DLog.Once("mf-rgb-cpu", "Media Foundation: the source reader converts a texture not of the shim's NV12 to RGB on the CPU");
+                        var px = new byte[w * 4 * h];
+                        Nv12ToRgb(nv12.Bytes(), (int)w, (int)h, px, (int)w * 4, 4, _rgb == SR.MFVideoFormat_ARGB32 ? (byte)255 : (byte)0, matrix == 1);
+                        gpu = D3DTextureIo.CreateBgraBuffer(tex, (int)w, (int)h, px, _rgb == SR.MFVideoFormat_ARGB32);
+                    }
+                }
+                if (gpu != IntPtr.Zero)
+                {
+                    s.SetBuffer(gpu);
+                    Com.Release(gpu);
                 }
                 else
                 {
+                    var src = nv12.Bytes();
+                    int stride = Stride(_rgb, w);
+                    var rgb = new byte[stride * h];
+                    Nv12ToRgb(src, (int)w, (int)h, rgb, stride, _rgb == SR.MFVideoFormat_RGB24 ? 3 : 4, _rgb == SR.MFVideoFormat_ARGB32 ? (byte)255 : (byte)0, matrix == 1);
                     var buf = new MFMemoryBuffer((uint)rgb.Length);
                     byte* d = buf.LockBytes(true);
                     rgb.CopyTo(new Span<byte>(d, rgb.Length));

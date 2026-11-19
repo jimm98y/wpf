@@ -234,7 +234,9 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
     sample carries `MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED`, and the new type has the picture in its
     apertures and `MF_MT_VIDEO_NOMINAL_RANGE`.
   - With `MF_SOURCE_READER_D3D_MANAGER`, the frames are textures of the manager's device: NV12, and for
-    RGB a B8G8R8X8 / B8G8R8A8 texture. The conversion to RGB still runs on the CPU.
+    RGB a B8G8R8X8 / B8G8R8A8 texture, converted on the device's GPU (`Direct3D/D3DContext.Nv12ToBgra`: one render
+    pass of the CPU's integers, so the bytes are the same), the frame read back never. A texture not of the shim's is
+    converted on the CPU.
   - Audio is decoded to PCM (8, 16, 24 or 32 bits) or float, of any rate and channel count. Like
     Windows' resampler, the reader converts after the decoder (`AudioConverter.cs`):
     - to mono (L + R) / 2;
@@ -644,6 +646,5 @@ on macOS and in the Ubuntu VM.
   packings, and its scaling filter to the byte.
 - More of the source reader:
   - more containers (ASF);
-  - the RGB conversion of textures on the GPU (the shim's video processor).
 - The media session, and camera capture (`MFEnumDeviceSources`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder (the test VM has none).
