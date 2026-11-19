@@ -153,7 +153,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         private static extern IntPtr CFDataCreate(IntPtr allocator, byte* bytes, nint length);
 
         [DllImport(CoreFoundationLib)]
-        private static extern IntPtr CFNumberCreate(IntPtr allocator, int type, void* value);
+        // CFNumberType is a CFIndex: 64 bits (under a JIT an int's register happens to be clear above; under iOS's interpreter it is not)
+        private static extern IntPtr CFNumberCreate(IntPtr allocator, nint type, void* value);
 
         [DllImport(CoreFoundationLib)]
         private static extern IntPtr CFDictionaryCreateMutable(IntPtr allocator, nint capacity, IntPtr keyCallBacks, IntPtr valueCallBacks);

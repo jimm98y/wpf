@@ -132,6 +132,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             }
 
             ApplySettings();
+            foreach (var u in _unapplied) Log.Warn($"VideoToolbox: {u}");
             VTCompressionSessionPrepareToEncodeFrames(_session);
         }
 
@@ -177,7 +178,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
                     break;
 
                 case RateControlMode.ConstantBitrate:
-                    SetNumber("kVTCompressionPropertyKey_ConstantBitRate", (int)o.Bitrate, nameof(o.RateControl));
+                    // where the encoder has no constant rate (the iOS simulator's, software ones): the average, of the same rate
+                    if (!TrySetNumber("kVTCompressionPropertyKey_ConstantBitRate", (int)o.Bitrate))
+                        SetNumber("kVTCompressionPropertyKey_AverageBitRate", (int)o.Bitrate, nameof(o.Bitrate));
                     break;
 
                 case RateControlMode.Quality:
@@ -213,8 +216,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         {
             _options.Bitrate = bitrate;
             if (_session == IntPtr.Zero) return;
-            if (_options.RateControl == RateControlMode.ConstantBitrate) SetNumber("kVTCompressionPropertyKey_ConstantBitRate", (int)bitrate, nameof(_options.Bitrate));
+            if (_options.RateControl == RateControlMode.ConstantBitrate)
+            {
+                if (!TrySetNumber("kVTCompressionPropertyKey_ConstantBitRate", (int)bitrate)) SetNumber("kVTCompressionPropertyKey_AverageBitRate", (int)bitrate, nameof(_options.Bitrate));
+            }
             else if (_options.RateControl is RateControlMode.Default or RateControlMode.VariableBitrate) SetNumber("kVTCompressionPropertyKey_AverageBitRate", (int)bitrate, nameof(_options.Bitrate));
+        }
+
+        /// <summary>A property of a number, if the encoder takes it (nothing reported where it does not).</summary>
+        private bool TrySetNumber(string key, int value)
+        {
+            IntPtr name = VideoToolboxConstant(key);
+            if (name == IntPtr.Zero) return false;
+            IntPtr number = CreateNumber(value);
+            int status = VTSessionSetProperty(_session, name, number);
+            CFRelease(number);
+            return status == 0;
         }
 
         private void SetNumber(string key, int value, string setting)
@@ -300,6 +317,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         }
 
         /// <summary>Encodes every frame VideoToolbox holds; read them out before <see cref="EndDrain"/>.</summary>
+        /// <summary>The frames up to the time (100 ns) finished and handed out, the session going on.</summary>
+        public void CompleteUntil(long time)
+        {
+            if (_session != IntPtr.Zero) VTCompressionSessionCompleteFrames(_session, CMTime.FromTicks(time));
+        }
+
         public void BeginDrain()
         {
             ThrowIfNotInitialized();

@@ -112,14 +112,22 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         private static void CompareLines(string[] windows, List<string> ours)
         {
-            static List<string> Clean(IEnumerable<string> lines)
+            // a file of a codec this system has no decoder of (the iOS simulator's VP9): its decoding as Windows' without that
+            // codec answers it, MF_E_TOPO_CODEC_NOT_FOUND -- the rest of the file not compared, of either
+            var undecodable = new HashSet<string>();
+            string at = "";
+            foreach (var l in ours) { if (l.StartsWith("==== ")) at = l; else if (l.StartsWith("decode to ") && l.EndsWith(": 0xc00d5212")) undecodable.Add(at); }
+            List<string> Clean(IEnumerable<string> lines)
             {
                 var r = new List<string>();
                 string file = "";
-                bool resampled = false;
+                bool resampled = false, gone = false;
                 foreach (var l in lines)
                 {
-                    if (l.StartsWith("==== ")) file = l;
+                    if (l.StartsWith("==== ")) { file = l; gone = false; }
+                    if (l.StartsWith("---- ")) gone = false;
+                    if (undecodable.Contains(file) && l.StartsWith("decode to ")) gone = true;
+                    if (gone) continue;
                     if (s_internal.Any(l.Contains)) continue;
                     // resampled, or of a file whose frames the decoder finds itself: the packets are the decoder's and the
                     // resampler's, each system's own (the signal is compared, below)

@@ -80,6 +80,20 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
       app's files, and `MF_TEST_ROOT` names them; each line goes to logcat under `MFTEST`. Started with
       `adb shell am start -n net.dot.wpf.mobilemedia/mobilemedia.MainActivity -e filter MF`. On the
       emulator (Android 15) every test that can run there passes.
+      On iOS the fixtures and media are the bundle's resources, and the lines go to stdout:
+      `xcrun simctl launch --console-pty <device> net.dot.wpf.mobilemedia MF`. Built with
+      `-p:ValidateXcodeVersion=false` (.NET for iOS 26.5 asks for Xcode 26.6; this Mac has 27.2). On the
+      iPhone 16 Pro simulator (iOS 26.5) every test that can run there passes. A launch after a crash
+      may fail in the simulator's own dyld; booting it again helps.
+      - Under iOS's interpreter a P/Invoke's argument must be of its native width: `CFNumberCreate`'s
+        type is a CFIndex (64 bits), and an `int` there crashed it.
+      - The simulator's VideoToolbox encoder has no constant bit rate: the average one of the same
+        rate is set. It also holds more frames than Windows' encoder does, so where Windows' encoder
+        would have handed a frame out and none has come within 100 ms, the H.264 MFT has VideoToolbox
+        finish the frames up to the oldest one's time (`VTCompressionSessionCompleteFrames`).
+      - It has no VP9 decoder. A file of a codec the system can't decode gives
+        MF_E_TOPO_CODEC_NOT_FOUND, as Windows without that codec does; the reader's report tests
+        don't compare the rest of that file.
     - `tests/WasmMedia` also runs the desktop's Media Foundation tests in the page: it compiles them in and
       runs each by reflection (`index.html?filter=<name>`). It prints `MF-TEST <name>: passed|skipped|failed`
       for each and `MF-TESTS` with the totals. Tests of textures, devices, HTTP and the probes are skipped.
@@ -494,8 +508,6 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- iOS: `tests/MobileMedia` has its simulator entry, not yet built or run (Xcode 27.2's license is to be
-  accepted, and .NET for iOS 26.5 asks for Xcode 26.6).
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
   (`MF_SINK_WRITER_MEDIASINK`); transforms registered by the application (`MFTRegisterLocal`).
 - More of the source reader:

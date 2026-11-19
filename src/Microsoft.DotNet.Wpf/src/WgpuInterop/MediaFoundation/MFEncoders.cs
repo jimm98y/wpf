@@ -616,7 +616,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             Collect();
             // where Windows' encoder would have a frame out by now, the system's (GStreamer's runs on threads of its own) is waited for
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            while (_out.Count == 0 && _encoder != null && !_draining && _held > Latency && sw.ElapsedMilliseconds < 500) { System.Threading.Thread.Sleep(2); Collect(); }
+            bool completed = false;
+            while (_out.Count == 0 && _encoder != null && !_draining && _held > Latency && sw.ElapsedMilliseconds < 500)
+            {
+                // an encoder that holds more frames than Windows' does (the iOS simulator's): made to finish the oldest
+                if (!completed && sw.ElapsedMilliseconds >= 100 && _times.Count > 0) { _encoder.CompleteUntil(_times.Peek().Time); completed = true; }
+                System.Threading.Thread.Sleep(2); Collect();
+            }
             // Windows' encoder holds its frames (its look-ahead) until enough have come, or it is drained
             if (_out.Count == 0) { if (_draining) { _draining = false; _held = 0; _times.Clear(); } return MF.MF_E_TRANSFORM_NEED_MORE_INPUT; }
             if (!_draining && _held <= Latency) return MF.MF_E_TRANSFORM_NEED_MORE_INPUT;
