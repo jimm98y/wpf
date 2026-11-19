@@ -101,6 +101,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
 
         /// <summary>Of MP3, the bit rate in bits a second: the nearest the encoder offers not above it.</summary>
         public uint Bitrate { get; set; } = 192000;
+
+        /// <summary>Of AAC, the bit rate in bits a second; 0 leaves it to the encoder.</summary>
+        public uint AacBitrate { get; set; }
+
+        /// <summary>Of AAC, the audio object type: 2 AAC-LC, 5 HE-AAC (SBR), 29 HE-AAC v2 (SBR and parametric stereo).</summary>
+        public uint AacObjectType { get; set; } = 2;
     }
 
     /// <summary>The ProRes an encoder makes: each of its own fixed quality, and of its own data rate, lowest first.</summary>

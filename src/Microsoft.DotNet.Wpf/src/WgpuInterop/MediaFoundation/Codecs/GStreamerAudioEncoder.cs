@@ -92,7 +92,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             string mask = ChannelMask(Channels) is { } m ? $",channel-mask=(bitmask)0x{m:x}" : "";
             string encoder = _codec switch
             {
-                AudioCodec.AAC => $"{Element} ! aacparse ! audio/mpeg,mpegversion=4,stream-format=raw",
+                AudioCodec.AAC => $"{Element}{(_options.AacBitrate > 0 ? $" bitrate={_options.AacBitrate}" : "")} ! aacparse ! audio/mpeg,mpegversion=4,stream-format=raw{(_options.AacObjectType is 5 or 29 && Element == "fdkaacenc" ? $",base-profile=lc,profile={(_options.AacObjectType == 5 ? "he-aac-v1" : "he-aac-v2")}" : "")}",
                 AudioCodec.Mp3 => $"lamemp3enc target=bitrate cbr=true bitrate={Math.Max(_options.Bitrate / 1000, 8)} ! mpegaudioparse",
                 AudioCodec.Opus => "opusenc frame-size=20",
                 AudioCodec.Flac => "flacenc blocksize=4096",

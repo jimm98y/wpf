@@ -153,7 +153,7 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         // ---- driving the decoder ----------------------------------------------------------------------
 
-        private static IntPtr Decoder()
+        internal static IntPtr Decoder()
         {
             if (OperatingSystem.IsWindows())
             {

@@ -255,6 +255,50 @@ MF_SOURCE_READER_MEDIASOURCE gives the source.
 - The reader's report of every file is Windows' report the three ways: of the URL, of the resolver's
   source, and of that source driven as an application's (`TheReader_DoesWithEachFileWhatWindowsReaderDoes`).
 
+## The encoders
+
+`MFTEnumEx` lists Windows' "H264 Encoder MFT" (`6ca50344-…`) and "Microsoft AAC Audio Encoder MFT"
+(`93af0c51-…`) wherever the system encodes the codec (`MFEncoders.cs`, over `Codecs/PlatformEncoders.cs`).
+Windows' were probed (`MFEncoderProbe`'s Details and Dumps, the report in `Encoder.windows.txt`). The
+shim's give the same report, except for what each system's encoder makes itself (below). Both are
+synchronous with one stream each way and write the application's output samples.
+
+- **H.264:**
+  - The output type comes first. It needs a size of even dimensions (MF_E_ATTRIBUTENOTFOUND without
+    one, even to a test), a frame rate and an interlace mode (MF_E_ATTRIBUTENOTFOUND), and a bitrate
+    (E_FAIL). `MF_MT_MPEG2_PROFILE` is 66, 77 or 100; Main is the default.
+  - Then the input: IYUV, YV12, NV12 or YUY2 of the output's size and rate, as the four available input
+    types give them.
+  - The current output type carries `MF_MT_MPEG_SEQUENCE_HEADER`. The output buffer is 1.875 bytes a
+    pixel, at least 32 KB.
+  - Each output is an access unit led by an access unit delimiter, with the parameter sets before each
+    key frame.
+  - Attributes: `MFSampleExtension_DecodeTimestamp` and the picture type, `MFSampleExtension_CleanPoint`
+    of 1 on key frames and 0 otherwise, and two more of Windows'.
+  - As Windows' encoder, it holds five frames before its first output (four of Baseline). Of profiles
+    with B pictures, each frame is timed one frame after its decode time.
+  - `ICodecAPI` has Windows' properties and their defaults: rate control, mean bitrate, quality, GOP
+    size, B pictures, low latency, QP and others.
+- **AAC:**
+  - Input: 16-bit PCM of 1, 2, 6 or 8 channels at 11025 to 96000 Hz. The 64 available input types list
+    float as well, as Windows' do, though float is refused.
+  - Output: one of Windows' 279 types, raw or ADTS, by bytes a second and profile level (LC, HE, HE v2).
+    It has to match the input's channels and rate; either may be set first.
+  - Like Windows', the encoder fills the application's own type objects in with the rest of the
+    attributes (`MF_MT_USER_DATA`'s HEAACWAVEINFO tail with the AudioSpecificConfig among them) and
+    keeps them.
+  - Packets come once 2048 frames have followed them, or at the drain. Each is a clean point, timed
+    from the first input.
+  - No `ICodecAPI` property, and no attribute store, as Windows'.
+- **What differs is each system's encoder's own:**
+  - the bytes, and so the parameter sets;
+  - Windows' B pictures: the shim's encoders make I and P pictures only, at the same times;
+  - SEI;
+  - each frame's QP attribute;
+  - AAC's priming: AudioToolbox's makes up to two packets more at the drain.
+- The test VM's H.264 decoder MFT decodes nothing when made on its own, so the round trip of encoding
+  and decoding (`TheH264Encoder_EncodesWhatTheDecoderDecodesBack`) is checked off Windows.
+
 ## The sink writer
 
 `MFCreateSinkWriterFromURL` (to a path, or to the shim's own file byte stream) gives an `IMFSinkWriterEx`
@@ -307,9 +351,8 @@ on macOS and in the Ubuntu VM.
 ## To come
 
 - The browser's decoder (WebCodecs). Android's is in but not yet run on a device or emulator.
-- The encoders as MFTs of their own (`MFTEnumEx` lists Windows' "H264 Encoder MFT" and "Microsoft AAC
-  Audio Encoder MFT"; the sink writer uses the system's encoders directly), and writing to an
-  application's byte stream.
+- Writing to an application's byte stream from the sink writer, and the sink writer through the encoder
+  MFTs (it uses the system's encoders directly).
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;

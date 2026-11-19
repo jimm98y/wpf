@@ -1,0 +1,1074 @@
+==== enumerated
+  MFTEnumEx flags 0x3f in MFVideoFormat_NV12 out MFVideoFormat_H264: 0x00000000 count 1
+    0: STR "H264 Encoder MFT" | GUID 6ca50344-051a-4ded-9779-a43305165e35
+  MFTEnumEx flags 0x61 in MFVideoFormat_NV12 out MFVideoFormat_H264: 0x00000000 count 1
+    0: STR "H264 Encoder MFT" | GUID 6ca50344-051a-4ded-9779-a43305165e35
+  MFTEnumEx flags 0x1 in MFVideoFormat_NV12 out MFVideoFormat_H264: 0x00000000 count 1
+    0: STR "H264 Encoder MFT" | GUID 6ca50344-051a-4ded-9779-a43305165e35
+  MFTEnumEx flags 0x3f in - out MFVideoFormat_H264: 0x00000000 count 1
+    0: STR "H264 Encoder MFT" | GUID 6ca50344-051a-4ded-9779-a43305165e35
+  MFTEnumEx flags 0x61 in - out MFVideoFormat_H264: 0x00000000 count 1
+    0: STR "H264 Encoder MFT" | GUID 6ca50344-051a-4ded-9779-a43305165e35
+  MFTEnumEx flags 0x1 in - out MFVideoFormat_H264: 0x00000000 count 1
+    0: STR "H264 Encoder MFT" | GUID 6ca50344-051a-4ded-9779-a43305165e35
+  MFTEnumEx flags 0x3f in MFAudioFormat_PCM out MFAudioFormat_AAC: 0x00000000 count 1
+    0: STR "Microsoft AAC Audio Encoder MFT" | GUID 93af0c51-2275-45d2-a35b-f2ba21caed00
+  MFTEnumEx flags 0x61 in MFAudioFormat_PCM out MFAudioFormat_AAC: 0x00000000 count 1
+    0: STR "Microsoft AAC Audio Encoder MFT" | GUID 93af0c51-2275-45d2-a35b-f2ba21caed00
+  MFTEnumEx flags 0x1 in MFAudioFormat_PCM out MFAudioFormat_AAC: 0x00000000 count 1
+    0: STR "Microsoft AAC Audio Encoder MFT" | GUID 93af0c51-2275-45d2-a35b-f2ba21caed00
+  MFTEnumEx flags 0x3f in MFAudioFormat_Float out MFAudioFormat_AAC: 0x00000000 count 0
+  MFTEnumEx flags 0x61 in MFAudioFormat_Float out MFAudioFormat_AAC: 0x00000000 count 0
+  MFTEnumEx flags 0x1 in MFAudioFormat_Float out MFAudioFormat_AAC: 0x00000000 count 0
+==== H.264 encoder found
+  attributes:
+    86a355ae-3a77-4ec4-9f31-01149a4e92de = UI4 1
+  stream limits 0x00000000 1 1 1 1
+  input current, none set 0xc00d6d60
+  output current, none set 0xc00d6d60
+  output info, none set 0x00000000 flags 0x0 size 0
+  ICodecAPI 0x00000000
+  CODECAPI_AVEncCommonRateControlMode: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncCommonMeanBitRate: supported 0x00000000 get 0x00000000 UI4 500000
+  CODECAPI_AVEncCommonQuality: supported 0x00000000 get 0x00000000 UI4 65
+  CODECAPI_AVEncCommonQualityVsSpeed: supported 0x00000000 get 0x00000000 UI4 33
+  CODECAPI_AVEncMPVGOPSize: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncMPVDefaultBPictureCount: supported 0x00000000 get 0x00000000 UI4 1
+  CODECAPI_AVEncH264CABACEnable: supported 0x00000000 get 0x00000000 VT 11
+  CODECAPI_AVLowLatencyMode: supported 0x00000000 get 0x00000000 VT 11
+  CODECAPI_AVEncVideoForceKeyFrame: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncCommonBufferSize: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncCommonMaxBitRate: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncVideoEncodeQP: supported 0x00000000 get 0x00000000 UI8 26 (0:26)
+  CODECAPI_AVEncVideoMinQP: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncVideoMaxQP: supported 0x00000000 get 0x00000000 UI4 51
+  CODECAPI_AVEncNumWorkerThreads: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncVideoTemporalLayerCount: supported 0x00000000 get 0x00000000 UI4 1
+  CODECAPI_AVEncMPVProfile: supported 0x00000001 get 0x80004001 
+  CODECAPI_AVEncAdaptiveMode: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncSliceControlMode: supported 0x00000000 get 0x80040314 
+  CODECAPI_AVEncVideoLTRBufferControl: supported 0x00000000 get 0x00000000 UI4 0
+  set output, no size: test 0xc00d36e6 set 0xc00d36e6
+  set output, no rate: test 0x00000000 set 0xc00d36e6
+  set output, no bitrate: test 0x00000000 set 0x80004005
+  set output, no interlace: test 0x00000000 set 0xc00d36e6
+  set output, odd size: test 0xc00d36b4 set 0xc00d36b4
+  set output, Baseline: test 0x00000000 set 0x00000000
+  set output, High: test 0x00000000 set 0x00000000
+  set output, Main: test 0x00000000 set 0x00000000
+  set output, plain: test 0x00000000 set 0x00000000
+  output current:
+    MF_MT_AVG_BITRATE = UI4 1000000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_MPEG_SEQUENCE_HEADER = BLOB[35] 00000001674d401496560a0fd080000003008000001e06d044229c0000000168ce3c80
+    MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+  input available 0: 56555949-0000-0010-8000-00aa00389b71 320x240 (7 attributes)
+  input available 1: 32315659-0000-0010-8000-00aa00389b71 320x240 (7 attributes)
+  input available 2: MFVideoFormat_NV12 320x240 (7 attributes)
+  input available 3: 32595559-0000-0010-8000-00aa00389b71 320x240 (7 attributes)
+  input available 4: 0xc00d36b9
+  output available 0: MFVideoFormat_H264 0x0 (2 attributes)
+  output available 1: 0xc00d36b9
+  output info, output set 0x00000000 flags 0x0 size 144000
+  set input, other size: 0xc00d36b4
+  set input, other rate: 0xc00d36b4
+  set input, same: 0x00000000
+  input current:
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  input info 0x00000000 latency 00 flags 0x0 size 0 lookahead 0 align 0
+  output info 0x00000000 flags 0x0 size 144000 align 0
+  output before input 0xc00d6d72
+  begin streaming 0x00000000, start of stream 0x00000000
+  input 0 0x00000000
+    output 0xc00d6d72
+  input 1 0x00000000
+    output 0xc00d6d72
+  input 2 0x00000000
+    output 0xc00d6d72
+  input 3 0x00000000
+    output 0xc00d6d72
+  input 4 0x00000000
+    output 0xc00d6d72
+  input 5 0x00000000
+    output: time 333333 duration 333333 bytes 14625 9,7,8,6,6,5 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:0) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=0 MFSampleExtension_CleanPoint=1 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 6 0x00000000
+    output: time 999999 duration 333333 bytes 7917 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:333333) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 7 0x00000000
+    output: time 666666 duration 333333 bytes 4052 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:666666) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=2 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:29)]
+    output 0xc00d6d72
+  input 8 0x00000000
+    output: time 1666665 duration 333333 bytes 8466 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:999999) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 9 0x00000000
+    output: time 1333332 duration 333333 bytes 6780 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1333332) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=2 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:29)]
+    output 0xc00d6d72
+  drain 0x00000000
+    output: time 2333331 duration 333333 bytes 9613 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1666665) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:24)]
+    output: time 1999998 duration 333333 bytes 7234 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1999998) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=2 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output: time 2999997 duration 333333 bytes 6932 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2333331) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output: time 2666664 duration 333333 bytes 5991 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2666664) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=2 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:30)]
+    output: time 3333330 duration 333333 bytes 7004 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2999997) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:28)]
+    output 0xc00d6d72
+  flush 0x00000000
+==== AAC encoder found
+  attributes:
+    (none)
+  ICodecAPI 0x00000000
+  CODECAPI_AVEncCommonRateControlMode: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncCommonMeanBitRate: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncCommonQuality: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncCommonQualityVsSpeed: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncMPVGOPSize: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncMPVDefaultBPictureCount: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncH264CABACEnable: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVLowLatencyMode: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncVideoForceKeyFrame: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncCommonBufferSize: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncCommonMaxBitRate: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncVideoEncodeQP: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncVideoMinQP: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncVideoMaxQP: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncNumWorkerThreads: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncVideoTemporalLayerCount: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncMPVProfile: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncAdaptiveMode: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncSliceControlMode: supported 0x80004001 get 0x80004001 
+  CODECAPI_AVEncVideoLTRBufferControl: supported 0x80004001 get 0x80004001 
+  input available, none set 0: MFAudioFormat_PCM ch 1 rate 44100 bits 16 bytes 88200 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 1: MFAudioFormat_Float ch 1 rate 44100 bits 16 bytes 88200 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 2: MFAudioFormat_PCM ch 2 rate 44100 bits 16 bytes 176400 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 3: MFAudioFormat_Float ch 2 rate 44100 bits 16 bytes 176400 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 4: MFAudioFormat_PCM ch 6 rate 44100 bits 16 bytes 529200 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 5: MFAudioFormat_Float ch 6 rate 44100 bits 16 bytes 529200 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 6: MFAudioFormat_PCM ch 8 rate 44100 bits 16 bytes 705600 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 7: MFAudioFormat_Float ch 8 rate 44100 bits 16 bytes 705600 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 8: MFAudioFormat_PCM ch 1 rate 48000 bits 16 bytes 96000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 9: MFAudioFormat_Float ch 1 rate 48000 bits 16 bytes 96000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 10: MFAudioFormat_PCM ch 2 rate 48000 bits 16 bytes 192000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 11: MFAudioFormat_Float ch 2 rate 48000 bits 16 bytes 192000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 12: MFAudioFormat_PCM ch 6 rate 48000 bits 16 bytes 576000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 13: MFAudioFormat_Float ch 6 rate 48000 bits 16 bytes 576000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 14: MFAudioFormat_PCM ch 8 rate 48000 bits 16 bytes 768000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 15: MFAudioFormat_Float ch 8 rate 48000 bits 16 bytes 768000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 16: MFAudioFormat_PCM ch 1 rate 11025 bits 16 bytes 22050 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 17: MFAudioFormat_Float ch 1 rate 11025 bits 16 bytes 22050 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 18: MFAudioFormat_PCM ch 2 rate 11025 bits 16 bytes 44100 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 19: MFAudioFormat_Float ch 2 rate 11025 bits 16 bytes 44100 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 20: MFAudioFormat_PCM ch 6 rate 11025 bits 16 bytes 132300 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 21: MFAudioFormat_Float ch 6 rate 11025 bits 16 bytes 132300 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 22: MFAudioFormat_PCM ch 8 rate 11025 bits 16 bytes 176400 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 23: MFAudioFormat_Float ch 8 rate 11025 bits 16 bytes 176400 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 24: MFAudioFormat_PCM ch 1 rate 16000 bits 16 bytes 32000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 25: MFAudioFormat_Float ch 1 rate 16000 bits 16 bytes 32000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 26: MFAudioFormat_PCM ch 2 rate 16000 bits 16 bytes 64000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 27: MFAudioFormat_Float ch 2 rate 16000 bits 16 bytes 64000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 28: MFAudioFormat_PCM ch 6 rate 16000 bits 16 bytes 192000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 29: MFAudioFormat_Float ch 6 rate 16000 bits 16 bytes 192000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 30: MFAudioFormat_PCM ch 8 rate 16000 bits 16 bytes 256000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 31: MFAudioFormat_Float ch 8 rate 16000 bits 16 bytes 256000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 32: MFAudioFormat_PCM ch 1 rate 22050 bits 16 bytes 44100 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 33: MFAudioFormat_Float ch 1 rate 22050 bits 16 bytes 44100 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 34: MFAudioFormat_PCM ch 2 rate 22050 bits 16 bytes 88200 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 35: MFAudioFormat_Float ch 2 rate 22050 bits 16 bytes 88200 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 36: MFAudioFormat_PCM ch 6 rate 22050 bits 16 bytes 264600 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 37: MFAudioFormat_Float ch 6 rate 22050 bits 16 bytes 264600 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 38: MFAudioFormat_PCM ch 8 rate 22050 bits 16 bytes 352800 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 39: MFAudioFormat_Float ch 8 rate 22050 bits 16 bytes 352800 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 40: MFAudioFormat_PCM ch 1 rate 24000 bits 16 bytes 48000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 41: MFAudioFormat_Float ch 1 rate 24000 bits 16 bytes 48000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 42: MFAudioFormat_PCM ch 2 rate 24000 bits 16 bytes 96000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 43: MFAudioFormat_Float ch 2 rate 24000 bits 16 bytes 96000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 44: MFAudioFormat_PCM ch 6 rate 24000 bits 16 bytes 288000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 45: MFAudioFormat_Float ch 6 rate 24000 bits 16 bytes 288000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 46: MFAudioFormat_PCM ch 8 rate 24000 bits 16 bytes 384000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 47: MFAudioFormat_Float ch 8 rate 24000 bits 16 bytes 384000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 48: MFAudioFormat_PCM ch 1 rate 32000 bits 16 bytes 64000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 49: MFAudioFormat_Float ch 1 rate 32000 bits 16 bytes 64000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 50: MFAudioFormat_PCM ch 2 rate 32000 bits 16 bytes 128000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 51: MFAudioFormat_Float ch 2 rate 32000 bits 16 bytes 128000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 52: MFAudioFormat_PCM ch 6 rate 32000 bits 16 bytes 384000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 53: MFAudioFormat_Float ch 6 rate 32000 bits 16 bytes 384000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 54: MFAudioFormat_PCM ch 8 rate 32000 bits 16 bytes 512000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 55: MFAudioFormat_Float ch 8 rate 32000 bits 16 bytes 512000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 56: MFAudioFormat_PCM ch 1 rate 96000 bits 16 bytes 192000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 57: MFAudioFormat_Float ch 1 rate 96000 bits 16 bytes 192000 block 2 pl 999 payload 999 (13 attributes)
+  input available, none set 58: MFAudioFormat_PCM ch 2 rate 96000 bits 16 bytes 384000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 59: MFAudioFormat_Float ch 2 rate 96000 bits 16 bytes 384000 block 4 pl 999 payload 999 (13 attributes)
+  input available, none set 60: MFAudioFormat_PCM ch 6 rate 96000 bits 16 bytes 1152000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 61: MFAudioFormat_Float ch 6 rate 96000 bits 16 bytes 1152000 block 12 pl 999 payload 999 (13 attributes)
+  input available, none set 62: MFAudioFormat_PCM ch 8 rate 96000 bits 16 bytes 1536000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 63: MFAudioFormat_Float ch 8 rate 96000 bits 16 bytes 1536000 block 16 pl 999 payload 999 (13 attributes)
+  input available, none set 64: 0xc00d36b9
+  output available, none set 0: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 1: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 2: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 3: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 4: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 5: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 6: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 7: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 8: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 72000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 9: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 96000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 10: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 120000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 11: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 144000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 12: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 13: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 14: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 15: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 16: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 17: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 18: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 19: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 20: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 72000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 21: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 96000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 22: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 120000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 23: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 144000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 24: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 25: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 26: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 27: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 28: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 29: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 30: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 31: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 32: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 72000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 33: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 96000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 34: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 120000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 35: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 144000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 36: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 37: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 38: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 39: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 40: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 41: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 42: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 43: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 44: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 72000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 45: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 96000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 46: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 120000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 47: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 144000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 48: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 49: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1500 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 50: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 51: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 52: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1500 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 53: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 54: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 55: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 56: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 57: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 58: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 59: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 4000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 60: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 61: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 62: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 63: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 64: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 65: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 66: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 67: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 68: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 69: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1500 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 70: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 71: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 72: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1500 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 73: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 74: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 75: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 76: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 77: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 78: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 79: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 4000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 80: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 81: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 82: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 83: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 84: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 85: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 86: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 87: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 88: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 1500 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 89: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 90: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 91: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 92: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 93: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 94: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 95: MFAudioFormat_AAC ch 2 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 96: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 97: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 98: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 99: MFAudioFormat_AAC ch 2 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 100: MFAudioFormat_AAC ch 2 rate 24000 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, none set 101: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 102: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 103: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 104: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 105: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 106: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 32000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 107: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 40000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 108: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 32000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 109: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 40000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 110: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 32000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 111: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 40000 block 1 pl 41 payload 0 (14 attributes)
+  output available, none set 112: MFAudioFormat_AAC ch 2 rate 96000 bits 16 bytes 40000 block 1 pl 43 payload 0 (14 attributes)
+  output available, none set 113: MFAudioFormat_AAC ch 2 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 114: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 115: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 116: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 117: MFAudioFormat_AAC ch 2 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 118: MFAudioFormat_AAC ch 2 rate 24000 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, none set 119: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 120: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 121: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 122: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 123: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 124: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 32000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 125: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 40000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 126: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 32000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 127: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 40000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 128: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 32000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 129: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 40000 block 1 pl 41 payload 1 (14 attributes)
+  output available, none set 130: MFAudioFormat_AAC ch 2 rate 96000 bits 16 bytes 40000 block 1 pl 43 payload 1 (14 attributes)
+  output available, none set 131: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 132: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 133: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 134: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 135: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 8000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 136: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 12000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 137: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 138: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 139: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 140: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 141: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 8000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 142: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 12000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 143: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 144: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 145: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 146: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 147: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 8000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 148: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 12000 block 1 pl 44 payload 0 (14 attributes)
+  output available, none set 149: MFAudioFormat_AAC ch 2 rate 22050 bits 16 bytes 1500 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 150: MFAudioFormat_AAC ch 2 rate 24000 bits 16 bytes 1500 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 151: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 1500 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 152: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 2000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 153: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 3000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 154: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 4000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 155: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 6000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 156: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 3000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 157: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 4000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 158: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 6000 block 1 pl 48 payload 0 (14 attributes)
+  output available, none set 159: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 16000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 160: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 24000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 161: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 32000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 162: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 40000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 163: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 60000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 164: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 64000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 165: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 80000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 166: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 90000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 167: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 16000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 168: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 24000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 169: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 32000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 170: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 40000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 171: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 60000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 172: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 64000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 173: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 80000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 174: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 90000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 175: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 16000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 176: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 24000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 177: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 32000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 178: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 40000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 179: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 60000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 180: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 64000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 181: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 80000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 182: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 90000 block 1 pl 42 payload 0 (14 attributes)
+  output available, none set 183: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 16000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 184: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 24000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 185: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 32000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 186: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 40000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 187: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 60000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 188: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 64000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 189: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 80000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 190: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 90000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 191: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 16000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 192: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 24000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 193: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 32000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 194: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 40000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 195: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 60000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 196: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 64000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 197: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 80000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 198: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 90000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 199: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 16000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 200: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 24000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 201: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 32000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 202: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 40000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 203: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 60000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 204: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 64000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 205: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 80000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 206: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 90000 block 1 pl 42 payload 1 (14 attributes)
+  output available, none set 207: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 8000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 208: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 12000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 209: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 16000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 210: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 24000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 211: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 32000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 212: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 40000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 213: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 8000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 214: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 12000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 215: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 16000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 216: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 24000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 217: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 32000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 218: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 40000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 219: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 8000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 220: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 12000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 221: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 16000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 222: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 24000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 223: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 32000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 224: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 40000 block 1 pl 46 payload 0 (14 attributes)
+  output available, none set 225: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 32000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 226: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 40000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 227: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 60000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 228: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 64000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 229: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 80000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 230: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 90000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 231: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 32000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 232: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 40000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 233: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 60000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 234: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 64000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 235: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 80000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 236: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 90000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 237: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 32000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 238: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 40000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 239: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 60000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 240: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 64000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 241: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 80000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 242: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 90000 block 1 pl 80 payload 0 (14 attributes)
+  output available, none set 243: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 32000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 244: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 40000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 245: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 60000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 246: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 64000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 247: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 80000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 248: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 90000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 249: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 32000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 250: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 40000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 251: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 60000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 252: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 64000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 253: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 80000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 254: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 90000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 255: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 32000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 256: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 40000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 257: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 60000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 258: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 64000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 259: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 80000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 260: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 90000 block 1 pl 80 payload 1 (14 attributes)
+  output available, none set 261: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 8000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 262: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 12000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 263: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 16000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 264: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 24000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 265: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 32000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 266: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 40000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 267: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 8000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 268: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 12000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 269: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 16000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 270: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 24000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 271: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 32000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 272: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 40000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 273: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 8000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 274: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 12000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 275: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 16000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 276: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 24000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 277: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 32000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 278: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 40000 block 1 pl 82 payload 0 (14 attributes)
+  output available, none set 279: 0xc00d36b9
+  set input, mono 44100: test 0x00000000 set 0x00000000
+  set input, 6 ch 48000: test 0x00000000 set 0x00000000
+  set input, 22050: test 0x00000000 set 0x00000000
+  set input, 8000: test 0xc00d36b4 set 0xc00d36b4
+  set input, 96000: test 0x00000000 set 0x00000000
+  set input, 24 bits: test 0xc00d36b4 set 0xc00d36b4
+  set input, float: test 0xc00d36b4 set 0xc00d36b4
+  set input, 3 ch: test 0xc00d36b4 set 0xc00d36b4
+  set input, stereo 48000: test 0x00000000 set 0x00000000
+  output available, input 48000 stereo 0: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 1: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 2: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 3: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 4: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 5: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 6: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 7: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 8: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 72000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 9: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 96000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 10: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 120000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 11: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 144000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 12: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 13: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 14: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 15: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 16: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 17: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 18: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 19: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 20: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 72000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 21: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 96000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 22: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 120000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 23: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 144000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 24: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 25: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 26: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 27: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 28: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 29: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 30: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 31: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 32: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 72000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 33: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 96000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 34: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 120000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 35: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 144000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 36: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 37: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 38: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 39: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 40: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 41: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 42: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 20000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 43: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 44: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 72000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 45: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 96000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 46: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 120000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 47: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 144000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 48: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 49: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1500 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 50: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 51: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 52: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1500 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 53: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 54: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 55: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 56: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 57: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 58: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 59: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 4000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 60: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 61: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 62: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 63: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 64: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 65: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 66: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 67: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 68: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 69: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 1500 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 70: MFAudioFormat_AAC ch 1 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 71: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 72: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 1500 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 73: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 74: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 75: MFAudioFormat_AAC ch 1 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 76: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 77: MFAudioFormat_AAC ch 1 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 78: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 79: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 4000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 80: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 81: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 82: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 83: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 84: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 85: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 86: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 87: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 88: MFAudioFormat_AAC ch 1 rate 24000 bits 16 bytes 1500 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 89: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 90: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 91: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 92: MFAudioFormat_AAC ch 1 rate 32000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 93: MFAudioFormat_AAC ch 1 rate 44100 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 94: MFAudioFormat_AAC ch 1 rate 48000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 95: MFAudioFormat_AAC ch 2 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 96: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 97: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 98: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 99: MFAudioFormat_AAC ch 2 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 100: MFAudioFormat_AAC ch 2 rate 24000 bits 16 bytes 4000 block 1 pl 40 payload 0 (14 attributes)
+  output available, input 48000 stereo 101: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 102: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 103: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 104: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 105: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 24000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 106: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 32000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 107: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 40000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 108: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 32000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 109: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 40000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 110: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 32000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 111: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 40000 block 1 pl 41 payload 0 (14 attributes)
+  output available, input 48000 stereo 112: MFAudioFormat_AAC ch 2 rate 96000 bits 16 bytes 40000 block 1 pl 43 payload 0 (14 attributes)
+  output available, input 48000 stereo 113: MFAudioFormat_AAC ch 2 rate 11025 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 114: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 2000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 115: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 3000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 116: MFAudioFormat_AAC ch 2 rate 16000 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 117: MFAudioFormat_AAC ch 2 rate 22050 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 118: MFAudioFormat_AAC ch 2 rate 24000 bits 16 bytes 4000 block 1 pl 40 payload 1 (14 attributes)
+  output available, input 48000 stereo 119: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 6000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 120: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 8000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 121: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 12000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 122: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 16000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 123: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 24000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 124: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 32000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 125: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 40000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 126: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 32000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 127: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 40000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 128: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 32000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 129: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 40000 block 1 pl 41 payload 1 (14 attributes)
+  output available, input 48000 stereo 130: MFAudioFormat_AAC ch 2 rate 96000 bits 16 bytes 40000 block 1 pl 43 payload 1 (14 attributes)
+  output available, input 48000 stereo 131: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 132: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 133: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 134: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 135: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 8000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 136: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 12000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 137: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 138: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 139: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 140: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 141: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 8000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 142: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 12000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 143: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 2000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 144: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 3000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 145: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 4000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 146: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 6000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 147: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 8000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 148: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 12000 block 1 pl 44 payload 0 (14 attributes)
+  output available, input 48000 stereo 149: MFAudioFormat_AAC ch 2 rate 22050 bits 16 bytes 1500 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 150: MFAudioFormat_AAC ch 2 rate 24000 bits 16 bytes 1500 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 151: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 1500 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 152: MFAudioFormat_AAC ch 2 rate 32000 bits 16 bytes 2000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 153: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 3000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 154: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 4000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 155: MFAudioFormat_AAC ch 2 rate 44100 bits 16 bytes 6000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 156: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 3000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 157: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 4000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 158: MFAudioFormat_AAC ch 2 rate 48000 bits 16 bytes 6000 block 1 pl 48 payload 0 (14 attributes)
+  output available, input 48000 stereo 159: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 16000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 160: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 24000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 161: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 32000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 162: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 40000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 163: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 60000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 164: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 64000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 165: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 80000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 166: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 90000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 167: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 16000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 168: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 24000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 169: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 32000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 170: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 40000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 171: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 60000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 172: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 64000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 173: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 80000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 174: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 90000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 175: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 16000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 176: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 24000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 177: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 32000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 178: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 40000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 179: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 60000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 180: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 64000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 181: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 80000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 182: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 90000 block 1 pl 42 payload 0 (14 attributes)
+  output available, input 48000 stereo 183: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 16000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 184: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 24000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 185: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 32000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 186: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 40000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 187: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 60000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 188: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 64000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 189: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 80000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 190: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 90000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 191: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 16000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 192: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 24000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 193: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 32000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 194: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 40000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 195: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 60000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 196: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 64000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 197: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 80000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 198: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 90000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 199: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 16000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 200: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 24000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 201: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 32000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 202: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 40000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 203: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 60000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 204: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 64000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 205: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 80000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 206: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 90000 block 1 pl 42 payload 1 (14 attributes)
+  output available, input 48000 stereo 207: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 8000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 208: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 12000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 209: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 16000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 210: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 24000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 211: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 32000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 212: MFAudioFormat_AAC ch 6 rate 32000 bits 16 bytes 40000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 213: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 8000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 214: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 12000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 215: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 16000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 216: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 24000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 217: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 32000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 218: MFAudioFormat_AAC ch 6 rate 44100 bits 16 bytes 40000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 219: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 8000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 220: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 12000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 221: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 16000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 222: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 24000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 223: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 32000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 224: MFAudioFormat_AAC ch 6 rate 48000 bits 16 bytes 40000 block 1 pl 46 payload 0 (14 attributes)
+  output available, input 48000 stereo 225: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 32000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 226: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 40000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 227: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 60000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 228: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 64000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 229: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 80000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 230: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 90000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 231: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 32000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 232: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 40000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 233: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 60000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 234: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 64000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 235: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 80000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 236: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 90000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 237: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 32000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 238: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 40000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 239: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 60000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 240: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 64000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 241: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 80000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 242: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 90000 block 1 pl 80 payload 0 (14 attributes)
+  output available, input 48000 stereo 243: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 32000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 244: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 40000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 245: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 60000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 246: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 64000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 247: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 80000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 248: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 90000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 249: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 32000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 250: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 40000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 251: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 60000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 252: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 64000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 253: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 80000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 254: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 90000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 255: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 32000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 256: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 40000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 257: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 60000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 258: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 64000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 259: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 80000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 260: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 90000 block 1 pl 80 payload 1 (14 attributes)
+  output available, input 48000 stereo 261: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 8000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 262: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 12000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 263: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 16000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 264: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 24000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 265: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 32000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 266: MFAudioFormat_AAC ch 8 rate 32000 bits 16 bytes 40000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 267: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 8000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 268: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 12000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 269: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 16000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 270: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 24000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 271: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 32000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 272: MFAudioFormat_AAC ch 8 rate 44100 bits 16 bytes 40000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 273: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 8000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 274: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 12000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 275: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 16000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 276: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 24000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 277: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 32000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 278: MFAudioFormat_AAC ch 8 rate 48000 bits 16 bytes 40000 block 1 pl 82 payload 0 (14 attributes)
+  output available, input 48000 stereo 279: 0xc00d36b9
+  output current, none set 0xc00d6d60
+  set output, plain: 0x00000000
+  set output, ADTS: 0x00000000
+  set output, 23000 bytes: 0xc00d36b4
+  output current:
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 41
+    MF_MT_AAC_PAYLOAD_TYPE = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 23000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 48000
+    MF_MT_AVG_BITRATE = UI4 192000
+    MF_MT_COMPRESSED = UI4 1
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 0
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+    MF_MT_USER_DATA = BLOB[14] 0100290000000000000000001190
+  input available, both set 0: MFAudioFormat_PCM ch 1 rate 44100 bits 16 bytes 88200 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 1: MFAudioFormat_Float ch 1 rate 44100 bits 16 bytes 88200 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 2: MFAudioFormat_PCM ch 2 rate 44100 bits 16 bytes 176400 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 3: MFAudioFormat_Float ch 2 rate 44100 bits 16 bytes 176400 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 4: MFAudioFormat_PCM ch 6 rate 44100 bits 16 bytes 529200 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 5: MFAudioFormat_Float ch 6 rate 44100 bits 16 bytes 529200 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 6: MFAudioFormat_PCM ch 8 rate 44100 bits 16 bytes 705600 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 7: MFAudioFormat_Float ch 8 rate 44100 bits 16 bytes 705600 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 8: MFAudioFormat_PCM ch 1 rate 48000 bits 16 bytes 96000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 9: MFAudioFormat_Float ch 1 rate 48000 bits 16 bytes 96000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 10: MFAudioFormat_PCM ch 2 rate 48000 bits 16 bytes 192000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 11: MFAudioFormat_Float ch 2 rate 48000 bits 16 bytes 192000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 12: MFAudioFormat_PCM ch 6 rate 48000 bits 16 bytes 576000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 13: MFAudioFormat_Float ch 6 rate 48000 bits 16 bytes 576000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 14: MFAudioFormat_PCM ch 8 rate 48000 bits 16 bytes 768000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 15: MFAudioFormat_Float ch 8 rate 48000 bits 16 bytes 768000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 16: MFAudioFormat_PCM ch 1 rate 11025 bits 16 bytes 22050 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 17: MFAudioFormat_Float ch 1 rate 11025 bits 16 bytes 22050 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 18: MFAudioFormat_PCM ch 2 rate 11025 bits 16 bytes 44100 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 19: MFAudioFormat_Float ch 2 rate 11025 bits 16 bytes 44100 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 20: MFAudioFormat_PCM ch 6 rate 11025 bits 16 bytes 132300 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 21: MFAudioFormat_Float ch 6 rate 11025 bits 16 bytes 132300 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 22: MFAudioFormat_PCM ch 8 rate 11025 bits 16 bytes 176400 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 23: MFAudioFormat_Float ch 8 rate 11025 bits 16 bytes 176400 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 24: MFAudioFormat_PCM ch 1 rate 16000 bits 16 bytes 32000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 25: MFAudioFormat_Float ch 1 rate 16000 bits 16 bytes 32000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 26: MFAudioFormat_PCM ch 2 rate 16000 bits 16 bytes 64000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 27: MFAudioFormat_Float ch 2 rate 16000 bits 16 bytes 64000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 28: MFAudioFormat_PCM ch 6 rate 16000 bits 16 bytes 192000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 29: MFAudioFormat_Float ch 6 rate 16000 bits 16 bytes 192000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 30: MFAudioFormat_PCM ch 8 rate 16000 bits 16 bytes 256000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 31: MFAudioFormat_Float ch 8 rate 16000 bits 16 bytes 256000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 32: MFAudioFormat_PCM ch 1 rate 22050 bits 16 bytes 44100 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 33: MFAudioFormat_Float ch 1 rate 22050 bits 16 bytes 44100 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 34: MFAudioFormat_PCM ch 2 rate 22050 bits 16 bytes 88200 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 35: MFAudioFormat_Float ch 2 rate 22050 bits 16 bytes 88200 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 36: MFAudioFormat_PCM ch 6 rate 22050 bits 16 bytes 264600 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 37: MFAudioFormat_Float ch 6 rate 22050 bits 16 bytes 264600 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 38: MFAudioFormat_PCM ch 8 rate 22050 bits 16 bytes 352800 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 39: MFAudioFormat_Float ch 8 rate 22050 bits 16 bytes 352800 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 40: MFAudioFormat_PCM ch 1 rate 24000 bits 16 bytes 48000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 41: MFAudioFormat_Float ch 1 rate 24000 bits 16 bytes 48000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 42: MFAudioFormat_PCM ch 2 rate 24000 bits 16 bytes 96000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 43: MFAudioFormat_Float ch 2 rate 24000 bits 16 bytes 96000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 44: MFAudioFormat_PCM ch 6 rate 24000 bits 16 bytes 288000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 45: MFAudioFormat_Float ch 6 rate 24000 bits 16 bytes 288000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 46: MFAudioFormat_PCM ch 8 rate 24000 bits 16 bytes 384000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 47: MFAudioFormat_Float ch 8 rate 24000 bits 16 bytes 384000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 48: MFAudioFormat_PCM ch 1 rate 32000 bits 16 bytes 64000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 49: MFAudioFormat_Float ch 1 rate 32000 bits 16 bytes 64000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 50: MFAudioFormat_PCM ch 2 rate 32000 bits 16 bytes 128000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 51: MFAudioFormat_Float ch 2 rate 32000 bits 16 bytes 128000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 52: MFAudioFormat_PCM ch 6 rate 32000 bits 16 bytes 384000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 53: MFAudioFormat_Float ch 6 rate 32000 bits 16 bytes 384000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 54: MFAudioFormat_PCM ch 8 rate 32000 bits 16 bytes 512000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 55: MFAudioFormat_Float ch 8 rate 32000 bits 16 bytes 512000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 56: MFAudioFormat_PCM ch 1 rate 96000 bits 16 bytes 192000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 57: MFAudioFormat_Float ch 1 rate 96000 bits 16 bytes 192000 block 2 pl 999 payload 999 (13 attributes)
+  input available, both set 58: MFAudioFormat_PCM ch 2 rate 96000 bits 16 bytes 384000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 59: MFAudioFormat_Float ch 2 rate 96000 bits 16 bytes 384000 block 4 pl 999 payload 999 (13 attributes)
+  input available, both set 60: MFAudioFormat_PCM ch 6 rate 96000 bits 16 bytes 1152000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 61: MFAudioFormat_Float ch 6 rate 96000 bits 16 bytes 1152000 block 12 pl 999 payload 999 (13 attributes)
+  input available, both set 62: MFAudioFormat_PCM ch 8 rate 96000 bits 16 bytes 1536000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 63: MFAudioFormat_Float ch 8 rate 96000 bits 16 bytes 1536000 block 16 pl 999 payload 999 (13 attributes)
+  input available, both set 64: 0xc00d36b9
+  input info 0x00000000 latency 00 flags 0x0 size 0 lookahead 0 align 0
+  output info 0x00000000 flags 0x0 size 1536 align 0
+  input 0 (1000 frames) 0x00000000
+    output 0xc00d6d72
+  input 1 (1000 frames) 0x00000000
+    output 0xc00d6d72
+  input 2 (1000 frames) 0x00000000
+    output 0xc00d6d72
+  input 3 (1000 frames) 0x00000000
+    output: time 0 duration 213333 bytes 512 fff14c80... [MFSampleExtension_CleanPoint=1 MFSampleExtension_Discontinuity=1]
+    output 0xc00d6d72
+  input 4 (800 frames) 0x00000000
+    output: time 213333 duration 213333 bytes 512 fff14c80... [MFSampleExtension_CleanPoint=1]
+    output 0xc00d6d72
+  drain 0x00000000
+    output: time 426666 duration 213333 bytes 521 fff14c80... [MFSampleExtension_CleanPoint=1]
+    output: time 640000 duration 213333 bytes 513 fff14c80... [MFSampleExtension_CleanPoint=1]
+    output: time 853333 duration 213333 bytes 502 fff14c80... [MFSampleExtension_CleanPoint=1]
+    output 0xc00d6d72
+==== AAC
+  input 0: 0x00000000
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 705600
+    MF_MT_COMPRESSED = UI4 0
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  input 1: 0x00000000
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 705600
+    MF_MT_COMPRESSED = UI4 0
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  output 0: 0x00000000
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 41
+    MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 12000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 96000
+    MF_MT_COMPRESSED = UI4 1
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 0
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+  output 278: 0x00000000
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 82
+    MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 40000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 8
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 48000
+    MF_MT_AVG_BITRATE = UI4 320000
+    MF_MT_COMPRESSED = UI4 1
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 0
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+  set output before input: test 0x00000000 set 0x00000000
+  input, output set 0: 0x00000000
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 705600
+    MF_MT_COMPRESSED = UI4 0
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  input, output set 1: 0x00000000
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 88200
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 2
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 1
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 705600
+    MF_MT_COMPRESSED = UI4 0
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  input, output set 2+: i 2: MFAudioFormat_PCM ch 2 rate 44100 bits 16 bytes 176400 block 4 pl 999 payload 999 (13 attributes) i 3: MFAudioFormat_Float ch 2 rate 44100 bits 16 bytes 176400 block 4 pl 999 payload 999 (13 attributes) i 4: MFAudioFormat_PCM ch 6 rate 44100 bits 16 bytes 529200 block 12 pl 999 payload 999 (13 attributes) i 5: MFAudioFormat_Float ch 6 rate 44100 bits 16 bytes 529200 block 12 pl 999 payload 999 (13 attributes) i 6: MFAudioFormat_PCM ch 8 rate 44100 bits 16 bytes 705600 block 16 pl 999 payload 999 (13 attributes) i 7: MFAudioFormat_Float ch 8 rate 44100 bits 16 bytes 705600 block 16 pl 999 payload 999 (13 attributes) i 8: MFAudioFormat_PCM ch 1 rate 48000 bits 16 bytes 96000 block 2 pl 999 payload 999 (13 attributes) i 9: MFAudioFormat_Float ch 1 rate 48000 bits 16 bytes 96000 block 2 pl 999 payload 999 (13 attributes) i 10: MFAudioFormat_PCM ch 2 rate 48000 bits 16 bytes 192000 block 4 pl 999 payload 999 (13 attributes) i 11: MFAudioFormat_Float ch 2 rate 48000 bits 16 bytes 192000 block 4 pl 999 payload 999 (13 attributes) i 12: MFAudioFormat_PCM ch 6 rate 48000 bits 16 bytes 576000 block 12 pl 999 payload 999 (13 attributes) i 13: MFAudioFormat_Float ch 6 rate 48000 bits 16 bytes 576000 block 12 pl 999 payload 999 (13 attributes) i 14: MFAudioFormat_PCM ch 8 rate 48000 bits 16 bytes 768000 block 16 pl 999 payload 999 (13 attributes) i 15: MFAudioFormat_Float ch 8 rate 48000 bits 16 bytes 768000 block 16 pl 999 payload 999 (13 attributes) i 16: MFAudioFormat_PCM ch 1 rate 11025 bits 16 bytes 22050 block 2 pl 999 payload 999 (13 attributes) i 17: MFAudioFormat_Float ch 1 rate 11025 bits 16 bytes 22050 block 2 pl 999 payload 999 (13 attributes) i 18: MFAudioFormat_PCM ch 2 rate 11025 bits 16 bytes 44100 block 4 pl 999 payload 999 (13 attributes) i 19: MFAudioFormat_Float ch 2 rate 11025 bits 16 bytes 44100 block 4 pl 999 payload 999 (13 attributes) i 20: MFAudioFormat_PCM ch 6 rate 11025 bits 16 bytes 132300 block 12 pl 999 payload 999 (13 attributes) i 21: MFAudioFormat_Float ch 6 rate 11025 bits 16 bytes 132300 block 12 pl 999 payload 999 (13 attributes) i 22: MFAudioFormat_PCM ch 8 rate 11025 bits 16 bytes 176400 block 16 pl 999 payload 999 (13 attributes) i 23: MFAudioFormat_Float ch 8 rate 11025 bits 16 bytes 176400 block 16 pl 999 payload 999 (13 attributes) i 24: MFAudioFormat_PCM ch 1 rate 16000 bits 16 bytes 32000 block 2 pl 999 payload 999 (13 attributes) i 25: MFAudioFormat_Float ch 1 rate 16000 bits 16 bytes 32000 block 2 pl 999 payload 999 (13 attributes) i 26: MFAudioFormat_PCM ch 2 rate 16000 bits 16 bytes 64000 block 4 pl 999 payload 999 (13 attributes) i 27: MFAudioFormat_Float ch 2 rate 16000 bits 16 bytes 64000 block 4 pl 999 payload 999 (13 attributes) i 28: MFAudioFormat_PCM ch 6 rate 16000 bits 16 bytes 192000 block 12 pl 999 payload 999 (13 attributes) i 29: MFAudioFormat_Float ch 6 rate 16000 bits 16 bytes 192000 block 12 pl 999 payload 999 (13 attributes) i 30: MFAudioFormat_PCM ch 8 rate 16000 bits 16 bytes 256000 block 16 pl 999 payload 999 (13 attributes) i 31: MFAudioFormat_Float ch 8 rate 16000 bits 16 bytes 256000 block 16 pl 999 payload 999 (13 attributes) i 32: MFAudioFormat_PCM ch 1 rate 22050 bits 16 bytes 44100 block 2 pl 999 payload 999 (13 attributes) i 33: MFAudioFormat_Float ch 1 rate 22050 bits 16 bytes 44100 block 2 pl 999 payload 999 (13 attributes) i 34: MFAudioFormat_PCM ch 2 rate 22050 bits 16 bytes 88200 block 4 pl 999 payload 999 (13 attributes) i 35: MFAudioFormat_Float ch 2 rate 22050 bits 16 bytes 88200 block 4 pl 999 payload 999 (13 attributes) i 36: MFAudioFormat_PCM ch 6 rate 22050 bits 16 bytes 264600 block 12 pl 999 payload 999 (13 attributes) i 37: MFAudioFormat_Float ch 6 rate 22050 bits 16 bytes 264600 block 12 pl 999 payload 999 (13 attributes) i 38: MFAudioFormat_PCM ch 8 rate 22050 bits 16 bytes 352800 block 16 pl 999 payload 999 (13 attributes) i 39: MFAudioFormat_Float ch 8 rate 22050 bits 16 bytes 352800 block 16 pl 999 payload 999 (13 attributes) i 40: MFAudioFormat_PCM ch 1 rate 24000 bits 16 bytes 48000 block 2 pl 999 payload 999 (13 attributes) i 41: MFAudioFormat_Float ch 1 rate 24000 bits 16 bytes 48000 block 2 pl 999 payload 999 (13 attributes) i 42: MFAudioFormat_PCM ch 2 rate 24000 bits 16 bytes 96000 block 4 pl 999 payload 999 (13 attributes) i 43: MFAudioFormat_Float ch 2 rate 24000 bits 16 bytes 96000 block 4 pl 999 payload 999 (13 attributes) i 44: MFAudioFormat_PCM ch 6 rate 24000 bits 16 bytes 288000 block 12 pl 999 payload 999 (13 attributes) i 45: MFAudioFormat_Float ch 6 rate 24000 bits 16 bytes 288000 block 12 pl 999 payload 999 (13 attributes) i 46: MFAudioFormat_PCM ch 8 rate 24000 bits 16 bytes 384000 block 16 pl 999 payload 999 (13 attributes) i 47: MFAudioFormat_Float ch 8 rate 24000 bits 16 bytes 384000 block 16 pl 999 payload 999 (13 attributes) i 48: MFAudioFormat_PCM ch 1 rate 32000 bits 16 bytes 64000 block 2 pl 999 payload 999 (13 attributes) i 49: MFAudioFormat_Float ch 1 rate 32000 bits 16 bytes 64000 block 2 pl 999 payload 999 (13 attributes) i 50: MFAudioFormat_PCM ch 2 rate 32000 bits 16 bytes 128000 block 4 pl 999 payload 999 (13 attributes) i 51: MFAudioFormat_Float ch 2 rate 32000 bits 16 bytes 128000 block 4 pl 999 payload 999 (13 attributes) i 52: MFAudioFormat_PCM ch 6 rate 32000 bits 16 bytes 384000 block 12 pl 999 payload 999 (13 attributes) i 53: MFAudioFormat_Float ch 6 rate 32000 bits 16 bytes 384000 block 12 pl 999 payload 999 (13 attributes) i 54: MFAudioFormat_PCM ch 8 rate 32000 bits 16 bytes 512000 block 16 pl 999 payload 999 (13 attributes) i 55: MFAudioFormat_Float ch 8 rate 32000 bits 16 bytes 512000 block 16 pl 999 payload 999 (13 attributes) i 56: MFAudioFormat_PCM ch 1 rate 96000 bits 16 bytes 192000 block 2 pl 999 payload 999 (13 attributes) i 57: MFAudioFormat_Float ch 1 rate 96000 bits 16 bytes 192000 block 2 pl 999 payload 999 (13 attributes) i 58: MFAudioFormat_PCM ch 2 rate 96000 bits 16 bytes 384000 block 4 pl 999 payload 999 (13 attributes) i 59: MFAudioFormat_Float ch 2 rate 96000 bits 16 bytes 384000 block 4 pl 999 payload 999 (13 attributes) i 60: MFAudioFormat_PCM ch 6 rate 96000 bits 16 bytes 1152000 block 12 pl 999 payload 999 (13 attributes) i 61: MFAudioFormat_Float ch 6 rate 96000 bits 16 bytes 1152000 block 12 pl 999 payload 999 (13 attributes) i 62: MFAudioFormat_PCM ch 8 rate 96000 bits 16 bytes 1536000 block 16 pl 999 payload 999 (13 attributes) i 63: MFAudioFormat_Float ch 8 rate 96000 bits 16 bytes 1536000 block 16 pl 999 payload 999 (13 attributes) i 64: 0xc00d36b9
+  set input of another rate: 0xc00d36b4
+  set input of the rate: 0x00000000
+  input current:
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 176400
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 4
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 1411200
+    MF_MT_COMPRESSED = UI4 0
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_PCM
+  output current same object False:
+    73d1072d-1870-4174-a063-29ff4ff6c11e = GUID 05589f81-c356-11ce-bf01-00aa0055595a
+    MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = UI4 41
+    MF_MT_AAC_PAYLOAD_TYPE = UI4 0
+    MF_MT_AUDIO_AVG_BYTES_PER_SECOND = UI4 16000
+    MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 16
+    MF_MT_AUDIO_BLOCK_ALIGNMENT = UI4 1
+    MF_MT_AUDIO_NUM_CHANNELS = UI4 2
+    MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+    MF_MT_AUDIO_SAMPLES_PER_SECOND = UI4 44100
+    MF_MT_AVG_BITRATE = UI4 128000
+    MF_MT_COMPRESSED = UI4 1
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 0
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+    MF_MT_SUBTYPE = GUID MFAudioFormat_AAC
+    MF_MT_USER_DATA = BLOB[14] 0000290000000000000000001210
+  set output of other channels: 0xc00d36b4
+  set output of 17000 bytes: 0xc00d36b4
+  set output of level 0x2a: 0xc00d36b4
+  set output of payload 3: 0xc00d36b4
+  set output of 24 bits: 0xc00d36b4
+==== H.264
+  output 0: 0x00000000
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+  input 0: 0x00000000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+    MF_MT_SUBTYPE = GUID 56555949-0000-0010-8000-00aa00389b71
+    MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+  input 2: 0x00000000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+    MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+    MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+  set output again, Baseline: 0x00000000
+  output current same object False:
+    MF_MT_AVG_BITRATE = UI4 1000000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_MPEG2_PROFILE = UI4 66
+    MF_MT_MPEG_SEQUENCE_HEADER = BLOB[36] 000000016742c01495b0507e84000003000400000300f03682211b800000000168ca8f20
+    MF_MT_SUBTYPE = GUID MFVideoFormat_H264
+  set input without interlace: 0x00000000
+  set input RGB32: 0xc00d36b4
+  Baseline, ten frames: begin 0x00000000
+  input 0 0x00000000
+    output 0xc00d6d72
+  input 1 0x00000000
+    output 0xc00d6d72
+  input 2 0x00000000
+    output 0xc00d6d72
+  input 3 0x00000000
+    output 0xc00d6d72
+  input 4 0x00000000
+    output: time 0 duration 333333 bytes 14656 9,7,8,6,6,5 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:0) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=0 MFSampleExtension_CleanPoint=1 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 5 0x00000000
+    output: time 333333 duration 333333 bytes 5087 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:333333) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 6 0x00000000
+    output: time 666666 duration 333333 bytes 4784 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:666666) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 7 0x00000000
+    output: time 999999 duration 333333 bytes 4470 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:999999) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 8 0x00000000
+    output: time 1333332 duration 333333 bytes 4858 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1333332) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 9 0x00000000
+    output: time 1666665 duration 333333 bytes 5282 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1666665) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  drain 0x00000000
+    output: time 1999998 duration 333333 bytes 4096 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1999998) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output: time 2333331 duration 333333 bytes 5012 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2333331) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output: time 2666664 duration 333333 bytes 5055 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2666664) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output: time 2999997 duration 333333 bytes 4168 9,1 [2b5d5457-5547-4f07-b8c8-b4a3a9a1daac=1 73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2999997) 9154733f-e1bd-41bf-81d3-fcd918f71332=65535 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output 0xc00d6d72

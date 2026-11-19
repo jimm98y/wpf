@@ -131,6 +131,31 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, info.Codec == AudioCodec.AAC ? new[] { MediaFormats.Float, MediaFormats.PCM } : info.Codec == AudioCodec.Opus ? new[] { MediaFormats.Float } : new[] { MediaFormats.PCM })));
                     found.Add(a);
                 }
+            // the encoders, of what the system encodes
+            if (sync && category == MFEncoder.MFT_CATEGORY_VIDEO_ENCODER
+                && (input == null || (input->guidMajorType == MF.MFMediaType_Video || input->guidMajorType == Guid.Empty) && (input->guidSubtype == Guid.Empty || Array.IndexOf(MFH264Encoder.Inputs, input->guidSubtype) >= 0))
+                && (output == null || output->guidSubtype == Guid.Empty || output->guidSubtype == MF.MFVideoFormat_H264)
+                && PlatformVideoEncoder.Supports(VideoCodec.H264))
+            {
+                var a = new MFActivate(() => new MFH264Encoder());
+                a.Attributes.Set(MF.MFT_FRIENDLY_NAME_Attribute, MFValue.Of(MFH264Encoder.Name));
+                a.Attributes.Set(MF.MFT_TRANSFORM_CLSID_Attribute, MFH264Encoder.Clsid);
+                a.Attributes.Set(MF.MFT_INPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFH264Encoder.Inputs)));
+                a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(new[] { MF.MFVideoFormat_H264 })));
+                found.Add(a);
+            }
+            if (sync && category == MFEncoder.MFT_CATEGORY_AUDIO_ENCODER
+                && (input == null || (input->guidMajorType == MFAudioDecoder.MFMediaType_Audio || input->guidMajorType == Guid.Empty) && (input->guidSubtype == Guid.Empty || input->guidSubtype == MediaFormats.PCM))
+                && (output == null || output->guidSubtype == Guid.Empty || output->guidSubtype == Source.SR.MFAudioFormat_AAC)
+                && PlatformAudioEncoder.Supports(AudioCodec.AAC))
+            {
+                var a = new MFActivate(() => new MFAacEncoder());
+                a.Attributes.Set(MF.MFT_FRIENDLY_NAME_Attribute, MFValue.Of(MFAacEncoder.Name));
+                a.Attributes.Set(MF.MFT_TRANSFORM_CLSID_Attribute, MFAacEncoder.Clsid);
+                a.Attributes.Set(MF.MFT_INPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, new[] { MediaFormats.PCM })));
+                a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFAudioDecoder.MFMediaType_Audio, new[] { Source.SR.MFAudioFormat_AAC })));
+                found.Add(a);
+            }
             if (found.Count == 0) return MF.S_OK;
             var array = (IntPtr*)Marshal.AllocCoTaskMem(found.Count * IntPtr.Size);
             for (int i = 0; i < found.Count; i++) array[i] = found[i].Pointer;

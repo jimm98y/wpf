@@ -77,7 +77,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
 
             _output = codec switch
             {
-                AudioCodec.AAC => new AudioStreamBasicDescription { FormatID = FourCC("aac "), FramesPerPacket = 1024 },
+                AudioCodec.AAC => new AudioStreamBasicDescription { FormatID = FourCC(options.AacObjectType switch { 5 => "aach", 29 => "aacp", _ => "aac " }), FramesPerPacket = options.AacObjectType is 5 or 29 ? 2048u : 1024u },
                 // of the bits of the PCM they are made of: kAppleLosslessFormatFlag_16BitSourceData, 1, or _24BitSourceData, 3
                 AudioCodec.Flac => new AudioStreamBasicDescription { FormatID = FourCC("flac"), FramesPerPacket = 4096, FormatFlags = bits == 24 ? 3u : 1u },
                 AudioCodec.Alac => new AudioStreamBasicDescription { FormatID = FourCC("alac"), FramesPerPacket = 4096, FormatFlags = bits == 24 ? 3u : 1u },
@@ -87,7 +87,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             };
             _output.SampleRate = rate;
             _output.ChannelsPerFrame = channels;
+            _aacBitrate = codec == AudioCodec.AAC ? options.AacBitrate : 0;
         }
+
+        private readonly uint _aacBitrate;
+        private static readonly uint kAudioConverterEncodeBitRate = FourCC("brat");
 
         /// <summary>The codec asked for.</summary>
         public AudioCodec Codec => _codec;
@@ -211,6 +215,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
                 status = AudioConverterSetProperty(_converter, kAudioConverterInputChannelLayout, (uint)sizeof(AudioChannelLayout), &layout);
                 if (status != 0 && Log.WarnEnabled)
                     Log.Warn($"The {_codec} encoder takes its own order of channels, not WAVE's: {FourCCString(status)}");
+            }
+
+            if (_aacBitrate > 0)
+            {
+                // a constant bit rate, as Windows' AAC encoder keeps (kAudioCodecBitRateControlMode_Constant)
+                uint mode = 0;
+                status = AudioConverterSetProperty(_converter, FourCC("acbf"), sizeof(uint), &mode);
+                if (status != 0 && Log.WarnEnabled)
+                    Log.Warn($"The AAC encoder takes no constant bit rate: {FourCCString(status)}");
+                uint bitrate = _aacBitrate;
+                status = AudioConverterSetProperty(_converter, kAudioConverterEncodeBitRate, sizeof(uint), &bitrate);
+                if (status != 0 && Log.WarnEnabled)
+                    Log.Warn($"The AAC encoder takes no bit rate of {bitrate}: {FourCCString(status)}");
             }
 
             uint maxPacket = 0;

@@ -107,8 +107,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
                 AMediaFormat_setInt32(format, "max-input-size", 65536);
                 if (_codec == AudioCodec.AAC)
                 {
-                    AMediaFormat_setInt32(format, "aac-profile", 2); // AAC-LC
-                    AMediaFormat_setInt32(format, "bitrate", (int)(64000 * Channels));
+                    AMediaFormat_setInt32(format, "aac-profile", (int)_options.AacObjectType); // 2 AAC-LC, 5 HE, 29 HE v2
+                    AMediaFormat_setInt32(format, "bitrate", (int)(_options.AacBitrate > 0 ? _options.AacBitrate : 64000 * Channels));
                 }
                 else if (_codec == AudioCodec.Opus)
                 {
