@@ -259,7 +259,33 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
   `OnFlush`.
 - `IMFSourceReaderEx.AddTransformForStream` is not implemented.
 
-### Transforms of the application's
+### Classes an application makes by CLSID
+
+`CoCreateInstance` off Windows (`WpfWebGpu.Win32`, Shell.cs) makes the classes of Media Foundation the stack has
+(`MediaFoundation/MFClasses.cs`), found by name, since the shim references not the Direct3D shim's assembly. On Windows
+the real ole32 makes Windows' own. A local transform registered by such a CLSID is made of them too.
+
+- **The video processor MFT** (CLSID_VideoProcessorMFT, `MFVideoProcessor.cs`), as Windows' (`MFVideoProcessorProbe`,
+  `VideoProcessor.windows.txt`; on Windows, a probe of the color converter's NV12 to NV12, or of an output of another
+  size, crashes the process, and is passed over):
+  - IMFTransform, IMFVideoProcessorControl and its second version, IMFRealTimeClientEx, IMFGetService; the attributes
+    Windows' has; up to 4 input streams, one output.
+  - Windows' 36 input subtypes, in its order; its 21 outputs once there is an input (some twice, as Windows lists
+    them); each of its major type and subtype alone. Not UYVY out.
+  - One picture in, one out, into the application's sample: of the input's time, a clean point, not interlaced.
+  - The pictures are Windows' to the byte:
+    - YUV to YUV keeps the samples (chroma averaged where the output has less, repeated where more);
+    - YUV to RGB by BT.601 in 8-bit fixed point, an odd column's chroma the rounded mean of the samples beside it;
+    - RGB to YUV by its inverse, each 2x2's chroma averaged;
+    - RGB of no MF_MT_DEFAULT_STRIDE is bottom-up;
+    - another size: YUV of each plane at its own resolution, RGB after the conversion; bilinear, centred, truncated.
+      Downscaling is Windows' to the byte; an upscale's first pixels are, its bytes within 1 on average.
+  - The subtypes of more than 8 bits (but P010 and P016), floats, palettes and the rarer packings are listed but not
+    converted: SetInputType refuses them. IMFVideoProcessorControl's settings are kept, not applied.
+- **The color converter DSP** (CLSID_CColorConvertDMO) is not yet a class here: it differs from the video processor
+  (a DMO as well, types of every attribute, top-down RGB, its own rounding).
+
+## Transforms of the application's
 
 `IMFSourceReaderEx::AddTransformForStream` takes an effect MFT (or its activation object) as Windows'
 reader does (`Source/ReaderEffects.cs`). This was probed with `SpyEffect`, a pass-through effect that logs
@@ -537,7 +563,8 @@ on macOS and in the Ubuntu VM.
 
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
   (`MF_SINK_WRITER_MEDIASINK`); the application's local audio decoders in the reader.
-- Windows' color converter DSP and video processor MFT as classes an application can create by CLSID.
+- Windows' color converter DSP as a class an application can create by CLSID; the video processor's rotation,
+  mirror and rectangles; its formats of more than 8 bits.
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;

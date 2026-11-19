@@ -42,6 +42,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 
         protected MFEncoder(Vtable codecApi) : base(s_transform, codecApi) { }
 
+        /// <summary>A transform of other interfaces beside IMFTransform (the video processor's).</summary>
+        protected MFEncoder(Vtable[] others) : base([s_transform, .. others]) { }
+
+        /// <summary>The input streams it takes, least and most (the video processor's are 1 to 4).</summary>
+        protected virtual uint MaxInputStreams => 1;
+
+        /// <summary>The input stream's sample size (MFT_INPUT_STREAM_INFO's cbSize): 0 where it says none.</summary>
+        protected virtual uint InputSize() => 0;
+
         protected override void OnFinalRelease()
         {
             Shutdown();
@@ -152,7 +161,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private static int GetStreamLimits(IntPtr self, uint* inMin, uint* inMax, uint* outMin, uint* outMax)
         {
             if (inMin == null || inMax == null || outMin == null || outMax == null) return MF.E_POINTER;
-            *inMin = *inMax = *outMin = *outMax = 1;
+            *inMin = *outMin = *outMax = 1;
+            *inMax = E(self)?.MaxInputStreams ?? 1;
             return MF.S_OK;
         }
 
@@ -162,9 +172,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         [UnmanagedCallersOnly]
         private static int GetInputStreamInfo(IntPtr self, uint id, byte* info)
         {
-            if (info == null) return MF.E_POINTER;
+            if (E(self) is not { } e || info == null) return MF.E_POINTER;
             if (id != 0) return MF.MF_E_INVALIDSTREAMNUMBER;
-            new Span<byte>(info, 24).Clear();            // no latency, no flags, no size, no lookahead, no alignment
+            new Span<byte>(info, 24).Clear();            // no latency, no flags, no lookahead, no alignment
+            lock (e.Lock) *(uint*)(info + 12) = e.InputSize();     // cbSize
             return MF.S_OK;
         }
 

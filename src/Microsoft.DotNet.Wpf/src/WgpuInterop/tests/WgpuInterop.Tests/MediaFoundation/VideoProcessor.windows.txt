@@ -1,0 +1,309 @@
+==== video processor
+create 0x00000000
+  IMFTransform 0x00000000
+  IMediaObject 0x80004002
+  IPropertyStore 0x80004002
+  IMFVideoProcessorControl 0x00000000
+  IMFVideoProcessorControl2 0x00000000
+  IMFRealTimeClientEx 0x00000000
+  IMFGetService 0x00000000
+  IMFAttributes 0x80004002
+  IWMColorConvProps 0x80004002
+  IMFShutdown 0x80004002
+stream limits 0x00000000 1 4 1 1
+input info 0x00000000 latency 0 flags 0x0 size 0 lookahead 0 align 0
+output info 0x00000000 flags 0x0 size 0 align 0
+attributes 0x00000000
+  093f81b1-4f2e-4631-8168-7934032a01d3 = UI4 1
+  206b4fc8-fcf9-4c51-afe3-9764369e33a0 = UI4 1
+  77f0bacb-17a8-4a50-9a7d-a5cc09d39d44 = UI4 1
+  input available 0: 00000032-0000-0010-8000-00aa00389b71 (2 attributes)
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID 00000032-0000-0010-8000-00aa00389b71
+  input available 1: 00000051-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 2: 00000050-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 3: 56555949-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 4: 32315659-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 5: MFVideoFormat_NV12 (2 attributes)
+  input available 6: 3132564e-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 7: 4f303234-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 8: 30313050-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 9: 36313050-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 10: 59565955-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 11: 32595559-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 12: 38303250-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 13: 30313259-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 14: 36313259-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 15: 3131564e-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 16: 56555941-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 17: 30313459-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 18: MFVideoFormat_ARGB32 (2 attributes)
+  input available 19: 00000020-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 20: MFVideoFormat_RGB32 (2 attributes)
+  input available 21: 0000001f-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 22: 36313459-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 23: 00000071-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 24: 00000014-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 25: 30323449-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 26: 32323449-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 27: 34343449-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 28: 55595659-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 29: 00000018-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 30: 00000017-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 31: 00000029-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 32: 30313476-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 33: 50313459-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 34: 54313459-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 35: 54323459-0000-0010-8000-00aa00389b71 (2 attributes)
+  input available 36: 0xc00d36b9
+  output available, no input 0: 0xc00d36b9
+set input NV12 64x48 0x00000000
+  output available 0: MFVideoFormat_NV12 (2 attributes)
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+  output available 1: 32595559-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 2: 56555949-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 3: 30323449-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 4: 00000014-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 5: MFVideoFormat_ARGB32 (2 attributes)
+  output available 6: MFVideoFormat_RGB32 (2 attributes)
+  output available 7: 32315659-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 8: 56555941-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 9: 3132564e-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 10: MFVideoFormat_RGB32 (2 attributes)
+  output available 11: MFVideoFormat_ARGB32 (2 attributes)
+  output available 12: 00000020-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 13: 0000001f-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 14: 00000071-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 15: MFVideoFormat_NV12 (2 attributes)
+  output available 16: 30313050-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 17: 36313050-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 18: 00000032-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 19: 00000051-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 20: 00000050-0000-0010-8000-00aa00389b71 (2 attributes)
+  output available 21: 0xc00d36b9
+input info 0x00000000 latency 0 flags 0x0 size 4608 lookahead 0 align 0
+  set output MFVideoFormat_RGB32 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 12288 align 0
+    input 0x00000000
+    output: 12288 bytes in 1, time 0, sum 1806118, 005940ff005b43ff005d47ff005f4aff
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output MFVideoFormat_ARGB32 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 12288 align 0
+    input 0x00000000
+    output: 12288 bytes in 1, time 0, sum 1806118, 005940ff005b43ff005d47ff005f4aff
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 00000014-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 9216 align 0
+    input 0x00000000
+    output: 9216 bytes in 1, time 0, sum 1022758, 005940005b43005d47005f4a00614e00
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 30323449-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 0
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 56555949-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 0
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 32315659-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 0
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 32595559-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 6144 align 0
+    input 0x00000000
+    output: 6144 bytes in 1, time 0, sum 718736, 21332449273a2a492d41304933483649
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 59565955-0000-0010-8000-00aa00389b71 64x48 0xc00d36b4
+  set output MFVideoFormat_NV12 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 0
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output MFVideoFormat_NV12 32x24 0x00000000
+    output info 0x00000000 flags 0x0 size 1152 align 0
+    input 0x00000000
+    output: 1152 bytes in 1, time 0, sum 134180, 252b31373d43494f555b61676d73797f
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output MFVideoFormat_RGB32 128x96 0x00000000
+    output info 0x00000000 flags 0x0 size 49152 align 0
+    input 0x00000000
+    output: 49152 bytes in 1, time 0, sum 7226930, 005940ff005940ff005a42ff005b44ff
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+set input RGB32 64x48 0x00000000
+  set output NV12 64x48 0x00000000
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 553572, 9fa0a0a1a2a3a4a5a6a7a8a9aaaaabac
+      MFSampleExtension_CleanPoint = UI4 1 b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0
+    output 0xc00d6d72
+==== color converter
+create 0x00000000
+  IMFTransform 0x00000000
+  IMediaObject 0x00000000
+  IPropertyStore 0x00000000
+  IMFVideoProcessorControl 0x80004002
+  IMFVideoProcessorControl2 0x80004002
+  IMFRealTimeClientEx 0x80004002
+  IMFGetService 0x00000000
+  IMFAttributes 0x80004002
+  IWMColorConvProps 0x80004002
+  IMFShutdown 0x80004002
+stream limits 0x00000000 1 1 1 1
+input info 0xc00d6d60 latency 0 flags 0x0 size 0 lookahead 0 align 0
+output info 0xc00d6d60 flags 0x0 size 0 align 0
+attributes 0x80004001
+  input available 0: 32315659-0000-0010-8000-00aa00389b71 (4 attributes)
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID 32315659-0000-0010-8000-00aa00389b71
+  input available 1: 32595559-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 2: 59565955-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 3: 56555941-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 4: MFVideoFormat_NV12 (4 attributes)
+  input available 5: MFVideoFormat_RGB32 (4 attributes)
+  input available 6: 00000017-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 7: 30323449-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 8: 56555949-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 9: 55595659-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 10: 00000014-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 11: 00000018-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 12: e436eb7a-524f-11ce-9f53-0020af0ba770 (4 attributes)
+  input available 13: 36313256-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 14: 30313456-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 15: 3131564e-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 16: 50313459-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 17: 54313459-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 18: 54323459-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 19: 39555659-0000-0010-8000-00aa00389b71 (4 attributes)
+  input available 20: 0xc00d36b9
+  output available, no input 0: 32315659-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 1: 32595559-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 2: 59565955-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 3: 56555941-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 4: MFVideoFormat_NV12 (4 attributes)
+  output available, no input 5: MFVideoFormat_RGB32 (4 attributes)
+  output available, no input 6: 00000017-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 7: 30323449-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 8: 56555949-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 9: 55595659-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 10: 00000014-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 11: 00000018-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 12: e436eb7a-524f-11ce-9f53-0020af0ba770 (4 attributes)
+  output available, no input 13: 36313256-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 14: 30313456-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 15: 3131564e-0000-0010-8000-00aa00389b71 (4 attributes)
+  output available, no input 16: 0xc00d36b9
+set input NV12 64x48 0x00000000
+  output available 0: 32315659-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+    MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+    MF_MT_DEFAULT_STRIDE = UI4 64
+    MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+    MF_MT_FRAME_RATE = UI8 42949672960400000 (10000000:400000)
+    MF_MT_FRAME_SIZE = UI8 274877906992 (64:48)
+    MF_MT_GEOMETRIC_APERTURE = BLOB[16] 00000000000000004000000030000000
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+    MF_MT_SAMPLE_SIZE = UI4 4608
+    MF_MT_SUBTYPE = GUID 32315659-0000-0010-8000-00aa00389b71
+  output available 1: 32595559-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 2: 59565955-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 3: 56555941-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 4: MFVideoFormat_NV12 64x48 (11 attributes)
+  output available 5: MFVideoFormat_RGB32 64x48 (11 attributes)
+  output available 6: 00000017-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 7: 30323449-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 8: 56555949-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 9: 55595659-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 10: 00000014-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 11: 00000018-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 12: 00000029-0000-0010-8000-00aa00389b71 64x48 (12 attributes)
+  output available 13: 36313256-0000-0010-8000-00aa00389b71 64x48 (10 attributes)
+  output available 14: 30313456-0000-0010-8000-00aa00389b71 64x48 (10 attributes)
+  output available 15: 3131564e-0000-0010-8000-00aa00389b71 64x48 (11 attributes)
+  output available 16: 0xc00d36b9
+input info 0x00000000 latency 0 flags 0x0 size 4608 lookahead 0 align 1
+  set output MFVideoFormat_RGB32 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 12288 align 1
+    input 0x00000000
+    output: 12288 bytes in 1, time 0, sum 1018454, 005f0000006300000063000000670000
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output MFVideoFormat_ARGB32 64x48 0xc00d36b4
+  set output 00000014-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 9216 align 1
+    input 0x00000000
+    output: 9216 bytes in 1, time 0, sum 1018454, 005f0000630000630000670000670000
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 30323449-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 1
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 56555949-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 1
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 32315659-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 4608 align 1
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 537488, 2124272a2d303336393c3f4245484b4e
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 32595559-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 6144 align 1
+    input 0x00000000
+    output: 6144 bytes in 1, time 0, sum 718736, 21332449273a2a492d41304933483649
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output 59565955-0000-0010-8000-00aa00389b71 64x48 0x00000000
+    output info 0x00000000 flags 0x0 size 6144 align 1
+    input 0x00000000
+    output: 6144 bytes in 1, time 0, sum 718736, 332149243a27492a412d493048334936
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72
+    flush 0x00000000
+  set output MFVideoFormat_NV12 64x48: passed over
+  set output MFVideoFormat_NV12 32x24: passed over
+  set output MFVideoFormat_RGB32 128x96: passed over
+set input RGB32 64x48 0x00000000
+  set output NV12 64x48 0x00000000
+    input 0x00000000
+    output: 4608 bytes in 1, time 0, sum 553434, 10111213141515161718191a1b1c1d1e
+      MFSampleExtension_CleanPoint = UI4 0
+    output 0xc00d6d72

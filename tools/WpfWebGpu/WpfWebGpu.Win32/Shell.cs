@@ -116,13 +116,40 @@ public static unsafe partial class Exports
     }
     [Win32Export("CoInitializeSecurity")] public static int CoInitializeSecurity(void* a, int b, void* c, void* d, uint e, uint f, void* g, uint h, void* i) => S_OK;
 
+    /// <summary>
+    /// CoCreateInstance of the classes the stack has (Media Foundation's: its video processor; MFClasses in the Direct3D
+    /// shim's assembly, found by name, as this assembly references it not). Off Windows only: on Windows the real ole32 has
+    /// Windows' own.
+    /// </summary>
     [Win32Export("CoCreateInstance")]
+    [System.Diagnostics.CodeAnalysis.DynamicDependency("CreateInstance", "Microsoft.Wpf.Interop.WebGpu.MediaFoundation.MFClasses", "Microsoft.Wpf.Interop.WebGpu")]
     public static int CoCreateInstance(Guid* clsid, void* outer, uint context, Guid* iid, void** result)
     {
+        if (result == null || clsid == null || iid == null) return unchecked((int)0x80004003);   // E_POINTER
         *result = null;
+        if (s_comClasses.Value is { } create)
+        {
+            if (outer != null) return unchecked((int)0x80040110);    // CLASS_E_NOAGGREGATION
+            int hr = create(*clsid, *iid, out nint p);
+            if (hr != unchecked((int)0x80040154)) { *result = (void*)p; return hr; }
+        }
         LogOnce("clsid:" + *clsid, $"win32: CoCreateInstance({*clsid}): no COM class is registered here");
         return unchecked((int)0x80040154);   // REGDB_E_CLASSNOTREG
     }
+
+    private delegate int CreateClass(Guid clsid, Guid iid, out nint ppv);
+
+    /// <summary>Media Foundation's class factory, where the assembly is there (MFClasses.CreateInstance).</summary>
+    private static readonly Lazy<CreateClass?> s_comClasses = new(() =>
+    {
+        try
+        {
+            var t = Type.GetType("Microsoft.Wpf.Interop.WebGpu.MediaFoundation.MFClasses, Microsoft.Wpf.Interop.WebGpu", throwOnError: false);
+            var m = t?.GetMethod("CreateInstance", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+            return m == null ? null : (CreateClass)Delegate.CreateDelegate(typeof(CreateClass), m);
+        }
+        catch (Exception) { return null; }
+    });
 
     [Win32Export("PropVariantClear")] public static int PropVariantClear(void* pv) => WpfWebGpu.ComInterop.Com.PropVariantClear((nint)pv);
     [Win32Export("PropVariantCopy")] public static int PropVariantCopy(void* dst, void* src) => WpfWebGpu.ComInterop.Com.PropVariantCopy((nint)dst, (nint)src);

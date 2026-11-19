@@ -116,13 +116,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return hr < 0 ? (hr, IntPtr.Zero) : (hr, unk);
         }
 
-        /// <summary>The shim's own transform of a CLSID: the H.264 and AAC encoders, the decoders.</summary>
+        /// <summary>The shim's own transform of a CLSID: the H.264 and AAC encoders, the decoders, the classes of MFClasses.</summary>
         private static (int, IntPtr) Create(Guid clsid)
         {
             ComObject? t = clsid == MFH264Encoder.Clsid ? new MFH264Encoder() : clsid == MFAacEncoder.Clsid ? new MFAacEncoder() : null;
             if (t == null && MFVideoDecoder.Registered.FirstOrDefault(i => i.Clsid == clsid) is { } v) t = new MFVideoDecoder(v);
             if (t == null && MFAudioDecoder.Registered.FirstOrDefault(i => i.Clsid == clsid) is { } au) t = new MFAudioDecoder(au);
-            return t == null ? (REGDB_E_CLASSNOTREG, IntPtr.Zero) : (MF.S_OK, t.Pointer);
+            if (t == null)
+            {
+                // a class of Media Foundation's an application makes by CLSID (the video processor)
+                var c = clsid; var iid = new Guid("00000000-0000-0000-C000-000000000046"); IntPtr unk;
+                int hr = MFClasses.Create(&c, &iid, &unk);
+                return hr < 0 ? (hr, IntPtr.Zero) : (hr, unk);
+            }
+            return (MF.S_OK, t.Pointer);
         }
 
         /// <summary>The first transform registered of the category and types that activates, as an IMFTransform (AddRef'd); zero where none.</summary>
