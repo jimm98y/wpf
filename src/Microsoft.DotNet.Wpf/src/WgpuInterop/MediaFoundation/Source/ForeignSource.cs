@@ -26,6 +26,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private readonly IntPtr _src, _pd;          // IMFMediaSource, IMFPresentationDescriptor: AddRef'd
         private readonly bool _disconnect;
         private readonly List<(ForeignFeed Feed, MFMediaType Native, bool Selected)> _streams = new();
+        private readonly List<IntPtr> _handlers = new();     // IMFMediaTypeHandler of each stream, AddRef'd
         private bool _started, _restart;
         private long? _startAt;
 
@@ -55,7 +56,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                     IntPtr t;
                     // the handler's current type, or its first
                     if (((delegate* unmanaged<IntPtr, IntPtr*, int>)Com.Fn(h, 7))(h, &t) < 0 && ((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(h, 5))(h, 0, &t) < 0) { Com.Release(h); continue; }
-                    Com.Release(h);
+                    s._handlers.Add(h);
                     var native = Mp4Types.Read(t);
                     Com.Release(t);
                     var major = native.Attributes.Guid(MF.MF_MT_MAJOR_TYPE);
@@ -85,6 +86,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         }
 
         public override IntPtr MediaSource => _src;
+
+        /// <summary>The stream's handler's types, by index, as Windows' reader lists them (of a handler of more than one).</summary>
+        public override MFMediaType? NativeType(int index, uint n)
+        {
+            if (index >= _handlers.Count) return null;
+            IntPtr h = _handlers[index], t;
+            uint count = 0;
+            ((delegate* unmanaged<IntPtr, uint*, int>)Com.Fn(h, 4))(h, &count);
+            if (count <= 1) return null;                    // (the one type: the stream's native, as of a file's)
+            if (((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(h, 5))(h, n, &t) < 0) return null;
+            var c = Mp4Types.Read(t);
+            Com.Release(t);
+            return c;
+        }
+
+        /// <summary>The handler's current type to the one given, where it takes it (the source goes on of it: not started again).</summary>
+        public override int SetNative(int index, IntPtr type, out MFMediaType? native)
+        {
+            native = null;
+            if (index >= _handlers.Count) return MF.MF_E_INVALIDSTREAMNUMBER;
+            IntPtr h = _handlers[index];
+            uint count = 0;
+            ((delegate* unmanaged<IntPtr, uint*, int>)Com.Fn(h, 4))(h, &count);
+            if (count <= 1) return MF.E_NOTIMPL;          // (the one type: as of a file's)
+            IntPtr closest = IntPtr.Zero;
+            int hr = ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, int>)Com.Fn(h, 3))(h, type, &closest);
+            Com.Release(closest);
+            if (hr < 0) return MF.MF_E_INVALIDMEDIATYPE;
+            hr = ((delegate* unmanaged<IntPtr, IntPtr, int>)Com.Fn(h, 6))(h, type);
+            if (hr < 0) return hr;
+            native = Mp4Types.Read(type);
+            var (f, old, sel) = _streams[index];
+            old.Release();
+            native.AddRef();
+            _streams[index] = (f, native, sel);
+            return MF.S_OK;
+        }
 
         public override void Select(int index, bool on)
         {
@@ -173,6 +211,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public override void Dispose()
         {
             foreach (var (f, t, _) in _streams) { f.Dispose(); t.Release(); }
+            foreach (var h in _handlers) Com.Release(h);
             if (!_disconnect) ((delegate* unmanaged<IntPtr, int>)Com.Fn(_src, 12))(_src);           // Shutdown
             Com.Release(_pd);
             Com.Release(_src);

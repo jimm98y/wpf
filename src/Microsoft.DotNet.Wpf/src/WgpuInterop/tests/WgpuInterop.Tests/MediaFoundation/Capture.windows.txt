@@ -1,0 +1,117 @@
+==== video devices 0x00000000 count <n>
+device 0:
+  56a819ca-0c78-4de4-a0a7-3ddaba0f24d4 = BLOB <types>
+  58f0aad8-22bf-4f8a-bb3d-d2c4978c6e2f = STR <link>
+  60d0e559-52f8-4fa2-bbce-acdb34a8ec01 = STR <name>
+  77f0ae69-c3bd-4509-941d-467e4d24899e = GUID e5323777-f976-4f5b-9b55-b94699c46e44
+  c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3 = GUID 8ac3587a-4ae7-42d8-99e0-0a6013eef90f
+  de7046ba-54d6-4487-a2a4-ec7c0d1bd163 = UI4 4
+  activate 0x00000000
+  characteristics 0x5
+  reader 0x00000000
+  stream 0: selected True
+    native 0:
+      53a0529c-890b-4216-8bf9-599367ad6d20 = UI4 3
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID f72a76a0-eb0a-11d0-ace4-0000c0cc16ba
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_FRAME_RATE = <value>
+      MF_MT_FRAME_SIZE = <value>
+      MF_MT_INTERLACE_MODE = UI4 2
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 #
+      MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+      MF_MT_VIDEO_CHROMA_SITING = UI4 1
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 1
+      MF_MT_VIDEO_PRIMARIES = UI4 2
+      MF_MT_YUV_MATRIX = UI4 1
+      d2e7558c-dc1f-403f-9a72-d28bb1eb3b5e = <value>
+      e3371d41-b4cf-4a05-bd4e-20b88bb2c4d6 = <value>
+      ea031a62-8bbb-43c5-b5c4-572d2d231c18 = UI4 1
+    current:
+      53a0529c-890b-4216-8bf9-599367ad6d20 = UI4 3
+      73d1072d-1870-4174-a063-29ff4ff6c11e = GUID f72a76a0-eb0a-11d0-ace4-0000c0cc16ba
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_FIXED_SIZE_SAMPLES = UI4 1
+      MF_MT_FRAME_RATE = <value>
+      MF_MT_FRAME_SIZE = <value>
+      MF_MT_INTERLACE_MODE = UI4 2
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+      MF_MT_PIXEL_ASPECT_RATIO = UI8 #
+      MF_MT_SUBTYPE = GUID MFVideoFormat_NV12
+      MF_MT_VIDEO_CHROMA_SITING = UI4 1
+      MF_MT_VIDEO_NOMINAL_RANGE = UI4 1
+      MF_MT_VIDEO_PRIMARIES = UI4 2
+      MF_MT_YUV_MATRIX = UI4 1
+      d2e7558c-dc1f-403f-9a72-d28bb1eb3b5e = <value>
+      e3371d41-b4cf-4a05-bd4e-20b88bb2c4d6 = <value>
+      ea031a62-8bbb-43c5-b5c4-572d2d231c18 = UI4 1
+  streams 1
+  read 0x00000000 flags 0x100 first t=# no sample
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 1; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 0; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 0; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 0; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 0; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 0; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [03ffdcb2-c32c-4b92-98ff-87c0333db253 137e6b95-4cad-4cb9-9b7f-65cef2068a41 3680913a-0e20-4b48-9364-be67fbf1a5e6 8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 941ce0a3-6ae3-4dda-9a08-a64298340617 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 MFSampleExtension_CleanPoint MFSampleExtension_Discontinuity b1d5830a-deb8-40e3-90fa-389943716461 c4139297-2cec-47c6-9cdf-6db62ee6df72 d06f8a46-60a0-4c20-bc33-ae96bf4fb070]
+    sample t=# d=# size=# buffers=1 <bytes> [03ffdcb2-c32c-4b92-98ff-87c0333db253 = BLOB[40] 0000000002000000000000004e5631324e56313200001000800000aa00389b71<size>; 137e6b95-4cad-4cb9-9b7f-65cef2068a41 = UI4 0; 3680913a-0e20-4b48-9364-be67fbf1a5e6 = UI4 0; 8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 #; 941ce0a3-6ae3-4dda-9a08-a64298340617 = UI4 1; 9bec3fd1-d3fd-4816-8943-dbfeb5b43372 = BLOB[24] 000000000000000000000000000000000300000000000000; MFSampleExtension_CleanPoint = UI4 1; MFSampleExtension_Discontinuity = UI4 0; b1d5830a-deb8-40e3-90fa-389943716461 = UI4 0; c4139297-2cec-47c6-9cdf-6db62ee6df72 = UI4 10; d06f8a46-60a0-4c20-bc33-ae96bf4fb070 = UI8 #]
+  set native 0x00000000 flags 0x30
+  current then: MFVideoFormat_NV12 of the native's size True
+  native in use: of its size True
+  read 0x00000000 flags 0x0 of the type's size True
+  read 0x00000000 flags 0x0 of the type's size True
+  read 0x00000000 flags 0x0 of the type's size True
+  read 0x00000000 flags 0x0 of the type's size True
+  presentation MF_PD_DURATION 0xc00d36e6
+  presentation MF_PD_TOTAL_FILE_SIZE 0xc00d36e6
+  presentation MF_PD_MIME_TYPE 0xc00d36e6
+  presentation MF_PD_AUDIO_ENCODING_BITRATE 0xc00d36e6
+  presentation MF_PD_VIDEO_ENCODING_BITRATE 0xc00d36e6
+  presentation MF_PD_LAST_MODIFIED_TIME 0xc00d36e6
+  presentation MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS = UI4 5
+  device source of its link 0x00000000
+    pd 0x00000000
+  device source of its link upper-cased 0x00000000
+    pd 0x00000000
+  device source of another link 0x80070003
+  device source of no link 0xc00d36e6
+  device source of no type 0xc00d36e6
+source events of the last device:
+  activate 0x00000000
+  pd 0x00000000
+  streams 1
+  sd 0: id 0 selected 1
+    sd 17145fd1-1b2b-423c-8001-2b6833ed3588 = UI4 1
+    sd 2939e7b8-a62e-4579-b674-d4073dfabbba = GUID fb6c4281-0353-11d1-905f-0000c0cc16ba
+    handler major MFMediaType_Video types <n>
+    current 0x00000000 MFVideoFormat_NV12
+  start 0x00000000
+  source MENewStream 0x00000000 UNKNOWN
+  source MESourceStarted 0x00000000 I8 #
+  stream id 0
+  stream MEStreamStarted 0x00000000 I8 #
+  stream MEStreamTick 0x00000000 I8 #
+  request 0x00000000
+  request 0x00000000
+  request 0x00000000
+  stream MEMediaSample 0x00000000 UNKNOWN t=# # bytes
+  stream MEMediaSample 0x00000000 UNKNOWN after # ms # bytes
+  stream MEMediaSample 0x00000000 UNKNOWN after # ms # bytes
+  pause 0x00000000
+  source MESourcePaused 0x00000000
+  stop 0x00000000
+  source MESourceStopped 0x00000000
+  stream MEStreamPaused 0x00000000
+  stream MEStreamStopped 0x00000000
+  request when stopped 0xc00d3e9b
+  shutdown 0x00000000
+  characteristics after shutdown 0xc00d3e85
+  activate again 0x00000000
+  shutdown object 0x00000000

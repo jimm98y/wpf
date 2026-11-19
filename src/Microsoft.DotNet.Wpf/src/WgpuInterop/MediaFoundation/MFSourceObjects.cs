@@ -233,6 +233,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private static readonly Vtable s_vt = Build();
         public readonly List<MFMediaType> Types = new();
         public MFMediaType? Current;
+        /// <summary>Told of SetCurrentMediaType's type, after it is current (a capture device's source: the camera to it).</summary>
+        public Action<MFMediaType>? CurrentChanged;
         private readonly object _lock = new();
 
         private static Vtable Build()
@@ -313,6 +315,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 h.Current?.Release();
                 h.Current = t;
             }
+            h.CurrentChanged?.Invoke(h.Current!);
             return MF.S_OK;
         }
 

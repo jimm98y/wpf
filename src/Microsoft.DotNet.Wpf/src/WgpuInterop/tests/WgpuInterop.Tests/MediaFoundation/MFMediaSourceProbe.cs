@@ -95,14 +95,14 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         private static string Name(uint type) => Events.TryGetValue(type, out var n) ? n : "event " + type;
 
-        private static string Describe((uint Type, int Status, Guid Ext, ushort Vt, IntPtr Unk, long I8) e)
+        internal static string Describe((uint Type, int Status, Guid Ext, ushort Vt, IntPtr Unk, long I8) e)
         {
             string v = e.Vt switch { 0 => "", 13 => " UNKNOWN", 20 => $" I8 {e.I8}", 21 => $" UI8 {e.I8}", 5 => " R8", 19 => " UI4", _ => $" VT {e.Vt}" };
             return $"{Name(e.Type)} {Hr(e.Status)}{(e.Ext != Guid.Empty ? " ext " + e.Ext : "")}{v}";
         }
 
         /// <summary>The events now on the queue, waiting up to the time given for the first and briefly for the rest.</summary>
-        private static List<(uint Type, int Status, Guid Ext, ushort Vt, IntPtr Unk, long I8)> Drain(IntPtr gen, int firstMs, Func<uint, bool>? until = null)
+        internal static List<(uint Type, int Status, Guid Ext, ushort Vt, IntPtr Unk, long I8)> Drain(IntPtr gen, int firstMs, Func<uint, bool>? until = null)
         {
             var got = new List<(uint, int, Guid, ushort, IntPtr, long)>();
             int wait = firstMs;
@@ -115,7 +115,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return got;
         }
 
-        private static string SampleLine(IntPtr s)
+        internal static string SampleLine(IntPtr s)
         {
             long t; ((delegate* unmanaged<IntPtr, long*, int>)Fn(s, 35))(s, &t);
             long d = MFReader.Duration(s);
@@ -126,9 +126,9 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         private static readonly Guid MFSampleExtension_Token = new("8294da66-f328-4805-b551-00deb4c57a61");
 
-        private static IntPtr Pd(IntPtr src, out int hr) { IntPtr p; hr = ((delegate* unmanaged<IntPtr, IntPtr*, int>)Fn(src, 8))(src, &p); return hr >= 0 ? p : IntPtr.Zero; }
+        internal static IntPtr Pd(IntPtr src, out int hr) { IntPtr p; hr = ((delegate* unmanaged<IntPtr, IntPtr*, int>)Fn(src, 8))(src, &p); return hr >= 0 ? p : IntPtr.Zero; }
 
-        private static int Start(IntPtr src, IntPtr pd, long? at)
+        internal static int Start(IntPtr src, IntPtr pd, long? at)
         {
             var pv = stackalloc byte[24];
             new Span<byte>(pv, 24).Clear();
@@ -137,9 +137,9 @@ namespace WgpuInterop.Tests.MediaFoundation
             return ((delegate* unmanaged<IntPtr, IntPtr, Guid*, byte*, int>)Fn(src, 9))(src, pd, &fmt, pv);
         }
 
-        private static int RequestSample(IntPtr stream, IntPtr token) => ((delegate* unmanaged<IntPtr, IntPtr, int>)Fn(stream, 9))(stream, token);
+        internal static int RequestSample(IntPtr stream, IntPtr token) => ((delegate* unmanaged<IntPtr, IntPtr, int>)Fn(stream, 9))(stream, token);
 
-        private static uint StreamId(IntPtr stream)
+        internal static uint StreamId(IntPtr stream)
         {
             IntPtr sd; uint id = 999;
             if (((delegate* unmanaged<IntPtr, IntPtr*, int>)Fn(stream, 8))(stream, &sd) >= 0) { ((delegate* unmanaged<IntPtr, uint*, int>)Fn(sd, 33))(sd, &id); Release(sd); }
@@ -147,7 +147,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         /// <summary>The presentation descriptor, as lines; the descriptors' ids and kinds in order.</summary>
-        private static List<string> PdReport(IntPtr pd, out List<(uint Id, bool Selected, Guid Major)> streams)
+        internal static List<string> PdReport(IntPtr pd, out List<(uint Id, bool Selected, Guid Major)> streams)
         {
             var log = new List<string>();
             streams = new();

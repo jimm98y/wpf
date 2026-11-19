@@ -73,6 +73,7 @@
     <None Include="MediaFoundation/ColorConverterDmo.windows.txt" Link="MediaFoundation/ColorConverterDmo.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/Formats.windows.txt" Link="MediaFoundation/Formats.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/Asf.windows.txt" Link="MediaFoundation/Asf.windows.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="MediaFoundation/Capture.windows.txt" Link="MediaFoundation/Capture.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/MediaSource.windows.txt" Link="MediaFoundation/MediaSource.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/Encoder.windows.txt" Link="MediaFoundation/Encoder.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/ReaderTransform.windows.txt" Link="MediaFoundation/ReaderTransform.windows.txt" CopyToOutputDirectory="PreserveNewest" />

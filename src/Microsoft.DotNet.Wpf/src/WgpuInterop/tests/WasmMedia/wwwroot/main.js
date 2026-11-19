@@ -16,7 +16,7 @@ try {
         const r = await fetch('media/' + m);
         Module.FS.writeFile('/MediaFoundation/Media/' + m, new Uint8Array(await r.arrayBuffer()));
     }
-    for (const f of ['SourceReader', 'SinkWriter', 'Encoder', 'MediaSource', 'ReaderTransform', 'SinkByteStream', 'SinkTransform', 'LocalTransform', 'VideoProcessor', 'VideoProcessorControl', 'HevcEncoder', 'MediaSink', 'ColorConverterDmo', 'Formats', 'Asf']) {
+    for (const f of ['SourceReader', 'SinkWriter', 'Encoder', 'MediaSource', 'ReaderTransform', 'SinkByteStream', 'SinkTransform', 'LocalTransform', 'VideoProcessor', 'VideoProcessorControl', 'HevcEncoder', 'MediaSink', 'ColorConverterDmo', 'Formats', 'Asf', 'Capture']) {
         const r = await fetch('fixtures/' + f + '.windows.txt');
         Module.FS.writeFile('/MediaFoundation/' + f + '.windows.txt', new Uint8Array(await r.arrayBuffer()));
     }

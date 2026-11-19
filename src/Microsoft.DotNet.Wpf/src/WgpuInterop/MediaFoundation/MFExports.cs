@@ -329,15 +329,69 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return MF.S_OK;
         }
 
-        /// <summary>The capture devices: none yet (camera and microphone capture are to come), as of a system without any.</summary>
+        /// <summary>
+        /// The capture devices of the kind the attributes ask for (MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE): the cameras, an
+        /// activate each, in the system's order (MFCaptureSource.cs); no microphones yet.
+        /// </summary>
         [Win32Export("MFEnumDeviceSources")]
         public static int MFEnumDeviceSources(IntPtr attributes, IntPtr** activates, uint* count)
         {
             if (activates == null || count == null) return MF.E_POINTER;
             *activates = null; *count = 0;
-            D3DLog.Once("mf-capture", "Media Foundation: MFEnumDeviceSources lists no devices yet (capture is to come)");
+            if (attributes == IntPtr.Zero) return MF.E_POINTER;
+            var k = Capture.CaptureIds.MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
+            Guid type;
+            if (((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Com.Fn(attributes, 10))(attributes, &k, &type) < 0) return MF.E_INVALIDARG;
+            if (type == Capture.CaptureIds.AUDCAP) { D3DLog.Once("mf-audcap", "Media Foundation: MFEnumDeviceSources lists no microphones yet"); return MF.S_OK; }
+            if (type != Capture.CaptureIds.VIDCAP) return MF.E_INVALIDARG;
+            var devices = Capture.CaptureDevices.Video();
+            if (devices.Count == 0) return MF.S_OK;
+            var a = (IntPtr*)Marshal.AllocCoTaskMem(devices.Count * IntPtr.Size);
+            for (int i = 0; i < devices.Count; i++) a[i] = Capture.CaptureIds.Activate(devices[i]).Pointer;
+            *activates = a; *count = (uint)devices.Count;
             return MF.S_OK;
         }
+
+        /// <summary>The source of the camera of the attributes' symbolic link (MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK).</summary>
+        [Win32Export("MFCreateDeviceSource")]
+        public static int MFCreateDeviceSource(IntPtr attributes, IntPtr* source)
+        {
+            if (source == null) return MF.E_POINTER;
+            *source = IntPtr.Zero;
+            int hr = MFCreateDeviceSourceActivate(attributes, source);
+            if (hr < 0) return hr;
+            IntPtr a = *source;
+            *source = IntPtr.Zero;
+            var iid = Source.MS.IID_IMFMediaSource;
+            hr = ((delegate* unmanaged<IntPtr, Guid*, IntPtr*, int>)Com.Fn(a, 33))(a, &iid, source);
+            Com.Release(a);
+            return hr;
+        }
+
+        /// <summary>The activate of the camera of the attributes' symbolic link.</summary>
+        [Win32Export("MFCreateDeviceSourceActivate")]
+        public static int MFCreateDeviceSourceActivate(IntPtr attributes, IntPtr* activate)
+        {
+            if (activate == null) return MF.E_POINTER;
+            *activate = IntPtr.Zero;
+            if (attributes == IntPtr.Zero) return MF.E_POINTER;
+            var k = Capture.CaptureIds.MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
+            Guid type;
+            if (((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Com.Fn(attributes, 10))(attributes, &k, &type) < 0) return MF.MF_E_ATTRIBUTENOTFOUND;
+            if (type != Capture.CaptureIds.VIDCAP) return MF.E_INVALIDARG;
+            var lk = Capture.CaptureIds.VIDCAP_SYMBOLIC_LINK;
+            char* str; uint len;
+            if (((delegate* unmanaged<IntPtr, Guid*, char**, uint*, int>)Com.Fn(attributes, 13))(attributes, &lk, &str, &len) < 0) return MF.MF_E_ATTRIBUTENOTFOUND;
+            string link = new string(str, 0, (int)len);
+            Marshal.FreeCoTaskMem((IntPtr)str);
+            foreach (var d in Capture.CaptureDevices.Video())
+                if (string.Equals(Capture.CaptureIds.Link(d), link, StringComparison.OrdinalIgnoreCase)) { *activate = Capture.CaptureIds.Activate(d).Pointer; return MF.S_OK; }
+            return Capture.CaptureIds.E_PATH_NOT_FOUND;
+        }
+
+        /// <summary>The system time, in 100 ns: the clock the capture devices' samples are of.</summary>
+        [Win32Export("MFGetSystemTime")]
+        public static long MFGetSystemTime() => Capture.CaptureDevices.Now();
 
         [Win32Export("MFCreateSourceResolver")]
         public static int MFCreateSourceResolver(IntPtr* resolver)

@@ -185,6 +185,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         public virtual IntPtr MediaSource => IntPtr.Zero;
         /// <summary>A stream selected or not, by the reader's index of it.</summary>
         public virtual void Select(int index, bool on) { }
+        /// <summary>The stream's native type of the index (its media type handler's: a capture device's formats); null past them. The one type of a file's stream, else.</summary>
+        public virtual MFMediaType? NativeType(int index, uint n) => null;
+        /// <summary>The source's stream to one of its types (SetNativeMediaType): the type now in use, or the HRESULT.</summary>
+        public virtual int SetNative(int index, IntPtr type, out MFMediaType? native) { native = null; return MF.E_NOTIMPL; }
         /// <summary>The whole source to a new position, before each stream's feed is.</summary>
         public virtual int Seek(long hns) => MF.S_OK;
         public abstract void Dispose();

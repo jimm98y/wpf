@@ -671,6 +671,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             return s;
         }
 
+        /// <summary>The application's choice of the source's type (SetNativeMediaType): the native and current type both, decoded no more.</summary>
+        public void NativeSet(MFMediaType t)
+        {
+            DropDecoder();
+            _held?.Release(); _held = null;
+            Native.Release();
+            Native = t;
+            Replace(t.Clone());
+        }
+
         /// <summary>The source's new type: the stream's native type; a decoder's input; where it is passed through, the current type.</summary>
         private void NativeChanged(MFMediaType t)
         {

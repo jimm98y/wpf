@@ -456,6 +456,45 @@ MF_SOURCE_READER_MEDIASOURCE gives the source.
 - The reader's report of every file is Windows' report the three ways: of the URL, of the resolver's
   source, and of that source driven as an application's (`TheReader_DoesWithEachFileWhatWindowsReaderDoes`).
 
+## Capture devices
+
+**The cameras** (`Capture/MFCaptureSource.cs`), as Windows' device source behaves. It was probed with the test VM's
+two cameras (`MFCaptureProbe`); the report kept, `Capture.windows.txt`, has no device's name or link, and only the
+first camera's details.
+- `MFEnumDeviceSources` of `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID`: an activate for each camera, carrying:
+  - its friendly name and a symbolic link of the shape of Windows' (`\\?\avcapture#…#{KSCATEGORY_VIDEO_CAMERA}\global`);
+  - the category, the source type, the major type and subtypes it gives, and the unnamed hardware-source attribute.
+  Microphones (`AUDCAP`) are listed as none yet.
+- `MFCreateDeviceSource` and `MFCreateDeviceSourceActivate` of the link (the case ignored). Another link is
+  0x80070003; no link, or no source type, is MF_E_ATTRIBUTENOTFOUND.
+- **The source:**
+  - It is live and can pause (characteristics 5). After Shutdown it gives 0xC00D3E85, the device gone.
+  - One stream (id 0, selected), with the frame source and stream category attributes Windows' has.
+  - Its handler lists each of the camera's sizes and rates as NV12, of the attributes Windows' types carry (the
+    frame server's among them); the first is current.
+- **Start** opens the camera at the handler's current type. It sends MENewStream, MESourceStarted, MEStreamStarted
+  and an MEStreamTick, all of the system time then (`MFGetSystemTime`, now exported too).
+- **Each RequestSample** is answered by a frame, as MEMediaSample:
+  - Frames that come before a request are kept, the latest three.
+  - A sample has the system time of its capture, the frame's duration, the token, and the frame server's
+    attributes: the frame's description, the device and delivery times, and the others Windows sets.
+  - Discontinuity is set on the first frame, and on a frame after one was dropped. The one attribute of
+    the VM's camera driver is not given.
+- **Pause** holds the frames; **Stop** closes the camera. A request while stopped is MF_E_MEDIA_SOURCE_WRONGSTATE.
+- **A change of the handler's current type** while the camera runs reopens it at the new format, without an event.
+- **The reader** lists the handler's types as the native types. Its first read is the tick (STREAMTICK); the frames
+  follow. `SetNativeMediaType` makes one of them the native and the current type (flags 0x30), and the frames after
+  it are of that type. This holds for any source whose handler has more than one type.
+
+The cameras of each system (`Capture/CaptureDevices.cs`), each format as NV12 of the full range:
+- **macOS and iOS:** AVFoundation. The cameras come from a discovery session of the built-in, external and Continuity
+  cameras (`devicesWithMediaType:` lists none on the newer systems). The output asks for 420f, and AVFoundation
+  converts a video-range format to it.
+- The other systems list no cameras yet.
+
+`TheCaptureSource_BehavesAsWindowsDoes` compares the first camera's report with Windows', with the names, links, sizes
+and times taken out. It is skipped where there is no camera.
+
 ## Transforms of the application's
 
 `MFTRegisterLocal` and `MFTRegisterLocalByCLSID` register a transform in the process (`LocalTransforms.cs`), as
@@ -664,6 +703,7 @@ on macOS and in the Ubuntu VM.
 - The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
   of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
   tolerance (by choice).
-- The media session, and camera capture (`MFEnumDeviceSources`).
+- The media session.
+- Audio capture (`MFEnumDeviceSources` of `AUDCAP`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).

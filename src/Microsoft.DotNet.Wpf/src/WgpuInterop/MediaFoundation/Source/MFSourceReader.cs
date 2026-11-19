@@ -209,7 +209,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             lock (r._lock)
             {
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
-                if (n != 0 && n != 0xFFFFFFFF) return MF.MF_E_NO_MORE_TYPES;           // MF_SOURCE_READER_CURRENT_TYPE_INDEX: the one in use, the only one
+                // the source's types (a capture device's); else of a file's stream the one, and MF_SOURCE_READER_CURRENT_TYPE_INDEX the one in use
+                if (n != 0xFFFFFFFF && r._source.NativeType(s.Index, n) is { } listed) { *type = listed.Pointer; return MF.S_OK; }
+                if (n != 0 && n != 0xFFFFFFFF) return MF.MF_E_NO_MORE_TYPES;
                 *type = s.Native.Clone().Pointer;
             }
             return MF.S_OK;
@@ -252,9 +254,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             lock (r._lock)
             {
                 if (r.StreamOf(i) is not { } s) return MF.MF_E_INVALIDSTREAMNUMBER;
+                // a source of types to choose from: the one given, the stream's native and current type now
+                int hr = r._source.SetNative(s.Index, type, out var chosen);
+                if (hr != MF.E_NOTIMPL)
+                {
+                    if (hr >= 0 && chosen != null) { s.NativeSet(chosen); if (flags != null) *flags = SR.NATIVEMEDIATYPECHANGED | SR.CURRENTMEDIATYPECHANGED; }
+                    return hr;
+                }
                 // a file's streams have their one type
                 var t = Mp4Types.Read(type);
-                return t.Subtype == s.Native.Subtype && t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == s.Native.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) ? MF.S_OK : MF.MF_E_INVALIDMEDIATYPE;
+                try { return t.Subtype == s.Native.Subtype && t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == s.Native.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) ? MF.S_OK : MF.MF_E_INVALIDMEDIATYPE; }
+                finally { t.Release(); }
             }
         }
 
