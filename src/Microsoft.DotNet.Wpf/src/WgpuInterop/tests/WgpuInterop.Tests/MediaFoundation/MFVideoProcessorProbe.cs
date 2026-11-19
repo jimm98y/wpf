@@ -127,6 +127,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 long time; ((delegate* unmanaged<IntPtr, long*, int>)Fn(got, 35))(got, &time);
                 long sum = 0; foreach (var x in bytes) sum += x;
                 log.Add($"    output: {bytes.Length} bytes in {buffers}, time {time}, sum {sum}, {Convert16(bytes)}");
+                if (bytes.Length == 4608) { long ls = 0; for (int q = 0; q < 3072; q++) ls += bytes[q]; log.Add($"      of the luma {ls}, the chroma's last {System.Convert.ToHexString(bytes, 4608 - 16, 16).ToLowerInvariant()}"); }
                 log.Add($"      {string.Join(" ", MFReader.Dump(got).Where(l => !l.Contains("Time")))}");
                 MFReader.Release(got);
             }
@@ -134,6 +135,73 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         private static string Convert16(byte[] b) => System.Convert.ToHexString(b, 0, Math.Min(16, b.Length)).ToLowerInvariant();
+
+        /// <summary>One picture through a transform of the types given: the output's bytes, or the failure.</summary>
+        private static byte[]? Through(IntPtr t, Guid inSub, Guid outSub, int w, int h, byte[] picture)
+        {
+            ((delegate* unmanaged<IntPtr, uint, nuint, int>)Fn(t, 23))(t, 0, 0);
+            var i = Type(inSub, (uint)w, (uint)h); var o = Type(outSub, (uint)w, (uint)h);
+            int hr = ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Fn(t, 15))(t, 0, i, 0);
+            if (hr >= 0) hr = ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Fn(t, 16))(t, 0, o, 0);
+            MFReader.Release(i); MFReader.Release(o);
+            if (hr < 0) return null;
+            var input = MFWriter.Sample(picture, 0, 400_000);
+            hr = ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Fn(t, 24))(t, 0, input, 0);
+            MFReader.Release(input);
+            if (hr < 0) return null;
+            IntPtr mine = MFWriter.Sample(new byte[w * h * 4 + 4096], 0, 0);
+            var odb = stackalloc byte[4 * sizeof(IntPtr)];
+            new Span<byte>(odb, 4 * sizeof(IntPtr)).Clear();
+            *(IntPtr*)(odb + IntPtr.Size) = mine;
+            uint status;
+            hr = ((delegate* unmanaged<IntPtr, uint, uint, byte*, uint*, int>)Fn(t, 25))(t, 0, 1, odb, &status);
+            IntPtr got = *(IntPtr*)(odb + IntPtr.Size);
+            if (hr < 0) { MFReader.Release(mine); return null; }
+            var bytes = MFReader.SampleBytes(got, out _);
+            MFReader.Release(got);
+            return bytes;
+        }
+
+        /// <summary>
+        /// Ramps through each class, to read its arithmetic off: NV12 of every luma (chroma neutral), of every U and every V
+        /// (luma 128), to RGB32; RGB32 of every red, green and blue, to NV12. Each output's first row (of NV12, and its first
+        /// chroma row), in hex.
+        /// </summary>
+        internal static List<string> Ramps(Guid clsid)
+        {
+            var log = new List<string>();
+            int w = 256, h = 2;
+            byte[] Nv12(Func<int, byte> y, Func<int, byte> u, Func<int, byte> v)
+            {
+                var b = new byte[w * h * 3 / 2];
+                for (int r = 0; r < h; r++) for (int x = 0; x < w; x++) b[r * w + x] = y(x);
+                for (int x = 0; x < w / 2; x++) { b[w * h + x * 2] = u(x * 2); b[w * h + x * 2 + 1] = v(x * 2); }
+                return b;
+            }
+            byte[] Rgb(int channel)
+            {
+                var b = new byte[w * h * 4];
+                for (int r = 0; r < h; r++) for (int x = 0; x < w; x++) { b[(r * w + x) * 4 + channel] = (byte)x; b[(r * w + x) * 4 + 3] = 255; }
+                return b;
+            }
+            foreach (var (name, pic) in new[] { ("luma", Nv12(x => (byte)x, _ => 128, _ => 128)), ("U", Nv12(_ => 128, x => (byte)x, _ => 128)), ("V", Nv12(_ => 128, _ => 128, x => (byte)x)) })
+            {
+                Create(clsid, out var t);
+                var o = Through(t, NV12, RGB32, w, h, pic);
+                MFReader.Release(t);
+                log.Add($"  NV12 {name} ramp to RGB32: {(o == null ? "failed" : System.Convert.ToHexString(o, 0, w * 4).ToLowerInvariant())}");
+                if (o != null) log.Add($"    last row: {System.Convert.ToHexString(o, w * 4, w * 4).ToLowerInvariant()}");
+            }
+            foreach (var (name, ch) in new[] { ("blue", 0), ("green", 1), ("red", 2) })
+            {
+                Create(clsid, out var t);
+                var o = Through(t, RGB32, NV12, w, h, Rgb(ch));
+                MFReader.Release(t);
+                log.Add($"  RGB32 {name} ramp to NV12: {(o == null ? "failed" : System.Convert.ToHexString(o, 0, w).ToLowerInvariant())}");
+                if (o != null) log.Add($"    chroma: {System.Convert.ToHexString(o, w * h, w).ToLowerInvariant()}");
+            }
+            return log;
+        }
 
         internal static List<string> Report()
         {
@@ -167,7 +235,23 @@ namespace WgpuInterop.Tests.MediaFoundation
                 var nv12 = Type(NV12, 64, 48);
                 log.Add($"set input NV12 64x48 {Hr(((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)Fn(t, 15))(t, 0, nv12, 0))}");
                 MFReader.Release(nv12);
-                log.AddRange(Available(t, 14, "output available", true));
+                log.AddRange(Available(t, 14, "output available", clsid == VideoProcessorClsid));
+                if (clsid == ColorConverterClsid)
+                    for (uint n = 0; n < 40; n++)
+                    {
+                        IntPtr type;
+                        if (((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, int>)Fn(t, 14))(t, 0, n, &type) < 0) break;
+                        log.Add($"  output {n} in full: {string.Join("; ", MFReader.Dump(type))}");
+                        // MF_MT_PALETTE whole
+                        var pk = new Guid("6d283f42-9846-4410-afd9-654d503b1a54"); uint size;
+                        if (((delegate* unmanaged<IntPtr, Guid*, uint*, int>)Fn(type, 14))(type, &pk, &size) >= 0)
+                        {
+                            var blob = new byte[size];
+                            fixed (byte* bp = blob) ((delegate* unmanaged<IntPtr, Guid*, byte*, uint, uint*, int>)Fn(type, 15))(type, &pk, bp, size, &size);
+                            log.Add($"    palette: {System.Convert.ToHexString(blob).ToLowerInvariant()}");
+                        }
+                        MFReader.Release(type);
+                    }
                 log.Add($"input info {Info(t, 6)}");
                 foreach (var (sub, w, h) in new[] { (RGB32, 64u, 48u), (ARGB32, 64u, 48u), (RGB24, 64u, 48u), (I420, 64u, 48u), (IYUV, 64u, 48u), (YV12, 64u, 48u), (YUY2, 64u, 48u), (UYVY, 64u, 48u), (NV12, 64u, 48u), (NV12, 32u, 24u), (RGB32, 128u, 96u) })
                 {
@@ -194,6 +278,8 @@ namespace WgpuInterop.Tests.MediaFoundation
                 log.Add($"  set output NV12 64x48 {Hr(nhr)}");
                 if (nhr >= 0) log.AddRange(Convert(t, RGB32, 64, 48));
                 MFReader.Release(t);
+                log.Add("ramps:");
+                log.AddRange(Ramps(clsid));
             }
             return log;
         }
@@ -202,15 +288,16 @@ namespace WgpuInterop.Tests.MediaFoundation
         /// The shim's video processor, as an application makes it by CLSID, is Windows' (VideoProcessor.windows.txt): its
         /// interfaces, streams, attributes, types, the outputs it takes, and its pictures to the byte -- but of the upscaled
         /// RGB, whose first pixels are Windows' and whose bytes are within 1 of Windows' on average (Windows' sampling of an
-        /// upscale is its own). The color converter is not the shim's yet.
+        /// upscale is its own). The color converter alike, to the byte, of its own arithmetic -- but for its IMediaObject (the
+        /// DMO), which the shim's has not.
         /// </summary>
         [Fact]
-        public void TheVideoProcessor_IsWindows()
+        public void TheVideoProcessorAndColorConverter_AreWindows()
         {
             Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows' video processor is the fixture");
-            static List<string> Of(IEnumerable<string> lines) => lines.TakeWhile(l => l != "==== color converter").ToList();
-            var windows = Of(File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "VideoProcessor.windows.txt")));
-            var ours = Of(Report());
+            // (the color converter's IMediaObject, which the shim's has not: E_NOINTERFACE)
+            var windows = File.ReadAllLines(Path.Combine(TestFiles.Root, "MediaFoundation", "VideoProcessor.windows.txt")).Select(l => l == "  IMediaObject 0x00000000" ? "  IMediaObject 0x80004002" : l).ToList();
+            var ours = Report();
             Assert.Equal(windows.Count, ours.Count);
             for (int i = 0; i < windows.Count; i++)
             {

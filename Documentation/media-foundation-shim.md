@@ -282,8 +282,19 @@ the real ole32 makes Windows' own. A local transform registered by such a CLSID 
       Downscaling is Windows' to the byte; an upscale's first pixels are, its bytes within 1 on average.
   - The subtypes of more than 8 bits (but P010 and P016), floats, palettes and the rarer packings are listed but not
     converted: SetInputType refuses them. IMFVideoProcessorControl's settings are kept, not applied.
-- **The color converter DSP** (CLSID_CColorConvertDMO) is not yet a class here: it differs from the video processor
-  (a DMO as well, types of every attribute, top-down RGB, its own rounding).
+- **The color converter DSP** (CLSID_CColorConvertDMO, `MFColorConverter.cs`), as Windows' (the same probe; its
+  arithmetic read off ramps of every luma, U, V, red, green and blue, and Windows' pictures of them):
+  - IMFTransform, IPropertyStore (of no properties), IMFGetService; no attributes of its own (E_NOTIMPL); the streams'
+    information MF_E_TRANSFORM_TYPE_NOT_SET before the types, aligned to 1.
+  - Windows' 20 input subtypes; its first 16 the outputs. Before an input, each type of its major type, subtype and
+    fixed, independent samples; once there is one, the outputs of the input's size, interlace and aspect, its rate as
+    10^7 over a frame's time, a full-frame aperture, the subtype's stride and sample size; RGB8 of Media Foundation's
+    subtype and Windows' halftone palette. Not ARGB32 out. It does not scale (Windows' crashes the process at an output
+    of another size): an output of another size is refused.
+  - Its own arithmetic, to the byte: to RGB, sums of truncated terms (1.164383 (Y - 16), 2.017232 (U - 128), 1.596027
+    (V - 128), 0.391762 (U - 128), 0.812968 (V - 128)), the chroma repeated, alpha 0; from RGB, BT.601 in 16-bit fixed
+    point, rounded, a block's top-left chroma; RGB of no stride top-down; samples not clean points.
+  - Not here: its IMediaObject (the DMO); RGB8, V216, V410, the 4:1:1 packings and YVU9 (listed, refused).
 
 ## Transforms of the application's
 
@@ -563,8 +574,8 @@ on macOS and in the Ubuntu VM.
 
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
   (`MF_SINK_WRITER_MEDIASINK`); the application's local audio decoders in the reader.
-- Windows' color converter DSP as a class an application can create by CLSID; the video processor's rotation,
-  mirror and rectangles; its formats of more than 8 bits.
+- The color converter's IMediaObject; the video processor's rotation, mirror and rectangles; the formats of more
+  than 8 bits, palettes and the rarer packings.
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;

@@ -277,8 +277,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         /// <summary>
         /// Transforms of the application's, as Windows keeps and uses them (LocalTransform.windows.txt): the registering, line by
         /// line; of the writer and the reader, that each takes the application's transform before the system's, and the calls
-        /// that set its types and tell it of streaming, in order. Not compared: Windows' color converter DSP (of a CLSID, the
-        /// shim has no class of: REGDB_E_CLASSNOTREG); the calls the transform's own work makes (it is the system's
+        /// that set its types and tell it of streaming, in order. Not compared: the calls the transform's own work makes (it is the system's
         /// encoder and decoder inside), such as a decoder's type set again at its stream change.
         /// </summary>
         [Fact]
@@ -296,12 +295,10 @@ namespace WgpuInterop.Tests.MediaFoundation
         {
             var r = new List<string>();
             string section = "";
-            bool converter = false, typed = false;
+            bool typed = false;
             foreach (var l in lines.SelectMany(x => x.Split('\n')))
             {
                 if (l.StartsWith("==== ")) { section = l; typed = false; }
-                if (l.StartsWith("  activating ")) converter = l.StartsWith("  activating 3 ");
-                if (converter && !l.StartsWith("  activating ")) continue;
                 if (section == "==== registering") { r.Add(l); continue; }
                 if (!l.StartsWith("    ")) { r.Add(l); continue; }
                 // the calls: the types set, the messages, the release

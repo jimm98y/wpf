@@ -51,6 +51,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         /// <summary>The input stream's sample size (MFT_INPUT_STREAM_INFO's cbSize): 0 where it says none.</summary>
         protected virtual uint InputSize() => 0;
 
+        /// <summary>What GetInputStreamInfo and GetOutputStreamInfo answer before the types (the color converter's MF_E_TRANSFORM_TYPE_NOT_SET).</summary>
+        protected virtual int StreamInfoWithoutTypes => MF.S_OK;
+
+        /// <summary>The streams' alignment (cbAlignment).</summary>
+        protected virtual uint Alignment => 0;
+
         protected override void OnFinalRelease()
         {
             Shutdown();
@@ -174,8 +180,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             if (E(self) is not { } e || info == null) return MF.E_POINTER;
             if (id != 0) return MF.MF_E_INVALIDSTREAMNUMBER;
-            new Span<byte>(info, 24).Clear();            // no latency, no flags, no lookahead, no alignment
-            lock (e.Lock) *(uint*)(info + 12) = e.InputSize();     // cbSize
+            new Span<byte>(info, 24).Clear();            // no latency, no flags, no lookahead
+            lock (e.Lock)
+            {
+                if (e.In == IntPtr.Zero && e.StreamInfoWithoutTypes < 0) return e.StreamInfoWithoutTypes;
+                *(uint*)(info + 12) = e.InputSize();     // cbSize
+                *(uint*)(info + 20) = e.Alignment;
+            }
             return MF.S_OK;
         }
 
@@ -184,7 +195,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             if (E(self) is not { } e || info == null) return MF.E_POINTER;
             if (id != 0) return MF.MF_E_INVALIDSTREAMNUMBER;
-            lock (e.Lock) { info[0] = 0; info[1] = e.OutputSize(); info[2] = 0; }
+            lock (e.Lock)
+            {
+                if (e.Out == IntPtr.Zero && e.StreamInfoWithoutTypes < 0) { info[0] = info[1] = info[2] = 0; return e.StreamInfoWithoutTypes; }
+                info[0] = 0; info[1] = e.OutputSize(); info[2] = e.Alignment;
+            }
             return MF.S_OK;
         }
 

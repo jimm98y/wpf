@@ -28,7 +28,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             if (ppv == null || clsid == null || iid == null) return MF.E_POINTER;
             *ppv = IntPtr.Zero;
-            Direct3D.ComObject? made = *clsid == MFVideoProcessor.Clsid ? new MFVideoProcessor() : null;
+            Direct3D.ComObject? made = *clsid == MFVideoProcessor.Clsid ? new MFVideoProcessor() : *clsid == MFColorConverter.Clsid ? new MFColorConverter() : null;
             if (made == null) return REGDB_E_CLASSNOTREG;
             int hr = Com.QueryInterface(made.Pointer, *iid, out var p);
             made.Release();

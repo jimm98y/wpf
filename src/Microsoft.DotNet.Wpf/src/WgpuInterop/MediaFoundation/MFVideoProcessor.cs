@@ -254,6 +254,48 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return ((C1[cy * CW + cx] + C1[cy * CW + nx] + 1) >> 1, (C2[cy * CW + cx] + C2[cy * CW + nx] + 1) >> 1);
         }
 
+        /// <summary>
+        /// The color converter's YUV to RGB: chroma repeated; each component a sum of truncated terms (its lookup tables:
+        /// 1.164383 (Y - 16), 2.017232 (U - 128), 1.596027 (V - 128), 0.391762 (U - 128), 0.812968 (V - 128)).
+        /// </summary>
+        public Picture AsRgbConverter()
+        {
+            if (Rgb) return this;
+            var p = new Picture(W, H, true);
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    int i = y * W + x, ci = Math.Min(y / SubY, CH - 1) * CW + Math.Min(x / SubX, CW - 1);
+                    int l = (int)Math.Floor(1.164383 * (C0[i] - 16)), d = C1[ci] - 128, e = C2[ci] - 128;
+                    p.C0[i] = Clamp(l + (int)Math.Floor(1.596027 * e));
+                    p.C1[i] = Clamp(l - (int)Math.Floor(0.391762 * d) - (int)Math.Floor(0.812968 * e));
+                    p.C2[i] = Clamp(l + (int)Math.Floor(2.017232 * d));
+                    p.A[i] = 0;
+                }
+            return p;
+        }
+
+        /// <summary>
+        /// The color converter's RGB to YUV: BT.601 in 16-bit fixed point, rounded (fitted to Windows' ramps of each channel
+        /// and its pictures: the luma's coefficients are those alone; the chroma's are one of the few sets all of Windows'
+        /// pictures fit); the chroma of the top-left pixel of each block.
+        /// </summary>
+        public Picture AsYuvConverter(int subX, int subY)
+        {
+            if (!Rgb) return this;
+            var p = new Picture(W, H, false, subX, subY);
+            for (int i = 0; i < W * H; i++) p.C0[i] = Clamp(16 + ((16842 * C0[i] + 33030 * C1[i] + 6423 * C2[i] + 32768) >> 16));
+            for (int cy = 0; cy < p.CH; cy++)
+                for (int cx = 0; cx < p.CW; cx++)
+                {
+                    int i = Math.Min(cy * subY, H - 1) * W + Math.Min(cx * subX, W - 1);
+                    int r = C0[i], g = C1[i], b = C2[i];
+                    p.C1[cy * p.CW + cx] = Clamp(128 + ((-9700 * r - 19071 * g + 28770 * b + 32768) >> 16));
+                    p.C2[cy * p.CW + cx] = Clamp(128 + ((28770 * r - 24116 * g - 4653 * b + 32768) >> 16));
+                }
+            return p;
+        }
+
         public Picture AsRgb()
         {
             if (Rgb) return this;
@@ -326,11 +368,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             || s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 || s == MFVideoProcessor.ABGR32 || s == P010 || s == P016;
 
         /// <summary>RGB is bottom-up where the type has no stride, or a negative one (Windows' video processor's default).</summary>
-        public static bool BottomUp(MFMediaType t)
+        public static bool BottomUp(MFMediaType t, bool byDefault = true)
         {
             if (!IsRgb(t.Subtype)) return false;
             var s = t.Attributes.Get(MF_MT_DEFAULT_STRIDE);
-            return s is not { } v || unchecked((int)(uint)v.U) < 0;
+            return s is not { } v ? byDefault : unchecked((int)(uint)v.U) < 0;
+        }
+
+        /// <summary>The subtypes the encoder writes.</summary>
+        public static bool Writes(Guid s) => s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == NV11 || s == YUY2 || s == UYVY || s == YVYU || s == AYUV
+            || s == MFVideoProcessor.L8 || s == P010 || s == P016 || s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16 || IsRgb(s);
+
+        /// <summary>A row's bytes of the subtype (MF_MT_DEFAULT_STRIDE's, top-down): of the planar ones the luma's.</summary>
+        public static int Stride(Guid s, int w)
+        {
+            if (s == MFVideoProcessor.RGB24) return RgbRow(3, w);
+            if (s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 || s == YUY2 || s == UYVY || s == YVYU) return RgbRow(2, w);
+            if (s == MFVideoProcessor.RGB32 || s == MFVideoProcessor.ARGB32 || s == AYUV) return w * 4;
+            return w;
         }
 
         private static int RgbRow(int bytesPerPixel, int w) => (w * bytesPerPixel + 3) & ~3;
@@ -433,13 +488,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         /// <summary>The picture into the output's layout (converted to its kind first: the caller scales after an RGB output's conversion).</summary>
-        public static byte[] Encode(Picture p, Guid s, bool bottomUp)
+        public static byte[] Encode(Picture p, Guid s, bool bottomUp, bool converter = false)
         {
             int w = p.W, h = p.H, cw = (w + 1) / 2, ch = (h + 1) / 2;
             var o = new byte[Size(s, w, h)];
             if (IsRgb(s))
             {
-                var q = p.AsRgb();
+                var q = converter ? p.AsRgbConverter() : p.AsRgb();
                 if (s == MFVideoProcessor.A16B16G16R16F)
                 {
                     for (int y = 0; y < h; y++)
@@ -470,12 +525,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                             uint v = (uint)(a >> 6) << 30 | (uint)(r << 2 | r >> 6) << 20 | (uint)(g << 2 | g >> 6) << 10 | (uint)(bl << 2 | bl >> 6);
                             BitConverter.TryWriteBytes(o.AsSpan(at), v);
                         }
-                        else { o[at] = bl; o[at + 1] = g; o[at + 2] = r; if (bpp == 4) o[at + 3] = s == MFVideoProcessor.RGB32 ? (byte)255 : a; }
+                        else { o[at] = bl; o[at + 1] = g; o[at + 2] = r; if (bpp == 4) o[at + 3] = s == MFVideoProcessor.RGB32 && !converter ? (byte)255 : a; }
                     }
                 }
                 return o;
             }
-            var yv = p.AsYuv();
+            var yv = converter ? p.AsYuvConverter(s == AYUV ? 1 : s == NV11 ? 4 : 2, s == YUY2 || s == UYVY || s == YVYU || s == AYUV || s == NV11 ? 1 : 2) : p.AsYuv();
             if (s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12)
             {
                 Array.Copy(yv.C0, o, w * h);
@@ -511,6 +566,26 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                         var (u, v) = yv.ChromaFor(x, y, 2, 1);
                         o[at] = yv.C0[y * w + 2 * x]; o[at + 1] = u; o[at + 2] = yv.C0[y * w + Math.Min(2 * x + 1, w - 1)]; o[at + 3] = v;
                     }
+                return o;
+            }
+            if (s == UYVY || s == YVYU)
+            {
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < cw; x++)
+                    {
+                        int at = y * w * 2 + x * 4;
+                        var (u, v) = yv.ChromaFor(x, y, 2, 1);
+                        byte y0 = yv.C0[y * w + 2 * x], y1 = yv.C0[y * w + Math.Min(2 * x + 1, w - 1)];
+                        if (s == UYVY) { o[at] = u; o[at + 1] = y0; o[at + 2] = v; o[at + 3] = y1; }
+                        else { o[at] = y0; o[at + 1] = v; o[at + 2] = y1; o[at + 3] = u; }
+                    }
+                return o;
+            }
+            if (s == NV11)
+            {
+                Array.Copy(yv.C0, o, w * h);
+                int qw = (w + 3) / 4;
+                for (int y = 0; y < h; y++) for (int x = 0; x < qw; x++) { var (u, v) = yv.ChromaFor(x, y, 4, 1); o[w * h + y * qw * 2 + x * 2] = u; o[w * h + y * qw * 2 + x * 2 + 1] = v; }
                 return o;
             }
             if (s == AYUV)
