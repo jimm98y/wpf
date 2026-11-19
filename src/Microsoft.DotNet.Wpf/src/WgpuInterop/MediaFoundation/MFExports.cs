@@ -162,6 +162,24 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(new[] { MF.MFVideoFormat_H264 })));
                 found.Add(a);
             }
+            // HEVC: Windows' of the HEVC Video Extensions (its activate of no CLSID: a packaged transform's)
+            if (sync && category == MFEncoder.MFT_CATEGORY_VIDEO_ENCODER
+                && (input == null || (input->guidMajorType == MF.MFMediaType_Video || input->guidMajorType == Guid.Empty) && (input->guidSubtype == Guid.Empty || Array.IndexOf(MFHevcEncoder.Inputs, input->guidSubtype) >= 0))
+                && (output == null || output->guidSubtype == Guid.Empty || output->guidSubtype == MF.MFVideoFormat_HEVC)
+                && PlatformVideoEncoder.Supports(VideoCodec.H265))
+            {
+                var a = new MFActivate(() => new MFHevcEncoder());
+                a.Attributes.Set(MF.MFT_FRIENDLY_NAME_Attribute, MFValue.Of(MFHevcEncoder.Name));
+                a.Attributes.Set(MF.MFT_INPUT_TYPES_Attributes, MFValue.Of(TypeInfos(MFHevcEncoder.InputsListed)));
+                a.Attributes.Set(MF.MFT_OUTPUT_TYPES_Attributes, MFValue.Of(TypeInfos(new[] { MF.MFVideoFormat_HEVC })));
+                a.Attributes.Set(LocalTransforms.MF_TRANSFORM_FLAGS_Attribute, MFValue.Of(1u));
+                a.Attributes.Set(LocalTransforms.MF_TRANSFORM_CATEGORY_Attribute, MFEncoder.MFT_CATEGORY_VIDEO_ENCODER);
+                // (Windows' activate's flags beside; not its package's: the path, names, class, architecture)
+                a.Attributes.Set(new Guid("3c0fbe52-d034-4115-995d-95b356b9855c"), MFValue.Of(1u));
+                a.Attributes.Set(new Guid("f9542f80-d069-4efe-b30d-345536f76aaa"), MFValue.Of(0u));
+                a.Attributes.Set(new Guid("f9a1ef38-f61e-42e6-87b3-309438f9ac67"), MFValue.Of(1u));
+                found.Add(a);
+            }
             if (sync && category == MFEncoder.MFT_CATEGORY_AUDIO_ENCODER
                 && (input == null || (input->guidMajorType == MFAudioDecoder.MFMediaType_Audio || input->guidMajorType == Guid.Empty) && (input->guidSubtype == Guid.Empty || input->guidSubtype == MediaFormats.PCM))
                 && (output == null || output->guidSubtype == Guid.Empty || output->guidSubtype == Source.SR.MFAudioFormat_AAC)

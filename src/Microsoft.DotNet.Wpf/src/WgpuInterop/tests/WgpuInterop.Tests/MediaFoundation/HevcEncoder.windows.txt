@@ -1,0 +1,150 @@
+==== enumerated
+  MFTEnumEx flags 0x3f in MFVideoFormat_NV12 out 43564548-0000-0010-8000-00aa00389b71: 0x00000000 count 1
+    0: STR "HEVCVideoExtensionEncoder"
+  MFTEnumEx flags 0x61 in MFVideoFormat_NV12 out 43564548-0000-0010-8000-00aa00389b71: 0x00000000 count 1
+    0: STR "HEVCVideoExtensionEncoder"
+  MFTEnumEx flags 0x1 in MFVideoFormat_NV12 out 43564548-0000-0010-8000-00aa00389b71: 0x00000000 count 1
+    0: STR "HEVCVideoExtensionEncoder"
+  MFTEnumEx flags 0x3f in - out 43564548-0000-0010-8000-00aa00389b71: 0x00000000 count 1
+    0: STR "HEVCVideoExtensionEncoder"
+  MFTEnumEx flags 0x61 in - out 43564548-0000-0010-8000-00aa00389b71: 0x00000000 count 1
+    0: STR "HEVCVideoExtensionEncoder"
+  MFTEnumEx flags 0x1 in - out 43564548-0000-0010-8000-00aa00389b71: 0x00000000 count 1
+    0: STR "HEVCVideoExtensionEncoder"
+==== by CLSID
+  create 0x80040154
+==== the encoder enumerated
+  activate:
+    314ffbae-5b41-4c95-9c19-4e7d586face3 = STR "HEVCVideoExtensionEncoder"
+    3c0fbe52-d034-4115-995d-95b356b9855c = UI4 1
+    4276c9b1-759d-4bf3-9cd0-0d723d138f96 = BLOB[128] 7669647300001000800000aa00389b714e56313200001000800000aa00389b717669647300001000800000aa00389b714959555600001000800000aa00389b71...
+    7347c815-79fc-4ad9-877d-acdf5f46685e = STR "C:\Program Files\WindowsApps\Microsoft.HEVCVideoExtension_2.5.48.0_arm64__8wekyb3d8bbwe\arm64\mfH265Enc.dll"
+    8eae8cf3-a44f-4306-ba5c-bf5dda242818 = BLOB[32] 7669647300001000800000aa00389b714845564300001000800000aa00389b71
+    9359bb7e-6275-46c4-a025-1c01e45f1a86 = UI4 1
+    957193ad-9029-4835-a2f2-3ec9ae9bb6c8 = STR "Microsoft.HEVCVideoExtension_2.5.48.0_arm64__8wekyb3d8bbwe"
+    9d8b61a8-6bc8-4bff-b31f-3a31060afa3d = STR "Microsoft.HEVCVideoExtension_8wekyb3d8bbwe"
+    bb49bc51-1810-4c3a-a9cf-d59c4e5b9622 = GUID de0f9983-6ebf-468f-bee8-5603a6c7de92
+    ceabba49-506d-4757-a6ff-66c184987e4e = GUID f79eac7d-e545-4387-bdee-d647d7bde42a
+    de106d30-42fb-4767-808d-0fcc6811b0b9 = STR "H265Encoder.CH265EncoderTransform"
+    e626cad1-767f-4e4c-a24c-08bc51b77021 = STR "arm64"
+    f9542f80-d069-4efe-b30d-345536f76aaa = UI4 0
+    f9a1ef38-f61e-42e6-87b3-309438f9ac67 = UI4 1
+  input types: MFVideoFormat_NV12, 56555949-0000-0010-8000-00aa00389b71, 32315659-0000-0010-8000-00aa00389b71, 32595559-0000-0010-8000-00aa00389b71
+  output types: 43564548-0000-0010-8000-00aa00389b71
+  activate 0x00000000
+  ICodecAPI 0x00000000
+  IMFShutdown 0x80004002
+  IMFRealTimeClientEx 0x00000000
+  IMFGetService 0x80004002
+  IPropertyStore 0x80004002
+  IMFMediaEventGenerator 0x80004002
+  attributes:
+    592a2a5a-e797-491a-9738-c0007be28c52 = UNKNOWN
+    86a355ae-3a77-4ec4-9f31-01149a4e92de = UI4 1
+  stream limits 0x00000000 1 1 1 1
+  output info, none set 0x00000000 flags 0x0 size 0
+  output available, before 0: 43564548-0000-0010-8000-00aa00389b71 0x0 (2 attributes)
+  output available, before 1: 0xc00d36b9
+  input available, before 0: 0xc00d6d60
+  output 0: 0x00000000
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID 43564548-0000-0010-8000-00aa00389b71
+  ICodecAPI 0x00000000
+  CODECAPI_AVEncCommonRateControlMode: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncCommonMeanBitRate: supported 0x00000000 get 0x00000000 UI4 500000
+  CODECAPI_AVEncCommonQuality: supported 0x00000000 get 0x00000000 UI4 65
+  CODECAPI_AVEncCommonQualityVsSpeed: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncMPVGOPSize: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncMPVDefaultBPictureCount: supported 0x00000001 get 0x00000000 UI4 0
+  CODECAPI_AVEncH264CABACEnable: supported 0x00000001 get 0x80004001 
+  CODECAPI_AVLowLatencyMode: supported 0x00000000 get 0x00000000 VT 11
+  CODECAPI_AVEncVideoForceKeyFrame: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncCommonBufferSize: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncCommonMaxBitRate: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncVideoEncodeQP: supported 0x00000000 get 0x00000000 UI8 26 (0:26)
+  CODECAPI_AVEncVideoMinQP: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncVideoMaxQP: supported 0x00000000 get 0x00000000 UI4 51
+  CODECAPI_AVEncNumWorkerThreads: supported 0x00000000 get 0x00000000 UI4 0
+  CODECAPI_AVEncVideoTemporalLayerCount: supported 0x00000001 get 0x00000000 UI4 1
+  CODECAPI_AVEncMPVProfile: supported 0x00000001 get 0x80004001 
+  CODECAPI_AVEncAdaptiveMode: supported 0x00000001 get 0x80004001 
+  CODECAPI_AVEncSliceControlMode: supported 0x00000001 get 0x80040314 
+  CODECAPI_AVEncVideoLTRBufferControl: supported 0x00000001 get 0x00000000 UI4 0
+  set output, Main10: test 0x00000000 set 0xc00d36bd
+  set output, Main: test 0x00000000 set 0x00000000
+  set output, odd size: test 0xc00d36b4 set 0xc00d36b4
+  set output, plain: test 0x00000000 set 0x00000000
+  input available 0: 56555949-0000-0010-8000-00aa00389b71 320x240 (7 attributes)
+  input available 1: MFVideoFormat_NV12 320x240 (7 attributes)
+  input available 2: 32323449-0000-0010-8000-00aa00389b71 320x240 (7 attributes)
+  input available 3: 34343449-0000-0010-8000-00aa00389b71 320x240 (7 attributes)
+  input available 4: 0xc00d36b9
+  input 0: 0x00000000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_PIXEL_ASPECT_RATIO = UI8 4294967297 (1:1)
+    MF_MT_SUBTYPE = GUID 56555949-0000-0010-8000-00aa00389b71
+    MF_MT_VIDEO_NOMINAL_RANGE = UI4 2
+  set input (available 0) 0x00000000
+  input info 0x00000000 flags 0x0 size 0 align 0
+  output info 0x00000000 flags 0x0 size 144000 align 0
+  output current:
+    MF_MT_AVG_BITRATE = UI4 500000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID 43564548-0000-0010-8000-00aa00389b71
+  begin 0x00000000 start 0x00000000
+  input 0 0x00000000
+    output: time 0 duration 333333 bytes True VPS SPS PPS IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:0) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=0 MFSampleExtension_CleanPoint=1 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:16)]
+    output 0xc00d6d72
+  input 1 0x00000000
+    output: time 333333 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:333333) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:27)]
+    output 0xc00d6d72
+  input 2 0x00000000
+    output: time 666666 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:666666) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:26)]
+    output 0xc00d6d72
+  input 3 0x00000000
+    output: time 999999 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:999999) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:29)]
+    output 0xc00d6d72
+  input 4 0x00000000
+    output: time 1333332 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1333332) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:32)]
+    output 0xc00d6d72
+  input 5 0x00000000
+    output: time 1666665 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1666665) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:35)]
+    output 0xc00d6d72
+  input 6 0x00000000
+    output: time 1999998 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:1999998) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:38)]
+    output 0xc00d6d72
+  input 7 0x00000000
+    output: time 2333331 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2333331) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:38)]
+    output 0xc00d6d72
+  input 8 0x00000000
+    output: time 2666664 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2666664) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:38)]
+    output 0xc00d6d72
+  input 9 0x00000000
+    output: time 2999997 duration 333333 bytes True non-IRAP [73a954d4-09e2-4861-befc-94bd97c08e6e=(0:2999997) 9154733f-e1bd-41bf-81d3-fcd918f71332=0 973704e6-cd14-483c-8f20-c9fc0928bad5=1 MFSampleExtension_CleanPoint=0 b2efe478-f979-4c66-b95e-ee2b82c82f36=(0:38)]
+    output 0xc00d6d72
+  drain 0x00000000
+    output 0xc00d6d72
+  output current after:
+    MF_MT_AVG_BITRATE = UI4 500000
+    MF_MT_FRAME_RATE = UI8 128849018881 (30:1)
+    MF_MT_FRAME_SIZE = UI8 1374389534960 (320:240)
+    MF_MT_INTERLACE_MODE = UI4 2
+    MF_MT_MAJOR_TYPE = GUID MFMediaType_Video
+    MF_MT_SUBTYPE = GUID 43564548-0000-0010-8000-00aa00389b71
+  shutdown 0x00000000
+==== the sink writer, HEVC
+  create 0x00000000
+  add 0x00000000, input 0x00000000
+  transform 0: 0x00000000 f79eac7d-e545-4387-bdee-d647d7bde42a
+    592a2a5a-e797-491a-9738-c0007be28c52 = UNKNOWN
+    86a355ae-3a77-4ec4-9f31-01149a4e92de = UI4 1
+  transform 1: 0xc00d36bf
+  begin 0x00000000
+  finalize 0x00000000
+  file True

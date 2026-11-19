@@ -3,10 +3,10 @@
 
 //
 // A stream's transforms in the sink writer, as Windows' writer chains them (MFSinkTransformProbe,
-// SinkTransform.windows.txt): the encoder MFT (H.264's, AAC's) driven through its vtable, after a converter
+// SinkTransform.windows.txt): the encoder MFT (H.264's, HEVC's, AAC's) driven through its vtable, after a converter
 // where the encoder takes not the input as it is.
 //
-//   - video: the encoder takes IYUV, YV12, NV12 and YUY2 of the target's size. Another subtype or size goes
+//   - video: the encoder takes IYUV, YV12, NV12 and YUY2 (HEVC's: IYUV, NV12, I422, I444) of the target's size. Another subtype or size goes
 //     through a video processor first, to the first of those the encoder takes that is not of the input's
 //     own layout (I420 to YV12; RGB32, or NV12 of another size, to IYUV);
 //   - audio: the encoder takes 16-bit PCM of the target's rate. Float, other bits or another rate go
@@ -71,6 +71,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
         {
             chain = null;
             bool video = target.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) == MF.MFMediaType_Video;
+            bool hevc = video && target.Subtype == MF.MFVideoFormat_HEVC;
+            var inputs = hevc ? MFHevcEncoder.Inputs : MFH264Encoder.Inputs;
             var category = video ? MFEncoder.MFT_CATEGORY_VIDEO_ENCODER : MFEncoder.MFT_CATEGORY_AUDIO_ENCODER;
             // an encoder the application registered in the process before the shim's own (as Windows' writer takes it)
             IntPtr local = LocalTransforms.First(category, video ? MF.MFMediaType_Video : SR.MFMediaType_Audio, Guid.Empty, target.Subtype);
@@ -82,9 +84,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                 var (w, h) = target.FrameSize;
                 var (iw, ih) = input.FrameSize;
                 Guid to = input.Subtype;
-                if (Array.IndexOf(MFH264Encoder.Inputs, input.Subtype) < 0 || (iw, ih) != (w, h))
+                if (Array.IndexOf(inputs, input.Subtype) < 0 || (iw, ih) != (w, h))
                 {
-                    to = Array.Find(MFH264Encoder.Inputs, s => Layout(s) != Layout(input.Subtype));
+                    to = Array.Find(inputs, s => Layout(s) != Layout(input.Subtype));
                     convIn = input.Clone();
                     convOut = input.Clone();
                     convOut.Attributes.Set(MF.MF_MT_SUBTYPE, to);
@@ -114,7 +116,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             }
             // H.264: Baseline where the target names no profile, the least level of its size, rate and bit rate where it names none
             var outType = target.Clone();
-            if (video)
+            if (video && !hevc)
             {
                 if (outType.Attributes.U32(MF_MT_MPEG2_PROFILE) == 0) outType.Attributes.Set(MF_MT_MPEG2_PROFILE, 66u);
                 if (outType.Attributes.U32(MF_MT_MPEG2_LEVEL) == 0)
@@ -141,7 +143,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                 if (local != IntPtr.Zero) { hr = Set(local); if (hr >= 0) encoder = local; else Com.Release(local); }
                 if (encoder == IntPtr.Zero)
                 {
-                    MFEncoder own = video ? new MFH264Encoder() : new MFAacEncoder();
+                    MFEncoder own = hevc ? new MFHevcEncoder() : video ? new MFH264Encoder() : new MFAacEncoder();
                     hr = Set(own.Pointer);
                     if (hr < 0) { own.Release(); convIn?.Release(); convOut?.Release(); return hr; }
                     encoder = own.Pointer;

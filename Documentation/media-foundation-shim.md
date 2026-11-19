@@ -457,6 +457,19 @@ Windows' were probed (`MFEncoderProbe`'s Details and Dumps, the report in `Encod
 shim's give the same report, except for what each system's encoder makes itself (below). Both are
 synchronous with one stream each way and write the application's output samples.
 
+- **HEVC** (`MFHevcEncoder.cs`, `MFHevcEncoderProbe`, `HevcEncoder.windows.txt`): Windows' of today has no
+  `CLSID_MSH265EncoderMFT` (REGDB_E_CLASSNOTREG); MFTEnumEx lists "HEVCVideoExtensionEncoder", of the HEVC Video
+  Extensions, and so does the shim's wherever the system encodes HEVC:
+  - its activate of no CLSID (a packaged transform's: the shim's lists not the package's path, names, class and
+    architecture), its input types listed NV12, IYUV, YV12, YUY2; synchronous;
+  - IMFTransform, ICodecAPI (H.264's properties but CABAC, B pictures, the profile, the adaptive mode, slices, temporal
+    layers and LTR, which it knows of: S_FALSE), IMFRealTimeClientEx;
+  - the output type first (Main or no profile; Main10 passes the test and is refused at the set; an odd size refused),
+    then IYUV, NV12, I422 or I444 of its size (4:2:2 and 4:4:4 encoded as 4:2:0 here);
+  - a picture in, its access unit out at once: no reordering, no access unit delimiter, VPS, SPS and PPS before the
+    IDR; of the input's time as its time and decode time, an IRAP picture a clean point; the current output type the
+    type set, of no sequence header. Not here: each picture's `MFSampleExtension_VideoEncodeQP`, which the system's
+    encoders tell not.
 - **H.264:**
   - The output type comes first. It needs a size of even dimensions (MF_E_ATTRIBUTENOTFOUND without
     one, even to a test), a frame rate and an interlace mode (MF_E_ATTRIBUTENOTFOUND), and a bitrate
@@ -543,8 +556,8 @@ H.264 of NV12 and AAC of PCM.
       does not.
     - The system's encoders change their bit rate while encoding: VideoToolbox's property, GStreamer's
       element property, MediaCodec's `video-bitrate`, WebCodecs' `configure` again.
-  - HEVC has no encoder MFT here. It goes to the system's encoder (`Codecs/PlatformEncoders.cs`) of
-    NV12, the input converted, and lists no transforms.
+  - HEVC goes through the HEVC encoder MFT as Windows' writer puts it before the sink (its parameter sets to
+    hvcC).
   - The encoders under the MFTs are the system's: VideoToolbox and AudioToolbox, GStreamer, MediaCodec,
     WebCodecs.
 - **The rest of the writer, as Windows' answers it:**
@@ -593,8 +606,7 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
-  (`MF_SINK_WRITER_MEDIASINK`).
+- The writer's media sink (`MF_SINK_WRITER_MEDIASINK`).
 - The color converter's IMediaObject; the video processor's formats of more than 8 bits, palettes and the rarer
   packings, and its scaling filter to the byte.
 - More of the source reader:

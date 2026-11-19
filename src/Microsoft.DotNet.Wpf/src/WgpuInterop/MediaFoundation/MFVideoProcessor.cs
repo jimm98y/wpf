@@ -278,7 +278,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         [UnmanagedCallersOnly] private static int EnableHardwareEffects(IntPtr self, int e) => MF.S_OK;
         [UnmanagedCallersOnly] private static int GetSupportedHardwareEffects(IntPtr self, uint* e) { if (e == null) return MF.E_POINTER; *e = 0; return MF.S_OK; }
 
-        private static Vtable BuildRealTime()
+        internal static Vtable BuildRealTime()
         {
             var vt = new Vtable("IMFRealTimeClientEx", 6, IID_IMFRealTimeClientEx);
             vt.Set(3, (delegate* unmanaged<IntPtr, uint*, char*, int, int>)&RegisterThreadsEx);

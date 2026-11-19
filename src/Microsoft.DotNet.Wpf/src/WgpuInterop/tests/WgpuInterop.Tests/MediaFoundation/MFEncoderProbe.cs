@@ -38,7 +38,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return hr >= 0 ? t : IntPtr.Zero;
         }
 
-        private static List<string> Types(IntPtr t, int slot, string what)
+        internal static List<string> Types(IntPtr t, int slot, string what)
         {
             var log = new List<string>();
             for (uint n = 0; n < 200; n++)
@@ -70,7 +70,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return (hr, *(uint*)(odb + 2 * IntPtr.Size), got);
         }
 
-        private static void Drain(IntPtr t, List<string> log, uint size, bool video)
+        internal static void Drain(IntPtr t, List<string> log, uint size, bool video)
         {
             for (int n = 0; n < 60; n++)
             {
@@ -199,7 +199,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return $"{sub} {w}x{h} ({d.Count} attributes)";
         }
 
-        private static List<string> AllTypes(IntPtr t, int slot, string what)
+        internal static List<string> AllTypes(IntPtr t, int slot, string what)
         {
             var log = new List<string>();
             for (uint n = 0; n < 400; n++)
@@ -213,9 +213,9 @@ namespace WgpuInterop.Tests.MediaFoundation
             return log;
         }
 
-        private static int SetIn(IntPtr t, IntPtr type, uint flags = 0) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)MFReader.Fn(t, 15))(t, 0, type, flags);
-        private static int SetOut(IntPtr t, IntPtr type, uint flags = 0) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)MFReader.Fn(t, 16))(t, 0, type, flags);
-        private static int Message(IntPtr t, uint m, nuint p = 0) => ((delegate* unmanaged<IntPtr, uint, nuint, int>)MFReader.Fn(t, 23))(t, m, p);
+        internal static int SetIn(IntPtr t, IntPtr type, uint flags = 0) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)MFReader.Fn(t, 15))(t, 0, type, flags);
+        internal static int SetOut(IntPtr t, IntPtr type, uint flags = 0) => ((delegate* unmanaged<IntPtr, uint, IntPtr, uint, int>)MFReader.Fn(t, 16))(t, 0, type, flags);
+        internal static int Message(IntPtr t, uint m, nuint p = 0) => ((delegate* unmanaged<IntPtr, uint, nuint, int>)MFReader.Fn(t, 23))(t, m, p);
 
         private static IntPtr Pcm(uint ch, uint rate, uint bits = 16, Guid? sub = null)
         {
@@ -239,7 +239,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         }
 
         /// <summary>The ICodecAPI properties the encoder says it supports, of those apps set most.</summary>
-        private static List<string> CodecApi(IntPtr t)
+        internal static List<string> CodecApi(IntPtr t)
         {
             var log = new List<string>();
             var iid = new Guid("901db4c7-31ce-41a2-85dc-8fa0bf41b8da");
@@ -274,7 +274,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return log;
         }
 
-        private static List<string> Enumerated(Guid category, Guid major, Guid? input, Guid? output)
+        internal static List<string> Enumerated(Guid category, Guid major, Guid? input, Guid? output)
         {
             var log = new List<string>();
             var i = new MFT_REGISTER_TYPE_INFO { guidMajorType = major, guidSubtype = input ?? Guid.Empty };
@@ -416,7 +416,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             return log;
         }
 
-        private static void DrainBrief(IntPtr t, List<string> log, uint size, bool video)
+        internal static void DrainBrief(IntPtr t, List<string> log, uint size, bool video)
         {
             for (int n = 0; n < 60; n++)
             {
@@ -431,7 +431,7 @@ namespace WgpuInterop.Tests.MediaFoundation
             }
         }
 
-        private static void DumpType(IntPtr t, int slot, uint n, List<string> log, string what)
+        internal static void DumpType(IntPtr t, int slot, uint n, List<string> log, string what)
         {
             IntPtr type;
             int hr = ((delegate* unmanaged<IntPtr, uint, uint, IntPtr*, int>)MFReader.Fn(t, slot))(t, 0, n, &type);

@@ -4,10 +4,9 @@
 //
 // The sink writer (Documentation/media-foundation-shim.md, "The sink writer"): IMFSinkWriterEx writing an MP4
 // file as Windows' MPEG-4 sink lays it out (Mp4Muxer.cs). A stream's target type is H.264, HEVC or AAC (or the
-// input as it is). H.264 and AAC go through the encoder MFTs, after a converter where the encoder takes not the
-// input as it is (SinkChain.cs), as Windows' writer chains them; GetTransformForStream lists the chain and
-// GetServiceForStream hands out the encoder. HEVC, of which there is no encoder MFT here, goes to the system's
-// encoder (Codecs/PlatformEncoders.cs) of NV12. H.264's and HEVC's parameter sets go to avcC / hvcC, out of the
+// input as it is). Each goes through its encoder MFT (H.264's, HEVC's, AAC's), after a converter where the encoder
+// takes not the input as it is (SinkChain.cs), as Windows' writer chains them; GetTransformForStream lists the chain
+// and GetServiceForStream hands out the encoder. H.264's and HEVC's parameter sets go to avcC / hvcC, out of the
 // samples, as Windows' sink takes them out.
 //
 
@@ -34,13 +33,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             public MFMediaType Target = null!;
             public MFMediaType? Input;
             public MuxTrack Track = null!;
-            public PlatformVideoEncoder? Video;           // HEVC's: the system's encoder
-            public SinkChain? Chain;                      // H.264's and AAC's: the encoder MFT, a converter before it
+            public SinkChain? Chain;                      // the encoder MFT, a converter before it
             public long Received, LastReceived;
             public bool Passthrough;
             public long FrameDuration;
-            public byte[] Scratch = Array.Empty<byte>();
-            public readonly Queue<(long Time, long Duration)> Inputs = new();
             public long AudioTime = -1, AudioFrames;
             public bool ConfigDone;
         }
@@ -74,7 +70,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
 
         protected override void OnFinalRelease()
         {
-            foreach (var s in _streams) { s.Video?.Dispose(); s.Chain?.Dispose(); s.Target.Release(); s.Input?.Release(); }
+            foreach (var s in _streams) { s.Chain?.Dispose(); s.Target.Release(); s.Input?.Release(); }
             if (!_finished) _file.Dispose();
         }
 
@@ -153,12 +149,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     bool pcm = t.Subtype == MediaFormats.PCM || t.Subtype == MediaFormats.Float;
                     if (!pcm || t.Attributes.U32(SR.MF_MT_AUDIO_NUM_CHANNELS) != s.Track.Channels) { t.Release(); return MF.MF_E_INVALIDMEDIATYPE; }
                 }
-                SinkChain? chain = null;
-                if (!hevc)
-                {
-                    int hr = SinkChain.Create(s.Target, t, encodingParameters, out chain);
-                    if (hr < 0) { t.Release(); return hr; }
-                }
+                int hr = SinkChain.Create(s.Target, t, encodingParameters, out var chain);
+                if (hr < 0) { t.Release(); return hr; }
                 s.Chain?.Dispose(); s.Chain = chain;
                 s.Input?.Release(); s.Input = t; s.Passthrough = false;
             }
@@ -191,20 +183,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                             if (s.Track.Video) { var (rn0, rd0) = MF.Unpack(s.Target.Attributes.U64(MF.MF_MT_FRAME_RATE, MF.Pack(30, 1))); s.FrameDuration = 10_000_000L * rd0 / rn0; }
                             continue;
                         }
-                        if (s.Track.Video)
-                        {
-                            var (rn, rd) = MF.Unpack(s.Target.Attributes.U64(MF.MF_MT_FRAME_RATE, MF.Pack(30, 1)));
-                            s.FrameDuration = 10_000_000L * rd / rn;
-                            var codec = s.Target.Subtype == MF.MFVideoFormat_HEVC ? VideoCodec.H265 : VideoCodec.H264;
-                            s.Video = PlatformVideoEncoder.Create(codec, new VideoEncoderOptions
-                            {
-                                Width = (uint)s.Track.Width, Height = (uint)s.Track.Height, FpsNom = rn, FpsDenom = rd,
-                                Bitrate = s.Target.Attributes.U32(SR.MF_MT_AVG_BITRATE, 2_000_000),
-                                // Windows' H.264 encoder's profile where the type names none: Baseline
-                                H264Profile = s.Target.Attributes.U32(SR.MF_MT_MPEG2_PROFILE, 66),
-                            });
-                            if (s.Video == null) return SR.MF_E_TOPO_CODEC_NOT_FOUND;
-                        }
                     }
                     // a byte stream of the application's: one Windows' sink can write and seek, or E_INVALIDARG (and the writer done)
                     if (w._file is ByteStreamWriter bs && !bs.Writable) { w._finished = true; return MF.E_INVALIDARG; }
@@ -233,11 +211,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     var (bytes, time, duration, clean) = Read(sample);
                     s.Received++; s.LastReceived = time;
                     if (s.Chain != null) { s.Chain.Push(bytes, time, duration > 0 ? duration : s.FrameDuration); w.TakeChain(s); return MF.S_OK; }
-                    if (s.Passthrough) { w.Mux(s, bytes, time, duration > 0 ? duration : s.FrameDuration, clean || !s.Track.Video); return MF.S_OK; }
-                    var nv12 = ToNv12(bytes, s.Input!.Subtype, s.Track.Width, s.Track.Height);
-                    s.Inputs.Enqueue((time, duration > 0 ? duration : s.FrameDuration));
-                    s.Video!.Push(nv12, time);
-                    w.TakeVideo(s);
+                    w.Mux(s, bytes, time, duration > 0 ? duration : s.FrameDuration, clean || !s.Track.Video);
                 }
                 return MF.S_OK;
             }
@@ -254,16 +228,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             uint clean = 0; var key = MF.MFSampleExtension_CleanPoint;
             ((delegate* unmanaged<IntPtr, Guid*, uint*, int>)Com.Fn(sample, 7))(sample, &key, &clean);
             return (b, t, d, clean != 0);
-        }
-
-        private void TakeVideo(Stream s)
-        {
-            while (s.Video!.TryTake(ref s.Scratch, out uint n, out long time))
-            {
-                var au = s.Scratch.AsSpan(0, (int)n).ToArray();
-                var (t, d) = s.Inputs.Count > 0 ? s.Inputs.Dequeue() : (time, s.FrameDuration);
-                Mux(s, au, t, d, IsKey(au, s.Track.Format == "hvc1"));
-            }
         }
 
         /// <summary>The encoder MFT's samples into the track: H.264's of their times and key frames, AAC's packets.</summary>
@@ -431,7 +395,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
                     if (w._streams.All(s => s.Received == 0)) { w._failed = MF_E_SINK_NO_SAMPLES_PROCESSED; w._finished = true; w._file.Dispose(); return w._failed; }
                     foreach (var s in w._streams)
                     {
-                        if (s.Video != null) { s.Video.BeginDrain(); w.TakeVideo(s); s.Video.EndDrain(); }
                         if (s.Chain != null) { s.Chain.Drain(); w.TakeChain(s); }
                     }
                     w._mux!.Finish();
