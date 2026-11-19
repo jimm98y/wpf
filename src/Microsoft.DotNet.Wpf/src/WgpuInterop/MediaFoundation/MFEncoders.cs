@@ -132,6 +132,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return MF.S_OK;
         }
 
+        protected delegate void Fill(Span<byte> memory);
+
+        /// <summary>
+        /// The picture written into the application's sample's memory where it lies (what the fill leaves is as it was), of
+        /// the length; with the time, duration and attributes.
+        /// </summary>
+        protected static int WriteInPlace(IntPtr sample, int length, Fill fill, long time, long duration, IEnumerable<(Guid, MFValue)> attributes)
+        {
+            IntPtr buf;
+            int hr = ((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)Com.Fn(sample, 40))(sample, 0, &buf);
+            if (hr < 0) return hr;
+            try
+            {
+                byte* p; uint max, cur;
+                hr = ((delegate* unmanaged<IntPtr, byte**, uint*, uint*, int>)Com.Fn(buf, 3))(buf, &p, &max, &cur);
+                if (hr < 0) return hr;
+                try
+                {
+                    if (max < length) return MF.MF_E_BUFFERTOOSMALL;
+                    fill(new Span<byte>(p, length));
+                }
+                finally { ((delegate* unmanaged<IntPtr, int>)Com.Fn(buf, 4))(buf); }
+                ((delegate* unmanaged<IntPtr, uint, int>)Com.Fn(buf, 6))(buf, (uint)length);
+            }
+            finally { Com.Release(buf); }
+            ((delegate* unmanaged<IntPtr, long, int>)Com.Fn(sample, 36))(sample, time);
+            ((delegate* unmanaged<IntPtr, long, int>)Com.Fn(sample, 38))(sample, duration);
+            foreach (var (k, v) in attributes) SetOn(sample, k, v);
+            return MF.S_OK;
+        }
+
         // ---- IMFTransform -------------------------------------------------------------------------------
 
         private static Vtable BuildTransform()

@@ -45,6 +45,9 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         private static IntPtr Fn(IntPtr o, int slot) => MFReader.Fn(o, slot);
 
+        internal static void Init() => CoInitializeEx(IntPtr.Zero, 0);
+        internal static int Make(Guid clsid, out IntPtr t) => Create(clsid, out t);
+
         private static int Create(Guid clsid, out IntPtr t)
         {
             var iid = s_interfaces[0].Iid; IntPtr p; int hr;

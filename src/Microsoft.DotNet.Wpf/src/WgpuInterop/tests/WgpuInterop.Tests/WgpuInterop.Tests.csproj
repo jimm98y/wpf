@@ -67,6 +67,7 @@
     <None Include="MediaFoundation/SinkTransform.windows.txt" Link="MediaFoundation/SinkTransform.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/LocalTransform.windows.txt" Link="MediaFoundation/LocalTransform.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/VideoProcessor.windows.txt" Link="MediaFoundation/VideoProcessor.windows.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="MediaFoundation/VideoProcessorControl.windows.txt" Link="MediaFoundation/VideoProcessorControl.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/MediaSource.windows.txt" Link="MediaFoundation/MediaSource.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/Encoder.windows.txt" Link="MediaFoundation/Encoder.windows.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="MediaFoundation/ReaderTransform.windows.txt" Link="MediaFoundation/ReaderTransform.windows.txt" CopyToOutputDirectory="PreserveNewest" />

@@ -14,6 +14,11 @@
 //   - RGB of no MF_MT_DEFAULT_STRIDE is bottom-up (Windows' video processor's: the color converter's is top-down);
 //   - another size: each plane bilinearly, at the full resolution.
 //
+// IMFVideoProcessorControl as Windows' applies it (MFVideoProcessorControlProbe, VideoProcessorControl.windows.txt): the
+// input type's rotation, then the mirror, then the source rectangle of that upright picture; letterboxed into the
+// destination rectangle (Windows' rounding, worked out in the output's orientation before the rotation and mirror), the
+// letterbox of the border color, the rest of the output sample left as it was.
+//
 // Of the subtypes listed, those of more than 8 bits, of floats, palettes and the rarer packings are not converted here:
 // SetInputType answers MF_E_INVALIDMEDIATYPE of those (logged once).
 //
@@ -58,8 +63,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 
         private static readonly Vtable s_control = BuildControl(), s_realtime = BuildRealTime(), s_service = BuildService();
 
+        private static readonly Guid MF_MT_VIDEO_ROTATION = new("c380465d-2271-428c-9b83-ecea3b4a85c1");
+
         private IntPtr _held;                         // the input sample, AddRef'd, until its picture is out
-        private int _rotation; private int _mirror;   // IMFVideoProcessorControl's (kept; not applied)
+
+        // IMFVideoProcessorControl(2)'s: the input type's rotation applied (ROTATION_NORMAL) or not (ROTATION_NONE); the
+        // mirror (1 horizontal, 2 vertical: others kept, of no effect); the rectangles (none: the whole frame); the border's
+        // MFARGB (opaque black); the constriction; the rotation override (taken, of no effect: Windows' software path's)
+        private int _rotation = 1, _mirror;
+        private Rect? _source, _destination;
+        private uint _border = 0xFF000000;
+        private (int W, int H)? _constriction;
+        private uint _rotationOverride;
 
         public MFVideoProcessor() : base(new[] { s_control, s_realtime, s_service })
         {
@@ -107,6 +122,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             if (t.Attributes.Guid(MF.MF_MT_MAJOR_TYPE) != MF.MFMediaType_Video || Array.IndexOf(Outputs, t.Subtype) < 0) return MF.MF_E_INVALIDMEDIATYPE;
             var (w, h) = t.FrameSize;
             if (w == 0 || h == 0) return MF.MF_E_INVALIDMEDIATYPE;
+            // (of a subsampled output, a frame of whole chroma samples)
+            var (sx, sy) = Pictures.Subsampling(t.Subtype);
+            if (w % sx != 0 || h % sy != 0) return MF.MF_E_INVALIDMEDIATYPE;
             return MF.S_OK;
         }
 
@@ -130,19 +148,97 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             try
             {
                 var (iw, ih) = i.FrameSize; var (ow, oh) = o.FrameSize;
-                var picture = Pictures.Decode(Bytes(_held), i.Subtype, (int)iw, (int)ih, Pictures.BottomUp(i));
-                // to the output's kind, then its size (Windows' scales an RGB output's pixels, a YUV output's planes)
-                picture = Pictures.IsRgb(o.Subtype) ? picture.AsRgb() : picture.AsYuv();
-                if (ow != iw || oh != ih) picture = picture.Scaled((int)ow, (int)oh);
-                var bytes = Pictures.Encode(picture, o.Subtype, Pictures.BottomUp(o));
+                int w = (int)ow, h = (int)oh, size = Pictures.Size(o.Subtype, w, h);
+                byte[] bytes = Bytes(_held);
+                bool inUp = Pictures.BottomUp(i), outUp = Pictures.BottomUp(o);
+                int rot = _rotation == 0 ? 0 : i.Attributes.U32(MF_MT_VIDEO_ROTATION) is var r && (r == 90 || r == 180 || r == 270) ? (int)r : 0;
+                int pw = rot % 180 == 0 ? (int)iw : (int)ih, ph = rot % 180 == 0 ? (int)ih : (int)iw;
+                bool mirrored = _mirror == 1 || _mirror == 2, unknownMirror = _mirror is not (0 or 1 or 2);
+
+                // the source rectangle, of the upright picture (the input rotated, mirrored), where it lies in it; the
+                // destination's, clipped to the frame; of none, or of none left, the whole frames
+                var src = _source is { } sr && sr.L >= 0 && sr.T >= 0 && sr.L < sr.R && sr.T < sr.B && sr.R <= pw && sr.B <= ph ? sr : new Rect(0, 0, pw, ph);
+                var dst = _destination is { } dr ? dr.Clip(w, h) : new Rect(0, 0, w, h);
+                if (dst.Empty) dst = new Rect(0, 0, w, h);
                 long time = Time(_held) ?? 0, duration = Duration(_held) ?? 0;
-                int hr = Write(sample, bytes, time, duration, new[] { (MF.MFSampleExtension_CleanPoint, MFValue.Of(1u)), (MFSampleExtension_Interlaced, MFValue.Of(0u)) });
+                var attributes = new[] { (MF.MFSampleExtension_CleanPoint, MFValue.Of(1u)), (MFSampleExtension_Interlaced, MFValue.Of(0u)) };
+
+                ulong inPar = i.Attributes.U64(MF.MF_MT_PIXEL_ASPECT_RATIO, MF.Pack(1, 1)), outPar = o.Attributes.U64(MF.MF_MT_PIXEL_ASPECT_RATIO, MF.Pack(1, 1));
+                int hr;
+                if (i.Subtype == o.Subtype && iw == ow && ih == oh && inUp == outUp && inPar == outPar && rot == 0 && _mirror == 0 && src == dst)
+                {
+                    // nothing to change but where: Windows' copies the frame whole (of the rectangles the same, the whole frame)
+                    hr = WriteInPlace(sample, size, m => bytes.AsSpan(0, Math.Min(size, bytes.Length)).CopyTo(m), time, duration, attributes);
+                }
+                else
+                {
+                    var (sx, sy) = Pictures.Subsampling(o.Subtype);
+                    dst = dst.Aligned(sx, sy);
+                    var picture = Pictures.Decode(bytes, i.Subtype, (int)iw, (int)ih, inUp);
+                    if (rot != 0) picture = picture.Rotated(rot);
+                    if (mirrored) picture = picture.Mirrored(_mirror == 1);
+                    if (src != new Rect(0, 0, pw, ph)) picture = picture.Cropped(src);
+                    var (inN, inD) = MF.Unpack(inPar); var (outN, outD) = MF.Unpack(outPar);
+                    var content = Letterbox(dst, picture.W, picture.H, (Math.Max(inN, 1), Math.Max(inD, 1)), (Math.Max(outN, 1), Math.Max(outD, 1)), rot, mirrored ? _mirror : 0, w, h).Aligned(sx, sy);
+
+                    // to the output's kind, then the content's size (Windows' scales an RGB output's pixels, a YUV output's
+                    // planes); of a constriction, through its size first
+                    byte[] inside = Array.Empty<byte>();
+                    if (!content.Empty)
+                    {
+                        picture = Pictures.IsRgb(o.Subtype) ? picture.AsRgb() : picture.AsYuv();
+                        if (_constriction is { } c && c.W > 0 && c.H > 0 && (c.W < content.W || c.H < content.H)) picture = picture.Scaled(Math.Min(c.W, content.W), Math.Min(c.H, content.H));
+                        if (picture.W != content.W || picture.H != content.H) picture = picture.Scaled(content.W, content.H);
+                        // (of a mirror Windows' knows not, a picture of no alpha: of RGB32 too)
+                        if (unknownMirror) picture.A.AsSpan().Clear();
+                        inside = Pictures.Encode(picture, unknownMirror && o.Subtype == RGB32 ? ARGB32 : o.Subtype, outUp);
+                    }
+                    var bands = dst.Minus(content);
+                    byte[]? border = bands.Count == 0 ? null
+                        : Pictures.Encode(Picture.Uniform(w, h, _border), o.Subtype == RGB32 ? ARGB32 : o.Subtype, outUp);   // (the border's alpha, of RGB32 too)
+                    hr = WriteInPlace(sample, size, m =>
+                    {
+                        Pictures.Copy(inside, content.W, content.H, new Rect(0, 0, content.W, content.H), m, w, h, content, o.Subtype, outUp);
+                        foreach (var band in bands)
+                        {
+                            Pictures.Copy(border!, w, h, band, m, w, h, band, o.Subtype, outUp, Pictures.Planes.Luma);
+                            // (Windows' writes an NV12 border's chroma half the destination's left further right)
+                            Pictures.Copy(border!, w, h, band, m, w, h, band, o.Subtype, outUp, Pictures.Planes.Chroma, o.Subtype == NV12 ? dst.L / 2 : 0);
+                        }
+                    }, time, duration, attributes);
+                }
                 if (hr < 0) return hr;
                 Com.Release(_held); _held = IntPtr.Zero;
                 return MF.S_OK;
             }
             finally { i.Release(); o.Release(); }
         }
+
+        private static readonly Guid NV12 = F("NV12");
+
+        /// <summary>
+        /// The rectangle of the picture (pw x ph, upright) in the destination, of the same shape (of the pixel aspect ratios):
+        /// as Windows' letterboxes it (MulDiv's rounding, the rest halved down), in the output's orientation before the
+        /// rotation and mirror, then rotated and mirrored (so of 90, the odd pixel left of the picture where unrotated it is
+        /// right of it).
+        /// </summary>
+        private static Rect Letterbox(Rect dst, int pw, int ph, (uint N, uint D) inPar, (uint N, uint D) outPar, int rot, int mirror, int w, int h)
+        {
+            bool quarter = rot % 180 != 0;
+            int uw = quarter ? h : w, uh = quarter ? w : h;
+            var u = dst.Mirrored(mirror, w, h).Unrotated(rot, w, h);
+            long sw = quarter ? ph : pw, sh = quarter ? pw : ph;
+            var (on, od) = quarter ? (outPar.D, outPar.N) : (outPar.N, outPar.D);
+            sw *= inPar.N * od; sh *= inPar.D * on;
+            int dw = u.W, dh = u.H, cw, ch;
+            if (MulDiv(sw, dh, sh) <= dw) { cw = (int)Math.Min(dw, MulDiv(dh, sw, sh)); ch = dh; }
+            else { ch = (int)Math.Min(dh, MulDiv(dw, sh, sw)); cw = dw; }
+            int l = u.L + (dw - cw) / 2, t = u.T + (dh - ch) / 2;
+            return new Rect(l, t, l + cw, t + ch).Rotated(rot, uw, uh).Mirrored(mirror, w, h);
+        }
+
+        /// <summary>Win32's MulDiv: a b / c, rounded half away from zero.</summary>
+        private static long MulDiv(long a, long b, long c) => c == 0 ? -1 : (2 * a * b + c) / (2 * c);
 
         protected override void Flush() { Com.Release(_held); _held = IntPtr.Zero; }
         protected override void Drain() { }
@@ -153,11 +249,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         {
             var vt = new Vtable("IMFVideoProcessorControl2", 12, IID_IMFVideoProcessorControl, IID_IMFVideoProcessorControl2);
             vt.Set(3, (delegate* unmanaged<IntPtr, uint*, int>)&SetBorderColor);
-            vt.Set(4, (delegate* unmanaged<IntPtr, int*, int>)&SetRectangle);
-            vt.Set(5, (delegate* unmanaged<IntPtr, int*, int>)&SetRectangle);
+            vt.Set(4, (delegate* unmanaged<IntPtr, int*, int>)&SetSourceRectangle);
+            vt.Set(5, (delegate* unmanaged<IntPtr, int*, int>)&SetDestinationRectangle);
             vt.Set(6, (delegate* unmanaged<IntPtr, int, int>)&SetMirror);
             vt.Set(7, (delegate* unmanaged<IntPtr, int, int>)&SetRotation);
-            vt.Set(8, (delegate* unmanaged<IntPtr, uint*, int>)&SetConstrictionSize);
+            vt.Set(8, (delegate* unmanaged<IntPtr, int*, int>)&SetConstrictionSize);
             vt.Set(9, (delegate* unmanaged<IntPtr, uint, int>)&SetRotationOverride);
             vt.Set(10, (delegate* unmanaged<IntPtr, int, int>)&EnableHardwareEffects);
             vt.Set(11, (delegate* unmanaged<IntPtr, uint*, int>)&GetSupportedHardwareEffects);
@@ -165,12 +261,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         private static MFVideoProcessor? P(IntPtr self) => From<MFVideoProcessor>(self);
-        [UnmanagedCallersOnly] private static int SetBorderColor(IntPtr self, uint* c) => MF.S_OK;
-        [UnmanagedCallersOnly] private static int SetRectangle(IntPtr self, int* r) => MF.S_OK;
+        // (of a null pointer, S_OK: a rectangle or constriction of none, the border color as it was)
+        [UnmanagedCallersOnly] private static int SetBorderColor(IntPtr self, uint* c) { if (P(self) is { } p && c != null) p._border = *c; return MF.S_OK; }
+        [UnmanagedCallersOnly] private static int SetSourceRectangle(IntPtr self, int* r) { if (P(self) is { } p) p._source = r == null ? null : new Rect(r[0], r[1], r[2], r[3]); return MF.S_OK; }
+        [UnmanagedCallersOnly] private static int SetDestinationRectangle(IntPtr self, int* r) { if (P(self) is { } p) p._destination = r == null ? null : new Rect(r[0], r[1], r[2], r[3]); return MF.S_OK; }
         [UnmanagedCallersOnly] private static int SetMirror(IntPtr self, int m) { if (P(self) is { } p) p._mirror = m; return MF.S_OK; }
         [UnmanagedCallersOnly] private static int SetRotation(IntPtr self, int r) { if (P(self) is { } p) p._rotation = r; return MF.S_OK; }
-        [UnmanagedCallersOnly] private static int SetConstrictionSize(IntPtr self, uint* s) => MF.S_OK;
-        [UnmanagedCallersOnly] private static int SetRotationOverride(IntPtr self, uint r) => MF.S_OK;
+        [UnmanagedCallersOnly] private static int SetConstrictionSize(IntPtr self, int* s) { if (P(self) is { } p) p._constriction = s == null ? null : (s[0], s[1]); return MF.S_OK; }
+        [UnmanagedCallersOnly]
+        private static int SetRotationOverride(IntPtr self, uint r)
+        {
+            if (r != 0 && r != 90 && r != 180 && r != 270) return MF.E_INVALIDARG;
+            if (P(self) is { } p) p._rotationOverride = r;
+            return MF.S_OK;
+        }
         [UnmanagedCallersOnly] private static int EnableHardwareEffects(IntPtr self, int e) => MF.S_OK;
         [UnmanagedCallersOnly] private static int GetSupportedHardwareEffects(IntPtr self, uint* e) { if (e == null) return MF.E_POINTER; *e = 0; return MF.S_OK; }
 
@@ -195,6 +299,50 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         [UnmanagedCallersOnly] private static int GetService(IntPtr self, Guid* service, Guid* riid, IntPtr* ppv) { if (ppv != null) *ppv = IntPtr.Zero; return unchecked((int)0xC00D36BA); }   // MF_E_UNSUPPORTED_SERVICE
+    }
+
+    /// <summary>A rectangle of pixels, right and bottom exclusive (a RECT's).</summary>
+    internal readonly record struct Rect(int L, int T, int R, int B)
+    {
+        public int W => R - L;
+        public int H => B - T;
+        public bool Empty => R <= L || B <= T;
+
+        public Rect Clip(int w, int h) => new(Math.Clamp(L, 0, w), Math.Clamp(T, 0, h), Math.Clamp(R, 0, w), Math.Clamp(B, 0, h));
+
+        /// <summary>To whole chroma samples: the left and top up, the right and bottom down.</summary>
+        public Rect Aligned(int sx, int sy) => new((L + sx - 1) / sx * sx, (T + sy - 1) / sy * sy, R / sx * sx, B / sy * sy);
+
+        /// <summary>A rectangle of a frame of w x h turned clockwise by the degrees (into a frame of h x w of 90 or 270).</summary>
+        public Rect Rotated(int deg, int w, int h) => deg switch
+        {
+            90 => new(h - B, L, h - T, R),
+            180 => new(w - R, h - B, w - L, h - T),
+            270 => new(T, w - R, B, w - L),
+            _ => this,
+        };
+
+        /// <summary>A rectangle of a frame of w x h mirrored left to right (1), top to bottom (2).</summary>
+        public Rect Mirrored(int mirror, int w, int h) => mirror == 1 ? new(w - R, T, w - L, B) : mirror == 2 ? new(L, h - B, R, h - T) : this;
+
+        /// <summary>A rectangle of an output of w x h back into its frame before the rotation.</summary>
+        public Rect Unrotated(int deg, int w, int h) => deg switch
+        {
+            90 => new(T, w - R, B, w - L),
+            180 => new(w - R, h - B, w - L, h - T),
+            270 => new(h - B, L, h - T, R),
+            _ => this,
+        };
+
+        /// <summary>What of this the inner leaves: the bands above and below it, left and right of it.</summary>
+        public List<Rect> Minus(Rect inner)
+        {
+            var r = new List<Rect>();
+            if (inner.Empty) { if (!Empty) r.Add(this); return r; }
+            foreach (var b in new[] { new Rect(L, T, R, inner.T), new Rect(L, inner.B, R, B), new Rect(L, inner.T, inner.L, inner.B), new Rect(inner.R, inner.T, R, inner.B) })
+                if (!b.Empty) r.Add(b);
+            return r;
+        }
     }
 
     /// <summary>
@@ -232,6 +380,71 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     d[y * dw + x] = (byte)Math.Clamp((int)v, 0, 255);
                 }
             }
+        }
+
+        /// <summary>A picture of one color, of an MFARGB (blue, green, red, alpha from its low byte).</summary>
+        public static Picture Uniform(int w, int h, uint argb)
+        {
+            var p = new Picture(w, h, true);
+            p.C0.AsSpan().Fill((byte)(argb >> 16)); p.C1.AsSpan().Fill((byte)(argb >> 8)); p.C2.AsSpan().Fill((byte)argb); p.A.AsSpan().Fill((byte)(argb >> 24));
+            return p;
+        }
+
+        /// <summary>The picture turned clockwise by 90, 180 or 270 degrees: each plane, the chroma at its own resolution.</summary>
+        public Picture Rotated(int deg)
+        {
+            var p = deg == 180 ? new Picture(W, H, Rgb, SubX, SubY) : new Picture(H, W, Rgb, SubY, SubX);
+            Turn(C0, W, H, p.C0, deg); Turn(A, W, H, p.A, deg); Turn(C1, CW, CH, p.C1, deg); Turn(C2, CW, CH, p.C2, deg);
+            return p;
+        }
+
+        private static void Turn(byte[] s, int w, int h, byte[] d, int deg)
+        {
+            if (deg == 180) { for (int i = 0; i < w * h; i++) d[w * h - 1 - i] = s[i]; return; }
+            for (int y = 0; y < w; y++)
+                for (int x = 0; x < h; x++)
+                    d[y * h + x] = deg == 90 ? s[(h - 1 - x) * w + y] : s[x * w + (w - 1 - y)];
+        }
+
+        /// <summary>The picture mirrored left to right, or top to bottom.</summary>
+        public Picture Mirrored(bool horizontal)
+        {
+            var p = new Picture(W, H, Rgb, SubX, SubY);
+            Flip(C0, W, H, p.C0, horizontal); Flip(A, W, H, p.A, horizontal); Flip(C1, CW, CH, p.C1, horizontal); Flip(C2, CW, CH, p.C2, horizontal);
+            return p;
+        }
+
+        private static void Flip(byte[] s, int w, int h, byte[] d, bool horizontal)
+        {
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++)
+                    d[y * w + x] = horizontal ? s[y * w + (w - 1 - x)] : s[(h - 1 - y) * w + x];
+        }
+
+        /// <summary>The rectangle of the picture: of one not of whole chroma samples, its chroma first to each pixel.</summary>
+        public Picture Cropped(Rect r)
+        {
+            var from = this;
+            if (r.L % SubX != 0 || r.T % SubY != 0)
+            {
+                from = new Picture(W, H, Rgb);
+                C0.CopyTo(from.C0, 0); A.CopyTo(from.A, 0);
+                for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) { var (u, v) = Chroma(x, y); from.C1[y * W + x] = (byte)u; from.C2[y * W + x] = (byte)v; }
+            }
+            var p = new Picture(r.W, r.H, Rgb, from.SubX, from.SubY);
+            for (int y = 0; y < r.H; y++)
+            {
+                Array.Copy(from.C0, (r.T + y) * W + r.L, p.C0, y * r.W, r.W);
+                Array.Copy(from.A, (r.T + y) * W + r.L, p.A, y * r.W, r.W);
+            }
+            int cl = r.L / from.SubX, ct = r.T / from.SubY;
+            for (int cy = 0; cy < p.CH; cy++)
+                for (int cx = 0; cx < p.CW; cx++)
+                {
+                    int si = Math.Min(ct + cy, from.CH - 1) * from.CW + Math.Min(cl + cx, from.CW - 1);
+                    p.C1[cy * p.CW + cx] = from.C1[si]; p.C2[cy * p.CW + cx] = from.C2[si];
+                }
+            return p;
         }
 
         /// <summary>The picture of another size: each plane at its own resolution.</summary>
@@ -366,6 +579,74 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         public static bool Reads(Guid s) => s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == NV11 || s == I422 || s == I444 || s == YUY2 || s == UYVY
             || s == YVYU || s == AYUV || s == MFVideoProcessor.L8 || s == MFVideoProcessor.RGB32 || s == MFVideoProcessor.ARGB32 || s == MFVideoProcessor.RGB24
             || s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 || s == MFVideoProcessor.ABGR32 || s == P010 || s == P016;
+
+        /// <summary>The output's chroma subsampling, across and down (of RGB and 4:4:4, 1 and 1).</summary>
+        public static (int X, int Y) Subsampling(Guid s) =>
+            s == NV12 || s == NV21 || s == IYUV || s == I420 || s == YV12 || s == P010 || s == P016 ? (2, 2)
+            : s == YUY2 || s == UYVY || s == YVYU || s == I422 ? (2, 1) : s == NV11 ? (4, 1) : (1, 1);
+
+        [Flags] public enum Planes { Luma = 1, Chroma = 2, All = 3 }
+
+        /// <summary>
+        /// The bytes of a rectangle of a frame of the subtype (w x h, of whole chroma samples), as (offset, length) runs: of
+        /// RGB and the packed ones, all luma; of the planar, the luma's rows, then the chroma's (shifted right by so many
+        /// samples, clipped to the frame).
+        /// </summary>
+        public static List<(int Offset, int Length)> Spans(Guid s, int w, int h, bool bottomUp, Rect r, Planes planes = Planes.All, int shift = 0)
+        {
+            var o = new List<(int, int)>();
+            if (r.Empty) return o;
+            int cw = (w + 1) / 2, ch = (h + 1) / 2;
+            bool luma = (planes & Planes.Luma) != 0, chroma = (planes & Planes.Chroma) != 0;
+            void Rows(int start, int stride, int bpp, bool up = false)
+            {
+                for (int y = r.T; y < r.B; y++) o.Add((start + (up ? h - 1 - y : y) * stride + r.L * bpp, r.W * bpp));
+            }
+            if (IsRgb(s))
+            {
+                int bpp = s == MFVideoProcessor.RGB24 ? 3 : s == MFVideoProcessor.RGB565 || s == MFVideoProcessor.RGB555 ? 2 : s == MFVideoProcessor.A16B16G16R16F ? 8 : 4;
+                if (luma) Rows(0, s == MFVideoProcessor.A16B16G16R16F ? w * 8 : RgbRow(bpp, w), bpp, bottomUp);
+                return o;
+            }
+            if (s == MFVideoProcessor.L8) { if (luma) Rows(0, w, 1); return o; }
+            if (s == MFVideoProcessor.L16 || s == MFVideoProcessor.D16) { if (luma) Rows(0, w * 2, 2); return o; }
+            if (s == AYUV) { if (luma) Rows(0, w * 4, 4); return o; }
+            if (s == YUY2 || s == UYVY || s == YVYU) { if (luma) Rows(0, w * 2, 2); return o; }
+            bool wide = s == P010 || s == P016;
+            if (luma) Rows(0, w * (wide ? 2 : 1), wide ? 2 : 1);
+            if (!chroma) return o;
+            if (s == NV11)
+            {
+                int qw = (w + 3) / 4, ql = r.L / 4 + shift, qr = Math.Min(qw, (r.R + 3) / 4 + shift);
+                if (ql < qr) for (int y = r.T; y < r.B; y++) o.Add((w * h + y * qw * 2 + ql * 2, (qr - ql) * 2));
+                return o;
+            }
+            int cl = r.L / 2 + shift, cr = Math.Min(cw, (r.R + 1) / 2 + shift);
+            if (cl >= cr) return o;
+            for (int pass = 0; pass < (s == NV12 || s == NV21 || wide ? 1 : 2); pass++)
+                for (int cy = r.T / 2; cy < (r.B + 1) / 2; cy++)
+                {
+                    if (wide) o.Add((w * h * 2 + (cy * w + cl * 2) * 2, (cr - cl) * 4));
+                    else if (s == NV12 || s == NV21) o.Add((w * h + cy * w + cl * 2, (cr - cl) * 2));
+                    else
+                    {
+                        bool v = pass == 1, first = s == YV12 ? v : !v;   // YV12: V's plane, then U's
+                        o.Add((w * h + (first ? 0 : cw * ch) + cy * cw + cl, cr - cl));
+                    }
+                }
+            return o;
+        }
+
+        /// <summary>A rectangle of one frame's bytes (fw x fh) into a rectangle of the same size of another's (tw x th).</summary>
+        public static void Copy(byte[] from, int fw, int fh, Rect fr, Span<byte> to, int tw, int th, Rect tr, Guid s, bool bottomUp, Planes planes = Planes.All, int shift = 0)
+        {
+            var a = Spans(s, fw, fh, bottomUp, fr, planes, shift); var b = Spans(s, tw, th, bottomUp, tr, planes, shift);
+            for (int k = 0; k < Math.Min(a.Count, b.Count); k++)
+            {
+                int n = Math.Min(Math.Min(a[k].Length, b[k].Length), Math.Min(from.Length - a[k].Offset, to.Length - b[k].Offset));
+                if (n > 0 && a[k].Offset >= 0 && b[k].Offset >= 0) from.AsSpan(a[k].Offset, n).CopyTo(to.Slice(b[k].Offset, n));
+            }
+        }
 
         /// <summary>RGB is bottom-up where the type has no stride, or a negative one (Windows' video processor's default).</summary>
         public static bool BottomUp(MFMediaType t, bool byDefault = true)

@@ -279,9 +279,29 @@ the real ole32 makes Windows' own. A local transform registered by such a CLSID 
     - RGB to YUV by its inverse, each 2x2's chroma averaged;
     - RGB of no MF_MT_DEFAULT_STRIDE is bottom-up;
     - another size: YUV of each plane at its own resolution, RGB after the conversion; bilinear, centred, truncated.
-      Downscaling is Windows' to the byte; an upscale's first pixels are, its bytes within 1 on average.
+      A halving of YUV is Windows' to the byte; other ratios within a few levels (Windows' filter is its own, sharper:
+      an upscale's bytes within 1 on average, a downscale's within 4 mostly, to a third within 26).
+    - another shape: letterboxed, as Windows' (below); an output of a subsampled subtype must be of whole chroma
+      samples (NV12 of 4x3 is refused).
   - The subtypes of more than 8 bits (but P010 and P016), floats, palettes and the rarer packings are listed but not
-    converted: SetInputType refuses them. IMFVideoProcessorControl's settings are kept, not applied.
+    converted: SetInputType refuses them.
+  - IMFVideoProcessorControl, applied as Windows' (`MFVideoProcessorControlProbe`, `VideoProcessorControl.windows.txt`:
+    an 8x6 picture of every pixel its own through each setting):
+    - the order: the input type's `MF_MT_VIDEO_ROTATION` (90 clockwise; SetRotation(ROTATION_NONE) turns it off), then
+      the mirror (1 left to right, 2 top to bottom; another value mirrors nothing, and the picture comes out of alpha
+      0), then the source rectangle, of the upright picture (one not inside it, empty or inverted, or null, is the
+      whole picture);
+    - the destination rectangle, of the output, clipped to it (empty or null, the whole output); of a subsampled
+      output, to whole chroma samples (the left and top up, the right and bottom down);
+    - the picture letterboxed in it, of its shape and both pixel aspect ratios: MulDiv's rounding, the rest halved
+      down, worked out in the output's orientation before the rotation and mirror (so of 90 the odd pixel falls left);
+      the letterbox of the border color (an MFARGB, opaque black by default; of YUV, BT.601), all else of the output
+      sample left as it was. Windows writes an NV12 border's chroma half the destination's left further right (the
+      chroma beneath that border left as it was), and so does the shim;
+    - the source and destination rectangles alike, of the same subtype, size, pixel aspect and stride and nothing
+      turned: the input copied whole, as Windows' does;
+    - the constriction size: the picture through that size first; SetRotationOverride takes 0, 90, 180 and 270
+      (E_INVALIDARG else) and changes nothing, as on Windows' software path.
 - **The color converter DSP** (CLSID_CColorConvertDMO, `MFColorConverter.cs`), as Windows' (the same probe; its
   arithmetic read off ramps of every luma, U, V, red, green and blue, and Windows' pictures of them):
   - IMFTransform, IPropertyStore (of no properties), IMFGetService; no attributes of its own (E_NOTIMPL); the streams'
@@ -574,8 +594,8 @@ on macOS and in the Ubuntu VM.
 
 - An HEVC encoder MFT, for the sink writer's HEVC streams; the writer's media sink
   (`MF_SINK_WRITER_MEDIASINK`); the application's local audio decoders in the reader.
-- The color converter's IMediaObject; the video processor's rotation, mirror and rectangles; the formats of more
-  than 8 bits, palettes and the rarer packings.
+- The color converter's IMediaObject; the video processor's formats of more than 8 bits, palettes and the rarer
+  packings, and its scaling filter to the byte.
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;
