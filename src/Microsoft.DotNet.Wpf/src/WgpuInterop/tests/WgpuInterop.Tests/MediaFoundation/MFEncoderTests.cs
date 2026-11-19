@@ -45,11 +45,11 @@ namespace WgpuInterop.Tests.MediaFoundation
             var s = (info[0] & 0x100) != 0 ? IntPtr.Zero : MFWriter.Sample(new byte[Math.Max(size, (int)info[1])], 0, 0);
             var odb = stackalloc byte[32];
             new Span<byte>(odb, 32).Clear();
-            *(IntPtr*)(odb + 8) = s;
+            *(IntPtr*)(odb + IntPtr.Size) = s;
             uint status;
             int hr = ((delegate* unmanaged<IntPtr, uint, uint, byte*, uint*, int>)MFReader.Fn(t, 25))(t, 0, 1, odb, &status);
             if (hr < 0) { MFReader.Release(s); return (hr, IntPtr.Zero); }
-            return (hr, *(IntPtr*)(odb + 8));
+            return (hr, *(IntPtr*)(odb + IntPtr.Size));
         }
 
         /// <summary>

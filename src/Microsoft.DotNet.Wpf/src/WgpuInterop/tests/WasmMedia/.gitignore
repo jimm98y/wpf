@@ -2,3 +2,4 @@
 wwwroot/media/
 wwwroot/browser-codecs.js
 wwwroot/wgpu-interop.js
+wwwroot/fixtures/

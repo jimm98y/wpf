@@ -187,14 +187,14 @@ namespace WgpuInterop.Tests.MediaFoundation
             var s = S(self);
             *status = 0;
             if (s._held == IntPtr.Zero) return NEED_MORE_INPUT;
-            if (s.Provides || *(IntPtr*)(buffers + 8) == IntPtr.Zero)
+            if (s.Provides || *(IntPtr*)(buffers + IntPtr.Size) == IntPtr.Zero)
             {
-                *(IntPtr*)(buffers + 8) = s._held;                 // the input itself, passed through
+                *(IntPtr*)(buffers + IntPtr.Size) = s._held;                 // the input itself, passed through
                 s._held = IntPtr.Zero;
                 return 0;
             }
             // into the reader's sample: the bytes, times and attributes of the input
-            IntPtr dst = *(IntPtr*)(buffers + 8);
+            IntPtr dst = *(IntPtr*)(buffers + IntPtr.Size);
             var bytes = MFReader.SampleBytes(s._held, out _);
             IntPtr buf;
             ((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)MFReader.Fn(dst, 40))(dst, 0, &buf);

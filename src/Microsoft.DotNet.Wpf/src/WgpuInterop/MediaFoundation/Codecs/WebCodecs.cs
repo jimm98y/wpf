@@ -33,6 +33,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         [JSImport("decodeAudio", M)] internal static partial int DecodeAudio(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> bytes, double timestamp);
         [JSImport("audioInfo", M)] internal static partial int AudioInfo(int handle, [JSMarshalAs<JSType.MemoryView>] Span<double> info);
         [JSImport("takeAudio", M)] internal static partial int TakeAudio(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> buffer);
+        [JSImport("supportsVideoEncoder", M)] internal static partial int SupportsVideoEncoder(string codec, int width, int height);
+        [JSImport("supportsAudioEncoder", M)] internal static partial int SupportsAudioEncoder(string codec, int sampleRate, int channels);
+        [JSImport("createVideoEncoder", M)] internal static partial int CreateVideoEncoder(string codec, int width, int height, double bitrate, double framerate, string mode);
+        [JSImport("encodeVideo", M)] internal static partial int EncodeVideo(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> nv12, int width, int height, double timestamp, bool key);
+        [JSImport("createAudioEncoder", M)] internal static partial int CreateAudioEncoder(string codec, int sampleRate, int channels, double bitrate);
+        [JSImport("encodeAudio", M)] internal static partial int EncodeAudio(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> pcm, int frames, double timestamp);
+        [JSImport("encoderConfig", M)] internal static partial int EncoderConfig(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> buffer);
         [JSImport("flush", M)] internal static partial void Flush(int handle);
         [JSImport("reset", M)] internal static partial void Reset(int handle);
         [JSImport("lastError", M)] internal static partial string LastError(int handle);
@@ -127,6 +134,53 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             foreach (var (o, n) in Nals(au))
                 if (n >= 4 && (au[o] & 0x1F) == 7) return $"avc1.{au[o + 1]:X2}{au[o + 2]:X2}{au[o + 3]:X2}";
             return null;
+        }
+
+        /// <summary>The coded size (in macroblocks, before the cropping) of the access unit's SPS (H.264 7.3.2.1.1); null where it has none.</summary>
+        internal static (int W, int H)? AvcCodedSize(ReadOnlySpan<byte> au)
+        {
+            foreach (var (o, n) in Nals(au))
+            {
+                if (n < 4 || (au[o] & 0x1F) != 7) continue;
+                var r = new BitReader(Rbsp(au.Slice(o + 1, n - 1), 256));
+                try
+                {
+                    int profile = (int)r.U(8); r.U(16); r.Ue();
+                    if (profile is 100 or 110 or 122 or 244 or 44 or 83 or 86 or 118 or 128 or 138 or 139 or 134 or 135)
+                    {
+                        if (r.Ue() == 3) r.U(1);                         // chroma_format_idc; separate_colour_plane_flag
+                        r.Ue(); r.Ue(); r.U(1);                          // bit depths, qpprime_y_zero_transform_bypass_flag
+                        if (r.U(1) == 1)                                 // seq_scaling_matrix_present_flag
+                            for (int i = 0; i < 8; i++)
+                                if (r.U(1) == 1)
+                                {
+                                    int size = i < 6 ? 16 : 64, last = 8, next = 8;
+                                    for (int j = 0; j < size && next != 0; j++) { next = (last + r.Se() + 256) % 256; last = next == 0 ? last : next; }
+                                }
+                    }
+                    r.Ue();                                              // log2_max_frame_num_minus4
+                    uint poc = r.Ue();
+                    if (poc == 0) r.Ue();
+                    else if (poc == 1) { r.U(1); r.Se(); r.Se(); uint k = r.Ue(); for (uint i = 0; i < k; i++) r.Se(); }
+                    r.Ue(); r.U(1);                                      // max_num_ref_frames, gaps
+                    uint w = r.Ue() + 1, h = r.Ue() + 1;
+                    uint frameMbsOnly = r.U(1);
+                    return ((int)w * 16, (int)((2 - frameMbsOnly) * h * 16));
+                }
+                catch (IndexOutOfRangeException) { return null; }
+            }
+            return null;
+        }
+
+        /// <summary>Bits of an RBSP, most significant first, with Exp-Golomb codes.</summary>
+        private sealed class BitReader
+        {
+            private readonly byte[] _b;
+            private int _bit;
+            public BitReader(byte[] b) { _b = b; }
+            public uint U(int n) { uint v = 0; for (int i = 0; i < n; i++, _bit++) v = (v << 1) | (uint)((_b[_bit >> 3] >> (7 - (_bit & 7))) & 1); return v; }
+            public uint Ue() { int z = 0; while (U(1) == 0) { if (++z > 31) throw new IndexOutOfRangeException(); } return z == 0 ? 0 : (1u << z) - 1 + U(z); }
+            public int Se() { uint k = Ue(); return (k & 1) != 0 ? (int)((k + 1) / 2) : -(int)(k / 2); }
         }
 
         /// <summary>hvc1.profile.compat.Llevel.constraints of the access unit's SPS (ISO/IEC 14496-15 E.3).</summary>
@@ -258,7 +312,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
                     VideoCodec.VP9 => WebCodecs.Vp9Codec(chunk), VideoCodec.AV1 => WebCodecs.Av1Codec(chunk), _ => null,
                 };
                 if (codec == null) return;
-                _h = WebCodecsJs.CreateVideoDecoder(codec, (int)_width, (int)_height, _lowLatency);
+                // the coded size where the type has none: of the SPS (Chrome's decoder fails a cropped stream without it)
+                var (w, h) = _width > 0 && _height > 0 ? ((int)_width, (int)_height) : _codec == VideoCodec.H264 && WebCodecs.AvcCodedSize(chunk) is { } s ? s : (0, 0);
+                _h = WebCodecsJs.CreateVideoDecoder(codec, w, h, _lowLatency);
                 if (_h == 0) return;
             }
             _keySeen = true;
@@ -379,7 +435,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         {
             if (_h == 0 || data.IsEmpty) return;
             int hr = WebCodecsJs.DecodeAudio(_h, data.ToArray(), time / 10);
-            if (hr != 0) Log.Warn("WebCodecs' AudioDecoder: " + WebCodecsJs.LastError(_h));
+            if (hr != 0) Log.Warn($"WebCodecs' AudioDecoder ({WebCodecs.AudioCodecString(_codec, _options.Config)}, config {Convert.ToHexString(_options.Config ?? Array.Empty<byte>())}): " + WebCodecsJs.LastError(_h));
         }
 
         public bool ProcessOutput(ref byte[] buffer, out uint length)
@@ -430,6 +486,171 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             if (_h != 0) WebCodecsJs.Close(_h);
             _h = 0;
         }
+    }
+
+    /// <summary>The queue of a WebCodecs object's outputs, shared by the encoders: what is ready, taken; a flush waited for.</summary>
+    internal sealed class WebCodecsQueue
+    {
+        private readonly int _h;
+        public readonly double[] Info = new double[9];
+        public WebCodecsQueue(int h) { _h = h; }
+
+        /// <summary>The next output's bytes (its time and key flag in Info), or null.</summary>
+        public byte[]? Take()
+        {
+            while (true)
+            {
+                WebCodecsJs.VideoInfo(_h, Info);
+                if (Info[0] == 0) return null;
+                var b = new byte[(int)Info[4]];
+                int n = WebCodecsJs.TakeVideo(_h, b);
+                if (n > 0) return b;
+            }
+        }
+
+        public void Drain()
+        {
+            WebCodecsJs.Flush(_h);
+            var sw = Stopwatch.StartNew();
+            var info = new double[9];
+            while (sw.ElapsedMilliseconds < 30_000)
+            {
+                WebCodecsJs.VideoInfo(_h, info);
+                if (info[7] >= 2 && info[6] == 0) break;
+                WebCodecs.Pause();
+            }
+        }
+    }
+
+    /// <summary>WebCodecs' VideoEncoder: NV12 in, Annex B access units out (the parameter sets before each key frame), each with its frame's time.</summary>
+    internal sealed class WebCodecsVideoEncoder : IDisposable
+    {
+        private readonly VideoCodec _codec;
+        private readonly VideoEncoderOptions _o;
+        private int _h;
+        private WebCodecsQueue? _q;
+        private long _frames;
+        private readonly Dictionary<long, Queue<long>> _times = new();
+
+        public WebCodecsVideoEncoder(VideoCodec codec, VideoEncoderOptions options) { _codec = codec; _o = options; }
+
+        /// <summary>The codec string of the options: H.264's profile (66, 77, 100) and a level of the picture's size; HEVC's Main.</summary>
+        internal static string? Codec(VideoCodec c, VideoEncoderOptions o)
+        {
+            long area = (long)o.Width * o.Height;
+            if (c == VideoCodec.H264)
+            {
+                string profile = o.H264Profile switch { 66 => "4200", 77 => "4D00", _ => "6400" };
+                string level = area <= 414_720 ? "1E" : area <= 921_600 ? "1F" : area <= 2_228_224 ? "28" : area <= 8_912_896 ? "33" : "34";
+                return "avc1." + profile + level;
+            }
+            if (c == VideoCodec.H265) return "hvc1.1.6.L" + (area <= 921_600 ? "93" : area <= 2_228_224 ? "120" : "153") + ".B0";
+            return null;
+        }
+
+        public static bool Supports(VideoCodec c) => OperatingSystem.IsBrowser() && Codec(c, new VideoEncoderOptions { Width = 640, Height = 480, H264Profile = 66 }) is { } s && WebCodecs.Ask("ve:" + s, () => WebCodecsJs.SupportsVideoEncoder(s, 640, 480));
+
+        public void Initialize()
+        {
+            string codec = Codec(_codec, _o) ?? throw new NotSupportedException($"no WebCodecs encoder of {_codec}");
+            double fps = _o.FpsNom > 0 ? (double)_o.FpsNom / Math.Max(1, _o.FpsDenom) : 0;
+            string mode = _o.RateControl switch { RateControlMode.ConstantBitrate => "constant", RateControlMode.VariableBitrate => "variable", _ => "" };
+            _h = WebCodecsJs.CreateVideoEncoder(codec, (int)_o.Width, (int)_o.Height, _o.Bitrate, fps, mode);
+            if (_h == 0) throw new NotSupportedException($"WebCodecs' VideoEncoder takes no {codec} of {_o.Width}x{_o.Height}");
+            _q = new WebCodecsQueue(_h);
+        }
+
+        public void ProcessInput(ReadOnlySpan<byte> nv12, long time)
+        {
+            long us = time / 10;
+            if (!_times.TryGetValue(us, out var q)) _times[us] = q = new Queue<long>();
+            q.Enqueue(time);
+            bool key = _o.KeyFrameInterval > 0 && _frames % _o.KeyFrameInterval == 0;
+            _frames++;
+            if (WebCodecsJs.EncodeVideo(_h, nv12.ToArray(), (int)_o.Width, (int)_o.Height, us, key) != 0) Log.Warn("WebCodecs' VideoEncoder: " + WebCodecsJs.LastError(_h));
+        }
+
+        public bool ProcessOutput(ref byte[] buffer, out uint length, out long time)
+        {
+            length = 0; time = 0;
+            if (_q?.Take() is not { } b) return false;
+            long us = (long)_q.Info[3];
+            time = _times.TryGetValue(us, out var q) && q.Count > 0 ? q.Dequeue() : us * 10;
+            if (q != null && q.Count == 0) _times.Remove(us);
+            if (buffer == null || buffer.Length < b.Length) buffer = new byte[b.Length];
+            b.CopyTo(buffer, 0);
+            length = (uint)b.Length;
+            return true;
+        }
+
+        public void BeginDrain() => _q?.Drain();
+        public void EndDrain() { }
+        public void Dispose() { if (_h != 0) WebCodecsJs.Close(_h); _h = 0; }
+    }
+
+    /// <summary>WebCodecs' AudioEncoder of AAC: 16-bit PCM in, raw AAC packets out, the AudioSpecificConfig once it has one.</summary>
+    internal sealed class WebCodecsAudioEncoder : IDisposable
+    {
+        private readonly AudioEncoderOptions _o;
+        private int _h;
+        private WebCodecsQueue? _q;
+        private long _framesIn;
+        private byte[]? _config;
+
+        public WebCodecsAudioEncoder(AudioCodec codec, AudioEncoderOptions options)
+        {
+            if (codec != AudioCodec.AAC) throw new NotSupportedException($"no WebCodecs encoder of {codec} here");
+            _o = options;
+        }
+
+        private static string Codec(uint objectType) => "mp4a.40." + (objectType is 5 or 29 ? objectType : 2);
+
+        public static bool Supports(AudioCodec c) => OperatingSystem.IsBrowser() && c == AudioCodec.AAC && WebCodecs.Ask("ae:mp4a.40.2", () => WebCodecsJs.SupportsAudioEncoder("mp4a.40.2", 48000, 2));
+
+        public uint Channels => _o.Channels;
+        public uint SampleRate => _o.SampleRate;
+
+        public void Initialize()
+        {
+            _h = WebCodecsJs.CreateAudioEncoder(Codec(_o.AacObjectType), (int)_o.SampleRate, (int)_o.Channels, _o.AacBitrate);
+            if (_h == 0) throw new NotSupportedException($"WebCodecs' AudioEncoder takes no AAC of {_o.SampleRate} Hz, {_o.Channels} channels");
+            _q = new WebCodecsQueue(_h);
+        }
+
+        public byte[]? Config
+        {
+            get
+            {
+                if (_config != null || _h == 0) return _config;
+                var b = new byte[64];
+                int n = WebCodecsJs.EncoderConfig(_h, b);
+                if (n > 0 && n <= b.Length) _config = b.AsSpan(0, n).ToArray();
+                return _config;
+            }
+        }
+
+        public void ProcessInput(ReadOnlySpan<byte> pcm, long time)
+        {
+            int frames = pcm.Length / (int)(2 * Math.Max(1, _o.Channels));
+            if (frames == 0) return;
+            long us = _framesIn * 1_000_000 / Math.Max(1, _o.SampleRate);
+            _framesIn += frames;
+            if (WebCodecsJs.EncodeAudio(_h, pcm.Slice(0, frames * (int)(2 * _o.Channels)).ToArray(), frames, us) != 0) Log.Warn("WebCodecs' AudioEncoder: " + WebCodecsJs.LastError(_h));
+        }
+
+        public bool ProcessOutput(ref byte[] buffer, out uint length)
+        {
+            length = 0;
+            if (_q?.Take() is not { } b) return false;
+            if (buffer == null || buffer.Length < b.Length) buffer = new byte[b.Length];
+            b.CopyTo(buffer, 0);
+            length = (uint)b.Length;
+            return true;
+        }
+
+        public void BeginDrain() => _q?.Drain();
+        public void EndDrain() { }
+        public void Dispose() { if (_h != 0) WebCodecsJs.Close(_h); _h = 0; }
     }
 }
 #endif

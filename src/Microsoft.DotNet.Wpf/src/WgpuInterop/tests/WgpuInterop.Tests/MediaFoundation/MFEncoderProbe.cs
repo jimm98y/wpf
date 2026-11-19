@@ -62,12 +62,12 @@ namespace WgpuInterop.Tests.MediaFoundation
             if ((info[0] & 0x100) == 0) mine = MFWriter.Sample(new byte[Math.Max(size, info[1])], 0, 0);
             var odb = stackalloc byte[32];
             new Span<byte>(odb, 32).Clear();
-            *(IntPtr*)(odb + 8) = mine;
+            *(IntPtr*)(odb + IntPtr.Size) = mine;
             uint status;
             int hr = ((delegate* unmanaged<IntPtr, uint, uint, byte*, uint*, int>)MFReader.Fn(t, 25))(t, 0, 1, odb, &status);
-            IntPtr got = *(IntPtr*)(odb + 8);
+            IntPtr got = *(IntPtr*)(odb + IntPtr.Size);
             if (hr < 0) { MFReader.Release(mine); return (hr, status, IntPtr.Zero); }
-            return (hr, *(uint*)(odb + 16), got);
+            return (hr, *(uint*)(odb + 2 * IntPtr.Size), got);
         }
 
         private static void Drain(IntPtr t, List<string> log, uint size, bool video)

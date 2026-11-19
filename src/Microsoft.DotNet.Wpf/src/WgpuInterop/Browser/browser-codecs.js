@@ -99,10 +99,10 @@ function configureVideo(d) {
             const e = newEntry(d);
             const ts = frame.timestamp;
             toNV12(frame).then(p => { e.w = p.w; e.h = p.h; e.bytes = p.bytes; e.ts = ts; e.ready = true; },
-                err => { e.failed = true; e.ready = true; d.error = String(err); })
+                err => { e.failed = true; e.ready = true; d.error = String(err); console.warn('Media Foundation: a decoded frame not copied: ' + err); })
                 .finally(() => { frame.close(); d.pending--; });
         },
-        error: err => { d.error = String(err); },
+        error: err => { d.error = String(err); console.warn('Media Foundation: VideoDecoder: ' + err); },
     });
     d.dec.configure(d.config);
 }
@@ -258,3 +258,98 @@ export function decodeAudio(handle, bytes, timestamp) {
 export const audioInfo = videoInfo;
 
 export const takeAudio = takeVideo;
+
+// ---- encoders ---------------------------------------------------------------------------------------
+
+export function supportsVideoEncoder(codec, width, height) {
+    if (typeof VideoEncoder === 'undefined') return 2;
+    return ask(`ve:${codec}:${width}x${height}`, () => VideoEncoder.isConfigSupported({ codec, width, height }));
+}
+
+export function supportsAudioEncoder(codec, sampleRate, channels) {
+    if (typeof AudioEncoder === 'undefined') return 2;
+    return ask(`ae:${codec}:${sampleRate}:${channels}`, () => AudioEncoder.isConfigSupported({ codec, sampleRate, numberOfChannels: channels }));
+}
+
+/** The chunk's bytes queued as an output: its time, whether a key frame (as the entry's w). */
+function chunkOut(d, chunk, meta) {
+    const e = newEntry(d);
+    try {
+        const b = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(b);
+        e.bytes = b; e.ts = chunk.timestamp; e.w = chunk.type === 'key' ? 1 : 0; e.h = chunk.duration || 0;
+        const desc = meta && meta.decoderConfig && meta.decoderConfig.description;
+        if (desc && !d.description) d.description = desc instanceof ArrayBuffer ? new Uint8Array(desc.slice(0)) : new Uint8Array(desc.buffer.slice(desc.byteOffset, desc.byteOffset + desc.byteLength));
+    } catch (err) { e.failed = true; d.error = String(err); }
+    finally { e.ready = true; d.pending--; }
+}
+
+/** A video encoder: of Annex B (H.264's and HEVC's), its rate (bits a second), frame rate and rate mode ('constant', 'variable'). */
+export function createVideoEncoder(codec, width, height, bitrate, framerate, mode) {
+    try {
+        const config = { codec, width, height, latencyMode: 'quality' };
+        if (bitrate > 0) config.bitrate = bitrate;
+        if (framerate > 0) config.framerate = framerate;
+        if (mode) config.bitrateMode = mode;
+        if (codec.startsWith('avc')) config.avc = { format: 'annexb' };
+        if (codec.startsWith('hvc') || codec.startsWith('hev')) config.hevc = { format: 'annexb' };
+        const d = { config, queue: [], pending: 0, error: '', flush: 0 };
+        d.dec = new VideoEncoder({ output: (chunk, meta) => chunkOut(d, chunk, meta), error: err => { d.error = String(err); } });
+        d.dec.configure(config);
+        const h = nextHandle++;
+        decoders.set(h, d);
+        return h;
+    } catch (e) {
+        console.warn('Media Foundation: no VideoEncoder of ' + codec, e);
+        return 0;
+    }
+}
+
+/** An NV12 picture (its bytes copied) encoded: its time in microseconds, a key frame where asked for. */
+export function encodeVideo(handle, nv12, width, height, timestamp, key) {
+    const d = decoders.get(handle);
+    if (!d || d.dec.state === 'closed') return 2;
+    try {
+        const frame = new VideoFrame(nv12.slice(), { format: 'NV12', codedWidth: width, codedHeight: height, timestamp });
+        d.dec.encode(frame, { keyFrame: !!key });
+        frame.close();
+        return 0;
+    } catch (e) { d.error = String(e); return 1; }
+}
+
+/** An audio encoder of the codec (AAC's 'mp4a.40.x'), of the rate, channels and bit rate. */
+export function createAudioEncoder(codec, sampleRate, channels, bitrate) {
+    try {
+        const config = { codec, sampleRate, numberOfChannels: channels };
+        if (bitrate > 0) { config.bitrate = bitrate; config.bitrateMode = 'constant'; }
+        const d = { config, queue: [], pending: 0, error: '', flush: 0, rate: sampleRate, channels };
+        d.dec = new AudioEncoder({ output: (chunk, meta) => chunkOut(d, chunk, meta), error: err => { d.error = String(err); } });
+        d.dec.configure(config);
+        const h = nextHandle++;
+        decoders.set(h, d);
+        return h;
+    } catch (e) {
+        console.warn('Media Foundation: no AudioEncoder of ' + codec, e);
+        return 0;
+    }
+}
+
+/** Interleaved 16-bit PCM (its bytes copied) encoded: its time in microseconds. */
+export function encodeAudio(handle, pcm, frames, timestamp) {
+    const d = decoders.get(handle);
+    if (!d || d.dec.state === 'closed') return 2;
+    try {
+        const data = new AudioData({ format: 's16', sampleRate: d.rate, numberOfFrames: frames, numberOfChannels: d.channels, timestamp, data: pcm.slice() });
+        d.dec.encode(data);
+        data.close();
+        return 0;
+    } catch (e) { d.error = String(e); return 1; }
+}
+
+/** The encoder's configuration (AAC's AudioSpecificConfig, once it has made one) into the buffer: its length, or 0. */
+export function encoderConfig(handle, buffer) {
+    const d = decoders.get(handle);
+    if (!d || !d.description) return 0;
+    if (buffer.length >= d.description.length) buffer.set(d.description);
+    return d.description.length;
+}

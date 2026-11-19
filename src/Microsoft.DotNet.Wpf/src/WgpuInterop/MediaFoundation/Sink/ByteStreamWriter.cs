@@ -82,32 +82,6 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             }
         }
 
-        /// <summary>IMFAsyncCallback of one write: its result kept (AddRef'd), the event set.</summary>
-        private sealed class WriteCallback : ComObject
-        {
-            private static readonly Vtable s_vt = Build();
-            public readonly System.Threading.ManualResetEventSlim Done = new();
-            public IntPtr Result;
-            public WriteCallback() : base(s_vt) { }
-            protected override void OnFinalRelease() { Com.Release(Result); Done.Dispose(); }
-            private static Vtable Build()
-            {
-                var vt = new Vtable("IMFAsyncCallback", 5, new Guid("a27003cf-2354-4f2a-8d6a-ab7cff15437e"));
-                vt.Set(3, (delegate* unmanaged<IntPtr, uint*, uint*, int>)&GetParameters);
-                vt.Set(4, (delegate* unmanaged<IntPtr, IntPtr, int>)&Invoke);
-                return vt;
-            }
-            [System.Runtime.InteropServices.UnmanagedCallersOnly] private static int GetParameters(IntPtr self, uint* flags, uint* queue) => MF.E_NOTIMPL;
-            [System.Runtime.InteropServices.UnmanagedCallersOnly]
-            private static int Invoke(IntPtr self, IntPtr result)
-            {
-                if (From<WriteCallback>(self) is not { } c) return MF.E_POINTER;
-                Com.AddRef(result);
-                c.Result = result;
-                c.Done.Set();
-                return MF.S_OK;
-            }
-        }
 
         public override void Flush() { }
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
@@ -121,6 +95,34 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
             Com.Release(_stream);
             _stream = IntPtr.Zero;
             base.Dispose(disposing);
+        }
+    }
+
+    // (at the namespace's level: the browser's runtime finds no callback of a nested class)
+    /// <summary>IMFAsyncCallback of one write: its result kept (AddRef'd), the event set.</summary>
+    internal sealed unsafe class WriteCallback : ComObject
+    {
+        private static readonly Vtable s_vt = Build();
+        public readonly System.Threading.ManualResetEventSlim Done = new();
+        public IntPtr Result;
+        public WriteCallback() : base(s_vt) { }
+        protected override void OnFinalRelease() { Com.Release(Result); Done.Dispose(); }
+        private static Vtable Build()
+        {
+            var vt = new Vtable("IMFAsyncCallback", 5, new Guid("a27003cf-2354-4f2a-8d6a-ab7cff15437e"));
+            vt.Set(3, (delegate* unmanaged<IntPtr, uint*, uint*, int>)&GetParameters);
+            vt.Set(4, (delegate* unmanaged<IntPtr, IntPtr, int>)&Invoke);
+            return vt;
+        }
+        [System.Runtime.InteropServices.UnmanagedCallersOnly] private static int GetParameters(IntPtr self, uint* flags, uint* queue) => MF.E_NOTIMPL;
+        [System.Runtime.InteropServices.UnmanagedCallersOnly]
+        private static int Invoke(IntPtr self, IntPtr result)
+        {
+            if (From<WriteCallback>(self) is not { } c) return MF.E_POINTER;
+            Com.AddRef(result);
+            c.Result = result;
+            c.Done.Set();
+            return MF.S_OK;
         }
     }
 }

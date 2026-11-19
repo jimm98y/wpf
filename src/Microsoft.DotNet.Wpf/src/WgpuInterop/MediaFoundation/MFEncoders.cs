@@ -371,9 +371,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             {
                 lock (e.Lock)
                 {
-                    *(uint*)(buffers + 16) = 0;
+                    *(uint*)(buffers + 2 * IntPtr.Size) = 0;
                     if (e.In == IntPtr.Zero || e.Out == IntPtr.Zero) return MF.MF_E_TRANSFORM_NEED_MORE_INPUT;
-                    IntPtr sample = *(IntPtr*)(buffers + 8);
+                    IntPtr sample = *(IntPtr*)(buffers + IntPtr.Size);
                     if (sample == IntPtr.Zero) return MF.E_INVALIDARG;            // the application provides the samples
                     return e.Output(sample);
                 }
@@ -701,6 +701,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private static Vtable BuildCodecApi()
         {
             var vt = new Vtable("ICodecAPI", 18, MF.IID_ICodecAPI);
+            CodecApiSlots.Fill(vt);
             vt.Set(3, (delegate* unmanaged<IntPtr, Guid*, int>)&IsSupported);
             vt.Set(4, (delegate* unmanaged<IntPtr, Guid*, int>)&IsSupported);       // IsModifiable
             vt.Set(7, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&GetValue);   // GetDefaultValue
@@ -1038,7 +1039,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                 var c = Current();
                 uint f = ObjectType(c.Pl) == 2 ? 1024u : 2048u;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                while (_packets.Count == 0 && _encoder != null && _framesIn >= (_packetsOut + 1) * f + 2048 && sw.ElapsedMilliseconds < 200) { System.Threading.Thread.Sleep(2); Collect(); }
+                while (_packets.Count == 0 && _encoder != null && _framesIn >= (_packetsOut + 1) * f + 2048 && sw.ElapsedMilliseconds < (OperatingSystem.IsBrowser() ? 3000 : 200)) { System.Threading.Thread.Sleep(2); Collect(); }
             }
             if (_packets.Count == 0) { _draining = false; return MF.MF_E_TRANSFORM_NEED_MORE_INPUT; }
             var e = Current();
@@ -1046,6 +1047,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             uint frames = ObjectType(e.Pl) == 2 ? 1024u : 2048u;
             // Windows' encoder looks 2048 frames ahead: a packet comes once that much has come after it, or at the drain
             if (!_draining && _framesIn < (_packetsOut + 1) * frames + 2048) return MF.MF_E_TRANSFORM_NEED_MORE_INPUT;
+            // at the drain: the packets of the input and the encoder's priming (2112 frames of the core's); what a system's
+            // encoder pads after them (WebCodecs' does) Windows' has not
+            if (_draining && _packetsOut >= (_framesIn + 2112 * (frames / 1024) + frames - 1) / frames) { _packets.Clear(); _draining = false; return MF.MF_E_TRANSFORM_NEED_MORE_INPUT; }
             long time = _t0!.Value + _packetsOut * frames * 10_000_000L / e.Rate, dur = frames * 10_000_000L / e.Rate;
             byte[] bytes = e.Payload == 1 ? Adts(packet, e) : packet;
             var attrs = new List<(Guid, MFValue)> { (MF.MFSampleExtension_CleanPoint, MFValue.Of(1u)) };
@@ -1096,10 +1100,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private static Vtable BuildCodecApi()
         {
             var vt = new Vtable("ICodecAPI", 18, MF.IID_ICodecAPI);
-            for (int i = 3; i < 18; i++) vt.Set(i, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&NotImplemented);
+            CodecApiSlots.Fill(vt);
             return vt;
         }
-
-        [UnmanagedCallersOnly] private static int NotImplemented(IntPtr self, Guid* api, byte* v) => MF.E_NOTIMPL;
     }
 }

@@ -58,9 +58,32 @@ which forwards to the GPU's decoder through Windows' Direct3D 11 (d3d11-webgpu-s
     - Times go over in microseconds and come back in 100 ns as they went in.
     - A drain waits for the decoder's flush and for every copy.
     - A page without the module (an older `main.js`) has no decoders.
+    - Where the input type has no frame size, the H.264 decoder is configured with the coded size of the
+      stream's SPS. Chrome's decoder fails a cropped stream configured without one.
+    - Encoders: `VideoEncoder` for H.264 and HEVC (Annex B out, the codec string from the profile and the
+      picture's size), with NV12 frames in. `AudioEncoder` for AAC, with s16 in. Behind them are the same
+      H.264 and AAC encoder MFTs and the same sink writer as on the desktop.
+      - Windows' AAC encoder has a packet once 2048 frames have come after it. The browser's encoder
+        answers through the page, so the MFT waits up to 3 s for it (200 ms elsewhere).
+      - At the drain, the MFT hands out the packets of the input and of the encoder's 2112 frames of
+        priming. It drops what an encoder pads after those (WebCodecs' does) and Windows' does not have.
     - The source reader's report of every test file in headless Chrome (`tests/WasmMedia`, its lines checked by
       `TheBrowsersReader_DoesWithEachFileWhatWindowsReaderDoes`) is Windows', under the desktop's
       tolerances.
+    - `tests/WasmMedia` also runs the desktop's Media Foundation tests in the page: it compiles them in and
+      runs each by reflection (`index.html?filter=<name>`). It prints `MF-TEST <name>: passed|skipped|failed`
+      for each and `MF-TESTS` with the totals. Tests of textures, devices, HTTP and the probes are skipped.
+- WebAssembly is 32-bit, so the shim and the tests find `MFT_OUTPUT_DATA_BUFFER`'s fields at offsets of the
+  pointer's size, never at the 64-bit 8 and 16.
+- Calls through native function pointers (the vtables' `calli`) need an interp-to-native trampoline of
+  their signature in the browser. Mono's build makes one only for the signatures of P/Invokes, so
+  `Browser/CalliSignatures.cs` declares one P/Invoke of each signature, never called. `CalliSignatureTests`
+  reads every `calli` of the built browser assembly and checks that the file holds each signature;
+  `MF_WRITE_CALLI=1` writes it anew.
+  - WebAssembly's `call_indirect` checks a signature exactly, so each vtable slot has a stub of its own
+    signature: `ICodecAPI`'s slots, for example, through `CodecApiSlots`.
+  - The interpreter finds no `UnmanagedCallersOnly` callback of a nested class, so the callback classes
+    are at the namespace's level.
 - **Apple Lossless in managed code** (`Codecs/AlacDecoder.cs`): a port of the algorithm of Apple's open-source ALAC
   decoder (Apache 2.0), used where the system has no ALAC decoder of its own (Chrome's WebCodecs has none). Mono
   and stereo, 16-bit and 24-bit tones decode to the bit what AudioToolbox and GStreamer decode
@@ -424,10 +447,8 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- Android's decoders are in but not yet run on a device or emulator. The browser has no encoders yet
-  (WebCodecs' `VideoEncoder` and `AudioEncoder`).
-- Writing to an application's byte stream from the sink writer, and the sink writer through the encoder
-  MFTs (it uses the system's encoders directly).
+- Android's decoders are in but not yet run on a device or emulator.
+- The sink writer through the encoder MFTs (it uses the system's encoders directly).
 - More of the source reader:
   - more containers (ASF);
   - stream ticks and format changes of an application's media source;

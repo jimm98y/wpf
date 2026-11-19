@@ -74,6 +74,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Direct3D
         public readonly IntPtr* Slots;
         public readonly int Count;
 
+#if WGPU_BROWSER
+        // the trampolines of the calls through these vtables' slots: their signatures' P/Invokes kept (Browser/CalliSignatures.cs)
+        [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All, typeof(Microsoft.Wpf.Interop.WebGpu.Browser.CalliSignatures))]
+#endif
         public Vtable(string name, int count, params Guid[] iids)
         {
             Name = name;

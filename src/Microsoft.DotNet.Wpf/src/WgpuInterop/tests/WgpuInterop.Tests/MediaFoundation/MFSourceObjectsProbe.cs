@@ -38,35 +38,6 @@ namespace WgpuInterop.Tests.MediaFoundation
             return t;
         }
 
-        /// <summary>A callback that records its Invoke: the event it ends, of the queue.</summary>
-        private sealed class Callback : Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject
-        {
-            private static readonly Microsoft.Wpf.Interop.WebGpu.Direct3D.Vtable s_vt = Build();
-            public IntPtr Queue;
-            public readonly ManualResetEventSlim Done = new();
-            public string Got = "";
-            private static Microsoft.Wpf.Interop.WebGpu.Direct3D.Vtable Build()
-            {
-                var vt = new Microsoft.Wpf.Interop.WebGpu.Direct3D.Vtable("IMFAsyncCallback", 5, new Guid("a27003cf-2354-4f2a-8d6a-ab7cff15437e"));
-                vt.Set(3, (delegate* unmanaged<IntPtr, uint*, uint*, int>)&GetParameters);
-                vt.Set(4, (delegate* unmanaged<IntPtr, IntPtr, int>)&Invoke);
-                return vt;
-            }
-            public Callback() : base(s_vt) { }
-            [UnmanagedCallersOnly] private static int GetParameters(IntPtr self, uint* f, uint* q) => unchecked((int)0x80004001);
-            [UnmanagedCallersOnly]
-            private static int Invoke(IntPtr self, IntPtr result)
-            {
-                var c = From<Callback>(self)!;
-                IntPtr e;
-                int hr = ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, int>)MFReader.Fn(c.Queue, 5))(c.Queue, result, &e);
-                uint type = 0;
-                if (hr >= 0) { ((delegate* unmanaged<IntPtr, uint*, int>)MFReader.Fn(e, 33))(e, &type); MFReader.Release(e); }
-                c.Got = $"invoked: end {Hr(hr)} type {type}";
-                c.Done.Set();
-                return 0;
-            }
-        }
 
         private static void QueueReport(List<string> log, IntPtr t0, bool win)
         {
@@ -103,7 +74,7 @@ namespace WgpuInterop.Tests.MediaFoundation
                 log.Add($"  get {Hr(hr)}: type {type} extended {g} status {Hr(st)} value {val}");
                 MFReader.Release(e);
             }
-            var cb = new Callback { Queue = q };
+            var cb = new QueueCallback { Queue = q };
             log.Add($"  begin {Hr(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)MFReader.Fn(q, 4))(q, cb.Pointer, IntPtr.Zero))}");
             log.Add($"  begin again {Hr(((delegate* unmanaged<IntPtr, IntPtr, IntPtr, int>)MFReader.Fn(q, 4))(q, cb.Pointer, IntPtr.Zero))}");
             log.Add($"  get while begun {Hr(((delegate* unmanaged<IntPtr, uint, IntPtr*, int>)MFReader.Fn(q, 3))(q, 1, &e))}");
@@ -218,6 +189,37 @@ namespace WgpuInterop.Tests.MediaFoundation
                 "  clone: selected 1 (the original deselected after) the same descriptor True",
             };
             Assert.Equal(string.Join("\n", expected), string.Join("\n", r));
+        }
+    }
+
+    // (at the namespace's level: the browser's runtime finds no callback of a nested class)
+    /// <summary>A callback that records its Invoke: the event it ends, of the queue.</summary>
+    internal sealed unsafe class QueueCallback : Microsoft.Wpf.Interop.WebGpu.Direct3D.ComObject
+    {
+        private static readonly Microsoft.Wpf.Interop.WebGpu.Direct3D.Vtable s_vt = Build();
+        public IntPtr Queue;
+        public readonly ManualResetEventSlim Done = new();
+        public string Got = "";
+        private static Microsoft.Wpf.Interop.WebGpu.Direct3D.Vtable Build()
+        {
+            var vt = new Microsoft.Wpf.Interop.WebGpu.Direct3D.Vtable("IMFAsyncCallback", 5, new Guid("a27003cf-2354-4f2a-8d6a-ab7cff15437e"));
+            vt.Set(3, (delegate* unmanaged<IntPtr, uint*, uint*, int>)&GetParameters);
+            vt.Set(4, (delegate* unmanaged<IntPtr, IntPtr, int>)&Invoke);
+            return vt;
+        }
+        public QueueCallback() : base(s_vt) { }
+        [UnmanagedCallersOnly] private static int GetParameters(IntPtr self, uint* f, uint* q) => unchecked((int)0x80004001);
+        [UnmanagedCallersOnly]
+        private static int Invoke(IntPtr self, IntPtr result)
+        {
+            var c = From<QueueCallback>(self)!;
+            IntPtr e;
+            int hr = ((delegate* unmanaged<IntPtr, IntPtr, IntPtr*, int>)MFReader.Fn(c.Queue, 5))(c.Queue, result, &e);
+            uint type = 0;
+            if (hr >= 0) { ((delegate* unmanaged<IntPtr, uint*, int>)MFReader.Fn(e, 33))(e, &type); MFReader.Release(e); }
+            c.Got = $"invoked: end 0x{hr:x8} type {type}";
+            c.Done.Set();
+            return 0;
         }
     }
 }

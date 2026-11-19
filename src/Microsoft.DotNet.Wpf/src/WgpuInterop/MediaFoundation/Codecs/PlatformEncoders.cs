@@ -21,11 +21,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         private readonly AndroidVideoEncoder? _android;
 
         private PlatformVideoEncoder(VideoToolboxEncoder? a, GStreamerVideoEncoder? g, AndroidVideoEncoder? d) { _apple = a; _gst = g; _android = d; }
+#if WGPU_BROWSER
+        private readonly WebCodecsVideoEncoder? _web;
+        private PlatformVideoEncoder(WebCodecsVideoEncoder w) { _web = w; }
+#endif
 
         public static bool Supports(VideoCodec codec)
         {
             try
             {
+#if WGPU_BROWSER
+                if (OperatingSystem.IsBrowser()) return WebCodecsVideoEncoder.Supports(codec);
+#endif
                 if (Apple) return VideoToolboxEncoder.Supports(codec);
                 if (OperatingSystem.IsAndroid()) return AndroidVideoEncoder.Supports(codec);
                 if (OperatingSystem.IsLinux()) return GStreamerVideoEncoder.Supports(codec);
@@ -39,6 +46,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             if (!Supports(codec)) return null;
             try
             {
+#if WGPU_BROWSER
+                if (OperatingSystem.IsBrowser()) { var w = new WebCodecsVideoEncoder(codec, options); w.Initialize(); return new PlatformVideoEncoder(w); }
+#endif
                 if (Apple) { var a = new VideoToolboxEncoder(codec, options); a.Initialize(); return new PlatformVideoEncoder(a, null, null); }
                 if (OperatingSystem.IsAndroid()) { var d = new AndroidVideoEncoder(codec, options); d.Initialize(); return new PlatformVideoEncoder(null, null, d); }
                 if (OperatingSystem.IsLinux()) { var g = new GStreamerVideoEncoder(codec, options); g.Initialize(); return new PlatformVideoEncoder(null, g, null); }
@@ -47,14 +57,29 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             return null;
         }
 
-        public void Push(ReadOnlySpan<byte> nv12, long time) { if (_apple != null) _apple.ProcessInput(nv12, time); else if (_gst != null) _gst.ProcessInput(nv12, time); else _android!.ProcessInput(nv12, time); }
+        public void Push(ReadOnlySpan<byte> nv12, long time) {
+#if WGPU_BROWSER
+            if (_web != null) { _web.ProcessInput(nv12, time); return; }
+#endif
+            if (_apple != null) _apple.ProcessInput(nv12, time); else if (_gst != null) _gst.ProcessInput(nv12, time); else _android!.ProcessInput(nv12, time); }
 
         public bool TryTake(ref byte[] buffer, out uint length, out long time)
-            => _apple?.ProcessOutput(ref buffer, out length, out time) ?? _gst?.ProcessOutput(ref buffer, out length, out time) ?? _android!.ProcessOutput(ref buffer, out length, out time);
+        {
+#if WGPU_BROWSER
+            if (_web != null) return _web.ProcessOutput(ref buffer, out length, out time);
+#endif
+            return _apple?.ProcessOutput(ref buffer, out length, out time) ?? _gst?.ProcessOutput(ref buffer, out length, out time) ?? _android!.ProcessOutput(ref buffer, out length, out time);
+        }
 
+#if WGPU_BROWSER
+        public void BeginDrain() { _web?.BeginDrain(); _apple?.BeginDrain(); _gst?.BeginDrain(); _android?.BeginDrain(); }
+        public void EndDrain() { _web?.EndDrain(); _apple?.EndDrain(); _gst?.EndDrain(); _android?.EndDrain(); }
+        public void Dispose() { _web?.Dispose(); _apple?.Dispose(); _gst?.Dispose(); _android?.Dispose(); }
+#else
         public void BeginDrain() { _apple?.BeginDrain(); _gst?.BeginDrain(); _android?.BeginDrain(); }
         public void EndDrain() { _apple?.EndDrain(); _gst?.EndDrain(); _android?.EndDrain(); }
         public void Dispose() { _apple?.Dispose(); _gst?.Dispose(); _android?.Dispose(); }
+#endif
     }
 
     internal sealed class PlatformAudioEncoder : IDisposable
@@ -65,11 +90,18 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         private readonly AndroidAudioEncoder? _android;
 
         private PlatformAudioEncoder(AudioToolboxEncoder? a, GStreamerAudioEncoder? g, AndroidAudioEncoder? d) { _apple = a; _gst = g; _android = d; }
+#if WGPU_BROWSER
+        private readonly WebCodecsAudioEncoder? _web;
+        private PlatformAudioEncoder(WebCodecsAudioEncoder w) { _web = w; }
+#endif
 
         public static bool Supports(AudioCodec codec)
         {
             try
             {
+#if WGPU_BROWSER
+                if (OperatingSystem.IsBrowser()) return WebCodecsAudioEncoder.Supports(codec);
+#endif
                 if (Apple) return AudioToolboxEncoder.Supports(codec);
                 if (OperatingSystem.IsAndroid()) return AndroidAudioEncoder.Supports(codec);
                 if (OperatingSystem.IsLinux()) return GStreamerAudioEncoder.Supports(codec);
@@ -83,6 +115,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
             if (!Supports(codec)) return null;
             try
             {
+#if WGPU_BROWSER
+                if (OperatingSystem.IsBrowser()) { var w = new WebCodecsAudioEncoder(codec, options); w.Initialize(); return new PlatformAudioEncoder(w); }
+#endif
                 if (Apple) { var a = new AudioToolboxEncoder(codec, options); a.Initialize(); return new PlatformAudioEncoder(a, null, null); }
                 if (OperatingSystem.IsAndroid()) { var d = new AndroidAudioEncoder(codec, options); d.Initialize(); return new PlatformAudioEncoder(null, null, d); }
                 if (OperatingSystem.IsLinux()) { var g = new GStreamerAudioEncoder(codec, options); g.Initialize(); return new PlatformAudioEncoder(null, g, null); }
@@ -92,15 +127,35 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         }
 
         /// <summary>AAC's AudioSpecificConfig, once the encoder has it.</summary>
+#if WGPU_BROWSER
+        public byte[]? Config => _web?.Config ?? _apple?.Config ?? _gst?.Config ?? _android?.Config;
+#else
         public byte[]? Config => _apple?.Config ?? _gst?.Config ?? _android?.Config;
+#endif
 
-        public void Push(ReadOnlySpan<byte> pcm, long time) { if (_apple != null) _apple.ProcessInput(pcm, time); else if (_gst != null) _gst.ProcessInput(pcm, time); else _android!.ProcessInput(pcm, time); }
+        public void Push(ReadOnlySpan<byte> pcm, long time) {
+#if WGPU_BROWSER
+            if (_web != null) { _web.ProcessInput(pcm, time); return; }
+#endif
+            if (_apple != null) _apple.ProcessInput(pcm, time); else if (_gst != null) _gst.ProcessInput(pcm, time); else _android!.ProcessInput(pcm, time); }
 
-        public bool TryTake(ref byte[] buffer, out uint length) => _apple?.ProcessOutput(ref buffer, out length) ?? _gst?.ProcessOutput(ref buffer, out length) ?? _android!.ProcessOutput(ref buffer, out length);
+        public bool TryTake(ref byte[] buffer, out uint length)
+        {
+#if WGPU_BROWSER
+            if (_web != null) return _web.ProcessOutput(ref buffer, out length);
+#endif
+            return _apple?.ProcessOutput(ref buffer, out length) ?? _gst?.ProcessOutput(ref buffer, out length) ?? _android!.ProcessOutput(ref buffer, out length);
+        }
 
+#if WGPU_BROWSER
+        public void BeginDrain() { _web?.BeginDrain(); _apple?.BeginDrain(); _gst?.BeginDrain(); _android?.BeginDrain(); }
+        public void EndDrain() { _web?.EndDrain(); _apple?.EndDrain(); _gst?.EndDrain(); _android?.EndDrain(); }
+        public void Dispose() { _web?.Dispose(); _apple?.Dispose(); _gst?.Dispose(); _android?.Dispose(); }
+#else
         public void BeginDrain() { _apple?.BeginDrain(); _gst?.BeginDrain(); _android?.BeginDrain(); }
         public void EndDrain() { _apple?.EndDrain(); _gst?.EndDrain(); _android?.EndDrain(); }
         public void Dispose() { _apple?.Dispose(); _gst?.Dispose(); _android?.Dispose(); }
+#endif
     }
 #pragma warning restore CA1416
 }

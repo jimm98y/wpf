@@ -26,40 +26,6 @@ namespace WgpuInterop.Tests.MediaFoundation
         private static readonly Guid VIDEO = new("73646976-0000-0010-8000-00aa00389b71"), H264 = new("34363248-0000-0010-8000-00aa00389b71"), NV12 = new("3231564e-0000-0010-8000-00aa00389b71");
         private static readonly Guid FRAME_SIZE = new("1652c33d-d6b2-4012-b834-72030849a37d"), FRAME_RATE = new("c459a2e8-3d2c-4e44-b132-fee5156c7bb0");
 
-        /// <summary>A COM IStream of memory.</summary>
-        private sealed class MemoryIStream : ComObject
-        {
-            private static readonly Vtable s_vt = Build();
-            public readonly MemoryStream Data = new();
-            public MemoryIStream() : base(s_vt) { }
-            private static Vtable Build()
-            {
-                var vt = new Vtable("IStream", 14, new Guid("0000000c-0000-0000-C000-000000000046"), new Guid("0c733a30-2a1c-11ce-ade5-00aa0044773d"));
-                vt.Set(3, (delegate* unmanaged<IntPtr, byte*, uint, uint*, int>)&Read);
-                vt.Set(4, (delegate* unmanaged<IntPtr, byte*, uint, uint*, int>)&Write);
-                vt.Set(5, (delegate* unmanaged<IntPtr, long, uint, ulong*, int>)&Seek);
-                vt.Set(6, (delegate* unmanaged<IntPtr, ulong, int>)&SetSize);
-                vt.Set(7, (delegate* unmanaged<IntPtr, IntPtr, ulong, ulong*, ulong*, int>)&CopyTo);
-                vt.Set(8, (delegate* unmanaged<IntPtr, uint, int>)&Commit);
-                vt.Set(9, (delegate* unmanaged<IntPtr, int>)&Revert);
-                vt.Set(10, (delegate* unmanaged<IntPtr, ulong, ulong, uint, int>)&Region);
-                vt.Set(11, (delegate* unmanaged<IntPtr, ulong, ulong, uint, int>)&Region);
-                vt.Set(12, (delegate* unmanaged<IntPtr, byte*, uint, int>)&Stat);
-                vt.Set(13, (delegate* unmanaged<IntPtr, IntPtr*, int>)&Clone);
-                return vt;
-            }
-            private static MemoryIStream S(IntPtr self) => From<MemoryIStream>(self)!;
-            [UnmanagedCallersOnly] private static int Read(IntPtr self, byte* p, uint n, uint* got) { int k = S(self).Data.Read(new Span<byte>(p, (int)n)); if (got != null) *got = (uint)k; return k < n ? 1 : 0; }
-            [UnmanagedCallersOnly] private static int Write(IntPtr self, byte* p, uint n, uint* wrote) { S(self).Data.Write(new ReadOnlySpan<byte>(p, (int)n)); if (wrote != null) *wrote = n; return 0; }
-            [UnmanagedCallersOnly] private static int Seek(IntPtr self, long off, uint origin, ulong* at) { long p = S(self).Data.Seek(off, (SeekOrigin)origin); if (at != null) *at = (ulong)p; return 0; }
-            [UnmanagedCallersOnly] private static int SetSize(IntPtr self, ulong n) { S(self).Data.SetLength((long)n); return 0; }
-            [UnmanagedCallersOnly] private static int CopyTo(IntPtr self, IntPtr o, ulong n, ulong* r, ulong* w) => unchecked((int)0x80004001);
-            [UnmanagedCallersOnly] private static int Commit(IntPtr self, uint f) => 0;
-            [UnmanagedCallersOnly] private static int Revert(IntPtr self) => 0;
-            [UnmanagedCallersOnly] private static int Region(IntPtr self, ulong a, ulong b, uint t) => unchecked((int)0x80030001);   // STG_E_INVALIDFUNCTION
-            [UnmanagedCallersOnly] private static int Stat(IntPtr self, byte* st, uint flags) { new Span<byte>(st, 80).Clear(); *(uint*)(st + 8) = 2; *(long*)(st + 16) = S(self).Data.Length; *(uint*)(st + 48) = 2; return 0; }   // STGTY_STREAM, STGM_READWRITE
-            [UnmanagedCallersOnly] private static int Clone(IntPtr self, IntPtr* o) { *o = IntPtr.Zero; return unchecked((int)0x80004001); }
-        }
 
         private static int OnStream(IntPtr s, out IntPtr bs) { IntPtr b; int hr = OperatingSystem.IsWindows() ? WinOnStream(s, &b) : MFExports.MFCreateMFByteStreamOnStream(s, &b); bs = hr >= 0 ? b : IntPtr.Zero; return hr; }
 
@@ -141,5 +107,41 @@ namespace WgpuInterop.Tests.MediaFoundation
             Assert.Equal(new byte[] { 2, 3, 4, 5 }, got);
             MFReader.Release(bs);
         }
+    }
+
+    // (at the namespace's level: the browser's runtime finds no callback of a nested class)
+    /// <summary>A COM IStream of memory.</summary>
+    internal sealed unsafe class MemoryIStream : ComObject
+    {
+        private static readonly Vtable s_vt = Build();
+        public readonly MemoryStream Data = new();
+        public MemoryIStream() : base(s_vt) { }
+        private static Vtable Build()
+        {
+            var vt = new Vtable("IStream", 14, new Guid("0000000c-0000-0000-C000-000000000046"), new Guid("0c733a30-2a1c-11ce-ade5-00aa0044773d"));
+            vt.Set(3, (delegate* unmanaged<IntPtr, byte*, uint, uint*, int>)&Read);
+            vt.Set(4, (delegate* unmanaged<IntPtr, byte*, uint, uint*, int>)&Write);
+            vt.Set(5, (delegate* unmanaged<IntPtr, long, uint, ulong*, int>)&Seek);
+            vt.Set(6, (delegate* unmanaged<IntPtr, ulong, int>)&SetSize);
+            vt.Set(7, (delegate* unmanaged<IntPtr, IntPtr, ulong, ulong*, ulong*, int>)&CopyTo);
+            vt.Set(8, (delegate* unmanaged<IntPtr, uint, int>)&Commit);
+            vt.Set(9, (delegate* unmanaged<IntPtr, int>)&Revert);
+            vt.Set(10, (delegate* unmanaged<IntPtr, ulong, ulong, uint, int>)&Region);
+            vt.Set(11, (delegate* unmanaged<IntPtr, ulong, ulong, uint, int>)&Region);
+            vt.Set(12, (delegate* unmanaged<IntPtr, byte*, uint, int>)&Stat);
+            vt.Set(13, (delegate* unmanaged<IntPtr, IntPtr*, int>)&Clone);
+            return vt;
+        }
+        private static MemoryIStream S(IntPtr self) => From<MemoryIStream>(self)!;
+        [UnmanagedCallersOnly] private static int Read(IntPtr self, byte* p, uint n, uint* got) { int k = S(self).Data.Read(new Span<byte>(p, (int)n)); if (got != null) *got = (uint)k; return k < n ? 1 : 0; }
+        [UnmanagedCallersOnly] private static int Write(IntPtr self, byte* p, uint n, uint* wrote) { S(self).Data.Write(new ReadOnlySpan<byte>(p, (int)n)); if (wrote != null) *wrote = n; return 0; }
+        [UnmanagedCallersOnly] private static int Seek(IntPtr self, long off, uint origin, ulong* at) { long p = S(self).Data.Seek(off, (SeekOrigin)origin); if (at != null) *at = (ulong)p; return 0; }
+        [UnmanagedCallersOnly] private static int SetSize(IntPtr self, ulong n) { S(self).Data.SetLength((long)n); return 0; }
+        [UnmanagedCallersOnly] private static int CopyTo(IntPtr self, IntPtr o, ulong n, ulong* r, ulong* w) => unchecked((int)0x80004001);
+        [UnmanagedCallersOnly] private static int Commit(IntPtr self, uint f) => 0;
+        [UnmanagedCallersOnly] private static int Revert(IntPtr self) => 0;
+        [UnmanagedCallersOnly] private static int Region(IntPtr self, ulong a, ulong b, uint t) => unchecked((int)0x80030001);   // STG_E_INVALIDFUNCTION
+        [UnmanagedCallersOnly] private static int Stat(IntPtr self, byte* st, uint flags) { new Span<byte>(st, 80).Clear(); *(uint*)(st + 8) = 2; *(long*)(st + 16) = S(self).Data.Length; *(uint*)(st + 48) = 2; return 0; }   // STGTY_STREAM, STGM_READWRITE
+        [UnmanagedCallersOnly] private static int Clone(IntPtr self, IntPtr* o) { *o = IntPtr.Zero; return unchecked((int)0x80004001); }
     }
 }

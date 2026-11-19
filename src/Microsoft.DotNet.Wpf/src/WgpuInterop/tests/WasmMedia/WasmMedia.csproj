@@ -10,26 +10,41 @@
     <Nullable>enable</Nullable>
     <WasmEnableThreads>true</WasmEnableThreads>
     <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
-    <NoWarn>$(NoWarn);CA1416;xUnit1013;xUnit1051;xUnit2013</NoWarn>
+    <NoWarn>$(NoWarn);CA1416;CA1825;CA1861;xUnit1013;xUnit1051;xUnit2013</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
     <StaticWebAssetFingerprintPattern Include="JS" Pattern="*.js" Expression="#[.{fingerprint}]!" />
     <ProjectReference Include="..\..\Browser\WgpuInterop.Browser.csproj" />
+    <!-- the tests are found by reflection: kept whole, with their attributes -->
+    <TrimmerRootAssembly Include="WgpuInterop.WasmMedia" />
+    <TrimmerRootAssembly Include="xunit.v3.core" />
+    <TrimmerRootAssembly Include="xunit.v3.assert" />
     <PackageReference Include="xunit.v3.extensibility.core" Version="3.0.0" />
     <PackageReference Include="xunit.v3.assert" Version="3.0.0" />
-    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\MFSourceReaderProbe.cs" Link="MFSourceReaderProbe.cs" />
-    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\Mp4TestFile.cs" Link="Mp4TestFile.cs" />
-    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\MFMediaSourceProbe.cs" Link="MFMediaSourceProbe.cs" />
-    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\MFDecoderTests.cs" Link="MFDecoderTests.cs" />
+    <Compile Include="..\WgpuInterop.Tests\MediaFoundation\*.cs" LinkBase="MediaFoundation" />
   </ItemGroup>
 
   <Target Name="CopyMediaJs" BeforeTargets="PrepareForBuild;ResolveProjectStaticWebAssets">
     <ItemGroup>
       <_Media Include="..\WgpuInterop.Tests\MediaFoundation\Media\*" />
+      <_Fixture Include="..\WgpuInterop.Tests\MediaFoundation\*.windows.txt" />
     </ItemGroup>
     <Copy SourceFiles="..\..\Browser\wgpu-interop.js;..\..\Browser\browser-codecs.js" DestinationFolder="wwwroot" SkipUnchangedFiles="true" />
     <Copy SourceFiles="@(_Media)" DestinationFolder="wwwroot/media" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_Fixture)" DestinationFolder="wwwroot/fixtures" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- As the SDK's: runtime.c includes the interp-to-native table without listing it among its dependencies, so a
+       build that adds signatures (calls through function pointers) relinks the old runtime.o without them. -->
+  <Target Name="_RuntimeCDependsOnInterpToNativeTable"
+          AfterTargets="_PrepareForBrowserWasmBuildNative" BeforeTargets="_WasmCompileNativeSourceFiles"
+          Condition="'$(_WasmInterpToNativeTablePath)' != ''">
+    <ItemGroup>
+      <_RuntimeC Include="@(_WasmRuntimePackSrcFile)" Condition="'%(Filename)' == 'runtime'" />
+      <_WasmRuntimePackSrcFile Remove="@(_RuntimeC)" />
+      <_WasmRuntimePackSrcFile Include="@(_RuntimeC)" Dependencies="%(_RuntimeC.Dependencies);$(_WasmInterpToNativeTablePath)" />
+    </ItemGroup>
   </Target>
 
 </Project>

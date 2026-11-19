@@ -31,6 +31,43 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
     /// <summary>A decoder the shim registers: its name, its CLSID, its codec and the subtypes it takes.</summary>
     internal sealed record DecoderInfo(string Name, Guid Clsid, VideoCodec Codec, uint Alignment, Guid[] Inputs);
 
+    /// <summary>
+    /// ICodecAPI's slots, each E_NOTIMPL of its own signature (a call through a slot of another's stops WebAssembly: its calls
+    /// check the signature); an implementation sets the slots it answers after.
+    /// </summary>
+    internal static unsafe class CodecApiSlots
+    {
+        public static void Fill(Vtable vt)
+        {
+            vt.Set(3, (delegate* unmanaged<IntPtr, Guid*, int>)&One);                          // IsSupported
+            vt.Set(4, (delegate* unmanaged<IntPtr, Guid*, int>)&One);                          // IsModifiable
+            vt.Set(5, (delegate* unmanaged<IntPtr, Guid*, byte*, byte*, byte*, int>)&Range);   // GetParameterRange
+            vt.Set(6, (delegate* unmanaged<IntPtr, Guid*, byte**, uint*, int>)&Values);        // GetParameterValues
+            vt.Set(7, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&Value);                 // GetDefaultValue
+            vt.Set(8, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&Value);                 // GetValue
+            vt.Set(9, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&Value);                 // SetValue
+            vt.Set(10, (delegate* unmanaged<IntPtr, Guid*, nint, int>)&Register);              // RegisterForEvent
+            vt.Set(11, (delegate* unmanaged<IntPtr, Guid*, int>)&One);                         // UnregisterForEvent
+            vt.Set(12, (delegate* unmanaged<IntPtr, int>)&None);                               // SetAllDefaults
+            vt.Set(13, (delegate* unmanaged<IntPtr, Guid*, byte*, Guid**, uint*, int>)&Notify); // SetValueWithNotify
+            vt.Set(14, (delegate* unmanaged<IntPtr, Guid**, uint*, int>)&DefaultsNotify);      // SetAllDefaultsWithNotify
+            vt.Set(15, (delegate* unmanaged<IntPtr, IntPtr, int>)&Stream);                     // GetAllSettings
+            vt.Set(16, (delegate* unmanaged<IntPtr, IntPtr, int>)&Stream);                     // SetAllSettings
+            vt.Set(17, (delegate* unmanaged<IntPtr, IntPtr, Guid**, uint*, int>)&StreamNotify); // SetAllSettingsWithNotify
+        }
+
+        [UnmanagedCallersOnly] private static int One(IntPtr self, Guid* api) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int Range(IntPtr self, Guid* api, byte* a, byte* b, byte* c) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int Values(IntPtr self, Guid* api, byte** v, uint* n) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int Value(IntPtr self, Guid* api, byte* v) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int Register(IntPtr self, Guid* api, nint param) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int None(IntPtr self) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int Notify(IntPtr self, Guid* api, byte* v, Guid** changed, uint* n) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int DefaultsNotify(IntPtr self, Guid** changed, uint* n) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int Stream(IntPtr self, IntPtr stream) => MF.E_NOTIMPL;
+        [UnmanagedCallersOnly] private static int StreamNotify(IntPtr self, IntPtr stream, Guid** changed, uint* n) => MF.E_NOTIMPL;
+    }
+
     internal abstract unsafe class MFTransform : ComObject
     {
         protected MFTransform(params Vtable[] vts) : base(vts) { }
@@ -669,6 +706,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         private static Vtable BuildCodecApi()
         {
             var vt = new Vtable("ICodecAPI", 18, MF.IID_ICodecAPI);
+            CodecApiSlots.Fill(vt);
             vt.Set(3, (delegate* unmanaged<IntPtr, Guid*, int>)&IsSupported);
             vt.Set(4, (delegate* unmanaged<IntPtr, Guid*, int>)&IsSupported);       // IsModifiable
             vt.Set(8, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&GetValue);

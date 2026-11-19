@@ -271,39 +271,12 @@ namespace WgpuInterop.Tests.MediaFoundation
 
         // ---- asynchronously ----------------------------------------------------------------------------
 
-        /// <summary>IMFSourceReaderCallback: what it is told, in order.</summary>
-        private sealed class Callback : ComObject
-        {
-            private static readonly Vtable s_vt = Build();
-            public readonly BlockingCollection<(string What, int Hr, uint Stream, uint Flags, long Time, byte[]? Bytes)> Told = new();
-
-            private static Vtable Build()
-            {
-                var vt = new Vtable("IMFSourceReaderCallback", 6, new Guid("deec8d99-fa1d-4d82-84c2-2c8969944867"));
-                vt.Set(3, (delegate* unmanaged<IntPtr, int, uint, uint, long, IntPtr, int>)&OnReadSample);
-                vt.Set(4, (delegate* unmanaged<IntPtr, uint, int>)&OnFlush);
-                vt.Set(5, (delegate* unmanaged<IntPtr, uint, IntPtr, int>)&OnEvent);
-                return vt;
-            }
-
-            public Callback() : base(s_vt) { }
-
-            [UnmanagedCallersOnly]
-            private static int OnReadSample(IntPtr self, int hr, uint stream, uint flags, long time, IntPtr sample)
-            {
-                From<Callback>(self)?.Told.Add(("read", hr, stream, flags, time, sample == IntPtr.Zero ? null : MFReader.SampleBytes(sample, out _)));
-                return 0;
-            }
-
-            [UnmanagedCallersOnly] private static int OnFlush(IntPtr self, uint stream) { From<Callback>(self)?.Told.Add(("flush", 0, stream, 0, 0, null)); return 0; }
-            [UnmanagedCallersOnly] private static int OnEvent(IntPtr self, uint stream, IntPtr e) => 0;
-        }
 
         [Fact]
         public void TheReader_ReadsThroughTheCallback()
         {
             var f = new Mp4TestFile();
-            var cb = new Callback();
+            var cb = new ReaderCallback();
             IntPtr r = Open(f, "async", a => MFReader.SetUnknown(a, MF_SOURCE_READER_ASYNC_CALLBACK, cb.Pointer), out var path);
             try
             {
@@ -470,5 +443,34 @@ namespace WgpuInterop.Tests.MediaFoundation
             }
             finally { File.Delete(path); }
         }
+    }
+
+    // (at the namespace's level: the browser's runtime finds no callback of a nested class)
+    /// <summary>IMFSourceReaderCallback: what it is told, in order.</summary>
+    internal sealed unsafe class ReaderCallback : ComObject
+    {
+        private static readonly Vtable s_vt = Build();
+        public readonly BlockingCollection<(string What, int Hr, uint Stream, uint Flags, long Time, byte[]? Bytes)> Told = new();
+
+        private static Vtable Build()
+        {
+            var vt = new Vtable("IMFSourceReaderCallback", 6, new Guid("deec8d99-fa1d-4d82-84c2-2c8969944867"));
+            vt.Set(3, (delegate* unmanaged<IntPtr, int, uint, uint, long, IntPtr, int>)&OnReadSample);
+            vt.Set(4, (delegate* unmanaged<IntPtr, uint, int>)&OnFlush);
+            vt.Set(5, (delegate* unmanaged<IntPtr, uint, IntPtr, int>)&OnEvent);
+            return vt;
+        }
+
+        public ReaderCallback() : base(s_vt) { }
+
+        [UnmanagedCallersOnly]
+        private static int OnReadSample(IntPtr self, int hr, uint stream, uint flags, long time, IntPtr sample)
+        {
+            From<ReaderCallback>(self)?.Told.Add(("read", hr, stream, flags, time, sample == IntPtr.Zero ? null : MFReader.SampleBytes(sample, out _)));
+            return 0;
+        }
+
+        [UnmanagedCallersOnly] private static int OnFlush(IntPtr self, uint stream) { From<ReaderCallback>(self)?.Told.Add(("flush", 0, stream, 0, 0, null)); return 0; }
+        [UnmanagedCallersOnly] private static int OnEvent(IntPtr self, uint stream, IntPtr e) => 0;
     }
 }

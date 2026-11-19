@@ -99,10 +99,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
         private static Vtable BuildApi()
         {
             var vt = new Vtable("ICodecAPI", 18, MF.IID_ICodecAPI);
-            for (int i = 3; i < 18; i++) vt.Set(i, (delegate* unmanaged<IntPtr, Guid*, byte*, int>)&No);
+            CodecApiSlots.Fill(vt);
             return vt;
         }
-        [UnmanagedCallersOnly] private static int No(IntPtr self, Guid* g, byte* v) => MF.E_NOTIMPL;
 
         public MFConverterStandIn(MFMediaType input, MFMediaType output) : base(s_api) { In = input.Clone().Pointer; Out = output.Clone().Pointer; }
         public override void Shutdown() { }
@@ -443,10 +442,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 }
                 var odb = stackalloc byte[32];
                 new Span<byte>(odb, 32).Clear();
-                *(IntPtr*)(odb + 8) = mine?.Pointer ?? IntPtr.Zero;
+                *(IntPtr*)(odb + IntPtr.Size) = mine?.Pointer ?? IntPtr.Zero;
                 uint status;
                 int hr = ((delegate* unmanaged<IntPtr, uint, uint, byte*, uint*, int>)Com.Fn(e.Mft, 25))(e.Mft, 0, 1, odb, &status);
-                IntPtr got = *(IntPtr*)(odb + 8);
+                IntPtr got = *(IntPtr*)(odb + IntPtr.Size);
                 if (hr == MF.MF_E_TRANSFORM_NEED_MORE_INPUT || hr == MF.MF_E_TRANSFORM_STREAM_CHANGE) { mine?.Release(); if (provides) Com.Release(got); return; }
                 if (hr < 0) { mine?.Release(); throw new InvalidOperationException($"the transform's ProcessOutput: 0x{hr:x8}"); }
                 MFSample next;

@@ -136,28 +136,30 @@ namespace WgpuInterop.Tests.MediaFoundation
         [UnmanagedCallersOnly] private static int Flush(IntPtr self) { S(self).Log("Flush"); return 0; }
         [UnmanagedCallersOnly] private static int Close(IntPtr self) { S(self).Log("Close"); return 0; }
 
-        /// <summary>IMFAsyncResult of a BeginWrite.</summary>
-        private sealed class AsyncResult : ComObject
+    }
+
+    // (at the namespace's level: the browser's runtime finds no callback of a nested class)
+    /// <summary>IMFAsyncResult of a BeginWrite.</summary>
+    internal sealed unsafe class AsyncResult : ComObject
+    {
+        private static readonly Vtable s_rv = BuildResult();
+        private readonly IntPtr _cb, _state;
+        public AsyncResult(IntPtr cb, IntPtr state) : base(s_rv) { _cb = cb; _state = state; ((delegate* unmanaged<IntPtr, uint>)((IntPtr*)*(IntPtr*)cb)[1])(cb); if (state != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)((IntPtr*)*(IntPtr*)state)[1])(state); }
+        protected override void OnFinalRelease() { MFReader.Release(_cb); MFReader.Release(_state); }
+        private static Vtable BuildResult()
         {
-            private static readonly Vtable s_rv = BuildResult();
-            private readonly IntPtr _cb, _state;
-            public AsyncResult(IntPtr cb, IntPtr state) : base(s_rv) { _cb = cb; _state = state; ((delegate* unmanaged<IntPtr, uint>)((IntPtr*)*(IntPtr*)cb)[1])(cb); if (state != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)((IntPtr*)*(IntPtr*)state)[1])(state); }
-            protected override void OnFinalRelease() { MFReader.Release(_cb); MFReader.Release(_state); }
-            private static Vtable BuildResult()
-            {
-                var vt = new Vtable("IMFAsyncResult", 8, new Guid("ac6b7889-0740-4d51-8619-905994a55cc6"));
-                vt.Set(3, (delegate* unmanaged<IntPtr, IntPtr*, int>)&GetState);
-                vt.Set(4, (delegate* unmanaged<IntPtr, int>)&GetStatus);
-                vt.Set(5, (delegate* unmanaged<IntPtr, int, int>)&SetStatus);
-                vt.Set(6, (delegate* unmanaged<IntPtr, IntPtr*, int>)&GetObject);
-                vt.Set(7, (delegate* unmanaged<IntPtr, IntPtr>)&GetStateNoAddRef);
-                return vt;
-            }
-            [UnmanagedCallersOnly] private static int GetState(IntPtr self, IntPtr* s) { var r = From<AsyncResult>(self)!; *s = r._state; if (r._state != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)((IntPtr*)*(IntPtr*)r._state)[1])(r._state); return 0; }
-            [UnmanagedCallersOnly] private static int GetStatus(IntPtr self) => 0;
-            [UnmanagedCallersOnly] private static int SetStatus(IntPtr self, int hr) => 0;
-            [UnmanagedCallersOnly] private static int GetObject(IntPtr self, IntPtr* o) { *o = IntPtr.Zero; return unchecked((int)0x80004003); }
-            [UnmanagedCallersOnly] private static IntPtr GetStateNoAddRef(IntPtr self) => From<AsyncResult>(self)!._state;
+            var vt = new Vtable("IMFAsyncResult", 8, new Guid("ac6b7889-0740-4d51-8619-905994a55cc6"));
+            vt.Set(3, (delegate* unmanaged<IntPtr, IntPtr*, int>)&GetState);
+            vt.Set(4, (delegate* unmanaged<IntPtr, int>)&GetStatus);
+            vt.Set(5, (delegate* unmanaged<IntPtr, int, int>)&SetStatus);
+            vt.Set(6, (delegate* unmanaged<IntPtr, IntPtr*, int>)&GetObject);
+            vt.Set(7, (delegate* unmanaged<IntPtr, IntPtr>)&GetStateNoAddRef);
+            return vt;
         }
+        [UnmanagedCallersOnly] private static int GetState(IntPtr self, IntPtr* s) { var r = From<AsyncResult>(self)!; *s = r._state; if (r._state != IntPtr.Zero) ((delegate* unmanaged<IntPtr, uint>)((IntPtr*)*(IntPtr*)r._state)[1])(r._state); return 0; }
+        [UnmanagedCallersOnly] private static int GetStatus(IntPtr self) => 0;
+        [UnmanagedCallersOnly] private static int SetStatus(IntPtr self, int hr) => 0;
+        [UnmanagedCallersOnly] private static int GetObject(IntPtr self, IntPtr* o) { *o = IntPtr.Zero; return unchecked((int)0x80004003); }
+        [UnmanagedCallersOnly] private static IntPtr GetStateNoAddRef(IntPtr self) => From<AsyncResult>(self)!._state;
     }
 }

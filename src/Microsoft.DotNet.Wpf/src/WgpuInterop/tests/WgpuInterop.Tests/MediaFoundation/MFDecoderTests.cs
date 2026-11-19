@@ -254,10 +254,10 @@ namespace WgpuInterop.Tests.MediaFoundation
                     var odb = stackalloc byte[32];
                     new Span<byte>(odb, 32).Clear();
                     IntPtr own = provides ? IntPtr.Zero : Sample(new byte[Math.Max(1, (int)info0)], 0);
-                    *(IntPtr*)(odb + 8) = own;
+                    *(IntPtr*)(odb + IntPtr.Size) = own;
                     uint status;
                     int hr = ((delegate* unmanaged<IntPtr, uint, uint, byte*, uint*, int>)Fn(t, 25))(t, 0, 1, odb, &status);
-                    IntPtr got = *(IntPtr*)(odb + 8);
+                    IntPtr got = *(IntPtr*)(odb + IntPtr.Size);
                     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) { changes++; size = SetOutput(t); Release(own); continue; }
                     if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) { Release(own); break; }
                     Ok(hr, "ProcessOutput");
