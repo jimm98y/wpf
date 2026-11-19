@@ -187,6 +187,16 @@ streams. The shim gives the earliest sample first; Windows' order follows its pi
       and the frame rate of twice the DefaultDuration (Windows reads it as a field's);
     - characteristics 6, MIME `video/x-matroska`; lacing (Xiph, EBML, fixed) is read.
 
+  - ASF (WMV, WMA: `Source/AsfContainer.cs`, `MFAsfProbe`, `Asf.windows.txt` of Windows' own WMV, `Media/clip.wmv`),
+    as Windows' ASF source reads it, the container alone: the streams in the order of their numbers; WMV's native type
+    of its BITMAPINFOHEADER (its codec data `MF_MT_USER_DATA`, the bitrate and frame rate of the extended stream
+    properties), WMA's of its WAVEFORMATEX (its tail `MF_MT_USER_DATA`); each sample a whole media object, of its
+    presentation time less the preroll, its duration of the Sample Duration payload extension (else none), each
+    payload extension's data an attribute of its system's GUID (of an object's last fragment), its object number
+    (`9ed713c8-…`), a token, a key frame a clean point, a discontinuity at the first and where the object numbers skip;
+    the duration the play duration less the preroll, a seek past it MF_E_OUT_OF_RANGE. WMV and WMA are handed out
+    compressed: there is no decoder of them on any platform (a decoded type is MF_E_TOPO_CODEC_NOT_FOUND).
+
     Known differences: Windows' FLAC bytes per second in Matroska follow a rule one file does not
     show. Windows' Opus decoder hands the sound out 274 frames after where the pre-skip puts it; the
     frame count is the same. Only box headers and sample tables are read at open; samples are read from the file as
@@ -654,9 +664,6 @@ on macOS and in the Ubuntu VM.
 - The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
   of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
   tolerance (by choice).
-- More of the source reader:
-  - more containers (ASF: the container, its compressed samples handed out; WMV and WMA decoders there are none of
-    on any platform);
 - The media session, and camera capture (`MFEnumDeviceSources`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).

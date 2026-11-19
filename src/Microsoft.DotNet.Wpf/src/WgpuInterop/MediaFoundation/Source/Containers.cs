@@ -41,6 +41,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             if (n >= 12 && h.Slice(0, 4).SequenceEqual("RIFF"u8) && h.Slice(8, 4).SequenceEqual("WAVE"u8)) return new WavContainer(src);
             if (n >= 4 && h.Slice(0, 4).SequenceEqual("fLaC"u8)) return new FlacContainer(src);
             if (MatroskaContainer.Sniff(h)) return new MatroskaContainer(src);
+            if (n >= 12) { Span<byte> g = stackalloc byte[16]; if (src.Read(0, g) == 16 && AsfContainer.Sniff(g)) return new AsfContainer(src); }
             if (Mp4Demuxer.Sniff(src)) return Mp4Demuxer.Open(src);
             if (n >= 3 && h.Slice(0, 3).SequenceEqual("ID3"u8) || n >= 2 && h[0] == 0xFF && (h[1] & 0xE0) == 0xE0)
             {
@@ -106,6 +107,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
             }
             return at;
         }
+
+        /// <summary>Whether a seek to the position is taken (ASF's past its duration: MF_E_OUT_OF_RANGE).</summary>
+        public virtual int SeekCheck(long hns) => MF.S_OK;
+
+        /// <summary>A sample's attributes of the container's own (ASF's payload extensions).</summary>
+        public virtual void Extra(Mp4Track t, in Mp4Sample s, MFSample sample) { }
 
         /// <summary>A sample a seek hands out before the one it goes on from (Matroska's FLAC header), or none.</summary>
         public virtual int? SeekPrelude(Mp4Track t) => null;

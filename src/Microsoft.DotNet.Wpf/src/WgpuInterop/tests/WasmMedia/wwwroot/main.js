@@ -5,7 +5,7 @@ import { dotnet } from './_framework/dotnet.js'
 import * as wgpuInterop from './wgpu-interop.js'
 import * as wpfBrowserCodecs from './browser-codecs.js'
 
-const media = ['tone-aac.m4a', 'tone-alac.m4a', 'tone-alac-stereo.m4a', 'tone-alac-24.m4a', 'tone.aac', 'tone.flac', 'tone.mp3', 'tone-notag.mp3', 'clip-vp9.mp4', 'clip-av1.mp4', 'clip-hevc.mp4', 'clip.webm', 'clip.mkv'];
+const media = ['tone-aac.m4a', 'tone-alac.m4a', 'tone-alac-stereo.m4a', 'tone-alac-24.m4a', 'tone.aac', 'tone.flac', 'tone.mp3', 'tone-notag.mp3', 'clip-vp9.mp4', 'clip-av1.mp4', 'clip-hevc.mp4', 'clip.webm', 'clip.mkv', 'clip.wmv'];
 const status = document.getElementById('status');
 try {
     const { setModuleImports, runMain, Module } = await dotnet.create();
@@ -16,7 +16,7 @@ try {
         const r = await fetch('media/' + m);
         Module.FS.writeFile('/MediaFoundation/Media/' + m, new Uint8Array(await r.arrayBuffer()));
     }
-    for (const f of ['SourceReader', 'SinkWriter', 'Encoder', 'MediaSource', 'ReaderTransform', 'SinkByteStream', 'SinkTransform', 'LocalTransform', 'VideoProcessor', 'VideoProcessorControl', 'HevcEncoder', 'MediaSink', 'ColorConverterDmo', 'Formats']) {
+    for (const f of ['SourceReader', 'SinkWriter', 'Encoder', 'MediaSource', 'ReaderTransform', 'SinkByteStream', 'SinkTransform', 'LocalTransform', 'VideoProcessor', 'VideoProcessorControl', 'HevcEncoder', 'MediaSink', 'ColorConverterDmo', 'Formats', 'Asf']) {
         const r = await fetch('fixtures/' + f + '.windows.txt');
         Module.FS.writeFile('/MediaFoundation/' + f + '.windows.txt', new Uint8Array(await r.arrayBuffer()));
     }

@@ -97,6 +97,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
                 for (int i = 0; i < lengths.Length; i++) BitConverter.GetBytes(lengths[i]).CopyTo(blob, i * 4);
                 s.Attributes.Set(SR.MFSampleExtension_NALULengthInfo, MFValue.Of(blob));
             }
+            c.Extra(t, m, s);
             var (clean, disc) = c.SampleFlags(m, first);
             if (clean) s.Attributes.Set(MF.MFSampleExtension_CleanPoint, 1u);
             if (disc) s.Attributes.Set(MF.MFSampleExtension_Discontinuity, 1u);
@@ -216,6 +217,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Source
 
         public override uint Characteristics => _c.Characteristics;
         public override MFValue? Presentation(Guid key) => _c.Presentation(key);
+        public override int Seek(long hns) => _c.SeekCheck(hns);
         public override IntPtr MediaSource => _owner?.Pointer ?? IntPtr.Zero;
 
         public override void Dispose()
