@@ -229,13 +229,15 @@ public static partial class MacPackager
             export HOME=/var/root
             C=/usr/local/bin/container
             mkdir -p "$D/installations" "/Library/Logs/{{manifest.Product.Name}}" /Library/Logs/WpfWebGpu
-            # this installation's own SQL Server of before: stopped, its container gone (its volume and password taken)
-            if [ -f /Library/LaunchDaemons/{{EarlierSqlServerLabel(id)}}.plist ]; then
+            # this installation's own SQL Server of before: stopped, its container gone (its volume and password taken).
+            # Its daemon is asked of launchd, not of its file: the installer has removed the files the earlier
+            # component had and this one has not (its receipt's obsoleting) before this runs, the job still loaded
+            if launchctl print system/{{EarlierSqlServerLabel(id)}} >/dev/null 2>&1; then
               launchctl bootout system/{{EarlierSqlServerLabel(id)}} >/dev/null 2>&1 || true
               i=0; while launchctl print system/{{EarlierSqlServerLabel(id)}} >/dev/null 2>&1 && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
-              rm -f /Library/LaunchDaemons/{{EarlierSqlServerLabel(id)}}.plist
-              "$C" delete --force {{earlier}} >/dev/null 2>&1 || true
             fi
+            rm -f /Library/LaunchDaemons/{{EarlierSqlServerLabel(id)}}.plist
+            "$C" delete --force {{earlier}} >/dev/null 2>&1 || true
             OLDPW=
             [ -f "{{root}}/sqlserver/sqlserver.env" ] && OLDPW=$(sed -n 's/^MSSQL_SA_PASSWORD=//p' "{{root}}/sqlserver/sqlserver.env")
             rm -rf "{{root}}/sqlserver"; rm -f "{{SqlBrowserInstances}}/{{id}}"
