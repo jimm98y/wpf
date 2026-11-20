@@ -33,8 +33,9 @@ namespace System.Windows.Forms
 
     internal static class EmbeddedScenes
     {
-        private static readonly List<IEmbeddedScene> s_items = new();
         private static readonly object s_lock = new();
+        // the video renderer's surfaces always among them (nothing collected where there is none)
+        private static readonly List<IEmbeddedScene> s_items = new() { VideoSurfaceScene.Instance };
 
         /// <summary>The host's native window and backing scale, published once the window exists. A
         /// contributor that needs a real OS window of its own (ElementHost parents WPF's HwndSource

@@ -26,6 +26,8 @@ using System.Runtime.CompilerServices;
 // The cross-platform test suite (tests/WgpuInterop.Tests). Per-test-app entries are removed as
 // their apps are folded into it; the ones left belong to apps not yet migrated.
 [assembly: InternalsVisibleTo("WgpuInterop.Tests")]
+// the WinForms driver's tests: what the media shim shows in a control (VideoSurfaceTests)
+[assembly: InternalsVisibleTo("Wpf.WinFormsInterop.Tests")]
 [assembly: InternalsVisibleTo("WgpuInterop.LiveCompositionTest")]
 [assembly: InternalsVisibleTo("WgpuInterop.WasmSpike")]
 // WinForms-on-WebGPU host: presents the Mono System.Windows.Forms composite through the shared

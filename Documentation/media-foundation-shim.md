@@ -501,8 +501,21 @@ Linux (the system's libpulse-simple), AAudio on Android, WebAudio in the browser
 `IMFSimpleAudioVolume` (MR_POLICY_VOLUME_SERVICE) and `IMFAudioStreamVolume` (MR_STREAM_VOLUME_SERVICE). Where there is
 no output, its activate gives MF_E_NO_AUDIO_PLAYBACK_DEVICE.
 
-`TheSession_PlaysToSampleGrabbersAsWindowsDoes` and `TheSession_PlaysToTheAudioRendererAsWindowsDoes` compare the
-reports with Windows', but for times and the endpoint's id; the second is skipped where there is no audio output.
+**The video renderer** (`Session/MFVideoRenderer.cs`, `MFCreateVideoRendererActivate`): its activate carries the window
+(MF_ACTIVATE_VIDEO_WINDOW). Its stream takes the uncompressed video the mixer takes, so the decoder's NV12 goes straight
+in. Its node, and its branch's source node, carry its device manager (with the source node D3D-aware), as Windows'
+loader sets them. Each frame is shown at its presentation time: converted to BGRA and written into a texture of the
+process's device kept for the window (`Composition/VideoSurfaces.cs`), letterboxed of the picture's shape on the border's
+color. The window system draws it over the window: a WinForms control's host through an embedded scene
+(`WinFormsInterop/host/VideoSurfaceScene.cs`), each frame a version it presents on. Its display control
+(MR_VIDEO_RENDER_SERVICE's `IMFVideoDisplayControl`) has the native size and aspect, the window, the source and
+destination rectangles, the aspect mode (PreservePicture | PreservePixel), the border, `RepaintVideo` and
+`GetCurrentImage`.
+
+`TheSession_PlaysToSampleGrabbersAsWindowsDoes`, `TheSession_PlaysToTheAudioRendererAsWindowsDoes` and
+`TheSession_PlaysToTheVideoRendererAsWindowsDoes` compare the reports with Windows', but for times, the endpoint's id and
+the window (the probe has one on Windows only); the audio renderer's is skipped where there is no audio output.
+`VideoSurfaceTests` (the WinForms suite) shows a frame drawn over its control, letterboxed, in its form's host only.
 
 ## Capture devices
 
@@ -758,7 +771,8 @@ on macOS and in the Ubuntu VM.
 - The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
   of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
   tolerance (by choice).
-- The media session's video renderer (EVR, `MFCreateVideoRendererActivate`): into the application's window.
+- The video renderer into a WPF window's handle (an `HwndSource`'s, an `HwndHost`'s child): WinForms controls only so far;
+  and its frames converted on the GPU (`Direct3D/D3DContext.Nv12.cs`) rather than in managed code.
 - Audio capture (`MFEnumDeviceSources` of `AUDCAP`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).

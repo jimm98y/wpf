@@ -464,8 +464,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return MF.S_OK;
         }
 
+        /// <summary>The enhanced video renderer's activate, of the window (MF_ACTIVATE_VIDEO_WINDOW): Session/MFVideoRenderer.cs.</summary>
         [Win32Export("MFCreateVideoRendererActivate")]
-        public static int MFCreateVideoRendererActivate(IntPtr hwnd, IntPtr* activate) { if (activate == null) return MF.E_POINTER; *activate = IntPtr.Zero; return MF.E_NOTIMPL; }
+        public static int MFCreateVideoRendererActivate(IntPtr hwnd, IntPtr* activate)
+        {
+            if (activate == null) return MF.E_POINTER;
+            MFActivate? a = null;
+            a = new MFActivate(() => (MF.S_OK, new Session.MFVideoRenderer((IntPtr)(long)a!.Attributes.U64(Session.MFVideoRenderer.MF_ACTIVATE_VIDEO_WINDOW)).Pointer), MF.S_OK);
+            a.Attributes.Set(Session.MFVideoRenderer.MF_ACTIVATE_VIDEO_WINDOW, (ulong)(long)hwnd);
+            *activate = a.Pointer;
+            return MF.S_OK;
+        }
 
         [Win32Export("MFCreateSourceResolver")]
         public static int MFCreateSourceResolver(IntPtr* resolver)

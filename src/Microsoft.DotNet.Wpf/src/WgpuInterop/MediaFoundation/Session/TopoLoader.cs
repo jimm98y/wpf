@@ -116,6 +116,13 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
                     {
                         int hr = Output(nextC);
                         if (hr < 0) return hr;
+                        // a D3D-aware renderer's branch: its source node aware too, of the renderer's device manager
+                        if (nextC.Attributes.Get(TopoIds.TOPONODE_DEVICE_MANAGER) is { Unknown: var dm } && dm != IntPtr.Zero)
+                        {
+                            srcC.Attributes.Set(TopoIds.MF_TOPONODE_D3DAWARE, 1u);
+                            Com.AddRef(dm);
+                            srcC.Attributes.Set(TopoIds.TOPONODE_DEVICE_MANAGER, new MFValue { Type = MF.VT_UNKNOWN, Unknown = dm });
+                        }
                         hr = Connect(up, nextC, type, added);
                         if (hr < 0) return hr;
                         break;
@@ -186,6 +193,11 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
             else return MF.E_INVALIDARG;
             // a system renderer's node: of its CLSID
             if (ComObject.From(sink) is IRendererClsid r) n.Attributes.Set(TopoIds.MF_TOPONODE_TRANSFORM_OBJECTID, MFValue.Of(r.Clsid));
+            if (ComObject.From(sink) is MFVideoRenderer vr && vr.DeviceManager != IntPtr.Zero)
+            {
+                Com.AddRef(vr.DeviceManager);
+                n.Attributes.Set(TopoIds.TOPONODE_DEVICE_MANAGER, new MFValue { Type = MF.VT_UNKNOWN, Unknown = vr.DeviceManager });
+            }
             try
             {
                 IntPtr stream;

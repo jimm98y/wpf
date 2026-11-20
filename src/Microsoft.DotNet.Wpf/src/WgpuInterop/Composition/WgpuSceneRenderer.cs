@@ -1389,6 +1389,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             try
             {
                 _srgbOutput = format is WGPUTextureFormat.RGBA8UnormSrgb or WGPUTextureFormat.BGRA8UnormSrgb;
+                VideoSurfaces.SrgbDisplay = _srgbOutput;
                 _transparentTarget = transparentTarget;
                 long c0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 long ca0 = GC.GetAllocatedBytesForCurrentThread();

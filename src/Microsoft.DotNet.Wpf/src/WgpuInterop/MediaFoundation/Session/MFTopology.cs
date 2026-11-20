@@ -27,6 +27,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
         // a decoder's: MF_TOPONODE_DECODER and its two neighbours, as Windows' loader sets them
         public static readonly Guid TOPONODE_494bbd00 = new("494bbd00-b031-4e38-97c4-d5422dd618dc"), TOPONODE_494bbd01 = new("494bbd01-b031-4e38-97c4-d5422dd618dc");
         public static readonly Guid MF_TOPONODE_DECODER = new("494bbd02-b031-4e38-97c4-d5422dd618dc"), MF_TOPONODE_D3DAWARE = new("494bbced-b031-4e38-97c4-d5422dd618dc");
+        /// <summary>The D3D-aware renderer's device manager, on its node and its branch's source node (as Windows' loader sets it).</summary>
+        public static readonly Guid TOPONODE_DEVICE_MANAGER = new("b8aa3129-dfc9-423a-8acd-1d82850a3d1f");
         public static readonly Guid MF_TOPOLOGY_RESOLUTION_STATUS = new("494bbcde-b031-4e38-97c4-d5422dd618dc");
         public const uint OUTPUT = 0, SOURCESTREAM = 1, TRANSFORM = 2, TEE = 3;
 

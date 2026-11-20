@@ -416,7 +416,11 @@ namespace WgpuInterop.Tests.MediaFoundation
             string path = new Mp4TestFile { Frames = 25, AudioFrames = 43 }.WriteTemp("session");
             var ours = Normalize(section == "==== sample grabbers" ? Grabbers(path) : Renderers(path, section.Contains("Video") ? Video : Audio));
             for (int i = 0; i < Math.Min(windows.Count, ours.Count); i++)
+            {
+                // (the probe has a window of its own on Windows only: the renderer of none has none)
+                if (windows[i] == "    window 0x00000000 the app's" && ours[i] == "    window 0x00000000 none") continue;
                 Assert.True(windows[i] == ours[i], $"line {i}: Windows '{windows[i]}', ours '{ours[i]}'");
+            }
             Assert.Equal(windows.Count, ours.Count);
         }
 
@@ -445,6 +449,13 @@ namespace WgpuInterop.Tests.MediaFoundation
             Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows' session is the fixture");
             Assert.SkipWhen(!HasAudioOutput(), "no audio output here");
             Compare("==== renderer of MFMediaType_Audio");
+        }
+
+        [Fact]
+        public void TheSession_PlaysToTheVideoRendererAsWindowsDoes()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows' session is the fixture");
+            Compare("==== renderer of MFMediaType_Video");
         }
 
         [Fact]
