@@ -122,9 +122,35 @@ public class PackagerTests
         Assert.Contains("launchctl bootout gui/", un);              // the startup agent out of the sessions it runs in
         Assert.Contains("dscl . -delete \"/Users/$a\"", un);       // --all: the service accounts
         Assert.True(un.IndexOf("dscl . -delete", StringComparison.Ordinal) > un.IndexOf("if [ -n \"$ALL\" ]", StringComparison.Ordinal));
-        string withSql = WpfWebGpu.Packager.Desktop.MacPackager.Uninstall(root, product, id, new List<string>(), sqlServer: true);
+        string withSql = WpfWebGpu.Packager.Desktop.MacPackager.Uninstall(root, product, id, new List<string>(), sqlInstance: "SQLEXPRESS");
         ShellSyntax(withSql);
-        Assert.Contains("uninstall-container.sh -d", withSql);      // --all: Apple's container, where nothing else uses it
+        Assert.Contains("launchctl bootout system/com.example.p-sqlbrowser", withSql);
+        Assert.DoesNotContain("container delete", withSql);          // the instance stays, as on Windows
+        Assert.DoesNotContain("uninstall-container.sh", withSql);
+    }
+
+    [Fact]
+    public void Mac_SQL_Server_is_one_instance_a_name_shared_by_the_installations()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "shell scripts");
+        var manifest = new PackageManifest();
+        manifest.Product.Name = "P";
+        manifest.SqlServer.Instance = "SQLExpress2025";
+        string post = WpfWebGpu.Packager.Desktop.MacPackager.SqlServerPostInstall(manifest, "com.example.p", "/Library/Application Support/P");
+        ShellSyntax(post);
+        const string dir = "/Library/Application Support/WpfWebGpu/SqlServer/SQLEXPRESS2025";
+        Assert.Contains($"D=\"{dir}\"", post);
+        Assert.Contains("if [ ! -f \"$D/sqlserver.env\" ]; then", post);                  // made once, by the first installation
+        Assert.Contains("lsof -nP -iTCP:\"$P\" -sTCP:LISTEN", post);                     // the next free port where 1433 is taken
+        Assert.Contains("touch \"$D/installations/com.example.p\"", post);
+        Assert.Contains("/Library/LaunchDaemons/com.wpfwebgpu.sqlserver.sqlexpress2025.plist", post);
+        Assert.Contains("p-sqlserver-data", post);                                         // an earlier version's databases taken
+        // the instance's own uninstall: its daemon, container, databases; Apple's container where nothing else uses it
+        string un = WpfWebGpu.Packager.Desktop.MacPackager.SqlInstanceUninstall("SQLExpress2025");
+        ShellSyntax(un);
+        Assert.Contains("container\" delete --force sqlserver-sqlexpress2025", un.Replace("\"$C\"", "container\""));
+        Assert.Contains("uninstall-container.sh -d", un);
+        Assert.Contains("! -name sqlserver.env", un);                                     // --keep-data: the password, port, volume
     }
 
     private static void ShellSyntax(string script)
@@ -183,17 +209,23 @@ public class PackagerTests
         Assert.Contains("User=nobody", unit);
         Assert.Contains("AmbientCapabilities=CAP_NET_BIND_SERVICE", unit);    // UDP 1434, below 1024
 
+        Assert.Contains("ConditionDirectoryNotEmpty=/var/lib/wpfwebgpu/sqlbrowser", unit); // started once an instance is there
+
+        // one instance a name, shared by every installation naming it, its package not the installation's
+        Assert.Equal("wpfwebgpu-sqlserver-sqlexpress2025", WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerPackageName(manifest));
         string postinst = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerPostInst(manifest, sql, "p");
-        string postrm = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerPostRm(sql, "p");
-        string un = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerUninstallStep("x64", "p");
-        Assert.Contains("printf '%s %s\\n' \"SQLEXPRESS2025\" \"1433\" > /var/lib/wpfwebgpu/sqlbrowser/p", postinst);
-        Assert.Contains("systemctl enable p-sqlserver.service p-sqlbrowser.service", postinst);
-        foreach (string script in new[] { postrm, un })
-        {
-            Assert.Contains("p-sqlbrowser.service", script);
-            Assert.Contains("rm -f /var/lib/wpfwebgpu/sqlbrowser/p", script);
-        }
-        foreach (string script in new[] { postinst, postrm, un }) ShellSyntax(script);
+        string postrm = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerPostRm(manifest, sql);
+        string install = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerInstallStep(manifest, "x64", "p");
+        string un = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerUninstallStep(manifest);
+        Assert.Contains("ENVFILE=/etc/wpfwebgpu/sqlserver/sqlexpress2025.env", postinst);
+        Assert.Contains("while [ \"$P\" = 1434 ] || ss -Hltn \"sport = :$P\"", postinst);                    // the next free port where 1433 is taken
+        Assert.Contains("printf '%s %s\\n' \"SQLEXPRESS2025\" \"$PORT\" > /var/lib/wpfwebgpu/sqlbrowser/sqlexpress2025", postinst);
+        Assert.Contains("/etc/p/sqlserver.env", postinst);                                 // an earlier version's password taken
+        Assert.Contains("p-sqlserver-data", postinst);                                     // and its databases
+        Assert.Contains("rm -f /var/lib/wpfwebgpu/sqlbrowser/sqlexpress2025", postrm);
+        Assert.Contains("/etc/wpfwebgpu/sqlserver/sqlexpress2025-uninstall.sh", install);  // the instance's own uninstall
+        Assert.DoesNotContain("podman rm", un);                                            // the installation's leaves it
+        foreach (string script in new[] { postinst, postrm, install, un }) ShellSyntax(script);
     }
 
     [Fact]

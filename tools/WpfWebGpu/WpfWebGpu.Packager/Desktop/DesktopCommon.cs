@@ -201,6 +201,20 @@ internal static class DesktopCommon
     /// <summary>The accounts earlier versions of the macOS installers made for them.</summary>
     public static readonly string[] EarlierMacAccounts = { "_wpfnetworkservice", "_wpflocalservice" };
 
+    /// <summary>A SQL Server instance's name as the machine's names for it take it (its daemon, container, volume,
+    /// package): lower case letters, digits and '-' (container and Debian take no other). One instance of a name is
+    /// on a machine, shared by every installation that names it, as on Windows.</summary>
+    public static string SqlInstanceKey(string instance)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (char c in instance.ToLowerInvariant())
+            if (char.IsAsciiLetterOrDigit(c)) sb.Append(c);
+            else if (sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+        string key = sb.ToString().Trim('-');
+        if (key.Length > 40) key = key[..40].TrimEnd('-');
+        return key.Length == 0 ? "mssqlserver" : key;
+    }
+
     public static string AccountTitle(ServiceAccount account) => account == ServiceAccount.LocalService ? "LOCAL SERVICE" : "NETWORK SERVICE";
 
     /// <summary>services.sh: the installation's services by their Windows names, as the Services console or sc.exe

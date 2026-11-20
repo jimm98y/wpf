@@ -68,24 +68,6 @@ internal static class SqlServer
         }
     }
 
-    /// <summary>The instance the installation installed, uninstalled by SQL Server's own setup (the one it leaves in
-    /// Setup Bootstrap), with its databases.</summary>
-    public static void Uninstall(string instance)
-    {
-        if (!InstanceExists(instance)) return;
-        string bootstrap = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft SQL Server");
-        string? setup = Directory.Exists(bootstrap)
-            ? Directory.EnumerateFiles(bootstrap, "setup.exe", SearchOption.AllDirectories)
-                .Where(f => f.Contains(@"\Setup Bootstrap\SQL", StringComparison.OrdinalIgnoreCase)).OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
-            : null;
-        if (setup == null) { Console.WriteLine($"  SQL Server: no setup to uninstall {instance} with (Apps & features removes it)"); return; }
-        Console.WriteLine($"  SQL Server: uninstalling instance {instance} (this takes several minutes)");
-        Run(setup, $"/Q /ACTION=Uninstall /FEATURES=SQLEngine /INSTANCENAME={instance} /SUPPRESSPRIVACYSTATEMENTNOTICE", "uninstalling");
-        // its databases' files, which its uninstall leaves (MSSQL<version>.<instance>)
-        foreach (string dir in Directory.EnumerateDirectories(bootstrap, "MSSQL*." + instance))
-            try { Directory.Delete(dir, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-    }
-
     private static bool Wanted(SetupSqlServer sql, string[] args, bool quiet)
     {
         if (args.Any(a => a.Equals("/nosql", StringComparison.OrdinalIgnoreCase))) return false;

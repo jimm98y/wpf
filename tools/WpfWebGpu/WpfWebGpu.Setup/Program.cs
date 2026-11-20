@@ -258,7 +258,7 @@ internal static partial class Program
         var record = InstallRecord.Load(info.Id);
         bool Flag(string f) => s_args.Any(a => a.Equals(f, StringComparison.OrdinalIgnoreCase));
         bool all = Flag("/all") || !Flag("/keepdata") && (s_quiet || Console.IsInputRedirected || Ask(
-            $"Remove {info.Product}'s data too -- its ProgramData, its registry settings" + (record.SqlInstance != null ? $", SQL Server's instance {record.SqlInstance} and its databases" : "") + "? [Y/n] "));
+            $"Remove {info.Product}'s data too -- its ProgramData, its registry settings? [Y/n] "));
         Console.WriteLine($"Removing {info.Product} from {root}" + (all ? ", with its data" : ""));
 
         // what runs: the services (those the installation registered, and those its programs created since, of its
@@ -278,7 +278,6 @@ internal static partial class Program
 
         if (all)
         {
-            if (record.SqlInstance is { } instance) SqlServer.Uninstall(instance);
             int values = RegistryImport.Remove(record);
             Console.WriteLine($"  registry: {values} values removed");
             foreach (var acl in record.Acls) Ungrant(acl.Folder, acl.Sid);
@@ -301,6 +300,10 @@ internal static partial class Program
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{root}\"") { CreateNoWindow = true, UseShellExecute = false });
         Console.WriteLine($"{info.Product} removed" + (all ? "." : " (ProgramData and the registry's values are kept; /uninstall removes them too)."));
         if (s_delayed > 0) Console.WriteLine($"  {s_delayed} files in use go when Windows restarts.");
+        // SQL Server stays, as a product's uninstall leaves the SQL Server Express it brought (other programs may use
+        // the instance): its own entry in Apps & features removes it
+        if (record.SqlInstance is { } instance)
+            Console.WriteLine($"  SQL Server's instance {instance} stays, with its databases: Apps & features removes it (Microsoft SQL Server).");
         return 0;
     }
 

@@ -1,8 +1,8 @@
 # Uninstalling what the Packager installs
 
 Every desktop installer the Packager writes can be removed again. By default, an uninstall removes everything the
-installation put on the machine; asked to, it keeps the installation's data (its ProgramData and registry settings, and
-SQL Server's databases) for a later install.
+installation put on the machine; asked to, it keeps the installation's data (its ProgramData and registry settings)
+for a later install. SQL Server is the exception: it stays, as on Windows (see [SQL Server](#sql-server)).
 
 Phone, tablet and headset apps live in their sandbox, and the system removes them with their data.
 
@@ -28,11 +28,9 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
     (`%LOCALAPPDATA%\<Product>`, `~/Library/Caches/<Product>`). What it starts writes there, not into wpfrun's shared
     folders, so the uninstaller finds it.
   - On macOS, the startup agent is booted out of every logged-in session.
-- **SQL Server's container** (macOS, Linux) is removed. Its databases stay.
-- **The SQL Server Browser** (macOS, Linux) is stopped and removed, with this installation's line in the instances
-  file every installation's browser reads (`/Library/Application Support/WpfWebGpu/SqlBrowser`,
-  `/var/lib/wpfwebgpu/sqlbrowser`). The browser answers UDP 1434 as Windows' SQL Server Browser does, so a
-  connection string naming the instance (`(local)\SQLEXPRESS`) finds the container's port. It runs as `nobody`.
+- **The SQL Server Browser** (macOS, Linux), the installation's: it answers UDP 1434 as Windows' SQL Server Browser
+  does, so a connection string naming an instance (`(local)\SQLEXPRESS`) finds its port. It runs as `nobody`. Every
+  installation's browser answers for every instance; the one holding the port answers.
 
 ## The full uninstall (the default), besides
 
@@ -52,17 +50,33 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
     installation to `nobody`. The uninstall deletes them where no daemon still runs as one and macOS lets it: in a
     terminal, `sysadminctl` asks for the administrator's password. Otherwise they are left hidden, of no password
     and no shell, and the command that removes them is printed.
-- **SQL Server:**
-  - **Windows:** the instance the installation installed is uninstalled by SQL Server's own setup, with its databases.
-    An instance that was there before is left alone.
-  - **macOS:** the databases' volume and the image go. Apple's `container` goes too, where nothing else uses it (no
-    other installation's database, no container, no image left).
-  - **Linux:** the volume, the image and the password go. The SQL Server package depends on the installation's, so
-    `apt remove` or `apt purge` of the installation takes it along.
 - **WPE WebKit on Linux:** the packages the install added are removed by the package manager that added them (apt,
   dnf, zypper or pacman), where no other installation's WPE source is left. That means WPE itself, Debian's keyring,
   and the libraries pinned for it; packages the machine had before are not touched.
 - **The inotify limits** (`/etc/sysctl.d/60-<product>.conf`) on Linux.
+
+## SQL Server
+
+An installation that brings SQL Server brings an instance of the name its configuration gives (`SQLEXPRESS2025`,
+say). There is one instance of a name on a machine, shared by every installation that names it, as on Windows: a second
+product's setup finds the instance there and uses it. Uninstalling an installation leaves the instance and its
+databases, as uninstalling a product on Windows leaves the SQL Server Express it brought. The instance has an
+uninstall of its own:
+
+| | The instance | Removed by |
+|---|---|---|
+| Windows | Microsoft's SQL Server Express, the named instance | its entry in Apps & features (Microsoft SQL Server) |
+| macOS | the daemon `com.wpfwebgpu.sqlserver.<instance>`, running the container `sqlserver-<instance>` in Apple's `container`; its files in `/Library/Application Support/WpfWebGpu/SqlServer/<INSTANCE>/` | `sudo '/Library/Application Support/WpfWebGpu/SqlServer/<INSTANCE>/uninstall.sh'` |
+| Linux | the package `wpfwebgpu-sqlserver-<instance>` (the unit, the container `sqlserver-<instance>` in Podman), its password, port and volume in `/etc/wpfwebgpu/sqlserver/<instance>.env` | `apt remove` (the databases kept) or `apt purge`; from the `.tar.gz`, `/etc/wpfwebgpu/sqlserver/<instance>-uninstall.sh` |
+
+- **The port** is the one the installation's configuration gives (1433) where it is free, else the next free one, as a
+  named instance on Windows takes a port of its own. Clients naming the instance find it through the SQL Server
+  Browser; the port is in the instance's `sqlserver.txt` (macOS, readable by administrators) or `.env` (Linux, root).
+- **Its own uninstall** removes the databases and the password too, unless `--keep-data` is given (on Linux, unless
+  it is an `apt remove`). The image goes where no other instance needs it, and on macOS Apple's `container` goes too,
+  where nothing else uses it (no other instance, no container, no image left).
+- **Earlier versions** brought an installation's own SQL Server (`<id>-sqlserver` on macOS, `<pkg>-sqlserver` on
+  Linux). Upgrading takes it over as the instance, with its password and databases.
 
 ### What the Windows installer records
 

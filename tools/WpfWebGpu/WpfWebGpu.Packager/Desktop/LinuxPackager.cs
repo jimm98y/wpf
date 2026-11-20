@@ -108,6 +108,12 @@ public static partial class LinuxPackager
             // the service manager: the services as registered, installed into the machine's state on every install, and
             // its daemon, root, which starts and stops them for callers that are not
             tar.AddText($"{root}/services.json", DesktopCommon.ServiceDatabase(manifest, root, sv => UnitName(pkg, sv.Name), Host(manifest, pkg, root, state)), executable: false);
+            // the SQL Server Browser, for the SQL Server instance the installation names (SqlServer.cs)
+            if (sqlServer)
+            {
+                tar.AddText($"/lib/systemd/system/{SqlBrowserUnitName(pkg)}.service", SqlBrowserUnit(manifest), executable: false);
+                units.Add(($"{SqlBrowserUnitName(pkg)}.service", true));
+            }
             if (manifest.Services.Count > 0)
             {
                 tar.AddText($"/lib/systemd/system/{pkg}-scm.service", SystemUnit(manifest, pkg, root, state, "scm", "service manager"), executable: false);
@@ -179,7 +185,7 @@ public static partial class LinuxPackager
             tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg),
                 (sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : "") + (webView ? WebViewInstallStep(pkg, WebViewRecord(state)) : "")), executable: true);
             tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units, maskedUnits,
-                sqlServer ? SqlServerUninstallStep(arch, pkg) : "", webView), executable: true);
+                sqlServer ? SqlServerUninstallStep(manifest) : "", webView), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
             if (sqlServer)
             {
@@ -377,7 +383,7 @@ public static partial class LinuxPackager
         Maintainer: {(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : manifest.Product.Name)} <noreply@localhost>
         Installed-Size: {Math.Max(1, bytes / 1024)}
         Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu78 | libicu77 | libicu76 | libicu75 | libicu74 | libicu72 | libicu70 | libicu67 | libicu66, acl
-        Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1{(sqlServer ? ", " + SqlServerPackageName(pkg) : "")}{(webView ? ", debian-archive-keyring, " + WpePackages.Replace(" ", ", ") : "")}
+        Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1{(sqlServer ? ", " + SqlServerPackageName(manifest) : "")}{(webView ? ", debian-archive-keyring, " + WpePackages.Replace(" ", ", ") : "")}
         Section: misc
         Priority: optional
         Description: {manifest.Product.Name}
