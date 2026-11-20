@@ -6,8 +6,9 @@
 // MFVideoRenderer.cs) presents into the HWND it was given, kept here per window as a texture of the process's device
 // (ExternalImage.cs: written in place, its version bumped each frame) with the rectangle of the window's client area it
 // fills. The window systems draw it over the window it belongs to: WinForms' hosts through an embedded scene
-// (WinFormsInterop/host/VideoSurfaceScene.cs), each frame a new version they present on. Nothing is drawn of a window
-// none of them knows.
+// (WinFormsInterop/host/VideoSurfaceScene.cs), each frame a new version they present on; WPF's compositor over the window
+// it composites (EmbeddedContent.Compose), a render posted to the window's dispatcher for each (PresentationCore's
+// MediaContext). Nothing is drawn of a window none of them knows.
 //
 
 using System;
@@ -32,6 +33,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             public float Aspect = 1;
             public uint Border;
             public bool Visible = true;
+            /// <summary>Bumped with each of its frames and changes of place.</summary>
+            public int Version;
+        }
+
+        /// <summary>The window's own version (0 of none): what a compositor presents on.</summary>
+        public static int VersionOf(IntPtr hwnd) { lock (s_lock) return s_surfaces.TryGetValue(hwnd, out var s) ? s.Version : 0; }
+
+        /// <summary>The window system told of a change (WPF's: a render of the window's posted; WinForms' hosts poll <see cref="Version"/>).</summary>
+        private static void Changed(IntPtr hwnd)
+        {
+            Interlocked.Increment(ref s_version);
+            try { (AppContext.GetData("WpfWebGpu.Video.FrameArrived") as Action<IntPtr>)?.Invoke(hwnd); }
+            catch (Exception) { }
         }
 
         private static readonly Dictionary<IntPtr, Surface> s_surfaces = new();
@@ -81,11 +95,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                         wgpuQueueWriteTexture(ctx.Queue, &dst, p, (nuint)(width * height * 4), &layout, &size);
                     }
                     s.Image.Bump();
+                    s.Version++;
                 }
                 // (a texture of another size: let go of once no frame in flight draws it -- the renderers key what they
                 // made of it by its id, and keep it no longer than its last draw)
                 _ = retired;
-                Interlocked.Increment(ref s_version);
+                Changed(hwnd);
             }
             finally { ProcessGpu.Release(ctx); }
         }
@@ -97,15 +112,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             {
                 if (!s_surfaces.TryGetValue(hwnd, out var s)) s_surfaces[hwnd] = s = new Surface { Hwnd = hwnd };
                 s.Placed = placed; s.X = x; s.Y = y; s.Width = w; s.Height = h; s.Preserve = preserve; s.Border = border; s.Visible = visible;
+                s.Version++;
             }
-            Interlocked.Increment(ref s_version);
+            Changed(hwnd);
         }
 
         /// <summary>The window shows no video any more (its renderer shut down).</summary>
         public static void Remove(IntPtr hwnd)
         {
             lock (s_lock) s_surfaces.Remove(hwnd);
-            Interlocked.Increment(ref s_version);
+            Changed(hwnd);
         }
 
         /// <summary>The surfaces now, each its window, texture and place.</summary>

@@ -509,6 +509,25 @@ public static class Screenshots
         Console.Error.Write(lines.ToString());
     }
 
+    /// <summary>The UI thread's compositor's composed frame (WgpuInterop's WpfCompositionSink.CaptureComposed), as RGBA.</summary>
+    private static bool ComposedFrame(IntPtr hwnd, out byte[]? rgba, out int width, out int height)
+    {
+        rgba = null; width = 0; height = 0;
+        try
+        {
+            var sink = Type.GetType("Microsoft.Wpf.Interop.WebGpu.Composition.Protocol.WpfCompositionSink, Microsoft.Wpf.Interop.WebGpu");
+            object? current = sink?.GetProperty("Current", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            MethodInfo? capture = sink?.GetMethod("CaptureComposed", BindingFlags.Public | BindingFlags.Instance, null,
+                new[] { typeof(IntPtr), typeof(int).MakeByRefType(), typeof(int).MakeByRefType() }, null);
+            if (current == null || capture == null) return false;
+            object?[] args = { hwnd, 0, 0 };
+            rgba = capture.Invoke(current, args) as byte[];
+            width = (int)args[1]!; height = (int)args[2]!;
+            return rgba != null;
+        }
+        catch (Exception) { return false; }
+    }
+
     private static void SaveWpf(HwndSource source, string path)
     {
         if (Environment.GetEnvironmentVariable("WPFRUN_DUMP_ADORNERS") == "1")
@@ -517,6 +536,20 @@ public static class Screenshots
         // At the window's own DPI, so the picture is the window's physical pixels (a 200% display
         // got a half-size picture of a window that is drawn 1:1).
         DpiScale dpi = VisualTreeHelper.GetDpi(root);
+        // The composed frame where the compositor has it (this UI thread's sink): what is composited outside WPF's
+        // visual tree too -- a WindowsFormsHost's control, a video renderer's frames -- which a RenderTargetBitmap
+        // of the root does not have.
+        if (ComposedFrame(source.Handle, out byte[]? rgba, out int cw, out int ch) && rgba != null && cw > 0 && ch > 0)
+        {
+            var bgra = new byte[rgba.Length];
+            for (int i = 0; i + 3 < rgba.Length; i += 4) { bgra[i] = rgba[i + 2]; bgra[i + 1] = rgba[i + 1]; bgra[i + 2] = rgba[i]; bgra[i + 3] = rgba[i + 3]; }
+            var frame = BitmapSource.Create(cw, ch, dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Bgra32, null, bgra, cw * 4);
+            var png = new PngBitmapEncoder();
+            png.Frames.Add(BitmapFrame.Create(frame));
+            using var file = File.Create(path);
+            png.Save(file);
+            return;
+        }
         var rtb = new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX), (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
             dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
         rtb.Render(root);

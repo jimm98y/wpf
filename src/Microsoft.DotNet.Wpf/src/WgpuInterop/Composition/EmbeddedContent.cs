@@ -175,6 +175,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>Return a render root that composites the hosted scenes ON TOP of the WPF root (each
         /// translated to its device position, scaled to device pixels, and clipped to the host rect).
         /// Returns <paramref name="wpfRoot"/> unchanged when nothing is hosted.</summary>
+        internal static SceneVisual Compose(SceneVisual wpfRoot, IntPtr window, int width, int height)
+        {
+            var root = Compose(wpfRoot, window);
+            // the video shown in the window itself (Media Foundation's video renderer of its handle), over all of it
+            if (window == IntPtr.Zero) return root;
+            foreach (var s in VideoSurfaces.Snapshot())
+            {
+                if (s.Hwnd != window) continue;
+                if (ReferenceEquals(root, wpfRoot)) { root = new SceneVisual(); root.Children.Add(wpfRoot); }
+                root.Children.Add(VideoSurfaces.SceneOf(s, width, height));
+            }
+            return root;
+        }
+
         internal static SceneVisual Compose(SceneVisual wpfRoot, IntPtr window)
         {
             lock (s_lock)

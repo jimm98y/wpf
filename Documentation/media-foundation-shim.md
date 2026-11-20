@@ -507,7 +507,9 @@ in. Its node, and its branch's source node, carry its device manager (with the s
 loader sets them. Each frame is shown at its presentation time: converted to BGRA and written into a texture of the
 process's device kept for the window (`Composition/VideoSurfaces.cs`), letterboxed of the picture's shape on the border's
 color. The window system draws it over the window: a WinForms control's host through an embedded scene
-(`WinFormsInterop/host/VideoSurfaceScene.cs`), each frame a version it presents on. Its display control
+(`WinFormsInterop/host/VideoSurfaceScene.cs`), each frame a version it presents on; a WPF window's compositor over its
+composited root (`EmbeddedContent.Compose`), each frame a render posted to the window's dispatcher (PresentationCore's
+`MediaContext`, through the AppContext hook `WpfWebGpu.Video.FrameArrived`). Its display control
 (MR_VIDEO_RENDER_SERVICE's `IMFVideoDisplayControl`) has the native size and aspect, the window, the source and
 destination rectangles, the aspect mode (PreservePicture | PreservePixel), the border, `RepaintVideo` and
 `GetCurrentImage`.
@@ -771,8 +773,7 @@ on macOS and in the Ubuntu VM.
 - The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
   of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
   tolerance (by choice).
-- The video renderer into a WPF window's handle (an `HwndSource`'s, an `HwndHost`'s child): WinForms controls only so far;
-  and its frames converted on the GPU (`Direct3D/D3DContext.Nv12.cs`) rather than in managed code.
+- The video renderer into an `HwndHost`'s child window; and its frames converted on the GPU rather than in managed code.
 - Audio capture (`MFEnumDeviceSources` of `AUDCAP`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).

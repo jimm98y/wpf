@@ -42,6 +42,18 @@ namespace System.Windows.Media
             }
 
             EventTrace.EasyTraceEvent(EventTrace.Keyword.KeywordGraphics, EventTrace.Event.WClientQPCFrequency, _perfCounterFreq, qpcCurrentTime);
+
+            // Off Windows, Media Foundation's video renderer of a WPF window's handle shows its frames through the window's
+            // compositor (WgpuInterop's Composition/VideoSurfaces.cs): each one a render of the window's, which an idle
+            // window would not make on its own.
+            AppContext.SetData("WpfWebGpu.Video.FrameArrived", (Action<IntPtr>)VideoFrameArrived);
+        }
+
+        private static void VideoFrameArrived(IntPtr hwnd)
+        {
+            if (System.Windows.Interop.HwndSource.FromHwnd(hwnd) is not { } source || source.IsDisposed) return;
+            Dispatcher d = source.Dispatcher;
+            d.BeginInvoke(DispatcherPriority.Render, (Action)(() => { if (!source.IsDisposed) From(d).PostRender(); }));
         }
 
         /// <summary>

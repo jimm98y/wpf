@@ -479,6 +479,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // ---- presentation ------------------------------------------------------------
 
         /// <summary>Render and present every target that has a window and a root visual.</summary>
+        private readonly Dictionary<IntPtr, int> _videoVersions = new();
+
         public void RenderTargets()
         {
             // A last commit can still be queued behind Dispose (the channel commits as it closes);
@@ -549,8 +551,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             bool settling = _settleFrame;
             _settleFrame = false;
+            // a window's video (Media Foundation's renderer of its handle) a new frame: presented
+            bool videoChanged = false;
+            foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
+            {
+                IntPtr vh = (IntPtr)tk.Value.Hwnd;
+                int vv = VideoSurfaces.VersionOf(vh);
+                if (_videoVersions.TryGetValue(vh, out int was) ? was != vv : vv != 0) { videoChanged = true; _videoVersions[vh] = vv; }
+            }
             if (s_skipUnchanged && !sigChanged && !_engine.Dirty && !_engine.HasContentBrushes
-                && _presentedAllTargets && !settling)
+                && _presentedAllTargets && !settling && !videoChanged)
             {
                 _renderer!.EndFrame();
                 _perfSkipped++;
@@ -900,7 +910,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 // A stereo pair (a headset's window): the window twice side by side, the left half seen with
                 // the left eye and the right half with the right -- the same 2D, each Viewport3D from its own
                 // eye (SceneVisual.StereoEye). Drawn whole: partial redraw keeps one picture of the window.
-                SceneVisual scene = EmbeddedContent.Compose(root, ts.Hwnd);
+                SceneVisual scene = EmbeddedContent.Compose(root, ts.Hwnd, t.Width, t.Height);
                 var pair = new SceneVisual();
                 var left = new SceneVisual { StereoEye = 1, Clip = new Rect(0, 0, t.Width, t.Height) };
                 left.Children.Add(scene);
@@ -912,12 +922,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             else if (ts.Transparent && IsGlBackend)
             {
-                _renderer!.RenderSceneToView(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+                _renderer!.RenderSceneToView(EmbeddedContent.Compose(root, ts.Hwnd, t.Width, t.Height), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             }
             else
             {
                 ts.Partial ??= new WgpuSceneRenderer.PartialTarget(_renderer!, $" wpf 0x{t.Hwnd:x}") { SnapScroll = UseRenderThread };
-                ts.Partial.Render(EmbeddedContent.Compose(root, ts.Hwnd), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
+                ts.Partial.Render(EmbeddedContent.Compose(root, ts.Hwnd, t.Width, t.Height), view, ts.RenderFormat, t.Width, t.Height, clear, ts.Transparent);
             }
             _perfRenderOnlyTicks += System.Diagnostics.Stopwatch.GetTimestamp() - ta;
 
@@ -933,14 +943,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             // is occluded/off-screen (present never succeeds in a detached/headless run). Env-gated by
             // WPF_WEBGPU_SINK_DUMP; fires once around frame 90 so animation has settled.
             if (s_dumpPath != null && AcquiredFrames == 40)
-                VerifyOffscreen(EmbeddedContent.Compose(root, ts.Hwnd), t, AcquiredFrames);
+                VerifyOffscreen(EmbeddedContent.Compose(root, ts.Hwnd, t.Width, t.Height), t, AcquiredFrames);
             // On demand: a file named <dump>.now makes the next frame dump its picture and its scene
             // tree (<dump>_<frame>.tree.txt), then is deleted -- for an app that has gone idle long
             // before frame 40.
             if (s_dumpPath != null && System.IO.File.Exists(s_dumpPath + ".now"))
             {
                 try { System.IO.File.Delete(s_dumpPath + ".now"); } catch (System.IO.IOException) { }
-                SceneVisual composed = EmbeddedContent.Compose(root, ts.Hwnd);
+                SceneVisual composed = EmbeddedContent.Compose(root, ts.Hwnd, t.Width, t.Height);
                 DumpTree(composed, System.IO.Path.Combine(System.IO.Path.GetDirectoryName(s_dumpPath) ?? ".",
                     System.IO.Path.GetFileNameWithoutExtension(s_dumpPath) + "_" + AcquiredFrames.ToString("000") + ".tree.txt"));
                 VerifyOffscreen(composed, t, AcquiredFrames);
@@ -995,7 +1005,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     Log(_engine.DumpOps());
                 }
                 if (s_logPath != null && (PresentedFrames == 30 || PresentedFrames == 90 || PresentedFrames == 150))
-                    VerifyOffscreen(EmbeddedContent.Compose(root, (IntPtr)t.Hwnd), t, PresentedFrames);
+                    VerifyOffscreen(EmbeddedContent.Compose(root, (IntPtr)t.Hwnd, t.Width, t.Height), t, PresentedFrames);
             }
 
             wgpuTextureViewRelease(view);
@@ -1017,7 +1027,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         /// usage declared at surface creation and so cannot be turned on after the fact.
         /// </summary>
         /// <returns>RGBA bytes, or null when there is no window target to render.</returns>
-        public byte[]? CaptureComposed(out int width, out int height)
+        public byte[]? CaptureComposed(out int width, out int height) => CaptureComposed(IntPtr.Zero, out width, out height);
+
+        /// <summary>The composed frame of the window <paramref name="hwnd"/>'s target (zero: the first window target).</summary>
+        public byte[]? CaptureComposed(IntPtr hwnd, out int width, out int height)
         {
             width = 0;
             height = 0;
@@ -1030,7 +1043,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                 foreach (KeyValuePair<uint, MilTarget> kv in _engine.Targets)
                 {
                     MilTarget t = kv.Value;
-                    if (t.IsBitmap || t.Width <= 0 || t.Height <= 0)
+                    if (t.IsBitmap || t.Width <= 0 || t.Height <= 0 || hwnd != IntPtr.Zero && (IntPtr)t.Hwnd != hwnd)
                         continue;
 
                     SceneVisual? root = _engine.VisualByHandle(t.RootHandle);
@@ -1040,7 +1053,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
                     width = t.Width;
                     height = t.Height;
                     return _renderer.RenderToRgba(
-                        EmbeddedContent.Compose(root, (IntPtr)t.Hwnd),
+                        EmbeddedContent.Compose(root, (IntPtr)t.Hwnd, t.Width, t.Height),
                         t.Width, t.Height, t.ClearColor, srgbOutput: true);
                 }
             }
