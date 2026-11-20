@@ -1,18 +1,17 @@
 # Uninstalling what the Packager installs
 
-Every desktop installer the Packager writes can be removed again, in two ways:
-- **Ordinary uninstall:** keeps the installation's data, as Windows keeps an application's ProgramData and registry
-  settings, so a later install finds them.
-- **Full uninstall:** removes everything the installation put on the machine.
+Every desktop installer the Packager writes can be removed again. By default, an uninstall removes everything the
+installation put on the machine; asked to, it keeps the installation's data (its ProgramData and registry settings, and
+SQL Server's databases) for a later install.
 
 Phone, tablet and headset apps live in their sandbox, and the system removes them with their data.
 
-| | Uninstall, data kept | Everything |
+| | Everything (the default) | Data kept |
 |---|---|---|
-| **Windows** (`Setup.exe`) | Apps & features, or `uninstall.exe /uninstall`: asks whether the data goes too | `uninstall.exe /uninstall /all` (`/quiet` for no questions) |
-| **macOS** (`.pkg`) | `/Applications/<Product>/Uninstall <Product>.app`, Keep Data | the same, Remove Everything, or `sudo "/Library/Application Support/<Product>/uninstall.sh" --all` |
-| **Linux** (`.deb`) | `apt remove <pkg>` | `apt purge <pkg>` |
-| **Linux** (`.tar.gz`) | `sudo /opt/<Product>/uninstall.sh` | `sudo /opt/<Product>/uninstall.sh --all` |
+| **Windows** (`Setup.exe`) | Apps & features, or `uninstall.exe /uninstall`: it asks, yes the default (`/quiet` for no questions) | `uninstall.exe /uninstall /keepdata` |
+| **macOS** (`.pkg`) | `/Applications/<Product>/Uninstall <Product>.app`: Remove Everything, the default; or `sudo "/Library/Application Support/<Product>/uninstall.sh"` | the same app, Keep Data; or `uninstall.sh --keep-data` |
+| **Linux** (`.deb`) | `apt purge <pkg>` | `apt remove <pkg>` (Debian's own distinction: remove keeps, purge removes all) |
+| **Linux** (`.tar.gz`) | `sudo /opt/<Product>/uninstall.sh` | `sudo /opt/<Product>/uninstall.sh --keep-data` |
 
 ## Every uninstall
 
@@ -31,18 +30,18 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
   - On macOS, the startup agent is booted out of every logged-in session.
 - **SQL Server's container** (macOS, Linux) is removed. Its databases stay.
 
-## The full uninstall, besides
+## The full uninstall (the default), besides
 
 - **The machine's state:**
   - **Windows:** the registry values the installation set and the keys it made, the ProgramData files it wrote and the
     folders it made, and the access rules it added for the service accounts.
   - **macOS and Linux:** `state/`, the stand-in registry and ProgramData, with the http.sys reservations kept there.
 - **The service accounts** it made on macOS and Linux (`_wpfnetworkservice`, `wpf-networkservice` and the others),
-  where no other installation's service still runs as one. They stay on an ordinary uninstall: the state they own
+  where no other installation's service still runs as one. They stay when the data is kept: the state they own
   stays too.
   - **macOS** deletes a user record only for a process with Full Disk Access, or one using an administrator's own
     credentials. Root alone, the installer's scripts included, gets `eDSPermissionError` (checked on macOS 26).
-    `uninstall.sh --all` run with sudo in a terminal asks for the administrator's password (`sysadminctl
+    `uninstall.sh` run with sudo in a terminal asks for the administrator's password (`sysadminctl
     -deleteUser`). Otherwise it leaves the accounts, hidden, of no password and no shell, and prints the command
     that removes them.
 - **SQL Server:**
@@ -60,7 +59,7 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
 ### What the Windows installer records
 
 A record of what it put on the machine is kept in `%ProgramData%\WpfWebGpu\installations\<id>.json`. It outlives an
-ordinary uninstall, so a full one after a reinstall still knows what the first install made. An upgrade's record grows
+uninstall that keeps the data, so a full one after a reinstall still knows what the first install made. An upgrade's record grows
 and never claims what the machine had before it.
 
 ## Left on purpose

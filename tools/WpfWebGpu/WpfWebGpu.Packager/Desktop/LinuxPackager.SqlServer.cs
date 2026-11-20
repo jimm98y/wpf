@@ -195,7 +195,7 @@ public static partial class LinuxPackager
     }
 
     // uninstall.sh's part: the service stopped and its container gone (its files go with the rest of the list); the
-    // databases and the password kept unless --all
+    // databases and the password kept with --keep-data
     private static string SqlServerUninstallStep(string arch, string pkg)
     {
         var sql = SqlServerImage.ForLinux(arch);
@@ -204,7 +204,7 @@ public static partial class LinuxPackager
             if [ -f /lib/systemd/system/{{spkg}}.service ]; then
               [ -d /run/systemd/system ] && systemctl disable --now {{spkg}}.service 2>/dev/null || true
               command -v podman >/dev/null && podman rm -f -i {{spkg}} >/dev/null 2>&1 || true
-              if [ "$1" = "--all" ] && command -v podman >/dev/null; then
+              if [ -n "$ALL" ] && command -v podman >/dev/null; then
                 podman volume rm -f {{spkg}}-data >/dev/null 2>&1 || true
                 podman rmi -f {{sql.Image}} >/dev/null 2>&1 || true
                 rm -f /etc/{{pkg}}/sqlserver.env; rmdir /etc/{{pkg}} 2>/dev/null || true

@@ -12,7 +12,7 @@
 // Its postinstall starts container (which fetches its own Linux kernel then), pulls Microsoft's image -- carried by
 // neither: a Linux system and kernel are GPL -- and starts the daemon, which keeps the container running (container's
 // own run command does not stop the container when it is ended) and stops it when launchd stops the daemon. The
-// databases are in a volume of container's; an uninstall keeps them, and the password with them, unless --all.
+// databases are in a volume of container's; an uninstall removes them, and the password, unless --keep-data.
 // The daemon's label is outside the product's <id>.* -- which an upgrade of the installation stops and removes --
 // so that the database server outlives the installation's own upgrades.
 
@@ -120,20 +120,20 @@ public static partial class MacPackager
 
         """;
 
-    // uninstall.sh's part: the daemon and its container gone; the databases and the password kept unless --all
+    // uninstall.sh's part: the daemon and its container gone; the databases and the password kept with --keep-data
     private static string SqlServerUninstall(string id, string root) => $$"""
         if [ -f /Library/LaunchDaemons/{{SqlServerLabel(id)}}.plist ]; then
           launchctl bootout system/{{SqlServerLabel(id)}} >/dev/null 2>&1 || true
           rm -f /Library/LaunchDaemons/{{SqlServerLabel(id)}}.plist
           HOME=/var/root /usr/local/bin/container delete --force {{SqlServerLabel(id)}} >/dev/null 2>&1 || true
-          if [ "$1" = "--all" ]; then
+          if [ -n "$ALL" ]; then
             HOME=/var/root /usr/local/bin/container volume delete {{SqlServerLabel(id)}}-data >/dev/null 2>&1 || true
             HOME=/var/root /usr/local/bin/container image delete {{SqlServerImage.X64.Image}} >/dev/null 2>&1 || true
           fi
           pkgutil --forget "{{id}}.sqlserver" >/dev/null 2>&1 || true
-          # Apple's container, which the installation brought for it: gone too with --all where nothing else uses it
+          # Apple's container, which the installation brought for it: gone too where nothing else uses it
           # (no other installation's database daemon, no container, no image left)
-          if [ "$1" = "--all" ] && [ -x /usr/local/bin/container ] && ! ls /Library/LaunchDaemons/*-sqlserver.plist >/dev/null 2>&1 \
+          if [ -n "$ALL" ] && [ -x /usr/local/bin/container ] && ! ls /Library/LaunchDaemons/*-sqlserver.plist >/dev/null 2>&1 \
              && [ -z "$(HOME=/var/root /usr/local/bin/container list --all --quiet 2>/dev/null)" ] \
              && [ -z "$(HOME=/var/root /usr/local/bin/container image list --quiet 2>/dev/null)" ]; then
             HOME=/var/root /usr/local/bin/container system stop >/dev/null 2>&1 || true

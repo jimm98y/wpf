@@ -319,8 +319,8 @@ public static partial class MacPackager
         File.WriteAllText(Path.Combine(bundle, "MacOS", "uninstall"), $$"""
             #!/bin/sh
             # Uninstall {{product}}: asked first, then uninstall.sh run as an administrator
-            choice=$(osascript -e 'button returned of (display dialog "Remove {{q}} from this Mac?\n\nIts settings and data (the registry, ProgramData{{(manifest.SqlServer.Include ? ", the SQL Server databases" : "")}}) can be kept for a later install, or removed with it." buttons {"Cancel", "Keep Data", "Remove Everything"} default button "Keep Data" cancel button "Cancel" with title "Uninstall {{q}}" with icon caution)' 2>/dev/null) || exit 0
-            arg=""; [ "$choice" = "Remove Everything" ] && arg=" --all"
+            choice=$(osascript -e 'button returned of (display dialog "Remove {{q}} from this Mac?\n\nIts settings and data (the registry, ProgramData{{(manifest.SqlServer.Include ? ", the SQL Server databases" : "")}}) can be kept for a later install, or removed with it." buttons {"Cancel", "Keep Data", "Remove Everything"} default button "Remove Everything" cancel button "Cancel" with title "Uninstall {{q}}" with icon caution)' 2>/dev/null) || exit 0
+            arg=""; [ "$choice" = "Keep Data" ] && arg=" --keep-data"
             osascript -e "do shell script \"'{{root}}/uninstall.sh'$arg\" with administrator privileges" >/dev/null 2>&1 \
               && osascript -e 'display dialog "{{q}} was removed." buttons {"OK"} default button "OK" with title "Uninstall {{q}}"' >/dev/null 2>&1
             exit 0
@@ -484,10 +484,12 @@ public static partial class MacPackager
     internal static string Uninstall(string root, string product, string id, List<string> daemons, bool sqlServer = false) => $$"""
         #!/bin/sh
         # Removes {{product}}: its services, its apps, its files, and its caches and logs (the machine's and each user's).
-        # The machine's state (state/: the registry and ProgramData) is kept unless --all is given, as Windows keeps
-        # ProgramData after an uninstall; --all also removes the service accounts it made, and its SQL Server's
-        # databases (and Apple's container, where nothing else uses it). "Uninstall {{product}}.app" runs this.
+        # Everything else it put on the machine too, unless --keep-data is given (which keeps the machine's state --
+        # state/: the registry and ProgramData -- and SQL Server's databases, for a later install): the service
+        # accounts it made, its SQL Server's databases, Apple's container where nothing else uses it.
+        # "Uninstall {{product}}.app" runs this.
         if [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
+        ALL=1; for a in "$@"; do [ "$a" = --keep-data ] && ALL=; done
         {{(sqlServer ? SqlServerUninstall(id, root) : "")}}
         {{StopAll(root, product, id)}}
         # the startup agent out of every session it runs in, then its job file
@@ -499,7 +501,7 @@ public static partial class MacPackager
         {{Caches(product)}}
         rm -rf "/Library/Logs/{{product}}"
         for h in /Users/* /var/root; do [ -d "$h/Library/Logs/{{product}}" ] && rm -rf "$h/Library/Logs/{{product}}"; done
-        if [ "$1" = "--all" ]; then
+        if [ -n "$ALL" ]; then
           rm -rf "{{root}}"
           # the service accounts the installation made (the state they owned gone with it), where no other
           # installation's daemon still runs as one

@@ -4,12 +4,12 @@
 // WebGPU (runtime/: a private .NET and wpfrun), the way the same installation runs on macOS and Linux.
 //
 //   Setup.exe                 install (or upgrade)
-//   Setup.exe /uninstall      remove; asked whether the installation's data goes too (no: ProgramData and the registry's
-//                             values are kept, as Windows keeps an application's data)
-//   /uninstall /all           remove everything it put on the machine (InstallRecord.cs): its ProgramData, its
+//   Setup.exe /uninstall      remove everything it put on the machine (InstallRecord.cs): its ProgramData, its
 //                             registry values and keys, the access rules it added, the SQL Server instance it installed,
-//                             every user's caches and logs of it
-//   /quiet                    no prompt at the end, nor the questions (their defaults taken: data kept)
+//                             every user's caches and logs of it -- asked first, yes the default
+//   /uninstall /keepdata      remove it, ProgramData and the registry's values kept for a later install
+//                             (/all: everything, without asking)
+//   /quiet                    no prompt at the end, nor the questions (their defaults taken: everything removed)
 //   /sql, /nosql              the SQL Server it brings installed, or left out, without asking (SqlServer.cs)
 
 using System.ComponentModel;
@@ -256,8 +256,9 @@ internal static partial class Program
         SetupInfo info;
         using (var s = File.OpenRead(setupJson)) info = SetupInfo.Read(s);
         var record = InstallRecord.Load(info.Id);
-        bool all = s_args.Any(a => a.Equals("/all", StringComparison.OrdinalIgnoreCase)) || !s_quiet && !Console.IsInputRedirected && Ask(
-            $"Remove {info.Product}'s data too -- its ProgramData, its registry settings" + (record.SqlInstance != null ? $", SQL Server's instance {record.SqlInstance} and its databases" : "") + "? [y/N] ");
+        bool Flag(string f) => s_args.Any(a => a.Equals(f, StringComparison.OrdinalIgnoreCase));
+        bool all = Flag("/all") || !Flag("/keepdata") && (s_quiet || Console.IsInputRedirected || Ask(
+            $"Remove {info.Product}'s data too -- its ProgramData, its registry settings" + (record.SqlInstance != null ? $", SQL Server's instance {record.SqlInstance} and its databases" : "") + "? [Y/n] "));
         Console.WriteLine($"Removing {info.Product} from {root}" + (all ? ", with its data" : ""));
 
         // what runs: the services (those the installation registered, and those its programs created since, of its
@@ -298,7 +299,7 @@ internal static partial class Program
         Registry.LocalMachine.DeleteSubKeyTree($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{info.Id}", throwOnMissingSubKey: false);
         // this program and its folder go once it has ended
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{root}\"") { CreateNoWindow = true, UseShellExecute = false });
-        Console.WriteLine($"{info.Product} removed" + (all ? "." : " (ProgramData and the registry's values are kept; /uninstall /all removes them)."));
+        Console.WriteLine($"{info.Product} removed" + (all ? "." : " (ProgramData and the registry's values are kept; /uninstall removes them too)."));
         if (s_delayed > 0) Console.WriteLine($"  {s_delayed} files in use go when Windows restarts.");
         return 0;
     }
@@ -307,7 +308,7 @@ internal static partial class Program
     {
         Console.Write(question);
         string? answer = Console.ReadLine()?.TrimStart();
-        return answer != null && (answer.StartsWith('y') || answer.StartsWith('Y'));
+        return answer == null || !(answer.StartsWith('n') || answer.StartsWith('N'));
     }
 
     private static int s_delayed;

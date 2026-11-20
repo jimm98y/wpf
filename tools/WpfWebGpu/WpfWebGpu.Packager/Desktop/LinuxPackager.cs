@@ -222,9 +222,10 @@ public static partial class LinuxPackager
         string sqlServerStep, bool webView) => $$"""
         #!/bin/sh
         # Removes {{pkg}} as installed by install.sh: its services, its files, its caches and logs (the machine's and
-        # every user's). The machine's state ({{state}}) is kept unless --all is given, as Windows keeps ProgramData;
-        # --all also removes the service accounts it made and what it installed of WPE WebKit.
+        # every user's), and everything else it put on the machine: its state ({{state}}), the service accounts it
+        # made, what it installed of WPE WebKit -- unless --keep-data is given, which keeps the state for a later install.
         [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+        ALL=1; for a in "$@"; do [ "$a" = --keep-data ] && ALL=; done
         if [ -d /run/systemd/system ]; then :
         {{string.Concat(units.Select(u => $"  systemctl disable --now {u.Name} 2>/dev/null || true\n"))}}fi
         {{PreRmBody(units, root)}}
@@ -239,7 +240,7 @@ public static partial class LinuxPackager
         fi
         rm -rf "{{root}}"
         {{RemovedTogether(pkg, masked)}}
-        if [ "$1" = "--all" ]; then
+        if [ -n "$ALL" ]; then
         {{Purged(pkg, state, webView, background: false)}}
         fi
         echo "{{pkg}} removed"
@@ -264,7 +265,7 @@ public static partial class LinuxPackager
         command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q /usr/share/icons/hicolor || true
         """;
 
-    // purge's and --all's: the machine's state, the inotify limits, the service accounts (where no other unit runs as
+    // purge's and uninstall.sh's (unless --keep-data): the machine's state, the inotify limits, the service accounts (where no other unit runs as
     // one), what the install added of WPE WebKit
     private static string Purged(string pkg, string state, bool webView, bool background) => $$"""
         {{(webView ? Indent(WebViewPurge(pkg, WebViewRecord(state), background), "  ") : "")}}

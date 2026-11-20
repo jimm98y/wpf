@@ -121,7 +121,7 @@ public class PackagerTests
         Assert.Contains("rm -rf \"/Library/Application Support/P\"", un);   // --all: the state too
         Assert.Contains("launchctl bootout gui/", un);              // the startup agent out of the sessions it runs in
         Assert.Contains("dscl . -delete \"/Users/$a\"", un);       // --all: the service accounts
-        Assert.True(un.IndexOf("dscl . -delete", StringComparison.Ordinal) > un.IndexOf("if [ \"$1\" = \"--all\" ]", StringComparison.Ordinal));
+        Assert.True(un.IndexOf("dscl . -delete", StringComparison.Ordinal) > un.IndexOf("if [ -n \"$ALL\" ]", StringComparison.Ordinal));
         string withSql = WpfWebGpu.Packager.Desktop.MacPackager.Uninstall(root, product, id, new List<string>(), sqlServer: true);
         ShellSyntax(withSql);
         Assert.Contains("uninstall-container.sh -d", withSql);      // --all: Apple's container, where nothing else uses it
@@ -166,7 +166,7 @@ public class PackagerTests
         ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.Install("p", "/opt/P", state, none, new List<string>(), "", ""));
         Assert.Contains("systemd-run", postrm);                       // (apt's lock is dpkg's while postrm runs)
         Assert.True(postrm.IndexOf("userdel", StringComparison.Ordinal) > postrm.IndexOf("if [ \"$1\" = purge ]", StringComparison.Ordinal));
-        Assert.True(un.IndexOf("userdel", StringComparison.Ordinal) > un.IndexOf("if [ \"$1\" = \"--all\" ]", StringComparison.Ordinal));
+        Assert.True(un.IndexOf("userdel", StringComparison.Ordinal) > un.IndexOf("if [ -n \"$ALL\" ]", StringComparison.Ordinal));
     }
 
     [Fact]
