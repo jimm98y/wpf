@@ -51,6 +51,10 @@ namespace System.Windows.Media
 
         private static void VideoFrameArrived(IntPtr hwnd)
         {
+            // (a child window of the app's in a WPF window, an HwndHost's: the window it is in)
+            if (System.Windows.Interop.HwndSource.FromHwnd(hwnd) is null
+                && AppContext.GetData("WpfWebGpu.Wpf.HostedPlacement") is Func<IntPtr, long[]> placement && placement(hwnd) is { Length: > 0 } p)
+                hwnd = (IntPtr)p[0];
             if (System.Windows.Interop.HwndSource.FromHwnd(hwnd) is not { } source || source.IsDisposed) return;
             Dispatcher d = source.Dispatcher;
             d.BeginInvoke(DispatcherPriority.Render, (Action)(() => { if (!source.IsDisposed) From(d).PostRender(); }));

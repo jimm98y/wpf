@@ -180,11 +180,23 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
             var root = Compose(wpfRoot, window);
             // the video shown in the window itself (Media Foundation's video renderer of its handle), over all of it
             if (window == IntPtr.Zero) return root;
+            Func<IntPtr, long[]?>? childPlacement = null;
             foreach (var s in VideoSurfaces.Snapshot())
             {
-                if (s.Hwnd != window) continue;
+                SceneVisual scene;
+                if (s.Hwnd == window) scene = VideoSurfaces.SceneOf(s, width, height);
+                else
+                {
+                    // a child window of the window's (an HwndHost's): where it is, in the window's units scaled to the target's pixels
+                    childPlacement ??= AppContext.GetData("WpfWebGpu.Wpf.HostedPlacement") as Func<IntPtr, long[]?>;
+                    if (childPlacement?.Invoke(s.Hwnd) is not { Length: >= 7 } p || (IntPtr)p[0] != window || p[5] <= 0 || p[6] <= 0) continue;
+                    float sx = (float)width / p[5], sy = (float)height / p[6];
+                    var inner = VideoSurfaces.SceneOf(s, (int)p[3], (int)p[4]);
+                    scene = new SceneVisual { Offset = new Vector2(p[1] * sx, p[2] * sy), Transform = Matrix3x2.CreateScale(sx, sy) };
+                    scene.Children.Add(inner);
+                }
                 if (ReferenceEquals(root, wpfRoot)) { root = new SceneVisual(); root.Children.Add(wpfRoot); }
-                root.Children.Add(VideoSurfaces.SceneOf(s, width, height));
+                root.Children.Add(scene);
             }
             return root;
         }

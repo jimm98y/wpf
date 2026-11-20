@@ -479,7 +479,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
         // ---- presentation ------------------------------------------------------------
 
         /// <summary>Render and present every target that has a window and a root visual.</summary>
-        private readonly Dictionary<IntPtr, int> _videoVersions = new();
+        private int _videoVersion;
 
         public void RenderTargets()
         {
@@ -551,14 +551,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition.Protocol
             }
             bool settling = _settleFrame;
             _settleFrame = false;
-            // a window's video (Media Foundation's renderer of its handle) a new frame: presented
-            bool videoChanged = false;
-            foreach (KeyValuePair<uint, MilTarget> tk in _engine.Targets)
-            {
-                IntPtr vh = (IntPtr)tk.Value.Hwnd;
-                int vv = VideoSurfaces.VersionOf(vh);
-                if (_videoVersions.TryGetValue(vh, out int was) ? was != vv : vv != 0) { videoChanged = true; _videoVersions[vh] = vv; }
-            }
+            // a video's new frame (Media Foundation's renderer of a window's handle, or of a child window's in it): presented
+            int videoVersion = VideoSurfaces.Version;
+            bool videoChanged = videoVersion != _videoVersion;
+            _videoVersion = videoVersion;
             if (s_skipUnchanged && !sigChanged && !_engine.Dirty && !_engine.HasContentBrushes
                 && _presentedAllTargets && !settling && !videoChanged)
             {

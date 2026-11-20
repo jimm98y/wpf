@@ -18,7 +18,7 @@ using static Microsoft.Wpf.Interop.WebGpu.Wgpu;
 
 namespace Microsoft.Wpf.Interop.WebGpu.Composition
 {
-    internal static unsafe class VideoSurfaces
+    internal static unsafe partial class VideoSurfaces
     {
         internal sealed class Surface
         {
@@ -62,8 +62,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         public static void Present(IntPtr hwnd, ReadOnlySpan<byte> bgra, int width, int height, float aspect)
         {
             if (hwnd == IntPtr.Zero || width <= 0 || height <= 0 || bgra.Length < width * height * 4) return;
-            var ctx = ProcessGpu.Acquire();
-            try
+            var ctx = Device();
             {
                 Surface s;
                 ExternalImage? retired = null;
@@ -102,7 +101,20 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
                 _ = retired;
                 Changed(hwnd);
             }
-            finally { ProcessGpu.Release(ctx); }
+
+        }
+
+        private static WgpuContext? s_ctx;
+
+        /// <summary>The process's device, held while there is a surface (its textures live as long as it does).</summary>
+        private static WgpuContext Device()
+        {
+            lock (s_lock)
+            {
+                if (s_ctx != null && !s_ctx.Lost) return s_ctx;
+                if (s_ctx != null) ProcessGpu.Release(s_ctx);
+                return s_ctx = ProcessGpu.Acquire();
+            }
         }
 
         /// <summary>The surface's place in its window changed (SetVideoPosition), or it is shown or hidden.</summary>
@@ -120,7 +132,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.Composition
         /// <summary>The window shows no video any more (its renderer shut down).</summary>
         public static void Remove(IntPtr hwnd)
         {
-            lock (s_lock) s_surfaces.Remove(hwnd);
+            lock (s_lock)
+            {
+                s_surfaces.Remove(hwnd);
+                if (s_planes.Remove(hwnd, out var pl)) { wgpuTextureViewRelease(pl.View); wgpuTextureRelease(pl.Texture); }
+                if (s_surfaces.Count == 0 && s_ctx != null) { ProcessGpu.Release(s_ctx); s_ctx = null; s_device = IntPtr.Zero; s_pipeline = IntPtr.Zero; }
+            }
             Changed(hwnd);
         }
 

@@ -25,6 +25,32 @@ namespace System.Windows.Interop
         {
             FocusableProperty.OverrideMetadata(typeof(HwndHost), new FrameworkPropertyMetadata(true));
             HwndHost.DpiChangedEvent = Window.DpiChangedEvent.AddOwner(typeof(HwndHost));
+            // Off Windows, where a hosted child window is in its WPF window (what Media Foundation's video renderer of
+            // the child's handle composites there): { the window's handle, the child's origin in the window's client
+            // area, its size, the client area's size }, of the last layout -- asked of the compositor's thread.
+            AppContext.SetData("WpfWebGpu.Wpf.HostedPlacement", (Func<IntPtr, long[]>)HostedPlacement);
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<IntPtr, long[]> s_placements = new();
+
+        private static long[] HostedPlacement(IntPtr hwnd) => s_placements.TryGetValue(hwnd, out var p) ? p : null;
+
+        /// <summary>The child's placement in its window, as of this layout (HostedPlacement).</summary>
+        private void RecordPlacement(object sender, EventArgs e)
+        {
+            IntPtr h = _hwnd.Handle;
+            if (h == IntPtr.Zero) return;
+            if (PresentationSource.FromVisual(this) is not HwndSource source || source.IsDisposed || source.RootVisual is not FrameworkElement root || !IsVisible)
+            {
+                s_placements.TryRemove(h, out _);
+                return;
+            }
+            UIElement client = source.RootVisual is Window w && w.Content is UIElement content ? content : root;
+            Point at;
+            try { at = TransformToAncestor(client).Transform(new Point(0, 0)); }
+            catch (InvalidOperationException) { return; }
+            var size = client.RenderSize;
+            s_placements[h] = new long[] { (long)source.Handle, (long)Math.Round(at.X), (long)Math.Round(at.Y), (long)Math.Round(ActualWidth), (long)Math.Round(ActualHeight), (long)Math.Round(size.Width), (long)Math.Round(size.Height) };
         }
 
         /// <summary>
@@ -1133,6 +1159,7 @@ namespace System.Windows.Interop
 
                 throw new InvalidOperationException(SR.ChildWindowNotCreated);
             }
+            LayoutUpdated += RecordPlacement;
 
             if (!OperatingSystem.IsWindows())
             {
@@ -1232,6 +1259,8 @@ namespace System.Windows.Interop
 
             HandleRef hwnd = _hwnd;
             _hwnd = new HandleRef(null, IntPtr.Zero);
+            LayoutUpdated -= RecordPlacement;
+            s_placements.TryRemove(hwnd.Handle, out _);
 
             DestroyWindowCore(hwnd);
         }

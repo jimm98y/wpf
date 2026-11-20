@@ -37,7 +37,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
         private float _srcL, _srcT, _srcR = 1, _srcB = 1;
         private int _dstL, _dstT, _dstR, _dstB;
         private uint _aspectMode = 3, _border, _prefs;
-        private byte[]? _last;                              // the last frame shown (BGRA), its size and time
+        private byte[]? _last;                              // the last frame shown (its bytes, of the subtype), its size and time
+        private Guid _lastSub;
         private int _lastW, _lastH;
         private long _lastTime;
         private readonly object _lock = new();
@@ -122,12 +123,27 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
             return ((int)w, (int)h, t.Subtype, aspect);
         }
 
-        /// <summary>The frame as BGRA, shown in the window (the source rectangle's part of it).</summary>
+        private static readonly Guid MF_MT_YUV_MATRIX = new("3e23d450-2c75-4d25-a00e-b91670d12327"), MF_MT_VIDEO_NOMINAL_RANGE = new("c21b8ee5-b956-4071-8daf-325edf5cab11");
+
+        /// <summary>The frame shown in the window: NV12 converted on the GPU, the others (and a part of the picture) as BGRA made here.</summary>
         public void Deliver(IntPtr sample, Guid major, long time, long duration)
         {
             var (w, h, sub, aspect) = Format();
             if (w <= 0 || h <= 0) return;
             byte[] bytes = MFSample.ForeignSampleBytes(sample);
+            bool whole;
+            lock (_lock) whole = _srcL == 0 && _srcT == 0 && _srcR == 1 && _srcB == 1;
+            if (sub == MF.MFVideoFormat_NV12 && whole)
+            {
+                var vt = ((VideoTypeHandler)Stream.Handler).Current!;
+                // the matrix and range of the type (BT.709 where it says nothing of a picture of HD's size)
+                uint matrix = vt.Attributes.U32(MF_MT_YUV_MATRIX), range = vt.Attributes.U32(MF_MT_VIDEO_NOMINAL_RANGE);
+                bool bt709 = matrix == 1 || matrix == 0 && h >= 720;
+                IntPtr wnd;
+                lock (_lock) { _last = bytes; _lastSub = sub; _lastW = w; _lastH = h; _lastTime = time; wnd = _hwnd; }
+                if (wnd != IntPtr.Zero) VideoSurfaces.PresentNv12(wnd, bytes, w, h, aspect, bt709, range == 1);
+                return;
+            }
             var picture = Pictures.Decode(bytes, sub, w, h, Pictures.BottomUp(((VideoTypeHandler)Stream.Handler).Current!, byDefault: false));
             byte[] bgra = Pictures.Encode(picture, MFVideoProcessor.RGB32, false, converter: true);
             for (int i = 3; i < bgra.Length; i += 4) bgra[i] = 255;
@@ -143,8 +159,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
                 bgra = crop; aspect *= (float)cw / w * h / ch; w = cw; h = ch;
             }
             IntPtr hwnd;
-            lock (_lock) { _last = bgra; _lastW = w; _lastH = h; _lastTime = time; hwnd = _hwnd; }
+            lock (_lock) { _last = bgra; _lastSub = MFVideoProcessor.RGB32; _lastW = w; _lastH = h; _lastTime = time; hwnd = _hwnd; }
             if (hwnd != IntPtr.Zero) VideoSurfaces.Present(hwnd, bgra, w, h, aspect);
+        }
+
+        /// <summary>The last frame as BGRA (an NV12 frame converted now), under the lock.</summary>
+        private byte[]? LastBgra(out int w, out int h)
+        {
+            w = _lastW; h = _lastH;
+            if (_last == null || _lastSub == MFVideoProcessor.RGB32) return _last;
+            var picture = Pictures.Decode(_last, _lastSub, w, h, false);
+            var bgra = Pictures.Encode(picture, MFVideoProcessor.RGB32, false, converter: true);
+            for (int i = 3; i < bgra.Length; i += 4) bgra[i] = 255;
+            return bgra;
         }
 
         private void Place()
@@ -346,7 +373,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
         {
             if (S(self) is not { } s) return MF.E_POINTER;
             byte[]? last; int w, h; IntPtr hwnd;
-            lock (s._lock) { last = s._last; w = s._lastW; h = s._lastH; hwnd = s._hwnd; }
+            lock (s._lock) { last = s.LastBgra(out w, out h); hwnd = s._hwnd; }
             if (last != null && hwnd != IntPtr.Zero) VideoSurfaces.Present(hwnd, last, w, h, s.Format().Aspect);
             return MF.S_OK;
         }
@@ -358,7 +385,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
             if (S(self) is not { } s || header == null || dib == null || size == null) return MF.E_POINTER;
             if (*(uint*)header != 40) return MF.E_INVALIDARG;
             byte[]? last; int w, h; long t;
-            lock (s._lock) { last = s._last; w = s._lastW; h = s._lastH; t = s._lastTime; }
+            lock (s._lock) { last = s.LastBgra(out w, out h); t = s._lastTime; }
             if (last == null) return MF.E_FAIL;
             *(int*)(header + 4) = w; *(int*)(header + 8) = h; *(ushort*)(header + 12) = 1; *(ushort*)(header + 14) = 32;
             *(uint*)(header + 16) = 0; *(uint*)(header + 20) = (uint)(w * h * 4);

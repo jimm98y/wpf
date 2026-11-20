@@ -513,6 +513,12 @@ composited root (`EmbeddedContent.Compose`), each frame a render posted to the w
 (MR_VIDEO_RENDER_SERVICE's `IMFVideoDisplayControl`) has the native size and aspect, the window, the source and
 destination rectangles, the aspect mode (PreservePicture | PreservePixel), the border, `RepaintVideo` and
 `GetCurrentImage`.
+- NV12 frames are converted on the GPU (`Composition/VideoSurfaces.Gpu.cs`): the frame's bytes as one 8-bit texture,
+  one render pass into the surface's BGRA8Unorm texture (sampled through an sRGB view where the display is sRGB), BT.601
+  or BT.709 of the limited or full range in the reader's 8-bit fixed point; the other subtypes and a cropped source
+  rectangle in managed code.
+- An `HwndHost`'s child window: its video where the host is in its WPF window, of the host's last layout
+  (`HwndHost`'s AppContext hook `WpfWebGpu.Wpf.HostedPlacement`), scaled to the window's target.
 
 `TheSession_PlaysToSampleGrabbersAsWindowsDoes`, `TheSession_PlaysToTheAudioRendererAsWindowsDoes` and
 `TheSession_PlaysToTheVideoRendererAsWindowsDoes` compare the reports with Windows', but for times, the endpoint's id and
@@ -773,7 +779,6 @@ on macOS and in the Ubuntu VM.
 - The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
   of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
   tolerance (by choice).
-- The video renderer into an `HwndHost`'s child window; and its frames converted on the GPU rather than in managed code.
 - Audio capture (`MFEnumDeviceSources` of `AUDCAP`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).
