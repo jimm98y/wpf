@@ -158,6 +158,8 @@ public class PackagerTests
         Assert.Contains($"D=\"{dir}\"", app);
         Assert.Contains("with administrator privileges", app);
         Assert.Contains("--keep-data", app);
+        Assert.Contains("ditto \"$APP\" \"/Applications/P/Uninstall SQL Server.app\"", post);   // beside the installation's own
+        Assert.Contains("rm -rf \"/Applications/$p/Uninstall SQL Server.app\"", un);           // every copy gone with the instance
     }
 
     private static void ShellSyntax(string script)
