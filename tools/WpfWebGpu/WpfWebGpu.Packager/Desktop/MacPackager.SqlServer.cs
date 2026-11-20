@@ -244,7 +244,8 @@ public static partial class MacPackager
             if [ ! -f "$D/sqlserver.env" ]; then
               PW="$OLDPW"; [ -n "$PW" ] || PW="Sq1-$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
               VOL=sqlserver-{{key}}-data
-              "$C" volume inspect {{earlier}}-data >/dev/null 2>&1 && VOL={{earlier}}-data
+              # (its databases only with their password: sa's is in them)
+              [ -n "$OLDPW" ] && "$C" volume inspect {{earlier}}-data >/dev/null 2>&1 && VOL={{earlier}}-data
               # the port: the configured one where nothing listens on it and no other instance has it, else the next
               P={{manifest.SqlServer.Port}}
               # (not 1434: the dedicated admin connection's by convention, the browser's on UDP)

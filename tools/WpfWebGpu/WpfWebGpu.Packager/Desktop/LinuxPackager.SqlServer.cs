@@ -188,7 +188,8 @@ public static partial class LinuxPackager
               VOL=sqlserver-{{key}}-data
               # the installation's own SQL Server of before ({{EarlierSqlServerPackageName(pkg)}}): its password, its databases
               [ -f /etc/{{pkg}}/sqlserver.env ] && PW=$(sed -n 's/^MSSQL_SA_PASSWORD=//p' /etc/{{pkg}}/sqlserver.env)
-              command -v podman >/dev/null && podman volume exists {{pkg}}-sqlserver-data 2>/dev/null && VOL={{pkg}}-sqlserver-data
+              # (its databases only with their password: sa's is in them)
+              [ -n "$PW" ] && command -v podman >/dev/null && podman volume exists {{pkg}}-sqlserver-data 2>/dev/null && VOL={{pkg}}-sqlserver-data
               [ -n "$PW" ] || PW="Sq1-$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 20)"
               # the port: the configured one where nothing listens on it and no other instance has it, else the next
               P={{manifest.SqlServer.Port}}
