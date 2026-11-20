@@ -41,10 +41,14 @@ public static partial class WindowsAccounts
     }
 
     /// <summary>The Windows service account a system account stands for: NETWORK SERVICE, LOCAL SERVICE.</summary>
+    /// (macOS runs both as nobody: NETWORK SERVICE, but for a process told it is LOCAL SERVICE -- this one's, by its
+    /// environment)
     public static (string Sid, string Name)? ServiceAccount(string? user) => user switch
     {
         "_wpfnetworkservice" or "wpf-networkservice" => ("S-1-5-20", "NETWORK SERVICE"),
         "_wpflocalservice" or "wpf-localservice" => ("S-1-5-19", "LOCAL SERVICE"),
+        ServiceUnits.MacServiceUser when OperatingSystem.IsMacOS() => Environment.GetEnvironmentVariable(ServiceUnits.AccountVariable) == "LocalService"
+            ? ("S-1-5-19", "LOCAL SERVICE") : ("S-1-5-20", "NETWORK SERVICE"),
         _ => null,
     };
 

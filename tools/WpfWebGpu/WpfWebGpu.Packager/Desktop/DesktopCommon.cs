@@ -188,14 +188,18 @@ internal static class DesktopCommon
         return false;
     }
 
-    /// <summary>The system account a service account is on macOS or Linux (the installers make it where it is
-    /// missing; the stack takes it for Windows' own: NETWORK SERVICE, LOCAL SERVICE); null for LocalSystem (root).</summary>
+    /// <summary>The system account a service account is on macOS or Linux, which the stack takes for Windows' own
+    /// (NETWORK SERVICE, LOCAL SERVICE): Linux's the installer makes where missing, macOS's nobody (see
+    /// ServiceUnits.MacServiceUser); null for LocalSystem (root).</summary>
     public static string? SystemAccount(ServiceAccount account, bool mac) => account switch
     {
-        ServiceAccount.NetworkService => mac ? "_wpfnetworkservice" : "wpf-networkservice",
-        ServiceAccount.LocalService => mac ? "_wpflocalservice" : "wpf-localservice",
+        ServiceAccount.NetworkService => mac ? WpfWebGpu.Services.ServiceUnits.MacServiceUser : "wpf-networkservice",
+        ServiceAccount.LocalService => mac ? WpfWebGpu.Services.ServiceUnits.MacServiceUser : "wpf-localservice",
         _ => null,
     };
+
+    /// <summary>The accounts earlier versions of the macOS installers made for them.</summary>
+    public static readonly string[] EarlierMacAccounts = { "_wpfnetworkservice", "_wpflocalservice" };
 
     public static string AccountTitle(ServiceAccount account) => account == ServiceAccount.LocalService ? "LOCAL SERVICE" : "NETWORK SERVICE";
 

@@ -308,6 +308,7 @@ internal sealed class IisHost
         command.AddRange(app.Module.Args);
 
         string? account = PoolAccount(app.Pool.Identity);
+        if (app.Pool.Identity == "LocalService") env[WpfWebGpu.Services.ServiceUnits.AccountVariable] = "LocalService";
         var psi = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = app.Root! };
         if (account != null && WindowsAccounts.CurrentUid() == 0 && WindowsAccounts.Uid(account) != null && File.Exists("/usr/bin/sudo"))
         {
@@ -333,8 +334,8 @@ internal sealed class IisHost
         return identity switch
         {
             "LocalSystem" => null,
-            "LocalService" => mac ? "_wpflocalservice" : "wpf-localservice",
-            _ => mac ? "_wpfnetworkservice" : "wpf-networkservice",
+            "LocalService" => mac ? WpfWebGpu.Services.ServiceUnits.MacServiceUser : "wpf-localservice",
+            _ => mac ? WpfWebGpu.Services.ServiceUnits.MacServiceUser : "wpf-networkservice",
         };
     }
 

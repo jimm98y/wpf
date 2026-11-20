@@ -176,7 +176,21 @@ public class ServiceCreationTests
         var native = new ServiceDefinition { Unit = "p-b.service", Title = "B", Program = "/usr/bin/b", Args = { "-x" }, WorkingDirectory = "/", LogName = "b" };
         Assert.Contains("ExecStart=/usr/bin/b -x\n", ServiceUnits.Systemd(host, native));
         Assert.DoesNotContain("runtime/run", ServiceUnits.Launchd(host, native));
-        Assert.Equal("_wpfnetworkservice", ServiceUnits.SystemAccount(@"NT AUTHORITY\NetworkService", mac: true));
+        Assert.Equal("nobody", ServiceUnits.SystemAccount(@"NT AUTHORITY\NetworkService", mac: true));
+        Assert.Equal("LocalService", ServiceUnits.WindowsServiceAccount(@"NT AUTHORITY\Local Service"));
+        // a LOCAL SERVICE daemon as nobody, told it is LOCAL SERVICE; a NETWORK SERVICE one told it too
+        string local = ServiceUnits.Launchd(host, new ServiceDefinition { Unit = "com.example.p.l", Program = "/bin/true", Account = "nobody", WindowsAccount = "LocalService" });
+        Assert.Contains("<key>UserName</key><string>nobody</string>", local);
+        Assert.Contains("<key>WPFWEBGPU_SERVICE_ACCOUNT</key><string>LocalService</string>", local);
+        string root = ServiceUnits.Launchd(host, new ServiceDefinition { Unit = "com.example.p.r", Program = "/bin/true", WindowsAccount = null });
+        Assert.DoesNotContain("WPFWEBGPU_SERVICE_ACCOUNT", root);
+        if (OperatingSystem.IsMacOS())
+        {
+            Assert.Equal(("S-1-5-20", "NETWORK SERVICE"), WindowsAccounts.ServiceAccount("nobody"));
+            Environment.SetEnvironmentVariable(ServiceUnits.AccountVariable, "LocalService");
+            try { Assert.Equal(("S-1-5-19", "LOCAL SERVICE"), WindowsAccounts.ServiceAccount("nobody")); }
+            finally { Environment.SetEnvironmentVariable(ServiceUnits.AccountVariable, null); }
+        }
         Assert.Equal("wpf-localservice", ServiceUnits.SystemAccount(@"NT AUTHORITY\LOCAL SERVICE", mac: false));
         Assert.Null(ServiceUnits.SystemAccount("LocalSystem", mac: false));
         Assert.Equal("someone", ServiceUnits.SystemAccount(@".\someone", mac: false));

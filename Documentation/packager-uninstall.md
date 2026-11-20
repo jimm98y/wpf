@@ -36,14 +36,18 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
   - **Windows:** the registry values the installation set and the keys it made, the ProgramData files it wrote and the
     folders it made, and the access rules it added for the service accounts.
   - **macOS and Linux:** `state/`, the stand-in registry and ProgramData, with the http.sys reservations kept there.
-- **The service accounts** it made on macOS and Linux (`_wpfnetworkservice`, `wpf-networkservice` and the others),
-  where no other installation's service still runs as one. They stay when the data is kept: the state they own
-  stays too.
-  - **macOS** deletes a user record only for a process with Full Disk Access, or one using an administrator's own
-    credentials. Root alone, the installer's scripts included, gets `eDSPermissionError` (checked on macOS 26).
-    `uninstall.sh` run with sudo in a terminal asks for the administrator's password (`sysadminctl
-    -deleteUser`). Otherwise it leaves the accounts, hidden, of no password and no shell, and prints the command
-    that removes them.
+- **The service accounts** it made on Linux (`wpf-networkservice`, `wpf-localservice`), where no other installation's
+  service still runs as one. They stay when the data is kept: the state they own stays too.
+  - **macOS** makes none. Its NETWORK SERVICE and LOCAL SERVICE services run as the system's own `nobody`, in the
+    group `staff` that the state is writable by. A daemon standing for LOCAL SERVICE is told so in its environment
+    (`WPFWEBGPU_SERVICE_ACCOUNT=LocalService`), and the stack gives it that Windows identity.
+  - This is because macOS deletes a user record only for a process with Full Disk Access, or one using an
+    administrator's own credentials. Root alone, the installer's scripts included, gets `eDSPermissionError`
+    (checked on macOS 26), so an account an installer made could never be removed by its uninstaller.
+  - Earlier versions made `_wpfnetworkservice` and `_wpflocalservice`. An upgrade gives what they owned of the
+    installation to `nobody`. The uninstall deletes them where no daemon still runs as one and macOS lets it: in a
+    terminal, `sysadminctl` asks for the administrator's password. Otherwise they are left hidden, of no password
+    and no shell, and the command that removes them is printed.
 - **SQL Server:**
   - **Windows:** the instance the installation installed is uninstalled by SQL Server's own setup, with its databases.
     An instance that was there before is left alone.

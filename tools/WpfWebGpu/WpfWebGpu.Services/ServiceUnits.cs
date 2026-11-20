@@ -41,6 +41,9 @@ public sealed class ServiceDefinition
     public Dictionary<string, string> Environment { get; set; } = new();
     /// <summary>The system's account it runs as; null for root (LocalSystem).</summary>
     public string? Account { get; set; }
+    /// <summary>The Windows service account it stands for (NetworkService, LocalService), where the system's account
+    /// does not say (macOS: both are nobody, the daemon told which in <see cref="ServiceUnits.AccountVariable"/>).</summary>
+    public string? WindowsAccount { get; set; }
     public ServiceStart Start { get; set; } = ServiceStart.Manual;
     /// <summary>Seconds before it is started again after a failure (its recovery actions); 0 to leave it stopped.</summary>
     public int RestartAfterFailure { get; set; }
@@ -73,10 +76,25 @@ public static class ServiceUnits
         if (user.Length == 0 || user.Equals("LocalSystem", StringComparison.OrdinalIgnoreCase)
             || (domain.Equals("NT AUTHORITY", StringComparison.OrdinalIgnoreCase) && user.Equals("SYSTEM", StringComparison.OrdinalIgnoreCase)))
             return null;
-        if (user.Replace(" ", "").Equals("NetworkService", StringComparison.OrdinalIgnoreCase)) return mac ? "_wpfnetworkservice" : "wpf-networkservice";
-        if (user.Replace(" ", "").Equals("LocalService", StringComparison.OrdinalIgnoreCase)) return mac ? "_wpflocalservice" : "wpf-localservice";
+        if (user.Replace(" ", "").Equals("NetworkService", StringComparison.OrdinalIgnoreCase)) return mac ? MacServiceUser : "wpf-networkservice";
+        if (user.Replace(" ", "").Equals("LocalService", StringComparison.OrdinalIgnoreCase)) return mac ? MacServiceUser : "wpf-localservice";
         return user;
     }
+
+    /// <summary>The Windows service account a service's start name is (NetworkService, LocalService), else null.</summary>
+    public static string? WindowsServiceAccount(string startName)
+    {
+        string user = startName.Trim();
+        user = user[(user.LastIndexOf('\\') + 1)..].Replace(" ", "");
+        return user.Equals("NetworkService", StringComparison.OrdinalIgnoreCase) ? "NetworkService"
+            : user.Equals("LocalService", StringComparison.OrdinalIgnoreCase) ? "LocalService" : null;
+    }
+
+    /// <summary>The account NETWORK SERVICE and LOCAL SERVICE run as on macOS: the system's own unprivileged one (an
+    /// account an installer made, macOS lets no uninstaller delete again), with the state's group (staff). Which of the
+    /// two a daemon stands for is in its environment (<see cref="AccountVariable"/>: LocalService; else NETWORK SERVICE).</summary>
+    public const string MacServiceUser = "nobody";
+    public const string AccountVariable = "WPFWEBGPU_SERVICE_ACCOUNT";
 
     /// <summary>Where the system service is installed: a daemon's plist, a unit file (a package's under /lib, one the
     /// service manager created under /etc, as an administrator's).</summary>
@@ -108,7 +126,7 @@ public static class ServiceUnits
                 <key>WPFRUN_STATE</key><string>{X(host.State)}</string>
                 <key>WPFRUN_CACHE</key><string>{X(host.Cache)}</string>
                 <key>WPFRUN_LOGS</key><string>{X(host.Logs)}</string>
-            {string.Concat(d.Environment.Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}
+            {string.Concat(d.Environment.Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}{(d.WindowsAccount is { } wa && d.Account != null ? $"    <key>{AccountVariable}</key><string>{X(wa)}</string>\n" : "")}
               </dict>
               <key>WorkingDirectory</key><string>{X(d.WorkingDirectory)}</string>
               {(d.Account is { } user ? $"<key>UserName</key><string>{X(user)}</string>\n  <key>GroupName</key><string>staff</string>" : "")}

@@ -110,6 +110,7 @@ internal static class Program
                 "startup" => Startup.Run(args[1..]),
                 "httpsys" => HttpSysCommand.Run(args[1..]),
                 "scm" => ScmCommand.Run(args[1..]),
+                "sqlbrowser" => SqlBrowser.Run(args[1..]),
                 "iis" => IisCommand.Run(args[1..]),
                 "where" => Where(),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),

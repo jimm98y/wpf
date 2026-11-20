@@ -318,7 +318,8 @@ public class PackagerTests
         Assert.Equal(new[] { ServiceAccount.NetworkService, ServiceAccount.LocalService, ServiceAccount.LocalSystem, ServiceAccount.LocalSystem },
             manifest.Services.Select(x => x.Account));
         Assert.Equal("wpf-networkservice", WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.NetworkService, mac: false));
-        Assert.Equal("_wpflocalservice", WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.LocalService, mac: true));
+        // macOS: the system's nobody (no account made: none an uninstaller could delete again), told which it stands for
+        Assert.Equal("nobody", WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.LocalService, mac: true));
         Assert.Null(WpfWebGpu.Packager.Desktop.DesktopCommon.SystemAccount(ServiceAccount.LocalSystem, mac: true));
     }
 

@@ -25,6 +25,26 @@ public static partial class MacPackager
 {
     private static string SqlServerLabel(string id) => id + "-sqlserver";
 
+    /// <summary>Windows' SQL Server Browser for the instance (wpfrun sqlbrowser): a client naming it
+    /// ((local)\SQLEXPRESS) asks UDP 1434 for its port. Its label is outside &lt;id&gt;.* as SQL Server's is.</summary>
+    private static string SqlBrowserLabel(string id) => id + "-sqlbrowser";
+
+    /// <summary>Where every installation's browser finds the instances (a file each, "instance port").</summary>
+    internal const string SqlBrowserInstances = "/Library/Application Support/WpfWebGpu/SqlBrowser";
+
+    /// <summary>The name of SQL Server's container (and, with -data, its volume's): container takes none but lower case
+    /// letters, digits and '-' to 63 characters (a launchd label of a long id is none: "not a valid container ID").</summary>
+    internal static string SqlServerContainer(string product)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (char c in product.ToLowerInvariant())
+            if (char.IsAsciiLetterOrDigit(c)) sb.Append(c);
+            else if (sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+        string name = sb.ToString().Trim('-');
+        if (name.Length > 48) name = name[..48].TrimEnd('-');
+        return (name.Length == 0 ? "app" : name) + "-sqlserver";
+    }
+
     /// <summary>Writes the SQL Server component (&lt;id&gt;.sqlserver) into <paramref name="work"/> and returns it.</summary>
     private static string BuildSqlServerComponent(PackageManifest manifest, string id, string root, string work, out long kbytes, Action<string> log)
     {
@@ -54,10 +74,34 @@ public static partial class MacPackager
             </dict>
             </plist>
             """);
+        File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", SqlBrowserLabel(id) + ".plist"), $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>Label</key><string>{X(SqlBrowserLabel(id))}</string>
+              <key>ProgramArguments</key>
+              <array>
+                <string>{X(root)}/runtime/dotnet/dotnet</string>
+                <string>{X(root)}/runtime/launcher/wpfrun.dll</string>
+                <string>sqlbrowser</string>
+                <string>--instances</string>
+                <string>{X(SqlBrowserInstances)}</string>
+              </array>
+              <key>UserName</key><string>{X(WpfWebGpu.Services.ServiceUnits.MacServiceUser)}</string>
+              <key>GroupName</key><string>staff</string>
+              <key>RunAtLoad</key><true/>
+              <key>KeepAlive</key><true/>
+              <key>ThrottleInterval</key><integer>30</integer>
+              <key>StandardOutPath</key><string>/Library/Logs/{X(manifest.Product.Name)}/sqlbrowser.log</string>
+              <key>StandardErrorPath</key><string>/Library/Logs/{X(manifest.Product.Name)}/sqlbrowser.log</string>
+            </dict>
+            </plist>
+            """);
         string run = Path.Combine(payload, dir.TrimStart('/'), "run.sh");
-        File.WriteAllText(run, SqlServerRun(manifest, sql, label, dir));
+        File.WriteAllText(run, SqlServerRun(manifest, sql, SqlServerContainer(manifest.Product.Name), label, dir));
         Executable(run);
-        File.WriteAllText(Path.Combine(scripts, "postinstall"), SqlServerPostInstall(manifest, sql, label, dir));
+        File.WriteAllText(Path.Combine(scripts, "postinstall"), SqlServerPostInstall(manifest, sql, label, SqlServerContainer(manifest.Product.Name), dir, id));
         Executable(Path.Combine(scripts, "postinstall"));
         string component = Path.Combine(work, "sqlserver.pkg");
         kbytes = MacComponent.Write(payload, scripts, id + ".sqlserver", manifest.Product.Version, compress: true, component, log);
@@ -67,9 +111,9 @@ public static partial class MacPackager
     // keeps SQL Server's container running: container started (and its kernel fetched) where it is not yet, the image
     // pulled where it is not there, the container started again whenever it is not running; stopped when launchd
     // stops this (container's run command, ended, leaves its container running)
-    private static string SqlServerRun(PackageManifest manifest, SqlServerImage sql, string name, string dir) => $$"""
+    private static string SqlServerRun(PackageManifest manifest, SqlServerImage sql, string name, string label, string dir) => $$"""
         #!/bin/sh
-        # {{sql.Engine}} for {{manifest.Product.Name}}, in Apple's container (launchd's {{name}})
+        # {{sql.Engine}} for {{manifest.Product.Name}}, in Apple's container (launchd's {{label}})
         export HOME=/var/root
         C=/usr/local/bin/container
         NAME={{name}}
@@ -94,7 +138,7 @@ public static partial class MacPackager
     // the sa password on the first install (kept on reinstalls, as the databases are), Rosetta where it is missing,
     // container started (fetching its kernel), the image pulled -- without the network then, the daemon pulls it as it
     // starts -- the databases' volume, and the daemon
-    private static string SqlServerPostInstall(PackageManifest manifest, SqlServerImage sql, string label, string dir) => $$"""
+    private static string SqlServerPostInstall(PackageManifest manifest, SqlServerImage sql, string label, string name, string dir, string id) => $$"""
         #!/bin/sh
         [ -n "$WPFPKG_ROOT" ] && exit 0
         DIR="{{dir}}"
@@ -112,22 +156,43 @@ public static partial class MacPackager
         C=/usr/local/bin/container
         "$C" system start --enable-kernel-install --timeout 300 >/dev/null 2>&1 || true
         "$C" image pull --platform {{sql.Platform}} {{sql.Image}} >/dev/null 2>&1 || echo "{{sql.Image}} not pulled now: the daemon pulls it as it starts" >&2
-        "$C" volume inspect {{label}}-data >/dev/null 2>&1 || "$C" volume create {{label}}-data >/dev/null 2>&1 || true
-        launchctl bootout system/{{label}} >/dev/null 2>&1 || true
-        launchctl enable system/{{label}} 2>/dev/null || true
-        launchctl bootstrap system /Library/LaunchDaemons/{{label}}.plist 2>/dev/null || true
+        "$C" volume inspect {{name}}-data >/dev/null 2>&1 || "$C" volume create {{name}}-data >/dev/null 2>&1 || true
+        # the instance, for the SQL Server Browser of whichever installation answers UDP 1434
+        mkdir -p "{{SqlBrowserInstances}}"
+        printf '%s %s\n' "{{manifest.SqlServer.Instance}}" "{{manifest.SqlServer.Port}}" > "{{SqlBrowserInstances}}/{{id}}"
+        chmod 755 "{{SqlBrowserInstances}}"; chmod 644 "{{SqlBrowserInstances}}/{{id}}"
+        # the daemons (again, on an upgrade): each started while launchd still lets go of the one before (up to 30 s)
+        for l in {{label}} {{SqlBrowserLabel(id)}}; do
+          launchctl bootout system/"$l" >/dev/null 2>&1 || true
+          launchctl enable system/"$l" 2>/dev/null || true
+          i=0
+          until launchctl bootstrap system /Library/LaunchDaemons/"$l".plist 2>/dev/null; do
+            launchctl print system/"$l" >/dev/null 2>&1 && break
+            i=$((i+1)); [ $i -ge 30 ] && { echo "could not start $l" >&2; break; }
+            sleep 1
+          done
+        done
         exit 0
 
         """;
 
     // uninstall.sh's part: the daemon and its container gone; the databases and the password kept with --keep-data
+    // (the names before container's own rule was kept to -- the daemon's label -- removed too)
     private static string SqlServerUninstall(string id, string root) => $$"""
+        # the SQL Server Browser: this installation's instance no more, its daemon gone
+        launchctl bootout system/{{SqlBrowserLabel(id)}} >/dev/null 2>&1 || true
+        rm -f /Library/LaunchDaemons/{{SqlBrowserLabel(id)}}.plist "{{SqlBrowserInstances}}/{{id}}"
+        rmdir "{{SqlBrowserInstances}}" "{{Path.GetDirectoryName(SqlBrowserInstances)}}" 2>/dev/null || true
         if [ -f /Library/LaunchDaemons/{{SqlServerLabel(id)}}.plist ]; then
           launchctl bootout system/{{SqlServerLabel(id)}} >/dev/null 2>&1 || true
           rm -f /Library/LaunchDaemons/{{SqlServerLabel(id)}}.plist
-          HOME=/var/root /usr/local/bin/container delete --force {{SqlServerLabel(id)}} >/dev/null 2>&1 || true
+          for n in {{SqlServerContainer(Path.GetFileName(root))}} {{SqlServerLabel(id)}}; do
+            HOME=/var/root /usr/local/bin/container delete --force "$n" >/dev/null 2>&1 || true
+          done
           if [ -n "$ALL" ]; then
-            HOME=/var/root /usr/local/bin/container volume delete {{SqlServerLabel(id)}}-data >/dev/null 2>&1 || true
+            for n in {{SqlServerContainer(Path.GetFileName(root))}} {{SqlServerLabel(id)}}; do
+              HOME=/var/root /usr/local/bin/container volume delete "$n-data" >/dev/null 2>&1 || true
+            done
             HOME=/var/root /usr/local/bin/container image delete {{SqlServerImage.X64.Image}} >/dev/null 2>&1 || true
           fi
           pkgutil --forget "{{id}}.sqlserver" >/dev/null 2>&1 || true
@@ -137,10 +202,16 @@ public static partial class MacPackager
              && [ -z "$(HOME=/var/root /usr/local/bin/container list --all --quiet 2>/dev/null)" ] \
              && [ -z "$(HOME=/var/root /usr/local/bin/container image list --quiet 2>/dev/null)" ]; then
             HOME=/var/root /usr/local/bin/container system stop >/dev/null 2>&1 || true
+            # (its uninstaller refuses while any of its services is still loaded: what its stop leaves, booted out)
+            i=0; while launchctl list 2>/dev/null | grep -q 'com\.apple\.container\W' && [ $i -lt 15 ]; do sleep 1; i=$((i+1)); done
+            for l in $(launchctl list 2>/dev/null | awk '{print $3}' | grep '^com\.apple\.container\.'); do
+              launchctl bootout system/"$l" >/dev/null 2>&1 || true
+            done
             if [ -x /usr/local/bin/uninstall-container.sh ]; then
-              HOME=/var/root /usr/local/bin/uninstall-container.sh -d >/dev/null 2>&1 || true
+              HOME=/var/root /usr/local/bin/uninstall-container.sh -d 2>&1 | grep -v '^Removed\|^Removing' || true
             fi
-            pkgutil --forget com.apple.container-installer >/dev/null 2>&1 || true
+            [ -x /usr/local/bin/container ] && echo "Apple's container is left (/usr/local/bin/uninstall-container.sh -d removes it)" \
+              || pkgutil --forget com.apple.container-installer >/dev/null 2>&1 || true
           fi
         fi
 

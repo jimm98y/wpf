@@ -204,6 +204,7 @@ public static partial class MacPackager
             WorkingDirectory = root + "/app/" + Path.GetDirectoryName(service.Exe.Replace('\\', '/'))!,
             Environment = DesktopCommon.ServiceEnvironment(service, osIdentity),
             Account = DesktopCommon.SystemAccount(service.Account, mac: true),
+            WindowsAccount = service.Account == ServiceAccount.LocalSystem ? null : service.Account.ToString(),
             Start = start ?? DesktopCommon.ServiceStartOf(service.Start),
             RestartAfterFailure = service.RestartAfterFailure,
             LogName = Path.GetFileNameWithoutExtension(service.Exe),
@@ -395,29 +396,15 @@ public static partial class MacPackager
     private static string Ere(string text) =>
         System.Text.RegularExpressions.Regex.Replace(text, @"[.\[\]{}()*+?^$|\\]", @"\$0").Replace("'", "'\\''");
 
-    // the machine's service accounts the services run as (NETWORK SERVICE, LOCAL SERVICE): hidden system users made
-    // where missing, in the group the state is writable by (staff); the services' logs and caches writable by them
+    // the services of NETWORK SERVICE and LOCAL SERVICE run as the system's nobody, in the group the state is writable by
+    // (staff): no account is made (one an installer made, macOS lets no uninstaller delete again); what the accounts of
+    // earlier versions own of the installation's -- its state, logs, caches -- made nobody's; their logs and caches
+    // writable by the services
     private static string Accounts(PackageManifest manifest, string product)
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var a in manifest.Services.Where(x => x.Start != StartType.Disabled).Select(x => x.Account).Distinct().Where(a => a != ServiceAccount.LocalSystem))
-        {
-            string user = DesktopCommon.SystemAccount(a, mac: true)!;
-            sb.Append($$"""
-                  if ! dscl . -read "/Users/{{user}}" >/dev/null 2>&1; then
-                    u=300; while dscl . -list /Users UniqueID | awk '{print $2}' | grep -qx "$u"; do u=$((u+1)); done
-                    dscl . -create "/Users/{{user}}"
-                    dscl . -create "/Users/{{user}}" UniqueID "$u"
-                    dscl . -create "/Users/{{user}}" PrimaryGroupID 20
-                    dscl . -create "/Users/{{user}}" UserShell /usr/bin/false
-                    dscl . -create "/Users/{{user}}" NFSHomeDirectory /var/empty
-                    dscl . -create "/Users/{{user}}" RealName "{{DesktopCommon.AccountTitle(a)}}"
-                    dscl . -create "/Users/{{user}}" Password '*'
-                    dscl . -create "/Users/{{user}}" IsHidden 1
-                  fi
-
-                """);
-        }
+        foreach (string earlier in DesktopCommon.EarlierMacAccounts)
+            sb.Append($"  dscl . -read \"/Users/{earlier}\" >/dev/null 2>&1 && find \"$STATE\" \"/Library/Logs/{product}\" \"/Library/Caches/{product}\" -user {earlier} -exec chown -h {WpfWebGpu.Services.ServiceUnits.MacServiceUser} {{}} + 2>/dev/null || true\n");
         sb.Append($"  mkdir -p \"/Library/Logs/{product}\" \"/Library/Caches/{product}\"\n");
         sb.Append($"  chgrp -R staff \"/Library/Logs/{product}\" \"/Library/Caches/{product}\" 2>/dev/null || true\n");
         sb.Append($"  chmod -R g+rwX \"/Library/Logs/{product}\" \"/Library/Caches/{product}\"");
@@ -503,9 +490,9 @@ public static partial class MacPackager
         for h in /Users/* /var/root; do [ -d "$h/Library/Logs/{{product}}" ] && rm -rf "$h/Library/Logs/{{product}}"; done
         if [ -n "$ALL" ]; then
           rm -rf "{{root}}"
-          # the service accounts the installation made (the state they owned gone with it), where no other
-          # installation's daemon still runs as one
-          for a in {{string.Join(" ", new[] { ServiceAccount.NetworkService, ServiceAccount.LocalService }.Select(a => DesktopCommon.SystemAccount(a, mac: true)))}}; do
+          # the service accounts earlier versions made (the services run as nobody now), where no installation's daemon
+          # still runs as one
+          for a in {{string.Join(" ", DesktopCommon.EarlierMacAccounts)}}; do
             dscl . -read "/Users/$a" >/dev/null 2>&1 || continue
             grep -lq "<string>$a</string>" /Library/LaunchDaemons/*.plist 2>/dev/null && continue
             # (macOS deletes a user record only for a process with Full Disk Access or of an administrator's own

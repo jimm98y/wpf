@@ -576,10 +576,14 @@ namespace System.Security.Principal
         /// <summary>The Windows service account a system account of this machine stands for: the installers make
         /// _wpfnetworkservice / wpf-networkservice (NETWORK SERVICE, S-1-5-20) and _wpflocalservice /
         /// wpf-localservice (LOCAL SERVICE, S-1-5-19) for the services that run as them on Windows.</summary>
+        /// On macOS both run as the system's nobody (an account an installer made, macOS lets no uninstaller delete): the
+        /// daemon's environment says which (WPFWEBGPU_SERVICE_ACCOUNT=LocalService; else NETWORK SERVICE).
         internal static (SecurityIdentifier Sid, string Name)? ServiceAccount(string user) => user switch
         {
             "_wpfnetworkservice" or "wpf-networkservice" => (new SecurityIdentifier(5, 20), "NETWORK SERVICE"),
             "_wpflocalservice" or "wpf-localservice" => (new SecurityIdentifier(5, 19), "LOCAL SERVICE"),
+            "nobody" when OperatingSystem.IsMacOS() => Environment.GetEnvironmentVariable("WPFWEBGPU_SERVICE_ACCOUNT") == "LocalService"
+                ? (new SecurityIdentifier(5, 19), "LOCAL SERVICE") : (new SecurityIdentifier(5, 20), "NETWORK SERVICE"),
             _ => null,
         };
 

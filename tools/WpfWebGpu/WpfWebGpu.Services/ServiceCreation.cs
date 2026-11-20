@@ -159,6 +159,7 @@ public static partial class ServiceControl
             WorkingDirectory = Path.GetDirectoryName(request.Program) ?? host.Root,
             Environment = new Dictionary<string, string>(host.Environment),
             Account = ServiceUnits.SystemAccount(service.StartName, mac),
+            WindowsAccount = ServiceUnits.WindowsServiceAccount(service.StartName),
             Start = service.Start,
             DependsOn = service.DependsOn.Select(d => db.Find(d)?.Unit).Where(u => !string.IsNullOrEmpty(u)).Select(u => u!).ToList(),
             LogName = Path.GetFileNameWithoutExtension(request.Program),
