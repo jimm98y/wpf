@@ -4,6 +4,11 @@ Every desktop installer the Packager writes can be removed again. By default, an
 installation put on the machine; asked to, it keeps the installation's data (its ProgramData and registry settings)
 for a later install. SQL Server is the exception: it stays, as on Windows (see [SQL Server](#sql-server)).
 
+Each installation has an uninstaller where its apps are: Windows' Apps & features, `Uninstall <Product>.app` in
+`/Applications/<Product>` on macOS, and **Uninstall <Product>** in the Linux desktop's menu. The Linux entry asks
+(zenity, or kdialog on KDE; without either, in a terminal), then removes it as an administrator through pkexec: with
+`apt purge` (or `apt remove`, keeping the data) where apt installed it, else with the `.tar.gz`'s `uninstall.sh`.
+
 Phone, tablet and headset apps live in their sandbox, and the system removes them with their data.
 
 | | Everything (the default) | Data kept |
@@ -67,7 +72,7 @@ uninstall of its own:
 |---|---|---|
 | Windows | Microsoft's SQL Server Express, the named instance | its entry in Apps & features (Microsoft SQL Server) |
 | macOS | the daemon `com.wpfwebgpu.sqlserver.<instance>`, running the container `sqlserver-<instance>` in Apple's `container`; its files in `/Library/Application Support/WpfWebGpu/SqlServer/<INSTANCE>/` | `/Applications/SQL Server/Uninstall SQL Server <INSTANCE>.app`, listed with the Mac's apps for as long as the instance is there (after the installations using it have gone too), or `sudo '<that folder>/uninstall.sh'` |
-| Linux | the package `wpfwebgpu-sqlserver-<instance>` (the unit, the container `sqlserver-<instance>` in Podman), its password, port and volume in `/etc/wpfwebgpu/sqlserver/<instance>.env` | `apt remove` (the databases kept) or `apt purge`; from the `.tar.gz`, `/etc/wpfwebgpu/sqlserver/<instance>-uninstall.sh` |
+| Linux | the package `wpfwebgpu-sqlserver-<instance>` (the unit, the container `sqlserver-<instance>` in Podman), its password, port and volume in `/etc/wpfwebgpu/sqlserver/<instance>.env` | **Uninstall SQL Server <INSTANCE>** in the desktop's menu (as the installation's entry); or `apt remove` (the databases kept) or `apt purge`; from the `.tar.gz`, `/etc/wpfwebgpu/sqlserver/<instance>-uninstall.sh` |
 
 - **The port** is the one the installation's configuration gives (1433) where it is free, else the next free one, as a
   named instance on Windows takes a port of its own. Clients naming the instance find it through the SQL Server
@@ -75,6 +80,8 @@ uninstall of its own:
 - **Its own uninstall** removes the databases and the password too, unless `--keep-data` is given (on Linux, unless
   it is an `apt remove`). The image goes where no other instance needs it, and on macOS Apple's `container` goes too,
   where nothing else uses it (no other instance, no container, no image left).
+- **On Linux, `apt autoremove` leaves it.** apt installs it as an installation's recommendation, which it counts as
+  automatic; its postinst marks it installed by hand, so it stays once no installation recommends it.
 - **Earlier versions** brought an installation's own SQL Server (`<id>-sqlserver` on macOS, `<pkg>-sqlserver` on
   Linux). Upgrading takes it over as the instance, with its password and databases.
 

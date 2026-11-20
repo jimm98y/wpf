@@ -130,6 +130,12 @@ public static partial class LinuxPackager
                 if (DesktopCommon.Icon(manifest, app) is { } image)
                     tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
             }
+            // the installation's uninstaller in the menu, as Windows' Apps & features entry
+            tar.AddText($"{root}/bin/{pkg}-uninstall", GuiUninstaller("Uninstall " + manifest.Product.Name,
+                $"Remove {manifest.Product.Name} from this computer?\n\nIts settings and data (the registry, ProgramData) can be kept for a later install, or removed with it." +
+                (sqlServer ? $"\n\nSQL Server's instance {manifest.SqlServer.Instance} stays: Uninstall SQL Server {manifest.SqlServer.Instance.ToUpperInvariant()} removes it." : ""),
+                pkg, root + "/uninstall.sh"), executable: true);
+            tar.AddText($"/usr/share/applications/{pkg}-uninstall.desktop", UninstallerEntry("Uninstall " + manifest.Product.Name, $"{root}/bin/{pkg}-uninstall"), executable: false);
             // the services by their Windows names, through systemd
             var named = manifest.Services.Select(x => (x.Name, UnitName(pkg, x.Name))).ToList();
             if (httpSys) named.Insert(0, ("HTTP", $"{pkg}-httpsys.service"));
@@ -362,6 +368,62 @@ public static partial class LinuxPackager
         StartupWMClass={windowClass}
         Terminal=false
         Categories=Utility;
+
+        """;
+
+    /// <summary>A menu entry's uninstaller: asked first (zenity, or kdialog, else in a terminal), then removed as an
+    /// administrator (pkexec) -- by apt where the package manager installed it (purge, or remove to keep the data),
+    /// else by the uninstall script the .tar.gz wrote (with --keep-data to keep it).</summary>
+    internal static string GuiUninstaller(string title, string question, string package, string script) => $$"""
+        #!/bin/sh
+        # {{title}}: asked first, then removed as an administrator
+        T="{{title}}"
+        Q="{{question}}"
+        if command -v zenity >/dev/null 2>&1; then
+          answer=$(zenity --question --title="$T" --icon=dialog-warning --text="$Q" --ok-label="Remove Everything"             --cancel-label="Cancel" --extra-button="Keep Data" 2>/dev/null) && answer=all
+        elif command -v kdialog >/dev/null 2>&1; then
+          kdialog --title "$T" --warningyesnocancel "$Q" --yes-label "Remove Everything" --no-label "Keep Data"
+          case $? in 0) answer=all;; 1) answer="Keep Data";; *) answer=;; esac
+        else
+          # no dialog to ask with: the uninstall in a terminal, which asks there
+          for t in x-terminal-emulator gnome-terminal konsole xterm; do
+            command -v $t >/dev/null 2>&1 && exec $t -e sh -c "if dpkg-query -W -f='\${Status}' {{package}} 2>/dev/null | grep -q 'ok installed'; then sudo apt-get purge {{package}}; else sudo '{{script}}'; fi; printf 'Press Enter to close. '; read x"
+          done
+          exit 1
+        fi
+        case "$answer" in
+          all) keep= ;;
+          "Keep Data") keep=1 ;;
+          *) exit 0 ;;
+        esac
+        log=$(mktemp)
+        if dpkg-query -W -f='${Status}' {{package}} 2>/dev/null | grep -q 'ok installed'; then
+          if [ -n "$keep" ]; then what=remove; else what=purge; fi
+          pkexec /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y -o DPkg::Lock::Timeout=300 $what {{package}} >"$log" 2>&1
+        else
+          if [ -n "$keep" ]; then pkexec "{{script}}" --keep-data >"$log" 2>&1; else pkexec "{{script}}" >"$log" 2>&1; fi
+        fi
+        status=$?
+        if [ $status = 126 ] || [ $status = 127 ]; then rm -f "$log"; exit 0; fi   # (the password not given)
+        if command -v zenity >/dev/null 2>&1; then
+          if [ $status = 0 ]; then zenity --info --title="$T" --text="Removed." 2>/dev/null
+          else zenity --text-info --title="$T: it failed" --filename="$log" 2>/dev/null; fi
+        elif command -v kdialog >/dev/null 2>&1; then
+          if [ $status = 0 ]; then kdialog --title "$T" --msgbox "Removed."; else kdialog --title "$T" --textbox "$log"; fi
+        fi
+        rm -f "$log"
+        exit 0
+
+        """;
+
+    internal static string UninstallerEntry(string name, string program) => $"""
+        [Desktop Entry]
+        Type=Application
+        Name={name}
+        Exec={Quote(program)}
+        Icon=edit-delete
+        Terminal=false
+        Categories=System;
 
         """;
 

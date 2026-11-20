@@ -233,7 +233,18 @@ public class PackagerTests
         Assert.Contains("rm -f /var/lib/wpfwebgpu/sqlbrowser/sqlexpress2025", postrm);
         Assert.Contains("/etc/wpfwebgpu/sqlserver/sqlexpress2025-uninstall.sh", install);  // the instance's own uninstall
         Assert.DoesNotContain("podman rm", un);                                            // the installation's leaves it
+        Assert.Contains("apt-mark -o DPkg::Lock::Timeout=1800 manual wpfwebgpu-sqlserver-sqlexpress2025", postinst);   // kept from autoremove
+        Assert.Contains("/usr/lib/wpfwebgpu/sqlserver-sqlexpress2025-uninstall", install);                         // the .tar.gz's removes its menu entry
         foreach (string script in new[] { postinst, postrm, install, un }) ShellSyntax(script);
+
+        // the menu entries' uninstallers: asked, then apt (purge, or remove to keep the data) or the uninstall script
+        string gui = WpfWebGpu.Packager.Desktop.LinuxPackager.GuiUninstaller("Uninstall P", "Remove P?\n\nIts data can be kept.", "p", "/opt/P/uninstall.sh");
+        ShellSyntax(gui);
+        Assert.Contains("zenity --question", gui);
+        Assert.Contains("kdialog --title", gui);
+        Assert.Contains("apt-get -y -o DPkg::Lock::Timeout=300 $what p", gui);
+        Assert.Contains("pkexec \"/opt/P/uninstall.sh\" --keep-data", gui);
+        Assert.Contains("Exec=/opt/P/bin/p-uninstall", WpfWebGpu.Packager.Desktop.LinuxPackager.UninstallerEntry("Uninstall P", "/opt/P/bin/p-uninstall"));
     }
 
     [Fact]

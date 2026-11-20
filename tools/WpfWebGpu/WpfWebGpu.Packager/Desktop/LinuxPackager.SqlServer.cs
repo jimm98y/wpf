@@ -51,6 +51,10 @@ public static partial class LinuxPackager
 
     private static string SqlServerUnitName(string key) => "wpfwebgpu-sqlserver-" + key;
 
+    // the instance's menu entry and the program it runs
+    private static string SqlUninstallProgram(string key) => $"/usr/lib/wpfwebgpu/sqlserver-{key}-uninstall";
+    private static string SqlUninstallEntry(string key) => $"/usr/share/applications/wpfwebgpu-sqlserver-{key}-uninstall.desktop";
+
     /// <summary>Writes wpfwebgpu-sqlserver-&lt;instance&gt;_&lt;version&gt;_&lt;arch&gt;.deb.</summary>
     public static string BuildSqlServer(PackageManifest manifest, string arch, string outDir, Action<string> log)
     {
@@ -112,6 +116,12 @@ public static partial class LinuxPackager
         string key = DesktopCommon.SqlInstanceKey(manifest.SqlServer.Instance);
         var tar = new TarTree(output);
         tar.AddText($"/lib/systemd/system/{SqlServerUnitName(key)}.service", SqlServerUnit(manifest, SqlServerImage.ForLinux(arch)), executable: false);
+        // its uninstaller in the menu, as SQL Server's own entry in Apps & features on Windows
+        string name = manifest.SqlServer.Instance.ToUpperInvariant();
+        tar.AddText(SqlUninstallProgram(key), GuiUninstaller("Uninstall SQL Server " + name,
+            $"Remove SQL Server's instance {name} from this computer?\n\nThe programs that use it have no database until it is installed again. Its databases can be kept for a later install, or removed with it.",
+            SqlServerPackageName(manifest), SqlServerUninstallScript(key)), executable: true);
+        tar.AddText(SqlUninstallEntry(key), UninstallerEntry("Uninstall SQL Server " + name, SqlUninstallProgram(key)), executable: false);
         tar.Finish();
     }
 
@@ -221,6 +231,16 @@ public static partial class LinuxPackager
                 systemctl restart --no-block "$b" || true
               done
             fi
+            command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
+            # installed as an installation's recommendation, apt counts it automatic: autoremove would take it once no
+            # installation recommends it. It stays, as SQL Server stays on Windows: installed by hand, once apt has
+            # let go of its lock
+            if dpkg-query -W -f='${Status}' {{SqlServerPackageName(manifest)}} 2>/dev/null | grep -q 'install ok' \
+               && [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1; then
+              systemctl reset-failed {{unit}}-manual.service >/dev/null 2>&1 || true
+              systemd-run --quiet --collect --unit={{unit}}-manual --description="{{SqlServerPackageName(manifest)}} kept from autoremove" --on-active=2 \
+                /usr/bin/apt-mark -o DPkg::Lock::Timeout=1800 manual {{SqlServerPackageName(manifest)}} >/dev/null 2>&1 || true
+            fi
             echo "{{sql.Engine}}, instance {{manifest.SqlServer.Instance}}: (local)\\{{manifest.SqlServer.Instance}} or 127.0.0.1,$PORT (login sa)"
             if [ -n "$NEW" ]; then echo "  sa password: $PW"; fi
             echo "  the password is kept in $ENVFILE (readable by root)"
@@ -285,7 +305,9 @@ public static partial class LinuxPackager
             ALL=1; for a in "$@"; do [ "$a" = --keep-data ] && ALL=; done
             set -- remove
             {{SqlServerPostRm(manifest, sql).Replace("\"$1\" = purge", "-n \"$ALL\"")}}
-            rm -f /lib/systemd/system/{{SqlServerUnitName(key)}}.service {{SqlServerUninstallScript(key)}}
+            rm -f /lib/systemd/system/{{SqlServerUnitName(key)}}.service {{SqlServerUninstallScript(key)}} {{SqlUninstallProgram(key)}} {{SqlUninstallEntry(key)}}
+            rmdir /usr/lib/wpfwebgpu 2>/dev/null
+            command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications
             [ -d /run/systemd/system ] && systemctl daemon-reload
             echo "SQL Server's instance {{manifest.SqlServer.Instance}} removed"
             UNINSTALL
