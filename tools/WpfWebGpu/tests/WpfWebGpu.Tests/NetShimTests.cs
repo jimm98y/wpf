@@ -164,7 +164,9 @@ public sealed class NetShimTests : IClassFixture<NetShimServer>
         Assert.True(wc.IsBusy);
         Assert.True(done.Wait(5000));
         Assert.Equal("GET tok False False", got);
-        Assert.True(progress > 0);
+        // (no synchronization context: progress and completion are posted to the thread pool, as .NET's WebClient
+        // posts them, so the completion may run before the last progress event)
+        Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref progress) > 0, 5000));
     }
 
     [Fact]
