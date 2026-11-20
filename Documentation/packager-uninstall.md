@@ -62,6 +62,7 @@ and never claims what the machine had before it.
 
 - On Windows, values and files that were on the machine before the installation, and HKEY_CURRENT_USER values of a
   user whose profile is not loaded.
-- On macOS, the ProtectedData keys of the apps in each user's login keychain (macOS asks the user to delete keychain
-  items), and Rosetta.
+- On macOS, each user's data protection key in the login keychain ("WpfWebGpu Data Protection"): it is every
+  installation's, as Windows' DPAPI keys outlive any one application, and removing it would leave other installations'
+  protected data unreadable. Rosetta stays too.
 - On Linux, Podman, which the SQL Server package depends on: `apt autoremove` takes it once nothing needs it.
