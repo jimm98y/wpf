@@ -161,14 +161,16 @@ public static partial class MacPackager
         mkdir -p "{{SqlBrowserInstances}}"
         printf '%s %s\n' "{{manifest.SqlServer.Instance}}" "{{manifest.SqlServer.Port}}" > "{{SqlBrowserInstances}}/{{id}}"
         chmod 755 "{{SqlBrowserInstances}}"; chmod 644 "{{SqlBrowserInstances}}/{{id}}"
-        # the daemons (again, on an upgrade): each started while launchd still lets go of the one before (up to 30 s)
+        # the daemons (again, on an upgrade): the one before gone first -- launchd lets go of it only once it has
+        # stopped its container (up to 30 s more) -- then each started, launchd retried until it takes it
         for l in {{label}} {{SqlBrowserLabel(id)}}; do
           launchctl bootout system/"$l" >/dev/null 2>&1 || true
+          i=0; while launchctl print system/"$l" >/dev/null 2>&1 && [ $i -lt 60 ]; do sleep 1; i=$((i+1)); done
           launchctl enable system/"$l" 2>/dev/null || true
           i=0
           until launchctl bootstrap system /Library/LaunchDaemons/"$l".plist 2>/dev/null; do
-            launchctl print system/"$l" >/dev/null 2>&1 && break
-            i=$((i+1)); [ $i -ge 30 ] && { echo "could not start $l" >&2; break; }
+            i=$((i+1))
+            if [ $i -ge 30 ]; then launchctl print system/"$l" >/dev/null 2>&1 || echo "could not start $l" >&2; break; fi
             sleep 1
           done
         done

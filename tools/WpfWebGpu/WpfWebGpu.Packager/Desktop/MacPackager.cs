@@ -456,8 +456,8 @@ public static partial class MacPackager
           launchctl enable system/"$1" 2>/dev/null
           i=0
           until launchctl bootstrap system "/Library/LaunchDaemons/$1.plist" 2>/dev/null; do
-            launchctl print system/"$1" >/dev/null 2>&1 && return 0
-            i=$((i+1)); if [ $i -ge 10 ]; then echo "could not start $1" >&2; return 0; fi
+            i=$((i+1))
+            if [ $i -ge 10 ]; then launchctl print system/"$1" >/dev/null 2>&1 || echo "could not start $1" >&2; return 0; fi
             sleep 1
           done
         }
