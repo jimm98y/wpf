@@ -116,6 +116,20 @@ internal static unsafe class Services
 
     public static void Delete(string name) => Using(name, svc => DeleteService(svc));
 
+    /// <summary>The services whose program is in <paramref name="root"/>: those the installation's programs created.</summary>
+    public static IEnumerable<string> Of(string root)
+    {
+        using var all = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
+        if (all == null) yield break;
+        foreach (string name in all.GetSubKeyNames())
+        {
+            using var k = all.OpenSubKey(name);
+            if (k?.GetValue("ImagePath", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is string image
+                && image.Contains(root.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
+                yield return name;
+        }
+    }
+
     private static void Using(string name, Action<IntPtr> action)
     {
         IntPtr scm = OpenSCManagerW(null, null, SC_MANAGER_ALL_ACCESS);

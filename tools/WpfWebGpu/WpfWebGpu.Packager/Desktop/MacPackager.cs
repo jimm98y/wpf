@@ -51,6 +51,10 @@ public static partial class MacPackager
         log($"macOS ({arch}): the installation into {root}");
         int files = CloneTree(manifest.Inputs.InstallDir, Path.Combine(home, "app"), excludes);
         CloneTree(Path.Combine(runtimePack.Directory, "runtime"), Path.Combine(home, "runtime"), new GlobSet(Array.Empty<string>()));
+        // every user's caches and logs of what the runtime starts (the startup agent, a program it runs) under the
+        // product's name, where the uninstall finds them (the app stubs and daemons say so themselves)
+        File.WriteAllText(Path.Combine(home, "runtime", "launcher", "wpfrun.env"),
+            $"WPFRUN_CACHE=~/Library/Caches/{product}\nWPFRUN_LOGS=~/Library/Logs/{product}\n");
         foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg"))
             Clone(hive, Path.Combine(home, "seed", "registry", Path.GetFileName(hive)));
         foreach (var (source, target) in staged.ProgramDataFiles)
@@ -119,6 +123,7 @@ public static partial class MacPackager
         var image = DesktopCommon.Icon(manifest);
         foreach (var app in manifest.Apps.Where(a => a.Kind == AppKind.Gui && a.Shortcut))
             WriteAppStub(Path.Combine(payload, "Applications", product), root, id, app, manifest, image);
+        WriteUninstallApp(Path.Combine(payload, "Applications", product), root, id, product, manifest);
 
         File.WriteAllText(Path.Combine(home, "uninstall.sh"), Uninstall(root, product, id, daemons, sqlPack != null));
         Executable(Path.Combine(home, "uninstall.sh"));
@@ -304,6 +309,40 @@ public static partial class MacPackager
             """);
     }
 
+    /// <summary>"Uninstall &lt;Product&gt;.app" beside the apps: asks whether the data goes too, then runs uninstall.sh
+    /// as an administrator (macOS's own prompt), as Apps &amp; features does on Windows.</summary>
+    private static void WriteUninstallApp(string folder, string root, string id, string product, PackageManifest manifest)
+    {
+        string bundle = Path.Combine(folder, DesktopCommon.FileName("Uninstall " + product) + ".app", "Contents");
+        Directory.CreateDirectory(Path.Combine(bundle, "MacOS"));
+        string q = product.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        File.WriteAllText(Path.Combine(bundle, "MacOS", "uninstall"), $$"""
+            #!/bin/sh
+            # Uninstall {{product}}: asked first, then uninstall.sh run as an administrator
+            choice=$(osascript -e 'button returned of (display dialog "Remove {{q}} from this Mac?\n\nIts settings and data (the registry, ProgramData{{(manifest.SqlServer.Include ? ", the SQL Server databases" : "")}}) can be kept for a later install, or removed with it." buttons {"Cancel", "Keep Data", "Remove Everything"} default button "Keep Data" cancel button "Cancel" with title "Uninstall {{q}}" with icon caution)' 2>/dev/null) || exit 0
+            arg=""; [ "$choice" = "Remove Everything" ] && arg=" --all"
+            osascript -e "do shell script \"'{{root}}/uninstall.sh'$arg\" with administrator privileges" >/dev/null 2>&1 \
+              && osascript -e 'display dialog "{{q}} was removed." buttons {"OK"} default button "OK" with title "Uninstall {{q}}"' >/dev/null 2>&1
+            exit 0
+
+            """);
+        Executable(Path.Combine(bundle, "MacOS", "uninstall"));
+        File.WriteAllText(Path.Combine(bundle, "Info.plist"), $"""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>CFBundleIdentifier</key><string>{X(id + ".uninstall")}</string>
+              <key>CFBundleName</key><string>{X("Uninstall " + product)}</string>
+              <key>CFBundleExecutable</key><string>uninstall</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleShortVersionString</key><string>{X(manifest.Product.Version)}</string>
+              <key>LSMinimumSystemVersion</key><string>12.0</string>
+            </dict>
+            </plist>
+            """);
+    }
+
     // an upgrade: the services stopped before their files are replaced, and the previous version's programs and app
     // stubs removed, so that what the new version no longer has is gone (as an MSI upgrade removes it); the machine's
     // state stays
@@ -346,10 +385,10 @@ public static partial class MacPackager
         rm -f /Library/LaunchDaemons/{{id}}.*.plist
         """;
 
-    // the product's caches: the machine's (its services') and each user's (its apps')
+    // the product's caches: the machine's (its services') and each user's (its apps'), root's among them
     private static string Caches(string product) => $$"""
         rm -rf "/Library/Caches/{{product}}"
-        for h in /Users/*; do [ -d "$h/Library/Caches/{{product}}" ] && rm -rf "$h/Library/Caches/{{product}}"; done
+        for h in /Users/* /var/root; do [ -d "$h/Library/Caches/{{product}}" ] && rm -rf "$h/Library/Caches/{{product}}"; done
         """;
 
     // a pattern for pkill (an extended regular expression) matching the text itself, quoted for a single-quoted word
@@ -446,17 +485,29 @@ public static partial class MacPackager
         #!/bin/sh
         # Removes {{product}}: its services, its apps, its files, and its caches and logs (the machine's and each user's).
         # The machine's state (state/: the registry and ProgramData) is kept unless --all is given, as Windows keeps
-        # ProgramData after an uninstall.
+        # ProgramData after an uninstall; --all also removes the service accounts it made, and its SQL Server's
+        # databases (and Apple's container, where nothing else uses it). "Uninstall {{product}}.app" runs this.
         if [ "$(id -u)" != 0 ]; then exec sudo "$0" "$@"; fi
         {{(sqlServer ? SqlServerUninstall(id, root) : "")}}
         {{StopAll(root, product, id)}}
+        # the startup agent out of every session it runs in, then its job file
+        for u in $(ps -axo uid=,comm= | awk '$2 ~ /loginwindow$/ {print $1}' | sort -u); do
+          launchctl bootout gui/"$u"/"{{id}}.startup" >/dev/null 2>&1 || true
+        done
         rm -f "/Library/LaunchAgents/{{id}}.startup.plist"
         rm -rf "/Applications/{{product}}"
         {{Caches(product)}}
         rm -rf "/Library/Logs/{{product}}"
-        for h in /Users/*; do [ -d "$h/Library/Logs/{{product}}" ] && rm -rf "$h/Library/Logs/{{product}}"; done
+        for h in /Users/* /var/root; do [ -d "$h/Library/Logs/{{product}}" ] && rm -rf "$h/Library/Logs/{{product}}"; done
         if [ "$1" = "--all" ]; then
           rm -rf "{{root}}"
+          # the service accounts the installation made (the state they owned gone with it), where no other
+          # installation's daemon still runs as one
+          for a in {{string.Join(" ", new[] { ServiceAccount.NetworkService, ServiceAccount.LocalService }.Select(a => DesktopCommon.SystemAccount(a, mac: true)))}}; do
+            dscl . -read "/Users/$a" >/dev/null 2>&1 || continue
+            grep -lq "<string>$a</string>" /Library/LaunchDaemons/*.plist 2>/dev/null && continue
+            dscl . -delete "/Users/$a" >/dev/null 2>&1 || true
+          done
         else
           find "{{root}}" -mindepth 1 -maxdepth 1 ! -name state ! -name sqlserver -exec rm -rf {} +
         fi

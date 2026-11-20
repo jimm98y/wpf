@@ -4,8 +4,12 @@
 // WebGPU (runtime/: a private .NET and wpfrun), the way the same installation runs on macOS and Linux.
 //
 //   Setup.exe                 install (or upgrade)
-//   Setup.exe /uninstall      remove; ProgramData and the registry's values are kept, as Windows keeps them
-//   /quiet                    no prompt at the end, nor the question below (its default taken)
+//   Setup.exe /uninstall      remove; asked whether the installation's data goes too (no: ProgramData and the registry's
+//                             values are kept, as Windows keeps an application's data)
+//   /uninstall /all           remove everything it put on the machine (InstallRecord.cs): its ProgramData, its
+//                             registry values and keys, the access rules it added, the SQL Server instance it installed,
+//                             every user's caches and logs of it
+//   /quiet                    no prompt at the end, nor the questions (their defaults taken: data kept)
 //   /sql, /nosql              the SQL Server it brings installed, or left out, without asking (SqlServer.cs)
 
 using System.ComponentModel;
@@ -77,6 +81,12 @@ internal static partial class Program
 
         // an upgrade: what runs is stopped before its files are replaced
         foreach (var service in info.Services) Services.Stop(ServiceName(info, service));
+        Directory.CreateDirectory(root);
+        var record = InstallRecord.Load(info.Id);
+        record.UserSid ??= System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value;
+        foreach (string top in zip.Entries.Where(e => e.FullName.StartsWith("programdata/", StringComparison.Ordinal))
+                     .Select(e => e.FullName["programdata/".Length..].Split('/')[0]).Append(info.Product).Where(f => f.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
+            if (!Directory.Exists(Path.Combine(programData, top))) record.ProgramDataFolders.Add(Path.Combine(programData, top));
 
         int files = 0, data = 0;
         foreach (ZipArchiveEntry e in zip.Entries)
@@ -94,6 +104,7 @@ internal static partial class Program
                 // the machine's data: put where it is not yet, never over what the machine has made of it
                 target = Path.Combine(programData, e.FullName["programdata/".Length..].Replace('/', '\\'));
                 if (File.Exists(target)) continue;
+                record.ProgramDataFiles.Add(target);
                 data++;
             }
             else continue;
@@ -113,7 +124,7 @@ internal static partial class Program
         foreach (ZipArchiveEntry e in zip.Entries.Where(e => e.FullName.StartsWith("registry/", StringComparison.Ordinal) && e.FullName.EndsWith(".reg", StringComparison.Ordinal)))
         {
             using var reader = new StreamReader(e.Open(), Encoding.UTF8);
-            values += RegistryImport.Import(Path.GetFileNameWithoutExtension(e.Name), reader.ReadToEnd(), tokens);
+            values += RegistryImport.Import(Path.GetFileNameWithoutExtension(e.Name), reader.ReadToEnd(), tokens, record);
         }
         Console.WriteLine($"  registry: {values} values");
 
@@ -140,12 +151,16 @@ internal static partial class Program
                 .Select(f => Path.Combine(programData, f)).Append(Path.Combine(programData, info.Product)).Where(Directory.Exists);
             foreach (string folder in folders)
                 foreach (string account in accounts)
-                    Grant(folder, account == "NetworkService" ? System.Security.Principal.WellKnownSidType.NetworkServiceSid : System.Security.Principal.WellKnownSidType.LocalServiceSid);
+                {
+                    var sid = account == "NetworkService" ? System.Security.Principal.WellKnownSidType.NetworkServiceSid : System.Security.Principal.WellKnownSidType.LocalServiceSid;
+                    Grant(folder, sid);
+                    record.Acls.Add(new AclItem(folder, new System.Security.Principal.SecurityIdentifier(sid, null).Value));
+                }
         }
         // the database server the services keep their configuration in, before they start; the accounts they run as
         // (which exist now, a service's virtual account with it) log in to it as Windows users, as on the machine the
         // installation was made on
-        SqlServer.Install(zip, info, s_args, s_quiet, info.Services.Select(s => s.StartName.Length > 0 ? s.StartName : s.Account switch
+        record.SqlInstance ??= SqlServer.Install(zip, info, s_args, s_quiet, info.Services.Select(s => s.StartName.Length > 0 ? s.StartName : s.Account switch
         {
             "NetworkService" => @"NT AUTHORITY\NETWORK SERVICE",
             "LocalService" => @"NT AUTHORITY\LOCAL SERVICE",
@@ -181,6 +196,13 @@ internal static partial class Program
             CopyBytes(self, to, program);
         }
         using (var s = File.Create(Path.Combine(root, "setup.json"))) info.Write(s);
+        record.Save(info.Id);
+        // the apps' caches and logs, each user's, in a folder of the installation's own (wpfrun's, its launchers read
+        // it), for the uninstall to find
+        foreach (string runtime in info.Runtimes.Values.Append("runtime").Distinct())
+            if (Directory.Exists(Path.Combine(root, runtime, "launcher")))
+                File.WriteAllText(Path.Combine(root, runtime, "launcher", "wpfrun.env"),
+                    $"WPFRUN_CACHE=%LOCALAPPDATA%\\{FileName(info.Product)}\\cache\r\nWPFRUN_LOGS=%LOCALAPPDATA%\\{FileName(info.Product)}\\logs\r\n");
         using (var key = Registry.LocalMachine.CreateSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{info.Id}"))
         {
             key.SetValue("DisplayName", info.Product);
@@ -190,6 +212,7 @@ internal static partial class Program
             key.SetValue("UninstallString", $"\"{uninstaller}\" /uninstall");
             key.SetValue("QuietUninstallString", $"\"{uninstaller}\" /uninstall /quiet");
             if (info.Apps.FirstOrDefault() is { } first) key.SetValue("DisplayIcon", Path.Combine(root, "app", first.Exe.Replace('/', '\\')));
+            key.SetValue("EstimatedSize", (int)Math.Min(int.MaxValue, Size(root) / 1024), RegistryValueKind.DWord);
             key.SetValue("NoModify", 1, RegistryValueKind.DWord);
             key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
         }
@@ -232,18 +255,136 @@ internal static partial class Program
         if (!File.Exists(setupJson)) throw new InvalidOperationException($"no installation in {root} (setup.json)");
         SetupInfo info;
         using (var s = File.OpenRead(setupJson)) info = SetupInfo.Read(s);
-        Console.WriteLine($"Removing {info.Product} from {root}");
-        foreach (var service in info.Services) { Services.Stop(ServiceName(info, service)); Services.Delete(ServiceName(info, service)); }
+        var record = InstallRecord.Load(info.Id);
+        bool all = s_args.Any(a => a.Equals("/all", StringComparison.OrdinalIgnoreCase)) || !s_quiet && !Console.IsInputRedirected && Ask(
+            $"Remove {info.Product}'s data too -- its ProgramData, its registry settings" + (record.SqlInstance != null ? $", SQL Server's instance {record.SqlInstance} and its databases" : "") + "? [y/N] ");
+        Console.WriteLine($"Removing {info.Product} from {root}" + (all ? ", with its data" : ""));
+
+        // what runs: the services (those the installation registered, and those its programs created since, of its
+        // folder), then every program of the installation still running
+        var services = info.Services.Select(sv => ServiceName(info, sv)).Concat(Services.Of(root)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (string name in services) Services.Stop(name);
+        foreach (string name in services) { Services.Delete(name); Console.WriteLine($"  service {name} removed"); }
+        StopPrograms(root);
+
         string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), info.Product);
         if (Directory.Exists(menu)) Directory.Delete(menu, recursive: true);
-        foreach (string dir in new[] { "app", "runtime" })
-            if (Directory.Exists(Path.Combine(root, dir))) Directory.Delete(Path.Combine(root, dir), recursive: true);
-        File.Delete(setupJson);
+        // every user's caches and logs of the installation's apps (wpfrun.env), and wpfrun's own of the installation
+        foreach (string profile in Profiles())
+            Remove(Path.Combine(profile, "AppData", "Local", FileName(info.Product)));
+        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        Remove(Path.Combine(programData, info.Product, "wpfrun"));
+
+        if (all)
+        {
+            if (record.SqlInstance is { } instance) SqlServer.Uninstall(instance);
+            int values = RegistryImport.Remove(record);
+            Console.WriteLine($"  registry: {values} values removed");
+            foreach (var acl in record.Acls) Ungrant(acl.Folder, acl.Sid);
+            foreach (string file in record.ProgramDataFiles) { try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+            foreach (string folder in record.ProgramDataFolders) Remove(folder);
+            // the folders the files were in, where nothing else is left in them
+            foreach (string? dir in record.ProgramDataFiles.Select(Path.GetDirectoryName).Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(d => d?.Length ?? 0))
+                for (string? d = dir; d != null && d.Length > programData.Length && d.StartsWith(programData, StringComparison.OrdinalIgnoreCase); d = Path.GetDirectoryName(d))
+                    if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); else break;
+            Console.WriteLine($"  ProgramData: {record.ProgramDataFiles.Count} files, {record.ProgramDataFolders.Count} folders removed");
+            InstallRecord.Delete(info.Id);
+        }
+
+        foreach (string dir in Directory.EnumerateDirectories(root))
+            Remove(dir);
+        foreach (string file in Directory.EnumerateFiles(root).Where(f => !f.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)))
+            Remove(file);
         Registry.LocalMachine.DeleteSubKeyTree($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{info.Id}", throwOnMissingSubKey: false);
         // this program and its folder go once it has ended
         Process.Start(new ProcessStartInfo("cmd.exe", $"/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{root}\"") { CreateNoWindow = true, UseShellExecute = false });
-        Console.WriteLine($"{info.Product} removed (ProgramData and the registry's values are kept).");
+        Console.WriteLine($"{info.Product} removed" + (all ? "." : " (ProgramData and the registry's values are kept; /uninstall /all removes them)."));
+        if (s_delayed > 0) Console.WriteLine($"  {s_delayed} files in use go when Windows restarts.");
         return 0;
+    }
+
+    private static bool Ask(string question)
+    {
+        Console.Write(question);
+        string? answer = Console.ReadLine()?.TrimStart();
+        return answer != null && (answer.StartsWith('y') || answer.StartsWith('Y'));
+    }
+
+    private static int s_delayed;
+
+    /// <summary>A file or folder deleted; what is in use (a program that would not stop) marked to go when Windows
+    /// restarts, rather than the uninstall stopping half done.</summary>
+    private static void Remove(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            try { Directory.Delete(path, recursive: true); return; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+            foreach (string f in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)) Remove(f);
+            foreach (string d in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length).Append(path))
+                try { Directory.Delete(d); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { if (MoveFileExW(d, null, MOVEFILE_DELAY_UNTIL_REBOOT)) s_delayed++; }
+        }
+        else if (File.Exists(path))
+        {
+            try { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { if (MoveFileExW(path, null, MOVEFILE_DELAY_UNTIL_REBOOT)) s_delayed++; }
+        }
+    }
+
+    private const uint MOVEFILE_DELAY_UNTIL_REBOOT = 4;
+    [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool MoveFileExW(string from, string? to, uint flags);
+
+    /// <summary>Every program running from the installation's folder (its apps, the runtime's dotnet and wpfrun),
+    /// ended.</summary>
+    private static void StopPrograms(string root)
+    {
+        string prefix = root.TrimEnd('\\') + "\\";
+        foreach (var p in Process.GetProcesses())
+        {
+            try
+            {
+                if (p.Id == Environment.ProcessId) continue;
+                string? path = p.MainModule?.FileName;
+                if (path == null || !path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                Console.WriteLine($"  ending {Path.GetFileName(path)} ({p.Id})");
+                p.Kill(entireProcessTree: true);
+                p.WaitForExit(5000);
+            }
+            catch (Exception e) when (e is Win32Exception or InvalidOperationException or NotSupportedException) { }
+            finally { p.Dispose(); }
+        }
+    }
+
+    /// <summary>The machine's user profiles (each one's caches of the installation's apps).</summary>
+    private static IEnumerable<string> Profiles()
+    {
+        using var list = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList");
+        if (list == null) yield break;
+        foreach (string sid in list.GetSubKeyNames())
+        {
+            using var k = list.OpenSubKey(sid);
+            if (k?.GetValue("ProfileImagePath") is string path && Directory.Exists(Environment.ExpandEnvironmentVariables(path)))
+                yield return Environment.ExpandEnvironmentVariables(path);
+        }
+    }
+
+    private static void Ungrant(string folder, string sid)
+    {
+        if (!Directory.Exists(folder)) return;
+        var info = new DirectoryInfo(folder);
+        var acl = System.IO.FileSystemAclExtensions.GetAccessControl(info);
+        acl.RemoveAccessRule(new System.Security.AccessControl.FileSystemAccessRule(new System.Security.Principal.SecurityIdentifier(sid),
+            System.Security.AccessControl.FileSystemRights.Modify,
+            System.Security.AccessControl.InheritanceFlags.ContainerInherit | System.Security.AccessControl.InheritanceFlags.ObjectInherit,
+            System.Security.AccessControl.PropagationFlags.None, System.Security.AccessControl.AccessControlType.Allow));
+        System.IO.FileSystemAclExtensions.SetAccessControl(info, acl);
+    }
+
+    private static long Size(string root)
+    {
+        long n = 0;
+        foreach (var f in new DirectoryInfo(root).EnumerateFiles("*", SearchOption.AllDirectories)) n += f.Length;
+        return n;
     }
 
     // ---- names ----------------------------------------------------------------------------------------------------

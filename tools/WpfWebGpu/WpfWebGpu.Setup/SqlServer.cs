@@ -18,21 +18,22 @@ namespace WpfWebGpu.Setup;
 
 internal static class SqlServer
 {
-    /// <summary>Installs it from <paramref name="zip"/> if the installation carries it and it is wanted.</summary>
-    public static void Install(ZipArchive zip, SetupInfo info, string[] args, bool quiet, IEnumerable<string> serviceAccounts)
+    /// <summary>Installs it from <paramref name="zip"/> if the installation carries it and it is wanted: the instance
+    /// installed, or null (none carried, not wanted, there already: not the installation's to remove).</summary>
+    public static string? Install(ZipArchive zip, SetupInfo info, string[] args, bool quiet, IEnumerable<string> serviceAccounts)
     {
-        if (info.SqlServer is not { } sql) return;
+        if (info.SqlServer is not { } sql) return null;
         ZipArchiveEntry? media = zip.GetEntry("sqlserver/" + sql.Media);
-        if (media == null) return;
+        if (media == null) return null;
         if (InstanceExists(sql.Instance))
         {
             Console.WriteLine($"  {sql.Engine}: instance {sql.Instance} is installed already");
-            return;
+            return null;
         }
         if (!Wanted(sql, args, quiet))
         {
             Console.WriteLine($"  {sql.Engine}: left out");
-            return;
+            return null;
         }
 
         string temp = Path.Combine(Path.GetTempPath(), "sqlserver-" + Guid.NewGuid().ToString("N")[..8]);
@@ -59,11 +60,30 @@ internal static class SqlServer
             string kept = Keep(info, sql, password);
             Console.WriteLine($"  {sql.Engine}: .\\{sql.Instance}, login sa, password {password}");
             Console.WriteLine($"    (kept in {kept}, readable by administrators)");
+            return sql.Instance;
         }
         finally
         {
             try { Directory.Delete(temp, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
+    }
+
+    /// <summary>The instance the installation installed, uninstalled by SQL Server's own setup (the one it leaves in
+    /// Setup Bootstrap), with its databases.</summary>
+    public static void Uninstall(string instance)
+    {
+        if (!InstanceExists(instance)) return;
+        string bootstrap = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft SQL Server");
+        string? setup = Directory.Exists(bootstrap)
+            ? Directory.EnumerateFiles(bootstrap, "setup.exe", SearchOption.AllDirectories)
+                .Where(f => f.Contains(@"\Setup Bootstrap\SQL", StringComparison.OrdinalIgnoreCase)).OrderByDescending(f => f, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
+            : null;
+        if (setup == null) { Console.WriteLine($"  SQL Server: no setup to uninstall {instance} with (Apps & features removes it)"); return; }
+        Console.WriteLine($"  SQL Server: uninstalling instance {instance} (this takes several minutes)");
+        Run(setup, $"/Q /ACTION=Uninstall /FEATURES=SQLEngine /INSTANCENAME={instance} /SUPPRESSPRIVACYSTATEMENTNOTICE", "uninstalling");
+        // its databases' files, which its uninstall leaves (MSSQL<version>.<instance>)
+        foreach (string dir in Directory.EnumerateDirectories(bootstrap, "MSSQL*." + instance))
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
 
     private static bool Wanted(SetupSqlServer sql, string[] args, bool quiet)

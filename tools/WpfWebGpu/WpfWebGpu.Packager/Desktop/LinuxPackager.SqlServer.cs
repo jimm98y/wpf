@@ -46,7 +46,7 @@ public static partial class LinuxPackager
                 Architecture: {arch}
                 Maintainer: {(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : manifest.Product.Name)} <noreply@localhost>
                 Installed-Size: 4
-                Depends: podman
+                Depends: podman, {pkg}
                 Section: database
                 Priority: optional
                 Description: {sql.Engine} for {manifest.Product.Name}

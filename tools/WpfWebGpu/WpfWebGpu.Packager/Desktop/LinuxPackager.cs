@@ -149,10 +149,10 @@ public static partial class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlServer, webView), executable: false);
-            tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg), webView ? WebViewPostInst(pkg) : ""), executable: true);
+            tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg), webView ? WebViewPostInst(pkg, WebViewRecord(state)) : ""), executable: true);
             tar.AddText("./preinst", PreInst(pkg), executable: true);
             tar.AddText("./prerm", PreRm(units, root), executable: true);
-            tar.AddText("./postrm", PostRm(state, units, pkg), executable: true);
+            tar.AddText("./postrm", PostRm(state, units, maskedUnits, pkg, webView), executable: true);
             tar.Finish();
         }
 
@@ -177,9 +177,9 @@ public static partial class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg),
-                (sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : "") + (webView ? WebViewInstallStep(pkg) : "")), executable: true);
-            tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units,
-                sqlServer ? SqlServerUninstallStep(arch, pkg) : ""), executable: true);
+                (sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : "") + (webView ? WebViewInstallStep(pkg, WebViewRecord(state)) : "")), executable: true);
+            tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units, maskedUnits,
+                sqlServer ? SqlServerUninstallStep(arch, pkg) : "", webView), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
             if (sqlServer)
             {
@@ -194,7 +194,7 @@ public static partial class LinuxPackager
         return deb;
     }
 
-    private static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
+    internal static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
         string sqlServerStep) => $$"""
         #!/bin/sh
         # Installs {{pkg}} on a Linux without dpkg: its files into / (the list kept for uninstall.sh), then as the .deb's
@@ -202,7 +202,7 @@ public static partial class LinuxPackager
         set -e
         [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
         cd "$(dirname "$0")"
-        if [ -d /run/systemd/system ]; then
+        if [ -d /run/systemd/system ]; then :
         {{string.Concat(units.Select(u => $"  systemctl stop {u.Name} 2>/dev/null || true\n"))}}fi
         # into /lib, /bin, /sbin as they are: on a merged-/usr system each is a symlink to usr/, and an archive's
         # directory entry for one must not replace it with a directory (tar does unless told: every program on the
@@ -218,23 +218,65 @@ public static partial class LinuxPackager
 
         """;
 
-    private static string UninstallScript(string pkg, string root, string state, List<(string Name, bool Enable)> units, string sqlServerStep) => $$"""
+    internal static string UninstallScript(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked,
+        string sqlServerStep, bool webView) => $$"""
         #!/bin/sh
-        # Removes {{pkg}} as installed by install.sh. The machine's state ({{state}}) is kept unless --all is given,
-        # as Windows keeps ProgramData.
+        # Removes {{pkg}} as installed by install.sh: its services, its files, its caches and logs (the machine's and
+        # every user's). The machine's state ({{state}}) is kept unless --all is given, as Windows keeps ProgramData;
+        # --all also removes the service accounts it made and what it installed of WPE WebKit.
         [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
-        if [ -d /run/systemd/system ]; then
+        if [ -d /run/systemd/system ]; then :
         {{string.Concat(units.Select(u => $"  systemctl disable --now {u.Name} 2>/dev/null || true\n"))}}fi
+        {{PreRmBody(units, root)}}
         {{sqlServerStep}}
         if [ -f "{{root}}/installed-files.txt" ]; then
           while IFS= read -r f; do [ -f "$f" ] && rm -f "$f"; done < "{{root}}/installed-files.txt"
+          # the folders the files were in, where nothing else is left in them
+          sed -e 's|/[^/]*$||' "{{root}}/installed-files.txt" | sort -ru | while IFS= read -r d; do
+            case "$d" in ""|/|/bin|/sbin|/lib|/lib64|/usr|/usr/*bin|/usr/lib|/usr/share|/usr/share/applications|/usr/share/icons|/etc|/etc/*.d|/opt|/var|/lib/systemd|/lib/systemd/system) continue;; esac
+            rmdir "$d" 2>/dev/null || true
+          done
         fi
         rm -rf "{{root}}"
-        [ -d /run/systemd/system ] && systemctl daemon-reload || true
-        if [ "$1" = "--all" ]; then rm -rf "{{Path.GetDirectoryName(state)}}" "/etc/sysctl.d/60-{{pkg}}.conf"; fi
+        {{RemovedTogether(pkg, masked)}}
+        if [ "$1" = "--all" ]; then
+        {{Purged(pkg, state, webView, background: false)}}
+        fi
         echo "{{pkg}} removed"
 
         """;
+
+    // what remove and uninstall.sh take besides the package's files: the services its programs created since, its
+    // masked units' masks, its caches and logs (the machine's and every user's), and the desktop's caches of its entries
+    private static string RemovedTogether(string pkg, List<string> masked) => $$"""
+        if [ -d /run/systemd/system ]; then :
+          for f in /etc/systemd/system/{{pkg}}-*.service; do
+            [ -f "$f" ] && [ ! -L "$f" ] || continue
+            systemctl disable --now "$(basename "$f")" >/dev/null 2>&1 || true
+            rm -f "$f"
+          done
+        {{string.Concat(masked.Select(u => $"  systemctl unmask {u} >/dev/null 2>&1 || true\n"))}}  systemctl daemon-reload || true
+        fi
+        {{Caches(pkg)}}
+        rm -rf "/var/log/{{pkg}}"
+        for h in /root /home/*; do [ -d "$h/.local/state/{{pkg}}" ] && rm -rf "$h/.local/state/{{pkg}}"; done
+        command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
+        command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q /usr/share/icons/hicolor || true
+        """;
+
+    // purge's and --all's: the machine's state, the inotify limits, the service accounts (where no other unit runs as
+    // one), what the install added of WPE WebKit
+    private static string Purged(string pkg, string state, bool webView, bool background) => $$"""
+        {{(webView ? Indent(WebViewPurge(pkg, WebViewRecord(state), background), "  ") : "")}}
+          rm -rf "{{Path.GetDirectoryName(state)}}" "/etc/sysctl.d/60-{{SysctlName(state)}}.conf"
+          for a in {{DesktopCommon.SystemAccount(ServiceAccount.NetworkService, mac: false)}} {{DesktopCommon.SystemAccount(ServiceAccount.LocalService, mac: false)}}; do
+            getent passwd "$a" >/dev/null || continue
+            grep -qsx "User=$a" /lib/systemd/system/*.service /etc/systemd/system/*.service && continue
+            userdel "$a" >/dev/null 2>&1 || deluser --system "$a" >/dev/null 2>&1 || true
+          done
+        """;
+
+    private static string SysctlName(string state) => Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant();
 
     // ---- what is installed ---------------------------------------------------------------------------------
 
@@ -366,7 +408,7 @@ public static partial class LinuxPackager
         return sb.ToString();
     }
 
-    private static string PostInst(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
+    internal static string PostInst(string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
         string webViewStep) =>
         "#!/bin/sh\n# the machine's state made from the seed on the first install (the registry's paths this installation's) and\n"
         + "# kept on an upgrade; then the services enabled and started\nset -e\n" + PostInstBody(root, state, units, masked, accounts) + webViewStep + "exit 0\n";
@@ -405,13 +447,13 @@ public static partial class LinuxPackager
           chmod -R o+rwX "$STATE"
         fi
         {{accounts}}
-        if [ -d /run/systemd/system ]; then
+        if [ -d /run/systemd/system ]; then :
           systemctl daemon-reload || true
         {{string.Concat(units.Select(u => $"  systemctl unmask {u.Name} >/dev/null 2>&1 || true\n"))}}{{string.Concat(units.Where(u => u.Enable).Select(u => $"  systemctl enable --now {u.Name} || true\n"))}}{{string.Concat(masked.Select(u => $"  systemctl mask {u} || true\n"))}}fi
         # a service per program, each watching its configuration: more inotify instances than Linux allows a user by
         # default (128); Windows has no such limit
-        printf 'fs.inotify.max_user_instances = 8192\nfs.inotify.max_user_watches = 524288\n' > /etc/sysctl.d/60-{{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}}.conf
-        sysctl -q -p /etc/sysctl.d/60-{{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}}.conf || true
+        printf 'fs.inotify.max_user_instances = 8192\nfs.inotify.max_user_watches = 524288\n' > /etc/sysctl.d/60-{{SysctlName(state)}}.conf
+        sysctl -q -p /etc/sysctl.d/60-{{SysctlName(state)}}.conf || true
         command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications || true
         command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q /usr/share/icons/hicolor || true
 
@@ -434,32 +476,36 @@ public static partial class LinuxPackager
 
         """;
 
-    private static string PreRm(List<(string Name, bool Enable)> units, string root) => $"""
+    internal static string PreRm(List<(string Name, bool Enable)> units, string root) => $"""
         #!/bin/sh
         # the services stopped before their files go (an upgrade starts them again in postinst), and what users still
         # run of the installation ended: asked first, then made to
-        if [ -d /run/systemd/system ]; then
-        {string.Concat(units.Select(u => $"  systemctl stop --no-block {u.Name} || true\n"))}fi
-        pkill -TERM -f "{root}/runtime/" 2>/dev/null
-        for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "{root}/runtime/" >/dev/null || break; sleep 0.5; done
-        pkill -KILL -f "{root}/runtime/" 2>/dev/null
+        {PreRmBody(units, root)}
         exit 0
 
         """;
 
-    private static string PostRm(string state, List<(string Name, bool Enable)> units, string pkg) => $"""
+    private static string PreRmBody(List<(string Name, bool Enable)> units, string root) => $"""
+        if [ -d /run/systemd/system ]; then :
+        {string.Concat(units.Select(u => $"  systemctl stop --no-block {u.Name} || true\n"))}fi
+        pkill -TERM -f "{root}/runtime/" 2>/dev/null
+        for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "{root}/runtime/" >/dev/null || break; sleep 0.5; done
+        pkill -KILL -f "{root}/runtime/" 2>/dev/null
+        """;
+
+    internal static string PostRm(string state, List<(string Name, bool Enable)> units, List<string> masked, string pkg, bool webView) => $"""
         #!/bin/sh
         # remove takes the caches and logs (the machine's and every user's) and keeps the machine's state (the registry,
-        # ProgramData), as Windows keeps ProgramData; purge removes that too
+        # ProgramData), as Windows keeps ProgramData; purge removes that too, the service accounts and what the install
+        # added of WPE WebKit
         if [ "$1" = remove ] || [ "$1" = purge ]; then
-          if [ -d /run/systemd/system ]; then
-        {string.Concat(units.Select(u => $"    systemctl disable {u.Name} >/dev/null 2>&1 || true\n"))}    systemctl daemon-reload || true
-          fi
-        {Caches(pkg)}
-          rm -rf "/var/log/{pkg}"
-          for h in /root /home/*; do [ -d "$h/.local/state/{pkg}" ] && rm -rf "$h/.local/state/{pkg}"; done
+          if [ -d /run/systemd/system ]; then :
+        {string.Concat(units.Select(u => $"    systemctl disable {u.Name} >/dev/null 2>&1 || true\n"))}  fi
+        {RemovedTogether(pkg, masked)}
         fi
-        if [ "$1" = purge ]; then rm -rf "{Path.GetDirectoryName(state)}" "/etc/sysctl.d/60-{Path.GetFileName(Path.GetDirectoryName(state))!.ToLowerInvariant()}.conf"; fi
+        if [ "$1" = purge ]; then
+        {Purged(pkg, state, webView, background: true)}
+        fi
         exit 0
 
         """;

@@ -119,6 +119,54 @@ public class PackagerTests
         Assert.Contains("$h/Library/Logs/P", un);
         Assert.Contains("! -name state", un);                       // everything of the installation but its state
         Assert.Contains("rm -rf \"/Library/Application Support/P\"", un);   // --all: the state too
+        Assert.Contains("launchctl bootout gui/", un);              // the startup agent out of the sessions it runs in
+        Assert.Contains("dscl . -delete \"/Users/$a\"", un);       // --all: the service accounts
+        Assert.True(un.IndexOf("dscl . -delete", StringComparison.Ordinal) > un.IndexOf("if [ \"$1\" = \"--all\" ]", StringComparison.Ordinal));
+        string withSql = WpfWebGpu.Packager.Desktop.MacPackager.Uninstall(root, product, id, new List<string>(), sqlServer: true);
+        ShellSyntax(withSql);
+        Assert.Contains("uninstall-container.sh -d", withSql);      // --all: Apple's container, where nothing else uses it
+    }
+
+    private static void ShellSyntax(string script)
+    {
+        string file = Path.Combine(TestEnvironment.NewDirectory("script"), "s.sh");
+        File.WriteAllText(file, script);
+        var check = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh", new[] { "-n", file }) { RedirectStandardError = true })!;
+        string err = check.StandardError.ReadToEnd();
+        check.WaitForExit();
+        Assert.True(check.ExitCode == 0, err + "\n" + script);
+    }
+
+    [Fact]
+    public void Linux_remove_and_purge_take_what_the_installation_made()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "shell scripts");
+        var units = new List<(string Name, bool Enable)> { ("p-a.service", true), ("p-b.service", false) };
+        var masked = new List<string> { "p-b.service" };
+        string state = "/var/opt/P/state";
+        string postrm = WpfWebGpu.Packager.Desktop.LinuxPackager.PostRm(state, units, masked, "p", webView: true);
+        string un = WpfWebGpu.Packager.Desktop.LinuxPackager.UninstallScript("p", "/opt/P", state, units, masked, "", webView: true);
+        foreach (string script in new[] { postrm, un })
+        {
+            ShellSyntax(script);
+            Assert.Contains("/etc/systemd/system/p-*.service", script);   // the services its programs created
+            Assert.Contains("systemctl unmask p-b.service", script);       // its masks
+            Assert.Contains("rm -rf \"/var/cache/p\"", script);            // the caches and logs
+            Assert.Contains("rm -rf \"/var/log/p\"", script);
+            Assert.Contains("userdel \"$a\"", script);                     // purge: the service accounts
+            Assert.Contains("/var/opt/P/wpewebkit-installed", script);    // purge: what it added of WPE
+            Assert.Contains("/etc/sysctl.d/60-p.conf", script);
+        }
+        // an installation of no services, no masks: no block left empty
+        var none = new List<(string Name, bool Enable)>();
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.PostRm(state, none, new List<string>(), "p", webView: false));
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.UninstallScript("p", "/opt/P", state, none, new List<string>(), "", webView: false));
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.PreRm(none, "/opt/P"));
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.PostInst("/opt/P", state, none, new List<string>(), "", ""));
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.Install("p", "/opt/P", state, none, new List<string>(), "", ""));
+        Assert.Contains("systemd-run", postrm);                       // (apt's lock is dpkg's while postrm runs)
+        Assert.True(postrm.IndexOf("userdel", StringComparison.Ordinal) > postrm.IndexOf("if [ \"$1\" = purge ]", StringComparison.Ordinal));
+        Assert.True(un.IndexOf("userdel", StringComparison.Ordinal) > un.IndexOf("if [ \"$1\" = \"--all\" ]", StringComparison.Ordinal));
     }
 
     [Fact]

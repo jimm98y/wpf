@@ -131,6 +131,17 @@ public static partial class MacPackager
             HOME=/var/root /usr/local/bin/container image delete {{SqlServerImage.X64.Image}} >/dev/null 2>&1 || true
           fi
           pkgutil --forget "{{id}}.sqlserver" >/dev/null 2>&1 || true
+          # Apple's container, which the installation brought for it: gone too with --all where nothing else uses it
+          # (no other installation's database daemon, no container, no image left)
+          if [ "$1" = "--all" ] && [ -x /usr/local/bin/container ] && ! ls /Library/LaunchDaemons/*-sqlserver.plist >/dev/null 2>&1 \
+             && [ -z "$(HOME=/var/root /usr/local/bin/container list --all --quiet 2>/dev/null)" ] \
+             && [ -z "$(HOME=/var/root /usr/local/bin/container image list --quiet 2>/dev/null)" ]; then
+            HOME=/var/root /usr/local/bin/container system stop >/dev/null 2>&1 || true
+            if [ -x /usr/local/bin/uninstall-container.sh ]; then
+              HOME=/var/root /usr/local/bin/uninstall-container.sh -d >/dev/null 2>&1 || true
+            fi
+            pkgutil --forget com.apple.container-installer >/dev/null 2>&1 || true
+          fi
         fi
 
         """;

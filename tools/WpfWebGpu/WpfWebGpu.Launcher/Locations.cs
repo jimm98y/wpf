@@ -86,5 +86,41 @@ internal static class Locations
 
     private static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    private static string? Override(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } v ? v : null;
+    private static string? Override(string name)
+    {
+        s_envFile ??= ReadEnvFile();
+        return Environment.GetEnvironmentVariable(name) is { Length: > 0 } v ? v : null;
+    }
+
+    /// <summary>
+    /// An installation's own places (wpfrun.env beside the launcher, or beside the folder it is in: KEY=VALUE lines of
+    /// WPFRUN_CACHE, WPFRUN_LOGS, WPFRUN_STATE, environment variables and a leading ~ expanded), so its uninstaller
+    /// finds every user's caches and logs of it. Taken into the environment where it does not say otherwise: what
+    /// the launcher starts sees them too.
+    /// </summary>
+    private static string? s_envFile;
+    private static string ReadEnvFile()
+    {
+        foreach (string dir in new[] { AppContext.BaseDirectory, Path.Combine(AppContext.BaseDirectory, "..") })
+        {
+            string file = Path.Combine(dir, "wpfrun.env");
+            if (!File.Exists(file)) continue;
+            try
+            {
+                foreach (string raw in File.ReadAllLines(file))
+                {
+                    string line = raw.Trim();
+                    int eq = line.IndexOf('=');
+                    if (line.Length == 0 || line[0] == '#' || eq <= 0) continue;
+                    string key = line[..eq].Trim(), value = Environment.ExpandEnvironmentVariables(line[(eq + 1)..].Trim());
+                    if (key is not ("WPFRUN_CACHE" or "WPFRUN_LOGS" or "WPFRUN_STATE")) continue;
+                    if (value.StartsWith("~/", StringComparison.Ordinal)) value = Path.Combine(Home, value[2..]);
+                    if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key))) Environment.SetEnvironmentVariable(key, value);
+                }
+                return file;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        return "";
+    }
 }
