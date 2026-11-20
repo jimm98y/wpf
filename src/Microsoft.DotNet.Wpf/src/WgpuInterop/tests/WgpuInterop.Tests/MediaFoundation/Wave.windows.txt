@@ -1,0 +1,349 @@
+==== waveOut devices some
+caps mapper OK mid 1 pid 2 version 0x500 name Microsoft Sound Mapper formats 0xfffff channels 2 reserved 0 support 0x2e
+caps device 0 OK mid 1 pid 65535 version 0x0 name <device> formats 0xfffff channels 2 reserved 0 support 0x2e
+caps bad device MMSYSERR_BADDEVICEID
+caps of 8 bytes MMSYSERR_INVALPARAM: CCCCCCCCCCCCCCCCCCCCCCCC
+caps of no buffer MMSYSERR_INVALPARAM
+caps A OK formats 0xfffff channels 2 support 0x2e
+out query pcm 8 8000 1: mapper OK device OK direct OK
+out query pcm 8 8000 2: mapper OK device OK direct OK
+out query pcm 8 11025 1: mapper OK device OK direct OK
+out query pcm 8 11025 2: mapper OK device OK direct OK
+out query pcm 8 22050 1: mapper OK device OK direct OK
+out query pcm 8 22050 2: mapper OK device OK direct OK
+out query pcm 8 44100 1: mapper OK device OK direct OK
+out query pcm 8 44100 2: mapper OK device OK direct OK
+out query pcm 8 48000 1: mapper OK device OK direct OK
+out query pcm 8 48000 2: mapper OK device OK direct OK
+out query pcm 8 96000 1: mapper OK device OK direct OK
+out query pcm 8 96000 2: mapper OK device OK direct OK
+out query pcm 8 192000 1: mapper OK device OK direct OK
+out query pcm 8 192000 2: mapper OK device OK direct OK
+out query pcm 16 8000 1: mapper OK device OK direct OK
+out query pcm 16 8000 2: mapper OK device OK direct OK
+out query pcm 16 11025 1: mapper OK device OK direct OK
+out query pcm 16 11025 2: mapper OK device OK direct OK
+out query pcm 16 22050 1: mapper OK device OK direct OK
+out query pcm 16 22050 2: mapper OK device OK direct OK
+out query pcm 16 44100 1: mapper OK device OK direct OK
+out query pcm 16 44100 2: mapper OK device OK direct OK
+out query pcm 16 48000 1: mapper OK device OK direct OK
+out query pcm 16 48000 2: mapper OK device OK direct OK
+out query pcm 16 96000 1: mapper OK device OK direct OK
+out query pcm 16 96000 2: mapper OK device OK direct OK
+out query pcm 16 192000 1: mapper OK device OK direct OK
+out query pcm 16 192000 2: mapper OK device OK direct OK
+out query pcm 24 8000 1: mapper OK device OK direct OK
+out query pcm 24 8000 2: mapper OK device OK direct OK
+out query pcm 24 11025 1: mapper OK device OK direct OK
+out query pcm 24 11025 2: mapper OK device OK direct OK
+out query pcm 24 22050 1: mapper OK device OK direct OK
+out query pcm 24 22050 2: mapper OK device OK direct OK
+out query pcm 24 44100 1: mapper OK device OK direct OK
+out query pcm 24 44100 2: mapper OK device OK direct OK
+out query pcm 24 48000 1: mapper OK device OK direct OK
+out query pcm 24 48000 2: mapper OK device OK direct OK
+out query pcm 24 96000 1: mapper OK device OK direct OK
+out query pcm 24 96000 2: mapper OK device OK direct OK
+out query pcm 24 192000 1: mapper OK device OK direct OK
+out query pcm 24 192000 2: mapper OK device OK direct OK
+out query pcm 32 8000 1: mapper OK device OK direct OK
+out query pcm 32 8000 2: mapper OK device OK direct OK
+out query pcm 32 11025 1: mapper OK device OK direct OK
+out query pcm 32 11025 2: mapper OK device OK direct OK
+out query pcm 32 22050 1: mapper OK device OK direct OK
+out query pcm 32 22050 2: mapper OK device OK direct OK
+out query pcm 32 44100 1: mapper OK device OK direct OK
+out query pcm 32 44100 2: mapper OK device OK direct OK
+out query pcm 32 48000 1: mapper OK device OK direct OK
+out query pcm 32 48000 2: mapper OK device OK direct OK
+out query pcm 32 96000 1: mapper OK device OK direct OK
+out query pcm 32 96000 2: mapper OK device OK direct OK
+out query pcm 32 192000 1: mapper OK device OK direct OK
+out query pcm 32 192000 2: mapper OK device OK direct OK
+out query pcm 16 48000 4: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query pcm 16 48000 6: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query pcm 16 48000 8: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query pcm 16 1000 2: mapper OK device OK direct OK
+out query pcm 16 384000 2: mapper OK device OK direct OK
+out query pcm 12 44100 2: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query pcm 16 44100 0: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query pcm 16 of block 3: mapper OK device OK direct OK
+out query pcm 16 of avg 1000: mapper OK device OK direct OK
+out query pcm 16 of cbSize 22: mapper OK device OK direct OK
+out query float 32 48000 2: mapper OK device OK direct OK
+out query float 32 44100 1: mapper OK device OK direct OK
+out query float 64 48000 2: mapper OK device OK direct OK
+out query float 16 48000 2: mapper OK device OK direct OK
+out query adpcm: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query alaw 8000 1: mapper OK device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query mulaw 8000 1: mapper OK device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query tag 0x55 (mp3): mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+out query ext pcm 16 48000 2: mapper OK device OK direct OK
+out query ext pcm 24in32 48000 2: mapper OK device OK direct OK
+out query ext pcm 24 48000 2: mapper OK device OK direct OK
+out query ext float 48000 2: mapper OK device OK direct OK
+out query ext float 48000 6: mapper OK device OK direct OK
+out query ext pcm 16 48000 2 of mask 0: mapper OK device OK direct OK
+out query ext pcm 16 48000 2 of mask 7: mapper OK device OK direct OK
+out query ext of cbSize 0: mapper WAVERR_BADFORMAT device MMSYSERR_INVALPARAM direct MMSYSERR_INVALPARAM
+out query ext of an unknown subtype: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+open null format MMSYSERR_INVALPARAM
+open bad flags OK
+open bad device MMSYSERR_BADDEVICEID
+open function of no function OK (opened)
+open OK handle set; messages then: WOM_OPEN(caller's thread)
+id OK WAVE_MAPPER
+write unprepared WAVERR_UNPREPARED flags 0x0
+prepare of a short size MMSYSERR_INVALPARAM flags 0x0
+prepare OK flags 0x2
+prepare again OK flags 0x2
+prepare of flags left OK flags 0xa
+write OK flags 0x12 next null
+write b OK flags 0x12
+write a again WAVERR_STILLPLAYING flags 0x12
+unprepare queued WAVERR_STILLPLAYING flags 0x12
+close queued WAVERR_STILLPLAYING
+played True: flags a 0x3 b 0x3 recorded 0 user 0x55; messages WOM_DONE[a] WOM_DONE[b]
+position after both MS: OK as BYTES as expected
+position after both SAMPLES: OK as SAMPLES as expected
+position after both BYTES: OK as BYTES as expected
+position after both SMPTE: OK as BYTES as expected
+position after both MIDI: OK as BYTES as expected
+position after both TICKS: OK as BYTES as expected
+position after both of 8 bytes: MMSYSERR_ERROR
+pause OK
+pause again OK
+write paused OK
+after 300 ms paused: flags 0x12 messages none
+position paused MS: OK as BYTES as expected
+position paused SAMPLES: OK as SAMPLES as expected
+position paused BYTES: OK as BYTES as expected
+position paused SMPTE: OK as BYTES as expected
+position paused MIDI: OK as BYTES as expected
+position paused TICKS: OK as BYTES as expected
+position paused of 8 bytes: MMSYSERR_ERROR
+restart OK
+restart again OK
+restarted: flags 0x3 messages WOM_DONE[a]
+position after three MS: OK as BYTES as expected
+position after three SAMPLES: OK as SAMPLES as expected
+position after three BYTES: OK as BYTES as expected
+position after three SMPTE: OK as BYTES as expected
+position after three MIDI: OK as BYTES as expected
+position after three TICKS: OK as BYTES as expected
+position after three of 8 bytes: MMSYSERR_ERROR
+reset OK flags a 0x3 b 0x3
+reset messages WOM_DONE[a] WOM_DONE[b]
+position after reset MS: OK as BYTES as expected
+position after reset SAMPLES: OK as SAMPLES as expected
+position after reset BYTES: OK as BYTES as expected
+position after reset SMPTE: OK as BYTES as expected
+position after reset MIDI: OK as BYTES as expected
+position after reset TICKS: OK as BYTES as expected
+position after reset of 8 bytes: MMSYSERR_ERROR
+reset again OK messages none
+written after pause and reset: flags 0x3 (0x3 played: a reset unpauses)
+break loop OK
+volume OK 0xffffffff
+set volume OK
+volume then 0x40008000
+volume of the device id OK 0xffffffff
+volume of no pointer MMSYSERR_INVALPARAM
+pitch MMSYSERR_NOTSUPPORTED set MMSYSERR_NOTSUPPORTED rate OK set OK
+message preferred OK id 0 flags 0
+message unknown MMSYSERR_NOTSUPPORTED
+unprepare 0 OK flags 0x1
+unprepare 1 OK flags 0x1
+unprepare 2 OK flags 0x1
+unprepare again OK flags 0x1
+close OK
+closed: messages WOM_CLOSE(caller's thread)
+closed handle: write WAVERR_UNPREPARED reset MMSYSERR_INVALHANDLE close MMSYSERR_INVALHANDLE
+open of an event OK: set True
+event at the done True flags 0x3
+event at the close True
+position 8-bit mono MS: OK as BYTES as expected
+position 8-bit mono SAMPLES: OK as SAMPLES as expected
+position 8-bit mono BYTES: OK as BYTES as expected
+position 8-bit mono SMPTE: OK as BYTES as expected
+position 8-bit mono MIDI: OK as BYTES as expected
+position 8-bit mono TICKS: OK as BYTES as expected
+position 8-bit mono of 8 bytes: MMSYSERR_ERROR
+==== waveIn devices some
+caps mapper OK mid 1 pid 2 version 0x500 name Microsoft Sound Mapper formats 0xfffff channels 2 reserved 0
+caps device 0 OK mid 1 pid 65535 version 0x0 name <device> formats 0xfffff channels 2 reserved 0
+caps bad device MMSYSERR_BADDEVICEID
+in query pcm 8 8000 1: mapper OK device OK direct OK
+in query pcm 8 8000 2: mapper OK device OK direct OK
+in query pcm 8 11025 1: mapper OK device OK direct OK
+in query pcm 8 11025 2: mapper OK device OK direct OK
+in query pcm 8 22050 1: mapper OK device OK direct OK
+in query pcm 8 22050 2: mapper OK device OK direct OK
+in query pcm 8 44100 1: mapper OK device OK direct OK
+in query pcm 8 44100 2: mapper OK device OK direct OK
+in query pcm 8 48000 1: mapper OK device OK direct OK
+in query pcm 8 48000 2: mapper OK device OK direct OK
+in query pcm 8 96000 1: mapper OK device OK direct OK
+in query pcm 8 96000 2: mapper OK device OK direct OK
+in query pcm 8 192000 1: mapper OK device OK direct OK
+in query pcm 8 192000 2: mapper OK device OK direct OK
+in query pcm 16 8000 1: mapper OK device OK direct OK
+in query pcm 16 8000 2: mapper OK device OK direct OK
+in query pcm 16 11025 1: mapper OK device OK direct OK
+in query pcm 16 11025 2: mapper OK device OK direct OK
+in query pcm 16 22050 1: mapper OK device OK direct OK
+in query pcm 16 22050 2: mapper OK device OK direct OK
+in query pcm 16 44100 1: mapper OK device OK direct OK
+in query pcm 16 44100 2: mapper OK device OK direct OK
+in query pcm 16 48000 1: mapper OK device OK direct OK
+in query pcm 16 48000 2: mapper OK device OK direct OK
+in query pcm 16 96000 1: mapper OK device OK direct OK
+in query pcm 16 96000 2: mapper OK device OK direct OK
+in query pcm 16 192000 1: mapper OK device OK direct OK
+in query pcm 16 192000 2: mapper OK device OK direct OK
+in query pcm 24 8000 1: mapper OK device OK direct OK
+in query pcm 24 8000 2: mapper OK device OK direct OK
+in query pcm 24 11025 1: mapper OK device OK direct OK
+in query pcm 24 11025 2: mapper OK device OK direct OK
+in query pcm 24 22050 1: mapper OK device OK direct OK
+in query pcm 24 22050 2: mapper OK device OK direct OK
+in query pcm 24 44100 1: mapper OK device OK direct OK
+in query pcm 24 44100 2: mapper OK device OK direct OK
+in query pcm 24 48000 1: mapper OK device OK direct OK
+in query pcm 24 48000 2: mapper OK device OK direct OK
+in query pcm 24 96000 1: mapper OK device OK direct OK
+in query pcm 24 96000 2: mapper OK device OK direct OK
+in query pcm 24 192000 1: mapper OK device OK direct OK
+in query pcm 24 192000 2: mapper OK device OK direct OK
+in query pcm 32 8000 1: mapper OK device OK direct OK
+in query pcm 32 8000 2: mapper OK device OK direct OK
+in query pcm 32 11025 1: mapper OK device OK direct OK
+in query pcm 32 11025 2: mapper OK device OK direct OK
+in query pcm 32 22050 1: mapper OK device OK direct OK
+in query pcm 32 22050 2: mapper OK device OK direct OK
+in query pcm 32 44100 1: mapper OK device OK direct OK
+in query pcm 32 44100 2: mapper OK device OK direct OK
+in query pcm 32 48000 1: mapper OK device OK direct OK
+in query pcm 32 48000 2: mapper OK device OK direct OK
+in query pcm 32 96000 1: mapper OK device OK direct OK
+in query pcm 32 96000 2: mapper OK device OK direct OK
+in query pcm 32 192000 1: mapper OK device OK direct OK
+in query pcm 32 192000 2: mapper OK device OK direct OK
+in query pcm 16 48000 4: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query pcm 16 48000 6: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query pcm 16 48000 8: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query pcm 16 1000 2: mapper OK device OK direct OK
+in query pcm 16 384000 2: mapper OK device OK direct OK
+in query pcm 12 44100 2: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query pcm 16 44100 0: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query pcm 16 of block 3: mapper OK device OK direct OK
+in query pcm 16 of avg 1000: mapper OK device OK direct OK
+in query pcm 16 of cbSize 22: mapper OK device OK direct OK
+in query float 32 48000 2: mapper OK device OK direct OK
+in query float 32 44100 1: mapper OK device OK direct OK
+in query float 64 48000 2: mapper OK device OK direct OK
+in query float 16 48000 2: mapper OK device OK direct OK
+in query adpcm: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query alaw 8000 1: mapper OK device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query mulaw 8000 1: mapper OK device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query tag 0x55 (mp3): mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in query ext pcm 16 48000 2: mapper OK device OK direct OK
+in query ext pcm 24in32 48000 2: mapper OK device OK direct OK
+in query ext pcm 24 48000 2: mapper OK device OK direct OK
+in query ext float 48000 2: mapper OK device OK direct OK
+in query ext float 48000 6: mapper OK device OK direct OK
+in query ext pcm 16 48000 2 of mask 0: mapper OK device OK direct OK
+in query ext pcm 16 48000 2 of mask 7: mapper OK device OK direct OK
+in query ext of cbSize 0: mapper WAVERR_BADFORMAT device MMSYSERR_INVALPARAM direct MMSYSERR_INVALPARAM
+in query ext of an unknown subtype: mapper WAVERR_BADFORMAT device WAVERR_BADFORMAT direct WAVERR_BADFORMAT
+in open OK; messages then: WIM_OPEN(caller's thread)
+in id OK WAVE_MAPPER
+in add unprepared WAVERR_UNPREPARED
+in prepared flags 0x2 recorded 77
+in add OK flags 0x12 recorded 0
+in add b OK
+in add a again WAVERR_STILLPLAYING
+not started after 250 ms: flags 0x12 messages none
+position in before start MS: OK as BYTES as expected
+position in before start SAMPLES: OK as SAMPLES as expected
+position in before start BYTES: OK as BYTES as expected
+position in before start SMPTE: OK as BYTES as expected
+position in before start MIDI: OK as BYTES as expected
+position in before start TICKS: OK as BYTES as expected
+position in before start of 8 bytes: MMSYSERR_ERROR
+in start OK
+in start again OK
+in recorded: flags a 0x3 b 0x3 recorded a full b full; messages WIM_DATA[a] WIM_DATA[b]
+position in running MS: OK as BYTES as expected
+position in running SAMPLES: OK as SAMPLES as expected
+position in running BYTES: OK as BYTES as expected
+position in running SMPTE: OK as BYTES as expected
+position in running MIDI: OK as BYTES as expected
+position in running TICKS: OK as BYTES as expected
+position in running of 8 bytes: MMSYSERR_ERROR
+in stop OK
+in stop again OK
+in stopped after 200 ms: flags 0x12 messages none
+in stop with one begun OK
+in stopped: flags 0x3 recorded part of whole frames True; messages WIM_DATA[a](caller's thread)
+in reset OK flags 0x3 recorded 0
+in reset messages WIM_DATA[a]
+position in after reset MS: OK as BYTES as expected
+position in after reset SAMPLES: OK as SAMPLES as expected
+position in after reset BYTES: OK as BYTES as expected
+position in after reset SMPTE: OK as BYTES as expected
+position in after reset MIDI: OK as BYTES as expected
+position in after reset TICKS: OK as BYTES as expected
+position in after reset of 8 bytes: MMSYSERR_ERROR
+in unprepared flags 0x1
+in message unknown MMSYSERR_NOTSUPPORTED
+in close OK
+in closed: messages WIM_CLOSE(caller's thread)
+in closed handle: start MMSYSERR_INVALHANDLE
+==== mixers some
+mixer 0 caps OK mid 1 pid 65535 version 0x0 support 0x0 destinations 1
+mixer bad caps MMSYSERR_BADDEVICEID
+==== error texts
+out error text 0: OK "The specified command was carried out."
+in error text 0: OK "The specified command was carried out."
+out error text 1: OK "Undefined external error."
+in error text 1: OK "Undefined external error."
+out error text 2: OK "A device ID has been used that is out of range for your system."
+in error text 2: OK "A device ID has been used that is out of range for your system."
+out error text 3: OK "The driver was not enabled."
+in error text 3: OK "The driver was not enabled."
+out error text 4: OK "The specified device is already in use.  Wait until it is free, and then try again."
+in error text 4: OK "The specified device is already in use.  Wait until it is free, and then try again."
+out error text 5: OK "The specified device handle is invalid."
+in error text 5: OK "The specified device handle is invalid."
+out error text 6: OK "There is no driver installed on your system."
+in error text 6: OK "There is no driver installed on your system."
+out error text 7: OK "There is not enough memory available for this task.  Quit one or more applications to increase available memory, and then try again."
+in error text 7: OK "There is not enough memory available for this task.  Quit one or more applications to increase available memory, and then try again."
+out error text 8: OK "This function is not supported.  Use the Capabilities function to determine which functions and messages the driver supports."
+in error text 8: OK "This function is not supported.  Use the Capabilities function to determine which functions and messages the driver supports."
+out error text 9: OK "An error number was specified that is not defined in the system."
+in error text 9: OK "An error number was specified that is not defined in the system."
+out error text 10: OK "An invalid flag was passed to a system function."
+in error text 10: OK "An invalid flag was passed to a system function."
+out error text 11: OK "An invalid parameter was passed to a system function."
+in error text 11: OK "An invalid parameter was passed to a system function."
+out error text 12: OK "Handle being used simultaneously on another thread (eg callback)."
+in error text 12: OK "Handle being used simultaneously on another thread (eg callback)."
+out error text 13: OK "Specified alias not found in WIN.INI."
+in error text 13: OK "Specified alias not found in WIN.INI."
+out error text 20: OK "The driver did not generate a valid OPEN callback."
+in error text 20: OK "The driver did not generate a valid OPEN callback."
+out error text 32: OK "The specified format is not supported or cannot be translated.  Use the Capabilities function to determine the supported formats."
+in error text 32: OK "The specified format is not supported or cannot be translated.  Use the Capabilities function to determine the supported formats."
+out error text 33: OK "Cannot perform this operation while media data is still playing.  Reset the device, or wait until the data is finished playing."
+in error text 33: OK "Cannot perform this operation while media data is still playing.  Reset the device, or wait until the data is finished playing."
+out error text 34: OK "The wave header was not prepared.  Use the Prepare function to prepare the header, and then try again."
+in error text 34: OK "The wave header was not prepared.  Use the Prepare function to prepare the header, and then try again."
+out error text 35: OK "Cannot open the device without using the WAVE_ALLOWSYNC flag.  Use the flag, and then try again."
+in error text 35: OK "Cannot open the device without using the WAVE_ALLOWSYNC flag.  Use the flag, and then try again."
+out error text 36: 9 ""
+in error text 36: 9 ""
+error text of 3 chars OK "Th0w"
+error text of no buffer OK

@@ -20,9 +20,16 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
     {
         public readonly int Rate, Channels;
         private readonly float[] _ring;
-        private int _read, _count;
+        private int _read, _count, _flushes;
+        private long _written, _consumed;
         protected readonly object Lock = new();
         private bool _disposed;
+
+        /// <summary>The frames written that stay (of a flush: those discarded taken off).</summary>
+        public long Written { get { lock (Lock) return _written; } }
+
+        /// <summary>The frames the device has taken from the ring (not its silence).</summary>
+        public long Consumed { get { lock (Lock) return _consumed; } }
 
         protected AudioOutput(int rate, int channels, double seconds = 0.5)
         {
@@ -49,13 +56,15 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
             return null;
         }
 
-        /// <summary>The samples written into the ring, waiting (up to the time) for room; the frames written.</summary>
+        /// <summary>The samples written into the ring, waiting (up to the time) for room; the frames written. A flush
+        /// meanwhile ends it (the rest not written).</summary>
         public int Write(ReadOnlySpan<float> samples, int timeoutMs = 2000)
         {
             int written = 0, deadline = Environment.TickCount + timeoutMs;
             lock (Lock)
             {
-                while (written < samples.Length && !_disposed)
+                int flushes = _flushes;
+                while (written < samples.Length && !_disposed && flushes == _flushes)
                 {
                     int room = _ring.Length - _count;
                     if (room == 0)
@@ -69,6 +78,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
                     for (int i = 0; i < n; i++) _ring[(_read + _count + i) % _ring.Length] = samples[written + i];
                     _count += n; written += n;
                 }
+                _written += written / Channels;
             }
             return written / Channels;
         }
@@ -82,6 +92,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
                 for (int i = 0; i < n; i++) into[i] = _ring[(_read + i) % _ring.Length];
                 into.Slice(n).Clear();
                 _read = (_read + n) % _ring.Length; _count -= n;
+                _consumed += n / Channels;
                 Monitor.PulseAll(Lock);
             }
         }
@@ -91,7 +102,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Session
 
         public void Flush()
         {
-            lock (Lock) { _count = 0; Monitor.PulseAll(Lock); }
+            lock (Lock) { _written -= _count / Channels; _count = 0; _flushes++; Monitor.PulseAll(Lock); }
             OnFlush();
         }
 

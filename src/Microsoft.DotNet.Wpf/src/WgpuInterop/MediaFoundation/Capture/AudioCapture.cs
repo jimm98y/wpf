@@ -86,6 +86,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         [DllImport(AT)] private static extern int AudioQueueEnqueueBuffer(IntPtr queue, IntPtr buffer, uint packets, IntPtr descriptions);
         [DllImport(AT)] private static extern int AudioQueueStart(IntPtr queue, IntPtr time);
         [DllImport(AT)] private static extern int AudioQueueStop(IntPtr queue, byte immediate);
+        [DllImport(AT)] private static extern int AudioQueuePause(IntPtr queue);
         [DllImport(AT)] private static extern int AudioQueueDispose(IntPtr queue, byte immediate);
         [DllImport(AT)] private static extern int AudioQueueSetProperty(IntPtr queue, uint id, void* data, uint size);
 
@@ -157,7 +158,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         }
 
         public void Start() { if (_disposed != 0) return; _running = true; AudioQueueStart(_queue, IntPtr.Zero); }
-        public void Stop() { _running = false; AudioQueueStop(_queue, 1); }
+        public void Stop() { _running = false; AudioQueuePause(_queue); }        // (its buffers kept for a start again: a stop would drop them)
 
         public void Dispose()
         {
@@ -186,16 +187,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         {
             if (_running || _disposed) return;
             _running = true;
+            if (_thread != null) return;
             _thread = new Thread(Loop) { IsBackground = true, Name = "Microphone" };
             _thread.Start();
         }
 
-        public virtual void Stop() { _running = false; _thread?.Join(500); _thread = null; }
+        /// <summary>Stopped: the device still read, what it gives let go -- else the system's buffer of it, given all
+        /// at once on the next start, would be a stopped device's recording.</summary>
+        public virtual void Stop() => _running = false;
 
         private void Loop()
         {
             int frames = Rate / 100;
-            while (_running)
+            while (!_disposed)
             {
                 var block = new float[frames * Channels];
                 if (!Read(block, frames)) { Thread.Sleep(10); continue; }
@@ -210,6 +214,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             if (_disposed) return;
             _disposed = true;
             Stop();
+            _thread?.Join(500);
             Close();
         }
     }

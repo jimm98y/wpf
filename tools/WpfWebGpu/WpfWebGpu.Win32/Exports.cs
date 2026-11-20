@@ -22,6 +22,9 @@ public static unsafe partial class Exports
         if (OnWindows) return;
         // for the Direct3D shim (DXGI's EnqueueSetEvent signals an event of ours)
         AppContext.SetData("WpfWebGpu.SetEvent", (Action<IntPtr>)(h => SetEvent(h)));
+        // for winmm's wave callbacks (the Direct3D shim's WaveExports: CALLBACK_WINDOW, CALLBACK_THREAD)
+        AppContext.SetData("WpfWebGpu.PostMessage", (Func<IntPtr, uint, IntPtr, IntPtr, bool>)((h, m, w, l) => PostMessageExport(h, m, w, l) != 0));
+        AppContext.SetData("WpfWebGpu.PostThreadMessage", (Func<uint, uint, IntPtr, IntPtr, bool>)((t, m, w, l) => PostThreadMessage(t, m, w, l) != 0));
         RegisterGdi();
         RegisterHooks();
         RegisterMenus();

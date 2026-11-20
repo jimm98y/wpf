@@ -129,15 +129,22 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
 
             public MicSession(int handle, AudioCaptureDevice d, AudioBlock blocks) { _handle = handle; _channels = d.Channels; _blocks = blocks; }
 
-            public void Start() => _running = true;
+            public void Start()
+            {
+                // what came while stopped let go first
+                if (!_running && !_closed) { try { while (WebCaptureJs.TakeMicrophoneBlock(_handle, _buffer) > 0) { } } catch (JSException) { } }
+                _running = true;
+            }
             public void Stop() => _running = false;
 
+            /// <summary>The blocks come in; while stopped they are let go, as a stopped device records nothing.</summary>
             public void Pump()
             {
-                if (!_running || _closed) return;
+                if (_closed) return;
                 int n;
                 while ((n = WebCaptureJs.TakeMicrophoneBlock(_handle, _buffer)) > 0)
                 {
+                    if (!_running) continue;
                     var f = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(_buffer.AsSpan(0, n)).ToArray();
                     _blocks(f, CaptureDevices.Now() - (long)f.Length / _channels * 10_000_000 / 48000);
                 }

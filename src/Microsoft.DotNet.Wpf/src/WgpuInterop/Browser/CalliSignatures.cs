@@ -31,6 +31,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.Browser
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern int Sig_IILL(int a0, long a1, long a2);
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern void Sig_VII(int a0, int a1);
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern void Sig_VIII(int a0, int a1, int a2);
+        [DllImport("wpfwebgpu-calli-signatures")] internal static extern void Sig_VIIIII(int a0, int a1, int a2, int a3, int a4);
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern void Sig_VIIIIIII(int a0, int a1, int a2, int a3, int a4, int a5, int a6);
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern void Sig_VIIIIIIIII(int a0, int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8);
     }

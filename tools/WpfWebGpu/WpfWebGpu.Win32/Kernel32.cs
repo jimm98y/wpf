@@ -414,7 +414,23 @@ public static unsafe partial class Exports
 
     [Win32Export("CreateEventW")] public static nint CreateEventW(void* sa, int manual, int initial, char* name) => CreateEventCore(manual != 0, initial != 0, ReadUtf16(name));
     [Win32Export("CreateEvent", "CreateEventA")] public static nint CreateEventBare(void* sa, int manual, int initial, byte* name) => CreateEventCore(manual != 0, initial != 0, ReadEither(name));
-    [Win32Export("SetEvent")] public static int SetEvent(nint h) => Handle(h) is EventWaitHandle e && e.Set() ? TRUE : FALSE;
+    [Win32Export("SetEvent")] public static int SetEvent(nint h) => Handle(h) is EventWaitHandle e ? (e.Set() ? TRUE : FALSE) : SetRuntimeEvent(h);
+
+    /// <summary>An event of the runtime's own (a .NET EventWaitHandle's SafeWaitHandle, as NAudio hands winmm), set
+    /// through the runtime.</summary>
+    private static int SetRuntimeEvent(nint h)
+    {
+        if (h == 0 || h == -1) return FALSE;
+        try
+        {
+            using var w = new EventWaitHandle(false, EventResetMode.AutoReset);
+            var own = w.SafeWaitHandle;
+            w.SafeWaitHandle = new Microsoft.Win32.SafeHandles.SafeWaitHandle(h, ownsHandle: false);
+            own.Dispose();
+            return w.Set() ? TRUE : FALSE;
+        }
+        catch (Exception e) when (e is ObjectDisposedException or IOException or InvalidOperationException or UnauthorizedAccessException or ArgumentException) { return FALSE; }
+    }
     [Win32Export("ResetEvent")] public static int ResetEvent(nint h) => Handle(h) is EventWaitHandle e && e.Reset() ? TRUE : FALSE;
 
     private static nint CreateMutexCore(bool initialOwner, string? name)
