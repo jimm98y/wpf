@@ -54,6 +54,8 @@ public static partial class LinuxPackager
     // the instance's menu entry and the program it runs
     private static string SqlUninstallProgram(string key) => $"/usr/lib/wpfwebgpu/sqlserver-{key}-uninstall";
     private static string SqlUninstallEntry(string key) => $"/usr/share/applications/wpfwebgpu-sqlserver-{key}-uninstall.desktop";
+    private static string SqlRemover(string key) => $"/usr/lib/wpfwebgpu/sqlserver-{key}-remove";
+    private static string SqlRemoverPolicy(string key) => $"/usr/share/polkit-1/actions/com.wpfwebgpu.uninstall.sqlserver-{key}.policy";
 
     /// <summary>Writes wpfwebgpu-sqlserver-&lt;instance&gt;_&lt;version&gt;_&lt;arch&gt;.deb.</summary>
     public static string BuildSqlServer(PackageManifest manifest, string arch, string outDir, Action<string> log)
@@ -116,12 +118,15 @@ public static partial class LinuxPackager
         string key = DesktopCommon.SqlInstanceKey(manifest.SqlServer.Instance);
         var tar = new TarTree(output);
         tar.AddText($"/lib/systemd/system/{SqlServerUnitName(key)}.service", SqlServerUnit(manifest, SqlServerImage.ForLinux(arch)), executable: false);
-        // its uninstaller in the menu, as SQL Server's own entry in Apps & features on Windows
-        string name = manifest.SqlServer.Instance.ToUpperInvariant();
-        tar.AddText(SqlUninstallProgram(key), GuiUninstaller("Uninstall SQL Server " + name,
+        // its uninstaller in the menu, as SQL Server's own entry in Apps & features on Windows: asks, then its remover as
+        // an administrator (pkexec, in the words of the remover's polkit action)
+        string name = manifest.SqlServer.Instance.ToUpperInvariant(), what = "SQL Server " + name;
+        tar.AddText(SqlUninstallProgram(key), GuiUninstaller("Uninstall " + what,
             $"Remove SQL Server's instance {name} from this computer?\n\nThe programs that use it have no database until it is installed again. Its databases can be kept for a later install, or removed with it.",
-            SqlServerPackageName(manifest), SqlServerUninstallScript(key)), executable: true);
-        tar.AddText(SqlUninstallEntry(key), UninstallerEntry("Uninstall SQL Server " + name, SqlUninstallProgram(key)), executable: false);
+            $"SQL Server's instance {name} was removed.", SqlRemover(key)), executable: true);
+        tar.AddText(SqlRemover(key), Remover(what, SqlServerPackageName(manifest), SqlServerUninstallScript(key)), executable: true);
+        tar.AddText(SqlRemoverPolicy(key), RemoverPolicy($"com.wpfwebgpu.uninstall.sqlserver-{key}", what, SqlRemover(key)), executable: false);
+        tar.AddText(SqlUninstallEntry(key), UninstallerEntry("Uninstall " + what, SqlUninstallProgram(key)), executable: false);
         tar.Finish();
     }
 
@@ -305,7 +310,7 @@ public static partial class LinuxPackager
             ALL=1; for a in "$@"; do [ "$a" = --keep-data ] && ALL=; done
             set -- remove
             {{SqlServerPostRm(manifest, sql).Replace("\"$1\" = purge", "-n \"$ALL\"")}}
-            rm -f /lib/systemd/system/{{SqlServerUnitName(key)}}.service {{SqlServerUninstallScript(key)}} {{SqlUninstallProgram(key)}} {{SqlUninstallEntry(key)}}
+            rm -f /lib/systemd/system/{{SqlServerUnitName(key)}}.service {{SqlServerUninstallScript(key)}} {{SqlUninstallProgram(key)}} {{SqlUninstallEntry(key)}} {{SqlRemover(key)}} {{SqlRemoverPolicy(key)}}
             rmdir /usr/lib/wpfwebgpu 2>/dev/null
             command -v update-desktop-database >/dev/null && update-desktop-database -q /usr/share/applications
             [ -d /run/systemd/system ] && systemctl daemon-reload

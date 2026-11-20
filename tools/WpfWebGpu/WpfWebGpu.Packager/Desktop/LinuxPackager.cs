@@ -124,17 +124,25 @@ public static partial class LinuxPackager
             {
                 string id = pkg + "-" + DesktopCommon.Segment(DesktopCommon.ProgramName(app));
                 string launcher = $"{root}/bin/{id}";
+                // (its windows' app id the entry's name: WaylandWindow.AppId)
                 tar.AddText(launcher, Launcher(DesktopCommon.AppName(app), pkg, state, manifest.Product.OsIdentity,
-                    $"exec {Quote(root + "/runtime/run")} {Quote(root + "/app/" + app.Exe)} \"$@\""), executable: true);
-                tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, id, launcher, WindowClass(manifest, app)), executable: false);
-                if (DesktopCommon.Icon(manifest, app) is { } image)
-                    tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image, 256));
+                    $"exec {Quote(root + "/runtime/run")} {Quote(root + "/app/" + app.Exe)} \"$@\"", $"{WindowClass(manifest, app)}={id}"), executable: true);
+                // its icon, the program's own; a program of none has the desktop's standard one, as Windows shows its
+                // default program icon (an entry naming an icon that is not there shows none at all)
+                var image = DesktopCommon.Icon(manifest, app);
+                if (image != null)
+                    tar.AddBytes($"/usr/share/icons/hicolor/256x256/apps/{id}.png", Icons.PngAt(image.Value, 256));
+                tar.AddText($"/usr/share/applications/{id}.desktop", Desktop(app, image != null ? id : "application-x-executable", launcher, WindowClass(manifest, app)), executable: false);
             }
-            // the installation's uninstaller in the menu, as Windows' Apps & features entry
+            // the installation's uninstaller in the menu, as Windows' Apps & features entry: asks, then its remover as an
+            // administrator (pkexec, in the words of the remover's polkit action)
+            string remover = $"{root}/bin/{pkg}-remove";
             tar.AddText($"{root}/bin/{pkg}-uninstall", GuiUninstaller("Uninstall " + manifest.Product.Name,
                 $"Remove {manifest.Product.Name} from this computer?\n\nIts settings and data (the registry, ProgramData) can be kept for a later install, or removed with it." +
                 (sqlServer ? $"\n\nSQL Server's instance {manifest.SqlServer.Instance} stays: Uninstall SQL Server {manifest.SqlServer.Instance.ToUpperInvariant()} removes it." : ""),
-                pkg, root + "/uninstall.sh"), executable: true);
+                $"{manifest.Product.Name} was removed.", remover), executable: true);
+            tar.AddText(remover, Remover(manifest.Product.Name, pkg, root + "/uninstall.sh"), executable: true);
+            tar.AddText($"/usr/share/polkit-1/actions/com.wpfwebgpu.uninstall.{pkg}.policy", RemoverPolicy($"com.wpfwebgpu.uninstall.{pkg}", manifest.Product.Name, remover), executable: false);
             tar.AddText($"/usr/share/applications/{pkg}-uninstall.desktop", UninstallerEntry("Uninstall " + manifest.Product.Name, $"{root}/bin/{pkg}-uninstall"), executable: false);
             // the services by their Windows names, through systemd
             var named = manifest.Services.Select(x => (x.Name, UnitName(pkg, x.Name))).ToList();
@@ -340,81 +348,117 @@ public static partial class LinuxPackager
 
     // what a user starts of the installation: the machine's state, and the user's own files of this product under its
     // name (XDG's cache and state folders), where an upgrade and the removal find them
-    private static string Launcher(string what, string pkg, string state, string osIdentity, string exec) => $$"""
+    private static string Launcher(string what, string pkg, string state, string osIdentity, string exec, string? desktopId = null) => $$"""
         #!/bin/sh
         # {{what}}: the Windows program run on this machine (WPF and WinForms on WebGPU)
-        export WPFRUN_STATE="{{state}}"{{(osIdentity.Length > 0 ? $"\nexport WPFWEBGPU_OS_IDENTITY={osIdentity}" : "")}}
+        export WPFRUN_STATE="{{state}}"{{(osIdentity.Length > 0 ? $"\nexport WPFWEBGPU_OS_IDENTITY={osIdentity}" : "")}}{{(desktopId != null ? $"\nexport WPFRUN_DESKTOP_ID=\"{desktopId}\"" : "")}}
         export WPFRUN_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/{{pkg}}"
         export WPFRUN_LOGS="${XDG_STATE_HOME:-$HOME/.local/state}/{{pkg}}"
         {{exec}}
 
         """;
 
-    // the app id its windows give the compositor (WaylandWindow.AppId: the app's assembly name, as AppDomain.FriendlyName
-    // has it), by which GNOME finds the entry -- its icon, its name -- for a window; without it the dock showed a
-    // generic gear for every app
+    // the app's assembly name, as AppDomain.FriendlyName has it: the app id its windows give the compositor unless its
+    // launcher names the entry (WPFRUN_DESKTOP_ID), and the entry's StartupWMClass, by which GNOME also finds the
+    // entry -- its icon, its name -- for a window (without either, the dock showed a generic gear for every app)
     private static string WindowClass(PackageManifest manifest, AppEntry app)
     {
         string exe = Path.Combine(manifest.Inputs.InstallDir, app.Exe);
         return Path.GetFileNameWithoutExtension(AppHost.AppDll(exe) ?? exe).Replace(' ', '-');
     }
 
-    private static string Desktop(AppEntry app, string id, string launcher, string windowClass) => $"""
+    private static string Desktop(AppEntry app, string icon, string launcher, string windowClass) => $"""
         [Desktop Entry]
         Type=Application
         Name={DesktopCommon.AppName(app)}
         Exec={Quote(launcher)}
-        Icon={id}
+        Icon={icon}
         StartupWMClass={windowClass}
         Terminal=false
         Categories=Utility;
 
         """;
 
-    /// <summary>A menu entry's uninstaller: asked first (zenity, or kdialog, else in a terminal), then removed as an
-    /// administrator (pkexec) -- by apt where the package manager installed it (purge, or remove to keep the data),
-    /// else by the uninstall script the .tar.gz wrote (with --keep-data to keep it).</summary>
-    internal static string GuiUninstaller(string title, string question, string package, string script) => $$"""
+    /// <summary>A menu entry's uninstaller: asked first (zenity, or kdialog, else in a terminal), then its remover run
+    /// as an administrator through pkexec -- which says, by the remover's polkit action, what the password is for.</summary>
+    internal static string GuiUninstaller(string title, string question, string done, string remover) => $$"""
         #!/bin/sh
         # {{title}}: asked first, then removed as an administrator
         T="{{title}}"
         Q="{{question}}"
         if command -v zenity >/dev/null 2>&1; then
-          answer=$(zenity --question --title="$T" --icon=dialog-warning --text="$Q" --ok-label="Remove Everything"             --cancel-label="Cancel" --extra-button="Keep Data" 2>/dev/null) && answer=all
+          answer=$(zenity --question --title="$T" --icon=dialog-warning --text="$Q" --ok-label="Remove Everything" \
+            --cancel-label="Cancel" --extra-button="Keep Data" 2>/dev/null) && answer=all
         elif command -v kdialog >/dev/null 2>&1; then
           kdialog --title "$T" --warningyesnocancel "$Q" --yes-label "Remove Everything" --no-label "Keep Data"
           case $? in 0) answer=all;; 1) answer="Keep Data";; *) answer=;; esac
         else
-          # no dialog to ask with: the uninstall in a terminal, which asks there
-          for t in x-terminal-emulator gnome-terminal konsole xterm; do
-            command -v $t >/dev/null 2>&1 && exec $t -e sh -c "if dpkg-query -W -f='\${Status}' {{package}} 2>/dev/null | grep -q 'ok installed'; then sudo apt-get purge {{package}}; else sudo '{{script}}'; fi; printf 'Press Enter to close. '; read x"
+          # no dialog to ask with: the removal in a terminal, asked there
+          for t in x-terminal-emulator konsole gnome-terminal xterm; do
+            command -v $t >/dev/null 2>&1 && exec $t -e sh -c "printf '%s\n\n' \"\$0\"; printf 'Keep the data? [y/N] '; read k; case \"\$k\" in [Yy]*) sudo '{{remover}}' --keep-data;; *) sudo '{{remover}}';; esac; printf 'Press Enter to close. '; read x" "$Q"
           done
           exit 1
         fi
         case "$answer" in
-          all) keep= ;;
-          "Keep Data") keep=1 ;;
+          all) set -- ;;
+          "Keep Data") set -- --keep-data ;;
           *) exit 0 ;;
         esac
         log=$(mktemp)
-        if dpkg-query -W -f='${Status}' {{package}} 2>/dev/null | grep -q 'ok installed'; then
-          if [ -n "$keep" ]; then what=remove; else what=purge; fi
-          pkexec /usr/bin/env DEBIAN_FRONTEND=noninteractive /usr/bin/apt-get -y -o DPkg::Lock::Timeout=300 $what {{package}} >"$log" 2>&1
-        else
-          if [ -n "$keep" ]; then pkexec "{{script}}" --keep-data >"$log" 2>&1; else pkexec "{{script}}" >"$log" 2>&1; fi
-        fi
+        pkexec "{{remover}}" "$@" >"$log" 2>&1
         status=$?
         if [ $status = 126 ] || [ $status = 127 ]; then rm -f "$log"; exit 0; fi   # (the password not given)
         if command -v zenity >/dev/null 2>&1; then
-          if [ $status = 0 ]; then zenity --info --title="$T" --text="Removed." 2>/dev/null
+          if [ $status = 0 ]; then zenity --info --title="$T" --text="{{done}}" 2>/dev/null
           else zenity --text-info --title="$T: it failed" --filename="$log" 2>/dev/null; fi
         elif command -v kdialog >/dev/null 2>&1; then
-          if [ $status = 0 ]; then kdialog --title "$T" --msgbox "Removed."; else kdialog --title "$T" --textbox "$log"; fi
+          if [ $status = 0 ]; then kdialog --title "$T" --msgbox "{{done}}"; else kdialog --title "$T" --textbox "$log"; fi
         fi
         rm -f "$log"
         exit 0
 
         """;
+
+    /// <summary>The remover the uninstaller runs as an administrator: apt where the package manager installed it
+    /// (purge, or remove to keep the data), else the uninstall script the .tar.gz wrote (with --keep-data).</summary>
+    internal static string Remover(string what, string package, string script) => $$"""
+        #!/bin/sh
+        # Removes {{what}} (its menu entry's uninstaller runs this as an administrator, through pkexec)
+        keep=; [ "$1" = --keep-data ] && keep=1
+        if dpkg-query -W -f='${Status}' {{package}} 2>/dev/null | grep -q 'ok installed'; then
+          if [ -n "$keep" ]; then what=remove; else what=purge; fi
+          DEBIAN_FRONTEND=noninteractive exec /usr/bin/apt-get -y -o DPkg::Lock::Timeout=300 $what {{package}}
+        elif [ -x "{{script}}" ]; then
+          if [ -n "$keep" ]; then exec "{{script}}" --keep-data; else exec "{{script}}"; fi
+        fi
+        echo "{{what}} is not installed" >&2
+        exit 1
+
+        """;
+
+    /// <summary>The remover's polkit action: pkexec asks for an administrator's password in these words, not with the
+    /// command line.</summary>
+    internal static string RemoverPolicy(string action, string what, string remover) => $"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+          "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+        <policyconfig>
+          <action id="{X(action)}">
+            <description>Uninstall {X(what)}</description>
+            <message>Authentication is required to uninstall {X(what)}</message>
+            <icon_name>edit-delete</icon_name>
+            <defaults>
+              <allow_any>auth_admin</allow_any>
+              <allow_inactive>auth_admin</allow_inactive>
+              <allow_active>auth_admin</allow_active>
+            </defaults>
+            <annotate key="org.freedesktop.policykit.exec.path">{X(remover)}</annotate>
+          </action>
+        </policyconfig>
+
+        """;
+
+    private static string X(string s) => System.Security.SecurityElement.Escape(s) ?? "";
 
     internal static string UninstallerEntry(string name, string program) => $"""
         [Desktop Entry]
@@ -554,13 +598,23 @@ public static partial class LinuxPackager
 
         """;
 
+    // what runs of the installation: its runtime's processes, and the apps users started from the menu, which run
+    // from their copies in each user's cache (${XDG_CACHE_HOME:-~/.cache}/<pkg>/apps/<app>-<hash>/, the launcher's)
     private static string PreRmBody(List<(string Name, bool Enable)> units, string root) => $"""
         if [ -d /run/systemd/system ]; then :
         {string.Concat(units.Select(u => $"  systemctl stop --no-block {u.Name} || true\n"))}fi
-        pkill -TERM -f "{root}/runtime/" 2>/dev/null
-        for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "{root}/runtime/" >/dev/null || break; sleep 0.5; done
-        pkill -KILL -f "{root}/runtime/" 2>/dev/null
+        RUNNING='{Running(root)}'
+        pkill -TERM -f "$RUNNING" 2>/dev/null
+        for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$RUNNING" >/dev/null || break; sleep 0.5; done
+        pkill -KILL -f "$RUNNING" 2>/dev/null
         """;
+
+    private static string Running(string root) =>
+        EreLiteral(root + "/runtime/") + "|/" + EreLiteral(PackageName(Path.GetFileName(root))) + "/apps/[^/ ]+-[0-9a-f]{12}/";
+
+    // text matched as itself in an extended regular expression (pkill's)
+    private static string EreLiteral(string text) =>
+        System.Text.RegularExpressions.Regex.Replace(text, @"[.^$*+?()\[\]{}|\\]", @"\$0");
 
     internal static string PostRm(string state, List<(string Name, bool Enable)> units, List<string> masked, string pkg, bool webView) => $"""
         #!/bin/sh

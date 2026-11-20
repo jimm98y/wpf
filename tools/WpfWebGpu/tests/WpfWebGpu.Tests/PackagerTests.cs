@@ -198,6 +198,12 @@ public class PackagerTests
         ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.PreRm(none, "/opt/P"));
         ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.PostInst("/opt/P", state, none, new List<string>(), "", ""));
         ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.Install("p", "/opt/P", state, none, new List<string>(), "", ""));
+        // what runs of it ended: its runtime's processes, and the apps started from the menu (their copies in the cache)
+        string prerm = WpfWebGpu.Packager.Desktop.LinuxPackager.PreRm(units, "/opt/P.1");
+        Assert.Contains("RUNNING='/opt/P\\.1/runtime/|/p\\.1/apps/[^/ ]+-[0-9a-f]{12}/'", prerm);
+        var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh", new[] { "-c",
+            "echo /home/u/.cache/p.1/apps/WinFormsDemo-612c36e0a364/WinFormsDemo | grep -Ec '/opt/P\\.1/runtime/|/p\\.1/apps/[^/ ]+-[0-9a-f]{12}/'" }) { RedirectStandardOutput = true })!;
+        Assert.Equal("1", probe.StandardOutput.ReadToEnd().Trim());
         Assert.Contains("systemd-run", postrm);                       // (apt's lock is dpkg's while postrm runs)
         Assert.True(postrm.IndexOf("userdel", StringComparison.Ordinal) > postrm.IndexOf("if [ \"$1\" = purge ]", StringComparison.Ordinal));
         Assert.True(un.IndexOf("userdel", StringComparison.Ordinal) > un.IndexOf("if [ -n \"$ALL\" ]", StringComparison.Ordinal));
@@ -238,12 +244,18 @@ public class PackagerTests
         foreach (string script in new[] { postinst, postrm, install, un }) ShellSyntax(script);
 
         // the menu entries' uninstallers: asked, then apt (purge, or remove to keep the data) or the uninstall script
-        string gui = WpfWebGpu.Packager.Desktop.LinuxPackager.GuiUninstaller("Uninstall P", "Remove P?\n\nIts data can be kept.", "p", "/opt/P/uninstall.sh");
+        string gui = WpfWebGpu.Packager.Desktop.LinuxPackager.GuiUninstaller("Uninstall P", "Remove P?\n\nIts data can be kept.", "P was removed.", "/opt/P/bin/p-remove");
         ShellSyntax(gui);
         Assert.Contains("zenity --question", gui);
         Assert.Contains("kdialog --title", gui);
-        Assert.Contains("apt-get -y -o DPkg::Lock::Timeout=300 $what p", gui);
-        Assert.Contains("pkexec \"/opt/P/uninstall.sh\" --keep-data", gui);
+        Assert.Contains("pkexec \"/opt/P/bin/p-remove\" \"$@\"", gui);
+        string remover = WpfWebGpu.Packager.Desktop.LinuxPackager.Remover("P", "p", "/opt/P/uninstall.sh");
+        ShellSyntax(remover);
+        Assert.Contains("apt-get -y -o DPkg::Lock::Timeout=300 $what p", remover);            // purge, or remove to keep the data
+        Assert.Contains("exec \"/opt/P/uninstall.sh\" --keep-data", remover);               // the .tar.gz's
+        var policy = System.Xml.Linq.XDocument.Parse(WpfWebGpu.Packager.Desktop.LinuxPackager.RemoverPolicy("com.wpfwebgpu.uninstall.p", "P", "/opt/P/bin/p-remove"));
+        Assert.Equal("Authentication is required to uninstall P", policy.Descendants("message").Single().Value);
+        Assert.Equal("/opt/P/bin/p-remove", policy.Descendants("annotate").Single().Value);
         Assert.Contains("Exec=/opt/P/bin/p-uninstall", WpfWebGpu.Packager.Desktop.LinuxPackager.UninstallerEntry("Uninstall P", "/opt/P/bin/p-uninstall"));
     }
 
