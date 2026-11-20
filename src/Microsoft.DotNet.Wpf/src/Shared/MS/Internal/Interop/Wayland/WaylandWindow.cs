@@ -622,8 +622,16 @@ namespace MS.Internal.Interop.Wayland
             {
                 string? name = AppDomain.CurrentDomain.FriendlyName;
                 if (string.IsNullOrEmpty(name)) return "dotnet-wpf";
-                // GNOME matches the app id against a .desktop file name, so keep it plain.
-                return name.Replace(' ', '-');
+                name = name.Replace(' ', '-');
+                // The desktop finds a window's menu entry -- its icon, its name -- by the app id, which by Wayland's
+                // convention is the entry's file name: an installation's launcher says it, as "<app>=<entry>" (Plasma
+                // matches nothing else; GNOME also takes the entry's StartupWMClass). Only for that app: a program it
+                // starts inherits the variable, and is not that entry.
+                string? entry = Environment.GetEnvironmentVariable("WPFRUN_DESKTOP_ID");
+                int eq = entry?.IndexOf('=') ?? -1;
+                if (eq > 0 && eq < entry!.Length - 1 && string.Equals(entry.Substring(0, eq), name, StringComparison.Ordinal))
+                    return entry.Substring(eq + 1);
+                return name;
             }
         }
 
