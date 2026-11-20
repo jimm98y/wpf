@@ -17,12 +17,10 @@
 //           sqlserver.txt                                 the same for the Mac's administrators to read
 //           installations/<id>                            the installations that use it (each its product's name)
 //           uninstall.sh                                  removes it (and Apple's container, where nothing else uses it)
-//           Uninstall SQL Server <INSTANCE>.app           asks, then runs uninstall.sh as an administrator: the
-//                                                         uninstaller next to what it removes, as a database server's
-//                                                         own on a Mac is (Windows: its entry in Apps & features)
-//       /Applications/<Product>/Uninstall SQL Server.app  the same, beside each installation's own uninstaller, where
-//                                                         it is looked for (gone with the installation; the instance's
-//                                                         uninstall removes every one)
+//       /Applications/SQL Server/Uninstall SQL Server <INSTANCE>.app   asks, then runs uninstall.sh as an
+//                                                         administrator -- where the Mac lists its apps (Windows: its
+//                                                         entry in Apps & features); made with the instance, removed
+//                                                         with it, so it outlives the installations that use it
 //       /Library/Application Support/WpfWebGpu/SqlBrowser/<instance>     "<instance> <port>", for the browsers
 //
 // The port is the installation's configured one (1433) where it is free, else the next free one, as a named instance
@@ -180,10 +178,9 @@ public static partial class MacPackager
             C=/usr/local/bin/container
             users=$(cat "$D/installations/"* 2>/dev/null | paste -sd, - | sed 's/,/, /g')
             [ -n "$users" ] && echo "SQL Server's instance {{instance}} is used by: $users"
-            # its uninstaller beside each installation's
-            cat "$D/installations/"* 2>/dev/null | while IFS= read -r p; do
-              [ -n "$p" ] && rm -rf "/Applications/$p/{{SqlUninstallAppInProduct}}"
-            done
+            # its uninstaller (this, when it runs it)
+            rm -rf "{{SqlUninstallApps}}/{{SqlInstanceUninstallAppName(instance)}}"
+            rmdir "{{SqlUninstallApps}}" 2>/dev/null || true
             launchctl bootout system/{{label}} >/dev/null 2>&1 || true
             rm -f /Library/LaunchDaemons/{{label}}.plist
             VOL=$(sed -n 's/^SQL_VOLUME=//p' "$D/sqlserver.env" 2>/dev/null)
@@ -226,8 +223,8 @@ public static partial class MacPackager
     /// <summary>The instance's uninstaller app, in its folder.</summary>
     internal static string SqlInstanceUninstallAppName(string instance) => $"Uninstall SQL Server {instance.ToUpperInvariant()}.app";
 
-    /// <summary>Its copy beside each installation's own uninstaller, in /Applications/&lt;Product&gt;.</summary>
-    internal const string SqlUninstallAppInProduct = "Uninstall SQL Server.app";
+    /// <summary>Where the instances' uninstallers are, listed with the Mac's apps.</summary>
+    internal const string SqlUninstallApps = "/Applications/SQL Server";
 
     // the app's program: asked first -- which installations still use the instance said -- then uninstall.sh run as an
     // administrator (the databases kept with "Keep Databases")
@@ -326,7 +323,9 @@ public static partial class MacPackager
             cat > "$D/uninstall.sh" <<'UNINSTALL'
             {{SqlInstanceUninstall(instance)}}UNINSTALL
             chmod 755 "$D/uninstall.sh"
-            APP="$D/{{SqlInstanceUninstallAppName(instance)}}"
+            # its uninstaller, where the Mac lists its apps (where earlier versions put it: gone)
+            rm -rf "$D/{{SqlInstanceUninstallAppName(instance)}}" "/Applications/{{manifest.Product.Name}}/Uninstall SQL Server.app"
+            APP="{{SqlUninstallApps}}/{{SqlInstanceUninstallAppName(instance)}}"
             rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
             cat > "$APP/Contents/MacOS/uninstall" <<'APPRUN'
             {{SqlInstanceUninstallApp(instance)}}APPRUN
@@ -334,9 +333,7 @@ public static partial class MacPackager
             {{SqlInstanceUninstallInfo(instance, "2025.1")}}
             APPINFO
             chmod 755 "$APP/Contents/MacOS/uninstall"
-            # and beside the installation's own uninstaller
-            rm -rf "/Applications/{{manifest.Product.Name}}/{{SqlUninstallAppInProduct}}"
-            [ -d "/Applications/{{manifest.Product.Name}}" ] && ditto "$APP" "/Applications/{{manifest.Product.Name}}/{{SqlUninstallAppInProduct}}"
+            chown -R root:admin "{{SqlUninstallApps}}"
             # the instance, for the SQL Server Browser of whichever installation answers UDP 1434
             mkdir -p "{{SqlBrowserInstances}}"
             printf '%s %s\n' "{{instance}}" "$SQL_PORT" > "{{SqlBrowserInstances}}/{{key}}"
@@ -374,7 +371,7 @@ public static partial class MacPackager
         rm -f /Library/LaunchDaemons/{{SqlBrowserLabel(id)}}.plist "{{SqlServerFolder(instance)}}/installations/{{id}}"
         pkgutil --forget "{{id}}.sqlserver" >/dev/null 2>&1 || true
         if [ -x "{{SqlServerFolder(instance)}}/uninstall.sh" ]; then
-          echo "SQL Server's instance {{instance}} stays, with its databases: '{{SqlServerFolder(instance)}}/{{SqlInstanceUninstallAppName(instance)}}' (or its uninstall.sh) removes it"
+          echo "SQL Server's instance {{instance}} stays, with its databases: '{{SqlUninstallApps}}/{{SqlInstanceUninstallAppName(instance)}}' (or its uninstall.sh) removes it"
         fi
 
         """;

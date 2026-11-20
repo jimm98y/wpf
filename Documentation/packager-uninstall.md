@@ -66,7 +66,7 @@ uninstall of its own:
 | | The instance | Removed by |
 |---|---|---|
 | Windows | Microsoft's SQL Server Express, the named instance | its entry in Apps & features (Microsoft SQL Server) |
-| macOS | the daemon `com.wpfwebgpu.sqlserver.<instance>`, running the container `sqlserver-<instance>` in Apple's `container`; its files in `/Library/Application Support/WpfWebGpu/SqlServer/<INSTANCE>/` | `Uninstall SQL Server.app` beside each installation's own uninstaller in `/Applications/<Product>/`; `Uninstall SQL Server <INSTANCE>.app` in that folder, next to what it removes (it stays when the installations have gone); or `sudo '<that folder>/uninstall.sh'` |
+| macOS | the daemon `com.wpfwebgpu.sqlserver.<instance>`, running the container `sqlserver-<instance>` in Apple's `container`; its files in `/Library/Application Support/WpfWebGpu/SqlServer/<INSTANCE>/` | `/Applications/SQL Server/Uninstall SQL Server <INSTANCE>.app`, listed with the Mac's apps for as long as the instance is there (after the installations using it have gone too), or `sudo '<that folder>/uninstall.sh'` |
 | Linux | the package `wpfwebgpu-sqlserver-<instance>` (the unit, the container `sqlserver-<instance>` in Podman), its password, port and volume in `/etc/wpfwebgpu/sqlserver/<instance>.env` | `apt remove` (the databases kept) or `apt purge`; from the `.tar.gz`, `/etc/wpfwebgpu/sqlserver/<instance>-uninstall.sh` |
 
 - **The port** is the one the installation's configuration gives (1433) where it is free, else the next free one, as a

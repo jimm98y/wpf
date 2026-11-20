@@ -151,15 +151,14 @@ public class PackagerTests
         Assert.Contains("uninstall-container.sh -d", un);
         Assert.Contains("! -name sqlserver.env", un);                                     // --keep-data: the password, port, volume
         // its uninstaller app, next to it: asked first (who still uses it said), then uninstall.sh as an administrator
-        Assert.Contains($"APP=\"$D/Uninstall SQL Server SQLEXPRESS2025.app\"", post);
+        Assert.Contains("APP=\"/Applications/SQL Server/Uninstall SQL Server SQLEXPRESS2025.app\"", post);   // listed with the apps
         Assert.Contains("printf '%s\\n' \"P\" > \"$D/installations/com.example.p\"", post);
         string app = WpfWebGpu.Packager.Desktop.MacPackager.SqlInstanceUninstallApp("SQLExpress2025");
         ShellSyntax(app);
         Assert.Contains($"D=\"{dir}\"", app);
         Assert.Contains("with administrator privileges", app);
         Assert.Contains("--keep-data", app);
-        Assert.Contains("ditto \"$APP\" \"/Applications/P/Uninstall SQL Server.app\"", post);   // beside the installation's own
-        Assert.Contains("rm -rf \"/Applications/$p/Uninstall SQL Server.app\"", un);           // every copy gone with the instance
+        Assert.Contains("rm -rf \"/Applications/SQL Server/Uninstall SQL Server SQLEXPRESS2025.app\"", un);   // gone with the instance
     }
 
     private static void ShellSyntax(string script)
