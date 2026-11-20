@@ -331,7 +331,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
 
         /// <summary>
         /// The capture devices of the kind the attributes ask for (MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE): the cameras, an
-        /// activate each, in the system's order (MFCaptureSource.cs); no microphones yet.
+        /// activate each, in the system's order (MFCaptureSource.cs); the microphones of AUDCAP (MFAudioCaptureSource.cs).
         /// </summary>
         [Win32Export("MFEnumDeviceSources")]
         public static int MFEnumDeviceSources(IntPtr attributes, IntPtr** activates, uint* count)
@@ -342,13 +342,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             var k = Capture.CaptureIds.MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
             Guid type;
             if (((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Com.Fn(attributes, 10))(attributes, &k, &type) < 0) return MF.E_INVALIDARG;
-            if (type == Capture.CaptureIds.AUDCAP) { D3DLog.Once("mf-audcap", "Media Foundation: MFEnumDeviceSources lists no microphones yet"); return MF.S_OK; }
-            if (type != Capture.CaptureIds.VIDCAP) return MF.E_INVALIDARG;
-            var devices = Capture.CaptureDevices.Video();
-            if (devices.Count == 0) return MF.S_OK;
-            var a = (IntPtr*)Marshal.AllocCoTaskMem(devices.Count * IntPtr.Size);
-            for (int i = 0; i < devices.Count; i++) a[i] = Capture.CaptureIds.Activate(devices[i]).Pointer;
-            *activates = a; *count = (uint)devices.Count;
+            List<MFActivate> found;
+            if (type == Capture.CaptureIds.AUDCAP) found = Capture.AudioCapture.Devices().ConvertAll(Capture.AudioCaptureIds.Activate);
+            else if (type == Capture.CaptureIds.VIDCAP) found = Capture.CaptureDevices.Video().ConvertAll(Capture.CaptureIds.Activate);
+            else return MF.E_INVALIDARG;
+            if (found.Count == 0) return MF.S_OK;
+            var a = (IntPtr*)Marshal.AllocCoTaskMem(found.Count * IntPtr.Size);
+            for (int i = 0; i < found.Count; i++) a[i] = found[i].Pointer;
+            *activates = a; *count = (uint)found.Count;
             return MF.S_OK;
         }
 
@@ -368,7 +369,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             return hr;
         }
 
-        /// <summary>The activate of the camera of the attributes' symbolic link.</summary>
+        /// <summary>The activate of the camera of the attributes' symbolic link, of the microphone of its endpoint identifier.</summary>
         [Win32Export("MFCreateDeviceSourceActivate")]
         public static int MFCreateDeviceSourceActivate(IntPtr attributes, IntPtr* activate)
         {
@@ -378,6 +379,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
             var k = Capture.CaptureIds.MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE;
             Guid type;
             if (((delegate* unmanaged<IntPtr, Guid*, Guid*, int>)Com.Fn(attributes, 10))(attributes, &k, &type) < 0) return MF.MF_E_ATTRIBUTENOTFOUND;
+            if (type == Capture.CaptureIds.AUDCAP)
+            {
+                var ek = Capture.AudioCaptureIds.AUDCAP_ENDPOINT_ID;
+                char* es; uint el;
+                if (((delegate* unmanaged<IntPtr, Guid*, char**, uint*, int>)Com.Fn(attributes, 13))(attributes, &ek, &es, &el) < 0) return MF.MF_E_ATTRIBUTENOTFOUND;
+                string endpoint = new string(es, 0, (int)el);
+                Marshal.FreeCoTaskMem((IntPtr)es);
+                foreach (var d in Capture.AudioCapture.Devices())
+                    if (string.Equals(Capture.AudioCaptureIds.Endpoint(d), endpoint, StringComparison.OrdinalIgnoreCase)) { *activate = Capture.AudioCaptureIds.Activate(d).Pointer; return MF.S_OK; }
+                return Capture.CaptureIds.E_PATH_NOT_FOUND;
+            }
             if (type != Capture.CaptureIds.VIDCAP) return MF.E_INVALIDARG;
             var lk = Capture.CaptureIds.VIDCAP_SYMBOLIC_LINK;
             char* str; uint len;

@@ -65,8 +65,19 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         }
     }
 
+    /// <summary>What a capture stream asks of its source (MFCaptureSource's, MFAudioCaptureSource's).</summary>
+    internal interface ICaptureOwner
+    {
+        object Lock { get; }
+        bool Started { get; }
+        int RequestState { get; }
+        bool IsShutdown { get; }
+        ComObject Source { get; }
+        void Pump();
+    }
+
     /// <summary>IMFMediaSource of a camera.</summary>
-    internal sealed unsafe class MFCaptureSource : ComObject
+    internal sealed unsafe class MFCaptureSource : ComObject, ICaptureOwner
     {
         private static readonly Vtable s_vt = Build();
         private static readonly Guid MF_MT_AM_FORMAT_TYPE = new("73d1072d-1870-4174-a063-29ff4ff6c11e"), FORMAT_VideoInfo2 = new("f72a76a0-eb0a-11d0-ace4-0000c0cc16ba");
@@ -81,7 +92,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         private readonly MFPresentationDescriptor _pd = new();
         private readonly MFStreamDescriptor _sd;
         internal readonly MFCaptureStream Stream;
-        internal readonly object Lock = new();
+        public object Lock { get; } = new();
+        public ComObject Source => this;
         private enum State { Stopped, Started, Paused, Shutdown }
         private State _state;
         private ICaptureSession? _session;
@@ -152,8 +164,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         }
 
         public bool IsShutdown { get { lock (Lock) return _state == State.Shutdown; } }
-        internal bool Started { get { lock (Lock) return _state == State.Started; } }
-        internal int RequestState => _state switch { State.Shutdown => MF.MF_E_SHUTDOWN, State.Stopped => MS.MF_E_MEDIA_SOURCE_WRONGSTATE, State.Paused => 1, _ => 0 };
+        public bool Started { get { lock (Lock) return _state == State.Started; } }
+        public int RequestState => _state switch { State.Shutdown => MF.MF_E_SHUTDOWN, State.Stopped => MS.MF_E_MEDIA_SOURCE_WRONGSTATE, State.Paused => 1, _ => 0 };
 
         public void Shutdown()
         {
@@ -171,7 +183,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         }
 
         /// <summary>The frames of a session whose frames are taken (the browser's), taken now.</summary>
-        internal void Pump()
+        public void Pump()
         {
             ICaptureSession? s;
             lock (Lock) s = _state == State.Started ? _session : null;
@@ -393,7 +405,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
     {
         private static readonly Vtable s_vt = Build();
         private const int Kept = 3;                                 // frames kept for the requests to come; older ones dropped
-        private readonly MFCaptureSource _source;
+        private readonly ICaptureOwner _source;
+        private readonly bool _audio;
+        private int _audioRate, _audioBlock;
         private readonly MFEventQueue _queue = new();
         private readonly MFStreamDescriptor _sd;
         private readonly Queue<IntPtr> _requests = new();           // tokens of the requests not answered (AddRef'd; zero of none)
@@ -420,9 +434,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             return vt;
         }
 
-        public MFCaptureStream(MFCaptureSource source, MFStreamDescriptor sd) : base(s_vt)
+        public MFCaptureStream(ICaptureOwner source, MFStreamDescriptor sd, bool audio = false) : base(s_vt)
         {
             _source = source;
+            _audio = audio;
             sd.AddRef();
             _sd = sd;
         }
@@ -452,6 +467,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         /// <summary>The camera opened at a format: its frames' durations and description.</summary>
         internal void Opened(CaptureFormat f) { _format = f; _frames.Clear(); }
 
+        /// <summary>A microphone opened: its rate and a frame's bytes (the blocks' durations of their lengths).</summary>
+        internal void OpenedAudio(int rate, int blockAlign) { _audioRate = rate; _audioBlock = blockAlign; _frames.Clear(); }
+
         internal void Tick(long time) => Queue(MS.MEStreamTick, new MFValue { Type = 20, U = (ulong)time });
 
         internal void Stopped()
@@ -469,7 +487,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         {
             if (!Active || _shut) return;
             _frames.Enqueue((bytes, time));
-            while (_frames.Count > Kept) { _frames.Dequeue(); _discontinuity = true; }       // (a frame dropped: the next one after a gap)
+            while (_frames.Count > (_audio ? 50 : Kept)) { _frames.Dequeue(); _discontinuity = true; }       // (a frame dropped: the next one after a gap)
             if (_source.Started) Resume();
         }
 
@@ -486,6 +504,17 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             s.Buffers.Add(buf.Pointer);
             s.Time = time;
             var a = s.Attributes;
+            if (_audio)
+            {
+                // a block of the microphone's: its duration of its frames, the device's timestamp; the first after a gap discontinuous
+                if (_audioRate > 0 && _audioBlock > 0) s.Duration = (long)(bytes.Length / _audioBlock) * 10_000_000 / _audioRate;
+                a.Set(MFSampleExtension_DeviceTimestamp, (ulong)time);
+                if (_discontinuity) a.Set(MF.MFSampleExtension_Discontinuity, 1u);
+                _discontinuity = false;
+                a.Set(MS.MFSampleExtension_Token, new MFValue { Type = MF.VT_UNKNOWN, Unknown = token });
+                Queue(MS.MEMediaSample, new MFValue { Type = MF.VT_UNKNOWN, Unknown = s.Pointer });
+                return;
+            }
             if (_format is { } f)
             {
                 var (n, dn) = CaptureDevices.Rate(f.MaxFps);
@@ -548,7 +577,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             if (M(self) is not { } m || source == null) return MF.E_POINTER;
             *source = IntPtr.Zero;
             if (m._source.IsShutdown) return MF.MF_E_SHUTDOWN;
-            *source = m._source.AddRefPointer();
+            *source = m._source.Source.AddRefPointer();
             return MF.S_OK;
         }
 

@@ -28,6 +28,9 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         [JSImport("cameraState", M)] internal static partial int CameraState(int handle);
         [JSImport("takeCameraFrame", M)] internal static partial int TakeCameraFrame(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> buffer);
         [JSImport("closeCamera", M)] internal static partial void CloseCamera(int handle);
+        [JSImport("microphones", M)] internal static partial string Microphones();
+        [JSImport("openMicrophone", M)] internal static partial int OpenMicrophone(string id, int rate, int channels);
+        [JSImport("takeMicrophoneBlock", M)] internal static partial int TakeMicrophoneBlock(int handle, [JSMarshalAs<JSType.MemoryView>] Span<byte> buffer);
     }
 
     internal static class WebCapture
@@ -79,6 +82,74 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
                 return null;
             }
             return new Session(handle, format, frames);
+        }
+
+        /// <summary>The page's microphones, waited for (up to 10 s) the first time; each of the shared format (float, 48 kHz, stereo).</summary>
+        public static List<AudioCaptureDevice> Microphones()
+        {
+            var list = new List<AudioCaptureDevice>();
+            string json;
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                while ((json = WebCaptureJs.Microphones()).Length == 0 && sw.ElapsedMilliseconds < 10_000) WebCodecs.Pause();
+            }
+            catch (Exception e) when (e is JSException or InvalidOperationException) { return list; }
+            if (json.Length == 0) return list;
+            using var doc = JsonDocument.Parse(json);
+            foreach (var d in doc.RootElement.EnumerateArray())
+                list.Add(new AudioCaptureDevice { Id = d.GetProperty("id").GetString() ?? "", Name = d.GetProperty("name").GetString() ?? "", Rate = 48000, Channels = 2 });
+            return list;
+        }
+
+        public static ICaptureSession? OpenMicrophone(AudioCaptureDevice device, AudioBlock blocks, out int hr)
+        {
+            hr = MF.S_OK;
+            int handle;
+            try { handle = WebCaptureJs.OpenMicrophone(device.Id, device.Rate, device.Channels); }
+            catch (Exception e) when (e is JSException or InvalidOperationException) { hr = CaptureIds.MF_E_NO_CAPTURE_DEVICES_AVAILABLE; return null; }
+            var sw = Stopwatch.StartNew();
+            int state;
+            while ((state = WebCaptureJs.CameraState(handle)) == 0 && sw.ElapsedMilliseconds < 10_000) WebCodecs.Pause();
+            if (state != 1)
+            {
+                WebCaptureJs.CloseCamera(handle);
+                hr = state == 3 ? CaptureIds.E_ACCESSDENIED : CaptureIds.MF_E_NO_CAPTURE_DEVICES_AVAILABLE;
+                return null;
+            }
+            return new MicSession(handle, device, blocks);
+        }
+
+        private sealed class MicSession : ICaptureSession
+        {
+            private readonly int _handle, _channels;
+            private readonly AudioBlock _blocks;
+            private readonly byte[] _buffer = new byte[48000 * 8];
+            private bool _running, _closed;
+
+            public MicSession(int handle, AudioCaptureDevice d, AudioBlock blocks) { _handle = handle; _channels = d.Channels; _blocks = blocks; }
+
+            public void Start() => _running = true;
+            public void Stop() => _running = false;
+
+            public void Pump()
+            {
+                if (!_running || _closed) return;
+                int n;
+                while ((n = WebCaptureJs.TakeMicrophoneBlock(_handle, _buffer)) > 0)
+                {
+                    var f = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(_buffer.AsSpan(0, n)).ToArray();
+                    _blocks(f, CaptureDevices.Now() - (long)f.Length / _channels * 10_000_000 / 48000);
+                }
+            }
+
+            public void Dispose()
+            {
+                if (_closed) return;
+                _closed = true; _running = false;
+                try { WebCaptureJs.CloseCamera(_handle); }
+                catch (Exception e) when (e is JSException or InvalidOperationException) { }
+            }
         }
 
         private sealed class Session : ICaptureSession

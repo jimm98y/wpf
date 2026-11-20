@@ -1,0 +1,54 @@
+==== audio devices 0x00000000 count <n>
+device 0:
+  30da9258-feb9-47a7-a453-763a7a8e1c5f = STR <device>
+  60d0e559-52f8-4fa2-bbce-acdb34a8ec01 = STR <device>
+  98d24b5e-5930-4614-b5a1-f600f9355a78 = STR <device>
+  c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3 = GUID 14dd9a1c-7cff-41be-b1b9-ba1ac6ecb571
+  activate 0x00000000
+  characteristics 0x5
+  reader 0x00000000
+  stream 0: selected True
+    native 0:
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = <the device's>
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = <the device's>
+      MF_MT_AUDIO_NUM_CHANNELS = <the device's>
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = <the device's>
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+    native types 1
+    current:
+      MF_MT_ALL_SAMPLES_INDEPENDENT = UI4 1
+      MF_MT_AUDIO_AVG_BYTES_PER_SECOND = <the device's>
+      MF_MT_AUDIO_BITS_PER_SAMPLE = UI4 32
+      MF_MT_AUDIO_BLOCK_ALIGNMENT = <the device's>
+      MF_MT_AUDIO_NUM_CHANNELS = <the device's>
+      MF_MT_AUDIO_PREFER_WAVEFORMATEX = UI4 1
+      MF_MT_AUDIO_SAMPLES_PER_SECOND = <the device's>
+      MF_MT_MAJOR_TYPE = GUID MFMediaType_Audio
+      MF_MT_SUBTYPE = GUID MFAudioFormat_Float
+  streams 1
+  read 0x00000000 flags 0x100 first no sample
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0 MFSampleExtension_Discontinuity]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>; MFSampleExtension_Discontinuity = UI4 1]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>]
+  read 0x00000000 flags 0x0 after # ms # bytes in 1 [8294da66-f328-4805-b551-00deb4c57a61 8f3e35e7-2dcd-4887-8622-2a58baa652b0]
+    sample t=# d=# size=# buffers=1 <bytes> [8294da66-f328-4805-b551-00deb4c57a61 = UNKNOWN; 8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 <time>]
+  presentation MF_PD_DURATION 0xc00d36e6
+  presentation MF_PD_TOTAL_FILE_SIZE 0xc00d36e6
+  presentation MF_PD_MIME_TYPE 0xc00d36e6
+  presentation MF_PD_AUDIO_ENCODING_BITRATE 0xc00d36e6
+  presentation MF_PD_VIDEO_ENCODING_BITRATE 0xc00d36e6
+  presentation MF_PD_LAST_MODIFIED_TIME 0xc00d36e6
+  presentation MF_SOURCE_READER_MEDIASOURCE_CHARACTERISTICS = UI4 5

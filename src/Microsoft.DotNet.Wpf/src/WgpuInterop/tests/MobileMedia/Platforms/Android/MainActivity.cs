@@ -12,8 +12,9 @@ using System.IO;
 using Android.App;
 using Android.OS;
 
-// the cameras' tests (MFCaptureProbe): granted by the test run (adb shell pm grant)
+// the cameras' and microphones' tests (MFCaptureProbe): granted by the test run (adb shell pm grant)
 [assembly: UsesPermission(Android.Manifest.Permission.Camera)]
+[assembly: UsesPermission(Android.Manifest.Permission.RecordAudio)]
 
 namespace MobileMedia
 {

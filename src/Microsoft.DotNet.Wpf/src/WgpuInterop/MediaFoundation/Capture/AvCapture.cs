@@ -29,6 +29,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
 
         private static readonly IntPtr s_av = NativeLibrary.Load(AVFoundationLib);
         private static readonly IntPtr AVMediaTypeVideo = *(IntPtr*)NativeLibrary.GetExport(s_av, "AVMediaTypeVideo");
+        private static readonly IntPtr AVMediaTypeAudio = *(IntPtr*)NativeLibrary.GetExport(s_av, "AVMediaTypeAudio");
         private static readonly uint F420v = AppleNative.FourCC("420v"), F420f = AppleNative.FourCC("420f");
         private static readonly Guid NV12 = new("3231564e-0000-0010-8000-00aa00389b71");
 
@@ -76,17 +77,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
         /// The video devices (NSArray): of a discovery session of the built-in, external and Continuity cameras -- of
         /// the types the system has (devicesWithMediaType:, deprecated, lists none on the newer systems).
         /// </summary>
-        private static IntPtr VideoDevices()
+        private static IntPtr VideoDevices() => Discover(AVMediaTypeVideo, new[] { "AVCaptureDeviceTypeBuiltInWideAngleCamera", "AVCaptureDeviceTypeExternal", "AVCaptureDeviceTypeExternalUnknown", "AVCaptureDeviceTypeContinuityCamera" });
+
+        /// <summary>The microphones: each one's name and identifier (its CoreAudio UID, the input queue's device), of the shared format.</summary>
+        public static List<AudioCaptureDevice> Microphones()
+        {
+            var list = new List<AudioCaptureDevice>();
+            IntPtr pool = objc_autoreleasePoolPush();
+            try
+            {
+                IntPtr devices = Discover(AVMediaTypeAudio, new[] { "AVCaptureDeviceTypeMicrophone", "AVCaptureDeviceTypeBuiltInMicrophone", "AVCaptureDeviceTypeExternal", "AVCaptureDeviceTypeExternalUnknown" });
+                foreach (var d in Items(devices))
+                    list.Add(new AudioCaptureDevice { Name = Str(Send(d, Sel("localizedName"))) ?? "", Id = Str(Send(d, Sel("uniqueID"))) ?? "", Rate = 48000, Channels = 2 });
+            }
+            finally { objc_autoreleasePoolPop(pool); }
+            return list;
+        }
+
+        /// <summary>Whether the application may use the microphones (the system asks when one is opened, where it has not been told).</summary>
+        public static bool MicrophoneAllowed => SendStatus(Cls("AVCaptureDevice"), Sel("authorizationStatusForMediaType:"), AVMediaTypeAudio) is 0 or 3;
+
+        private static IntPtr Discover(IntPtr mediaType, string[] typeNames)
         {
             var types = new List<IntPtr>();
-            foreach (var n in new[] { "AVCaptureDeviceTypeBuiltInWideAngleCamera", "AVCaptureDeviceTypeExternal", "AVCaptureDeviceTypeExternalUnknown", "AVCaptureDeviceTypeContinuityCamera" })
+            foreach (var n in typeNames)
                 if (NativeLibrary.TryGetExport(s_av, n, out var p) && *(IntPtr*)p is var t && t != IntPtr.Zero && !types.Contains(t)) types.Add(t);
             IntPtr cls = Cls("AVCaptureDeviceDiscoverySession");
-            if (cls == IntPtr.Zero || types.Count == 0) return Send(Cls("AVCaptureDevice"), Sel("devicesWithMediaType:"), AVMediaTypeVideo);
+            if (cls == IntPtr.Zero || types.Count == 0) return Send(Cls("AVCaptureDevice"), Sel("devicesWithMediaType:"), mediaType);
             IntPtr array;
             var arr = types.ToArray();
             fixed (IntPtr* a = arr) array = SendArray(Cls("NSArray"), Sel("arrayWithObjects:count:"), a, (nuint)arr.Length);
-            IntPtr session = SendDiscovery(cls, Sel("discoverySessionWithDeviceTypes:mediaType:position:"), array, AVMediaTypeVideo, 0);      // AVCaptureDevicePositionUnspecified
+            IntPtr session = SendDiscovery(cls, Sel("discoverySessionWithDeviceTypes:mediaType:position:"), array, mediaType, 0);      // AVCaptureDevicePositionUnspecified
             return session == IntPtr.Zero ? IntPtr.Zero : Send(session, Sel("devices"));
         }
 

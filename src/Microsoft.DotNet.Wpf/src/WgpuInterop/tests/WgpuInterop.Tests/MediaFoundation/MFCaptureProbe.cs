@@ -16,7 +16,7 @@ using Xunit;
 
 namespace WgpuInterop.Tests.MediaFoundation
 {
-    public sealed unsafe class MFCaptureProbe
+    public sealed unsafe partial class MFCaptureProbe
     {
         [DllImport("mf.dll", EntryPoint = "MFEnumDeviceSources")] private static extern int WinMFEnumDeviceSources(IntPtr attributes, IntPtr** activates, uint* count);
         [DllImport("mf.dll", EntryPoint = "MFCreateDeviceSource")] private static extern int WinMFCreateDeviceSource(IntPtr attributes, IntPtr* source);
@@ -47,6 +47,7 @@ namespace WgpuInterop.Tests.MediaFoundation
         internal static List<string> Report()
         {
             var log = new List<string>();
+            MFReader.Startup();          // (Windows' audio capture source is of the started platform's: MF_E_SHUTDOWN without)
             foreach (var (kind, guid) in new[] { ("video", VIDCAP_GUID), ("audio", AUDCAP_GUID) })
             {
                 IntPtr attrs = MFReader.Attributes();
@@ -89,7 +90,6 @@ namespace WgpuInterop.Tests.MediaFoundation
                                     MFReader.Release(c);
                                 }
                                 // a few frames of the first stream (the camera on, briefly; nothing is kept): flags, sizes, the times between
-                                if (kind == "video")
                                 {
                                     long prev = -1;
                                     for (int f = 0; f < 8; f++)
@@ -348,6 +348,64 @@ namespace WgpuInterop.Tests.MediaFoundation
             return r;
         }
 
+        [System.Text.RegularExpressions.GeneratedRegex(@"first t=\d+")] private static partial System.Text.RegularExpressions.Regex Rx0();
+        [System.Text.RegularExpressions.GeneratedRegex(@"after -?\d+ ms \d+ bytes")] private static partial System.Text.RegularExpressions.Regex Rx1();
+        [System.Text.RegularExpressions.GeneratedRegex(@"t=\d+ d=\d+ size=\d+ buffers=1 \S+")] private static partial System.Text.RegularExpressions.Regex Rx2();
+        [System.Text.RegularExpressions.GeneratedRegex(@"UI8 \d+ \(\d+:\d+\)")] private static partial System.Text.RegularExpressions.Regex Rx3();
+        [System.Text.RegularExpressions.GeneratedRegex(@"t=(\d+) d=(\d+) size=(\d+).*8f3e35e7-2dcd-4887-8622-2a58baa652b0 = UI8 (\d+)")] private static partial System.Text.RegularExpressions.Regex Rx4();
+
+        /// <summary>The report's microphones, of the first: of no device's name or endpoint, nor the blocks' times and sizes
+        /// (Windows' are of its engine's period, ours 10 ms: a block's duration of its size either way).</summary>
+        internal static List<string> NormalizeAudio(IEnumerable<string> report)
+        {
+            var o = new List<string>();
+            bool audio = false, skip = false;
+            foreach (var raw in report)
+            {
+                string l = raw;
+                if (l.StartsWith("==== audio")) { audio = true; o.Add(Cut(l, " count ") + " count <n>"); continue; }
+                if (!audio) continue;
+                if (l.StartsWith("device ")) { skip = l != "device 0:"; if (!skip) o.Add(l); continue; }
+                if (skip) continue;
+                foreach (var k in new[] { "30da9258-feb9-47a7-a453-763a7a8e1c5f = STR", "60d0e559-52f8-4fa2-bbce-acdb34a8ec01 = STR", "98d24b5e-5930-4614-b5a1-f600f9355a78 = STR" })
+                    if (l.Contains(k)) l = Cut(l, "= STR") + "= STR <device>";
+                foreach (var k in new[] { "MF_MT_AUDIO_AVG_BYTES_PER_SECOND = ", "MF_MT_AUDIO_BLOCK_ALIGNMENT = ", "MF_MT_AUDIO_NUM_CHANNELS = ", "MF_MT_AUDIO_SAMPLES_PER_SECOND = " })
+                    if (l.Contains(k)) l = Cut(l, k) + k + "<the device's>";            // (the device's mix format, as Windows' is)
+                l = Rx0().Replace(l, "first");
+                l = Rx1().Replace(l, "after # ms # bytes");
+                l = Rx2().Replace(l, "t=# d=# size=# buffers=1 <bytes>");
+                l = Rx3().Replace(l, "UI8 <time>");
+                o.Add(l);
+            }
+            return o;
+        }
+
+        /// <summary>The first microphone, as Windows' first is (CaptureAudio.windows.txt): where there is one.</summary>
+        [Fact]
+        public void TheAudioCaptureSource_BehavesAsWindowsDoes()
+        {
+            Assert.SkipWhen(OperatingSystem.IsWindows(), "Windows' device source is the fixture");
+            var report = Report();
+            var ours = NormalizeAudio(report);
+            Assert.SkipWhen(!ours.Contains("device 0:"), "no microphone here");
+            var windows = System.IO.File.ReadAllLines(System.IO.Path.Combine(TestFiles.Root, "MediaFoundation", "CaptureAudio.windows.txt"));
+            for (int i = 0; i < Math.Min(windows.Length, ours.Count); i++)
+                Assert.True(windows[i] == ours[i], $"line {i}: Windows '{windows[i]}', ours '{ours[i]}'");
+            Assert.Equal(windows.Length, ours.Count);
+            // each block's duration of its size, its device timestamp its time
+            var audio = report.SkipWhile(l => !l.StartsWith("==== audio")).ToList();
+            long Of(string k) => long.Parse(audio.First(l => l.Contains(k)).Split(' ').Last());
+            long rate = Of("MF_MT_AUDIO_SAMPLES_PER_SECOND = "), block = Of("MF_MT_AUDIO_BLOCK_ALIGNMENT = ");
+            Assert.Equal(block * rate, Of("MF_MT_AUDIO_AVG_BYTES_PER_SECOND = "));
+            foreach (var l in report.SkipWhile(l => !l.StartsWith("==== audio")).Where(l => l.StartsWith("    sample ")))
+            {
+                var m = Rx4().Match(l);
+                Assert.True(m.Success, l);
+                Assert.Equal(long.Parse(m.Groups[1].Value), long.Parse(m.Groups[4].Value));
+                Assert.Equal(long.Parse(m.Groups[3].Value) / block * 10_000_000 / rate, long.Parse(m.Groups[2].Value));
+            }
+        }
+
         /// <summary>The first camera, as Windows' first is (Capture.windows.txt, of the parts of Media Foundation's): where there is one.</summary>
         [Fact]
         public void TheCaptureSource_BehavesAsWindowsDoes()
@@ -365,7 +423,10 @@ namespace WgpuInterop.Tests.MediaFoundation
         public void Probe()
         {
             Assert.SkipWhen(Environment.GetEnvironmentVariable("MF_PROBE_CAPTURE") is not { Length: > 0 }, "MF_PROBE_CAPTURE=<file> writes the report (of no device's name or link)");
-            System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_CAPTURE")!, Normalize(Report()));
+            // (MF_PROBE_CAPTURE_RAW=1: the report as it is -- of the machine's device names: never a fixture)
+            var report = Report();
+            System.IO.File.WriteAllLines(Environment.GetEnvironmentVariable("MF_PROBE_CAPTURE")!, Environment.GetEnvironmentVariable("MF_PROBE_CAPTURE_RAW") == "1" ? report : Normalize(report));
+            if (Environment.GetEnvironmentVariable("MF_PROBE_CAPTURE_RAW") != "1") System.IO.File.WriteAllLines(System.IO.Path.ChangeExtension(Environment.GetEnvironmentVariable("MF_PROBE_CAPTURE")!, ".audio.txt"), NormalizeAudio(report));
         }
     }
 }

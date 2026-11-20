@@ -469,6 +469,7 @@ export function closeCamera(h) {
     if (!s) return;
     s.closed = true;
     if (s.track) s.track.stop();
+    if (s.ctx) s.ctx.close().catch(() => {});
     cameraSessions.delete(h);
 }
 
@@ -511,3 +512,58 @@ export function audioQueued(h) { const o = audioOutputs.get(h); return o ? Math.
 export function audioPause(h, pause) { const o = audioOutputs.get(h); if (o) (pause ? o.ctx.suspend() : o.ctx.resume()).catch(() => {}); }
 export function audioFlush(h) { const o = audioOutputs.get(h); if (!o) return; for (const s of o.sources) { try { s.stop(); } catch { } } o.sources = []; o.next = 0; }
 export function audioClose(h) { const o = audioOutputs.get(h); if (!o) return; audioFlush(h); o.ctx.close().catch(() => {}); audioOutputs.delete(h); }
+
+// ---- the page's microphones (MediaFoundation/Capture/WebCapture.cs) ---------------------------------
+
+let micList = null, micAsking = false;
+
+/** The audio inputs as JSON ([{ id, name }]); '' while the page asks for them. */
+export function microphones() {
+    if (micList === null && !micAsking) {
+        micAsking = true;
+        (async () => {
+            const md = navigator.mediaDevices;
+            if (!md || !md.enumerateDevices) return '[]';
+            let devices = await md.enumerateDevices();
+            if (devices.some(d => d.kind === 'audioinput' && (!d.label || !d.deviceId))) {
+                try { const s = await md.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); } catch { }
+                devices = await md.enumerateDevices();
+            }
+            return JSON.stringify(devices.filter(d => d.kind === 'audioinput' && d.deviceId).map(d => ({ id: d.deviceId, name: d.label || 'Microphone' })));
+        })().then(r => { micList = r; micAsking = false; }, () => { micList = '[]'; micAsking = false; });
+    }
+    return micList ?? '';
+}
+
+/** A microphone opened at the rate and channels (its state as a camera's: cameraState, closeCamera); blocks of interleaved float kept. */
+export function openMicrophone(id, rate, channels) {
+    const h = nextHandle++;
+    const s = { state: 0, frames: [], track: null, closed: false, ctx: null };
+    cameraSessions.set(h, s);
+    (async () => {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: id }, channelCount: { ideal: channels }, sampleRate: { ideal: rate } } });
+        s.track = stream.getAudioTracks()[0];
+        if (s.closed) { s.track.stop(); return; }
+        const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
+        s.ctx = new Ctx({ sampleRate: rate });
+        const src = s.ctx.createMediaStreamSource(stream);
+        const proc = s.ctx.createScriptProcessor(1024, 2, channels);
+        proc.onaudioprocess = e => {
+            const n = e.inputBuffer.length, chans = e.inputBuffer.numberOfChannels;
+            const out = new Float32Array(n * channels);
+            for (let c = 0; c < channels; c++) {
+                const d = e.inputBuffer.getChannelData(Math.min(c, chans - 1));
+                for (let i = 0; i < n; i++) out[i * channels + c] = d[i];
+            }
+            s.frames.push(new Uint8Array(out.buffer));
+            while (s.frames.length > 32) s.frames.shift();
+        };
+        src.connect(proc);
+        proc.connect(s.ctx.destination);           // (a processor runs only connected; its output is silence)
+        s.state = 1;
+    })().catch(e => { s.state = e && e.name === 'NotAllowedError' ? 3 : 2; s.error = String(e); });
+    return h;
+}
+
+/** The oldest block kept into the buffer: its bytes; 0 of none. */
+export function takeMicrophoneBlock(h, buffer) { return takeCameraFrame(h, buffer); }

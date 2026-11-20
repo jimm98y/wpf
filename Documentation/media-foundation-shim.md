@@ -533,7 +533,6 @@ first camera's details.
 - `MFEnumDeviceSources` of `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID`: an activate for each camera, carrying:
   - its friendly name and a symbolic link of the shape of Windows' (`\\?\avcapture#…#{KSCATEGORY_VIDEO_CAMERA}\global`);
   - the category, the source type, the major type and subtypes it gives, and the unnamed hardware-source attribute.
-  Microphones (`AUDCAP`) are listed as none yet.
 - `MFCreateDeviceSource` and `MFCreateDeviceSourceActivate` of the link (the case ignored). Another link is
   0x80070003; no link, or no source type, is MF_E_ATTRIBUTENOTFOUND.
 - **The source:**
@@ -570,6 +569,30 @@ The cameras of each system (`Capture/CaptureDevices.cs`), each format as NV12 of
 
 `TheCaptureSource_BehavesAsWindowsDoes` compares the first camera's report with Windows', with the names, links, sizes
 and times taken out. It is skipped where there is no camera.
+
+**The microphones** (`Capture/MFAudioCaptureSource.cs`), as Windows' audio capture source behaves. It was probed with
+the test VM's microphone, the Mac's shared into it (`MFCaptureProbe`); the report kept, `CaptureAudio.windows.txt`, has
+no device's name or endpoint, nor the blocks' times and sizes. Windows' source needs the platform started: without
+`MFStartup`, activating it is MF_E_SHUTDOWN.
+- `MFEnumDeviceSources` of `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_GUID`: an activate for each microphone, carrying
+  the endpoint's identifier (`{0.0.1.00000000}.{guid}`, of the device's own, the same each run), the friendly name,
+  the `\\?\SWD#MMDEVAPI#…#{KSCATEGORY_AUDIO_INTERFACE}` link and the source type. `MFCreateDeviceSource` of
+  `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_AUDCAP_ENDPOINT_ID` gives the microphone of the endpoint.
+- **The source** is live and can pause (characteristics 5), of one stream of one type: 32-bit float at the device's
+  rate and channels, of `MF_MT_AUDIO_PREFER_WAVEFORMATEX` and no channel mask, as Windows' gives the shared mix format.
+- **Start** opens the microphone: MENewStream, MESourceStarted, MEStreamStarted and an MEStreamTick of the system time.
+  The reader's first read is the tick.
+- **Each RequestSample** is answered by a block: the system time of its capture, that as the device's timestamp too,
+  its duration of its length, the token; the first is discontinuous, as is one after a block was dropped (half a
+  second is kept). Windows' blocks are of its audio engine's period (40 to 70 ms in the VM); ours are of 10 ms.
+- **Pause** holds the blocks; **Stop** closes the microphone.
+
+The microphones of each system (`Capture/AudioCapture.cs`): AudioQueue's input on macOS and iOS (the device by its UID;
+the system asks for the microphone once), PulseAudio's simple API on Linux (its default source, the system's
+libpulse-simple loaded as it is there), AAudio's input on Android (it needs RECORD_AUDIO; without it, Start is
+E_ACCESSDENIED), and getUserMedia in the browser. `TheAudioCaptureSource_BehavesAsWindowsDoes` compares the first
+microphone's report with Windows', and checks each block's duration and device timestamp; it is skipped where there is
+no microphone.
 
 ## Transforms of the application's
 
@@ -776,9 +799,5 @@ on macOS and in the Ubuntu VM.
 
 ## To come
 
-- The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
-  of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
-  tolerance (by choice).
-- Audio capture (`MFEnumDeviceSources` of `AUDCAP`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).
