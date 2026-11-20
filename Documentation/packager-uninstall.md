@@ -40,6 +40,11 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
 - **The service accounts** it made on macOS and Linux (`_wpfnetworkservice`, `wpf-networkservice` and the others),
   where no other installation's service still runs as one. They stay on an ordinary uninstall: the state they own
   stays too.
+  - **macOS** deletes a user record only for a process with Full Disk Access, or one using an administrator's own
+    credentials. Root alone, the installer's scripts included, gets `eDSPermissionError` (checked on macOS 26).
+    `uninstall.sh --all` run with sudo in a terminal asks for the administrator's password (`sysadminctl
+    -deleteUser`). Otherwise it leaves the accounts, hidden, of no password and no shell, and prints the command
+    that removes them.
 - **SQL Server:**
   - **Windows:** the instance the installation installed is uninstalled by SQL Server's own setup, with its databases.
     An instance that was there before is left alone.

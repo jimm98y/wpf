@@ -506,7 +506,14 @@ public static partial class MacPackager
           for a in {{string.Join(" ", new[] { ServiceAccount.NetworkService, ServiceAccount.LocalService }.Select(a => DesktopCommon.SystemAccount(a, mac: true)))}}; do
             dscl . -read "/Users/$a" >/dev/null 2>&1 || continue
             grep -lq "<string>$a</string>" /Library/LaunchDaemons/*.plist 2>/dev/null && continue
-            dscl . -delete "/Users/$a" >/dev/null 2>&1 || true
+            # (macOS deletes a user record only for a process with Full Disk Access or of an administrator's own
+            # credentials: root alone gets eDSPermissionError; in a terminal, sysadminctl asks for the password)
+            dscl . -delete "/Users/$a" >/dev/null 2>&1 && continue
+            if [ -t 0 ] && [ -n "$SUDO_USER" ]; then
+              echo "macOS asks $SUDO_USER's password to delete the service account $a:"
+              sysadminctl -deleteUser "$a" -adminUser "$SUDO_USER" -adminPassword - >/dev/null 2>&1
+            fi
+            dscl . -read "/Users/$a" >/dev/null 2>&1 && echo "the service account $a is left (macOS lets only an administrator's credentials delete it): sudo sysadminctl -deleteUser $a -adminUser \$USER -adminPassword -"
           done
         else
           find "{{root}}" -mindepth 1 -maxdepth 1 ! -name state ! -name sqlserver -exec rm -rf {} +
