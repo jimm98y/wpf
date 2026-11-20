@@ -393,6 +393,80 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         [Win32Export("MFGetSystemTime")]
         public static long MFGetSystemTime() => Capture.CaptureDevices.Now();
 
+        // ---- the media session (Session/) ----
+
+        [Win32Export("MFCreateMediaSession")]
+        public static int MFCreateMediaSession(IntPtr configuration, IntPtr* session)
+        {
+            if (session == null) return MF.E_POINTER;
+            *session = new Session.MFMediaSession().Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateTopology")]
+        public static int MFCreateTopology(IntPtr* topology)
+        {
+            if (topology == null) return MF.E_POINTER;
+            *topology = new Session.MFTopology().Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateTopologyNode")]
+        public static int MFCreateTopologyNode(uint type, IntPtr* node)
+        {
+            if (node == null) return MF.E_POINTER;
+            *node = IntPtr.Zero;
+            if (type > Session.TopoIds.TEE) return MF.E_INVALIDARG;
+            *node = new Session.MFTopologyNode(type).Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateCollection")]
+        public static int MFCreateCollection(IntPtr* collection)
+        {
+            if (collection == null) return MF.E_POINTER;
+            *collection = new Session.MFCollection().Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreatePresentationClock")]
+        public static int MFCreatePresentationClock(IntPtr* clock)
+        {
+            if (clock == null) return MF.E_POINTER;
+            *clock = new Sink.MFPresentationClock().Pointer;
+            return MF.S_OK;
+        }
+
+        /// <summary>The sample grabber's activate: its sink made of the type (copied) and the callback; the activate's attributes the sink's options.</summary>
+        [Win32Export("MFCreateSampleGrabberSinkActivate")]
+        public static int MFCreateSampleGrabberSinkActivate(IntPtr type, IntPtr callback, IntPtr* activate)
+        {
+            if (activate == null || type == IntPtr.Zero || callback == IntPtr.Zero) return MF.E_POINTER;
+            var t = Source.Mp4Types.Read(type);
+            MFActivate? a = null;
+            a = new MFActivate(() =>
+            {
+                bool ignore = a!.Attributes.U32(Session.SinkIds.MF_SAMPLEGRABBERSINK_IGNORE_CLOCK) != 0;
+                long offset = (long)a.Attributes.U64(Session.SinkIds.MF_SAMPLEGRABBERSINK_SAMPLE_TIME_OFFSET);
+                var sink = new Session.MFSampleGrabberSink(t, callback, ignore, offset);
+                return (MF.S_OK, sink.Pointer);
+            }, MF.S_OK, () => t.Release());
+            *activate = a.Pointer;
+            return MF.S_OK;
+        }
+
+        /// <summary>The streaming audio renderer's activate: the renderer of the system's output (Session/MFAudioRenderer.cs).</summary>
+        [Win32Export("MFCreateAudioRendererActivate")]
+        public static int MFCreateAudioRendererActivate(IntPtr* activate)
+        {
+            if (activate == null) return MF.E_POINTER;
+            *activate = new MFActivate(() => Session.MFAudioRenderer.Create(out var r) is var hr && hr < 0 ? (hr, IntPtr.Zero) : (MF.S_OK, r!.Pointer), MF.S_OK).Pointer;
+            return MF.S_OK;
+        }
+
+        [Win32Export("MFCreateVideoRendererActivate")]
+        public static int MFCreateVideoRendererActivate(IntPtr hwnd, IntPtr* activate) { if (activate == null) return MF.E_POINTER; *activate = IntPtr.Zero; return MF.E_NOTIMPL; }
+
         [Win32Export("MFCreateSourceResolver")]
         public static int MFCreateSourceResolver(IntPtr* resolver)
         {

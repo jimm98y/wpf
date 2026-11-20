@@ -6,7 +6,8 @@
 // way it faces, its formats the sizes it streams YUV_420_888 at (ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS) of
 // their fastest rate (_MIN_FRAME_DURATIONS, within the auto-exposure's ranges), as NV12, largest first; a session of
 // one at a format: an AImageReader's window the target of a repeating preview request at the rate, each image's
-// planes copied as tight NV12 on the camera's thread. Opening one needs the application's CAMERA permission
+// planes copied as tight NV12, the reader polled on a thread of the session's (the NDK's callbacks check their targets'
+// control flow, which the runtime's code fails). Opening one needs the application's CAMERA permission
 // (ACAMERA_ERROR_PERMISSION_DENIED: E_ACCESSDENIED).
 //
 
@@ -156,16 +157,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
 
         [UnmanagedCallersOnly] private static void OnDisconnected(IntPtr context, IntPtr device) { }
         [UnmanagedCallersOnly] private static void OnError(IntPtr context, IntPtr device, int error) => D3DLog.Once("camera2-error:" + error, $"Media Foundation: the camera's error {error}");
-        [UnmanagedCallersOnly] private static void OnSessionState(IntPtr context, IntPtr session) { }
 
-        [UnmanagedCallersOnly]
-        private static void OnImageAvailable(IntPtr context, IntPtr reader)
-        {
-            Session? s;
-            lock (s_sessions) s_sessions.TryGetValue(context, out s);
-            try { s?.Image(reader); }
-            catch (Exception e) { D3DLog.Error("AImageReader listener", e); }
-        }
 
         private sealed class Session : ICaptureSession
         {
@@ -196,9 +188,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
                 IntPtr rd, win, outp, cont, tgt, req;
                 if (AImageReader_new(_format.Width, _format.Height, AIMAGE_FORMAT_YUV_420_888, 4, &rd) != 0) return MF.E_FAIL;
                 _reader = rd;
-                _listener->Context = _key;
-                _listener->OnImageAvailable = (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnImageAvailable;
-                AImageReader_setImageListener(_reader, _listener);
+                // (no listener: libmediandk checks the control flow of its calls, and a callback of the runtime's code fails
+                // it; the images are polled for instead, on the session's thread)
                 AImageReader_getWindow(_reader, &win); _window = win;
                 ACaptureSessionOutputContainer_create(&cont); _container = cont;
                 ACaptureSessionOutput_create(_window, &outp); _output = outp;
@@ -218,19 +209,37 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Capture
             {
                 if (_running || _disposed != 0 || _device == IntPtr.Zero) return;
                 _sessionCb->Context = _key;
-                _sessionCb->OnClosed = _sessionCb->OnReady = _sessionCb->OnActive = (IntPtr)(delegate* unmanaged<IntPtr, IntPtr, void>)&OnSessionState;
+                // (none: libcamera2ndk's handler checks the control flow of the calls it makes, and a callback of the runtime's
+                // code fails it -- a SIGTRAP on its looper; it calls none of a null pointer)
+                _sessionCb->OnClosed = _sessionCb->OnReady = _sessionCb->OnActive = IntPtr.Zero;
                 IntPtr ses;
                 if (ACameraDevice_createCaptureSession(_device, _container, _sessionCb, &ses) != 0) return;
                 _session = ses;
                 IntPtr req = _request;
                 _running = true;
                 ACameraCaptureSession_setRepeatingRequest(_session, IntPtr.Zero, 1, &req, null);
+                _poll = new Thread(Poll) { IsBackground = true, Name = "Camera2 frames" };
+                _poll.Start();
+            }
+
+            private Thread? _poll;
+
+            /// <summary>The reader's latest image, every few milliseconds while the session runs.</summary>
+            private void Poll()
+            {
+                while (_running)
+                {
+                    try { Image(_reader); }
+                    catch (Exception e) { D3DLog.Error("the camera's images", e); }
+                    Thread.Sleep(4);
+                }
             }
 
             public void Stop()
             {
                 if (!_running) return;
                 _running = false;
+                _poll?.Join(); _poll = null;
                 ACameraCaptureSession_stopRepeating(_session);
                 ACameraCaptureSession_close(_session);
                 _session = IntPtr.Zero;

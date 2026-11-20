@@ -1,0 +1,214 @@
+==== sample grabbers
+source 0x00000000
+session 0x00000000
+  stream 0 MFMediaType_Audio connected 0x00000000
+    source node 835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+  stream 1 MFMediaType_Video connected 0x00000000
+    source node 835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+set topology 0x00000000
+  event MESessionTopologySet 0x00000000 UNKNOWN
+  event MESessionNotifyPresentationTime 0x00000000 [5ad914d0-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0); 5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0); 5ad914d2-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 115]
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 100]
+capabilities 0x73
+start 0x00000000
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 200]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 119; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionStarted 0x00000000 [5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+get clock 0x00000000 presentation clock True
+  full topology 0x00000000
+    topo 494bbcde-b031-4e38-97c4-d5422dd618dc = UI4 0
+    nodes 7
+    node 0: type 1 object none inputs 0 outputs 1
+      835c58ea-e075-4bc7-bcba-4de000df9ae6 = UI8 0 (0:0)
+      835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      output 0 -> node 2 input 0
+    node 1: type 0 object IMFStreamSink inputs 1 outputs 0
+      14932f9b-9087-4bb4-8412-5167145cbe04 = UI4 0
+    node 2: type 2 object IMFTransform inputs 1 outputs 1
+      494bbd00-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd01-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd02-b031-4e38-97c4-d5422dd618dc = UI4 1
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID 32d186a7-218f-4c75-8876-dd77273a8999
+      output 0 -> node 1 input 0
+      in MFAudioFormat_AAC
+      out MFAudioFormat_Float
+    node 3: type 1 object none inputs 0 outputs 1
+      835c58ea-e075-4bc7-bcba-4de000df9ae6 = UI8 0 (0:0)
+      835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      output 0 -> node 5 input 0
+    node 4: type 0 object IMFStreamSink inputs 1 outputs 0
+      14932f9b-9087-4bb4-8412-5167145cbe04 = UI4 0
+    node 5: type 2 object IMFTransform inputs 1 outputs 1
+      494bbd00-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd01-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd02-b031-4e38-97c4-d5422dd618dc = UI4 1
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID 62ce7e72-4c71-4d20-b15d-452831a87d9d
+      output 0 -> node 6 input 0
+      in MFVideoFormat_H264
+      out MFVideoFormat_NV12
+    node 6: type 2 object IMFTransform inputs 1 outputs 1
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID 98230571-0087-4204-b020-3282538e57d3
+      output 0 -> node 4 input 0
+      in MFVideoFormat_NV12
+      out MFVideoFormat_RGB32
+  playing: clock 0x00000000 time # ms state 1
+pause 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionPaused 0x00000000
+  paused: clock 0x00000000 time # ms state 3
+start at 400 ms 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 119; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionStarted 0x00000000 [5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+  seeked: clock 0x00000000 time # ms state 1
+to the end:
+  event MEEndOfPresentation 0x00000000
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 400]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionEnded 0x00000000 [190e852f-6238-42d1-b5af-69ea338ef850 = UI8 #]
+  ended: clock 0x00000000 time # ms state 2
+start again 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 119; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionStarted 0x00000000 [5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+stop 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionStopped 0x00000000 [190e852f-6238-42d1-b5af-69ea338ef850 = UI8 #]
+  stopped: clock 0x00000000 time # ms state 2
+close 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 112; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 3]
+  event MESessionClosed 0x00000000
+grabber MFMediaType_Audio: samples some
+  set clock clock
+  clock start offset 0
+  sample MFMediaType_Audio flags 0 time 0 duration 232200 size 8192
+  sample MFMediaType_Audio flags 0 time 232199 duration 232200 size 8192
+  sample MFMediaType_Audio flags 0 time 464399 duration 232200 size 8192
+  clock pause
+  clock start offset 4000000
+  clock stop
+  clock start offset 0
+  clock stop
+grabber MFMediaType_Video: samples some
+  set clock clock
+  clock start offset 0
+  sample MFMediaType_Video flags 0 time 0 duration 400000 size 12288
+  sample MFMediaType_Video flags 0 time 400000 duration 400000 size 12288
+  sample MFMediaType_Video flags 0 time 800000 duration 400000 size 12288
+  clock pause
+  clock start offset 4000000
+  clock stop
+  clock start offset 0
+  clock stop
+shutdown 0x00000000
+start after shutdown 0xc00d3e85
+==== renderer of MFMediaType_Video
+  renderer of MFMediaType_Video 0x00000000
+    9a2dbbdd-f57e-4162-82b9-6831377682d3 = UI8 #
+  stream 1 MFMediaType_Video connected 0x00000000
+    source node 835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+set topology 0x00000000
+  event MESessionTopologySet 0x00000000 UNKNOWN
+  event MESessionNotifyPresentationTime 0x00000000 [5ad914d0-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0); 5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0); 5ad914d2-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 115]
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 100]
+start 0x00000000
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 200]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 119; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionStarted 0x00000000 [5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+  full topology 0x00000000
+    topo 494bbcde-b031-4e38-97c4-d5422dd618dc = UI4 0
+    nodes 3
+    node 0: type 1 object none inputs 0 outputs 1
+      494bbced-b031-4e38-97c4-d5422dd618dc = UI4 1
+      835c58ea-e075-4bc7-bcba-4de000df9ae6 = UI8 0 (0:0)
+      835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      b8aa3129-dfc9-423a-8acd-1d82850a3d1f = UNKNOWN
+      output 0 -> node 2 input 0
+    node 1: type 0 object IMFStreamSink inputs 1 outputs 0
+      14932f9b-9087-4bb4-8412-5167145cbe04 = UI4 0
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID d23e6477-b104-4707-81cb-e1ca19a07016
+      b8aa3129-dfc9-423a-8acd-1d82850a3d1f = UNKNOWN
+    node 2: type 2 object IMFTransform inputs 1 outputs 1
+      494bbd00-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd01-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd02-b031-4e38-97c4-d5422dd618dc = UI4 1
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID 62ce7e72-4c71-4d20-b15d-452831a87d9d
+      output 0 -> node 1 input 0
+      in MFVideoFormat_H264
+      out MFVideoFormat_NV12
+  display control 0x00000000
+    native size 0x00000000 64x48 aspect 4x3
+    window 0x00000000 the app's
+    aspect mode 0x00000000 3
+to the end:
+  event MEEndOfPresentation 0x00000000
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 400]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionEnded 0x00000000 [190e852f-6238-42d1-b5af-69ea338ef850 = UI8 #]
+close 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 112; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 3]
+  event MESessionClosed 0x00000000
+shutdown 0x00000000
+==== renderer of MFMediaType_Audio
+  renderer of MFMediaType_Audio 0x00000000
+  stream 0 MFMediaType_Audio connected 0x00000000
+    source node 835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+    source node 835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+set topology 0x00000000
+  event MESessionTopologySet 0x00000000 UNKNOWN
+  event MESessionNotifyPresentationTime 0x00000000 [5ad914d0-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0); 5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0); 5ad914d2-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 115]
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 100]
+start 0x00000000
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 200]
+  event 2 0x00000000 LPWSTR <id> ext 02e7187d-0087-437e-a27f-cf5adccd3112
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 119; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionStarted 0x00000000 [5ad914d1-9b45-4a8d-a2c0-81d1e50bfb07 = UI8 0 (0:0)]
+  full topology 0x00000000
+    topo 494bbcde-b031-4e38-97c4-d5422dd618dc = UI4 0
+    nodes 4
+    node 0: type 1 object none inputs 0 outputs 1
+      835c58ea-e075-4bc7-bcba-4de000df9ae6 = UI8 0 (0:0)
+      835c58ec-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ed-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      835c58ee-e075-4bc7-bcba-4de000df9ae6 = UNKNOWN
+      output 0 -> node 2 input 0
+    node 1: type 0 object IMFStreamSink inputs 1 outputs 0
+      14932f9b-9087-4bb4-8412-5167145cbe04 = UI4 0
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID d23e6476-b104-4707-81cb-e1ca19a07016
+    node 2: type 2 object IMFTransform inputs 1 outputs 1
+      494bbd00-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd01-b031-4e38-97c4-d5422dd618dc = UI4 1
+      494bbd02-b031-4e38-97c4-d5422dd618dc = UI4 1
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID 32d186a7-218f-4c75-8876-dd77273a8999
+      output 0 -> node 3 input 0
+      in MFAudioFormat_AAC
+      out MFAudioFormat_Float
+    node 3: type 2 object IMFTransform inputs 1 outputs 1
+      88dcc0c9-293e-4e8b-9aeb-0ad64cc016b0 = GUID f447b69e-1884-4a7e-8055-346f74d6edb3
+      output 0 -> node 1 input 0
+      in MFAudioFormat_Float
+      out MFAudioFormat_Float
+  display control 0x80004002
+to the end:
+  event MEEndOfPresentation 0x00000000
+  event MESessionTopologyStatus 0x00000000 UNKNOWN [30c5018d-9a53-454b-ad9e-6d5f8fa7c43b = UI4 400]
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 115; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 4]
+  event MESessionEnded 0x00000000 [190e852f-6238-42d1-b5af-69ea338ef850 = UI8 #]
+close 0x00000000
+  event MESessionCapabilitiesChanged 0x00000000 [7e5ebcd0-11b8-4abe-afad-10f6599a7f42 = UI4 112; 7e5ebcd1-11b8-4abe-afad-10f6599a7f42 = UI4 3]
+  event MESessionClosed 0x00000000
+shutdown 0x00000000

@@ -57,6 +57,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         public abstract void EndDrain();
         public abstract void Flush();
         public abstract void Dispose();
+        /// <summary>A flush made of a decoder of its own again (a GStreamer pipeline flushed in place can block its next pull).</summary>
+        public virtual bool FlushByReset => false;
     }
 
     /// <summary>A decoded picture, NV12, of its own size.</summary>
@@ -145,6 +147,7 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Codecs
         }
 
         public override void Push(ReadOnlySpan<byte> data, long time) => _d.ProcessInput(data, time);
+        public override bool FlushByReset => true;
 
         public override bool TryTake(out DecodedFrame? frame)
         {

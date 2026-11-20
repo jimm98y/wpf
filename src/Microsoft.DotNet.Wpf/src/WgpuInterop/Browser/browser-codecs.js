@@ -471,3 +471,43 @@ export function closeCamera(h) {
     if (s.track) s.track.stop();
     cameraSessions.delete(h);
 }
+
+// ---- audio: the audio renderer's output (MediaFoundation/Session/WebAudioOutput.cs) ------------------
+
+const audioOutputs = new Map();
+
+/** An output of the rate and channels: its handle; 0 where the page has no WebAudio. */
+export function audioOpen(rate, channels) {
+    const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
+    if (!Ctx) return 0;
+    const h = nextHandle++;
+    audioOutputs.set(h, { ctx: new Ctx(), rate, channels, next: 0, sources: [] });
+    return h;
+}
+
+/** Frames of interleaved float scheduled after the last: the seconds queued then. */
+export function audioWrite(h, samples, frames) {
+    const o = audioOutputs.get(h);
+    if (!o) return 0;
+    const bytes = samples.slice();
+    const data = new Float32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2);
+    const buf = o.ctx.createBuffer(o.channels, frames, o.rate);
+    for (let c = 0; c < o.channels; c++) {
+        const ch = buf.getChannelData(c);
+        for (let i = 0; i < frames; i++) ch[i] = data[i * o.channels + c];
+    }
+    const src = o.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(o.ctx.destination);
+    const at = Math.max(o.next, o.ctx.currentTime + 0.02);
+    src.start(at);
+    o.next = at + frames / o.rate;
+    o.sources.push(src);
+    src.onended = () => { const i = o.sources.indexOf(src); if (i >= 0) o.sources.splice(i, 1); };
+    return o.next - o.ctx.currentTime;
+}
+
+export function audioQueued(h) { const o = audioOutputs.get(h); return o ? Math.max(0, o.next - o.ctx.currentTime) : 0; }
+export function audioPause(h, pause) { const o = audioOutputs.get(h); if (o) (pause ? o.ctx.suspend() : o.ctx.resume()).catch(() => {}); }
+export function audioFlush(h) { const o = audioOutputs.get(h); if (!o) return; for (const s of o.sources) { try { s.stop(); } catch { } } o.sources = []; o.next = 0; }
+export function audioClose(h) { const o = audioOutputs.get(h); if (!o) return; audioFlush(h); o.ctx.close().catch(() => {}); audioOutputs.delete(h); }

@@ -50,6 +50,14 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
 
         public MFPresentationClock() : base(s_vt) { }
 
+        /// <summary>No time source yet (the media session's clock before a topology is set): GetTime is MF_E_CLOCK_NO_TIME_SOURCE.</summary>
+        public bool NoTimeSource;
+
+        public uint State { get { lock (_lock) return _state; } }
+
+        public void AddSink(IntPtr sink) { lock (_lock) { if (_sinks.Contains(sink)) return; Com.AddRef(sink); _sinks.Add(sink); } }
+        public void RemoveSink(IntPtr sink) { lock (_lock) { if (_sinks.Remove(sink)) Com.Release(sink); } }
+
         protected override void OnFinalRelease() { lock (_lock) { foreach (var s in _sinks) Com.Release(s); _sinks.Clear(); } }
 
         /// <summary>The system's time in 100 ns units.</summary>
@@ -158,6 +166,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation.Sink
         private static int GetTime(IntPtr self, long* t)
         {
             if (C(self) is not { } c || t == null) return MF.E_POINTER;
+            *t = 0;
+            if (c.NoTimeSource) return unchecked((int)0xC00D9C41);            // MF_E_CLOCK_NO_TIME_SOURCE
             *t = c.Time;
             return MF.S_OK;
         }

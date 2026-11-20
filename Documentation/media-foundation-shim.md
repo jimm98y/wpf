@@ -456,6 +456,54 @@ MF_SOURCE_READER_MEDIASOURCE gives the source.
 - The reader's report of every file is Windows' report the three ways: of the URL, of the resolver's
   source, and of that source driven as an application's (`TheReader_DoesWithEachFileWhatWindowsReaderDoes`).
 
+## The media session
+
+**Topologies** (`Session/MFTopology.cs`): `MFCreateTopology`, `MFCreateTopologyNode` (source stream, transform,
+output, tee), the nodes' objects, attributes, connections and preferred types, clones that keep the node identifiers,
+`IMFCollection` (`MFCreateCollection`) of the source and output nodes.
+
+**The topology loader** (`Session/TopoLoader.cs`) resolves a partial topology as Windows' does. Windows' was probed
+(`MFMediaSessionProbe`, the report in `MediaSession.windows.txt`): a file's H.264 and AAC to sample grabbers of RGB32
+and float, and to Windows' renderers. Each branch, in the partial topology's order:
+- its source node, with MF_TOPONODE_MEDIASTART added;
+- its output node: the activate made the media sink's stream sink (MF_TOPONODE_STREAMID, 0), a system renderer's node
+  given the renderer's CLSID;
+- then the transforms the loader adds: none where the stream sink takes the stream's type; else the first decoder
+  MFTEnumEx lists (MF_TOPONODE_DECODER and its two neighbours set, its CLSID), of an output the sink takes, else of its
+  first; then, where the sink still takes neither, a converter of the sink's type completed of the stream's: the color
+  converter (the same size), the video processor (another size), the audio resampler (`Session/MFResampler.cs`, Windows'
+  CResamplerMediaObject).
+
+**The session** (`Session/MFMediaSession.cs`, `MFCreateMediaSession`). Its calls are queued and done in order on its
+own thread, which also moves the samples: each stream sink's request is answered by the next sample of its branch,
+through its transforms; the source's end is drained through them and marked on the stream sink. Its events are
+Windows':
+- SetTopology: MESessionTopologySet, MESessionNotifyPresentationTime, MESessionCapabilitiesChanged (0x73),
+  MESessionTopologyStatus READY.
+- Start: STARTED_SOURCE the first time; the capabilities with pause (0x77); MESessionStarted. Pause and Stop: the
+  capabilities without pause, MESessionPaused, MESessionStopped (with the time it happened).
+- The end of every branch: MEEndOfPresentation, ENDED, the capabilities, MESessionEnded, the clock stopped.
+- Close: the capabilities of neither start nor seek (0x70), MESessionClosed. After Shutdown every call is
+  MF_E_SHUTDOWN.
+- The presentation clock (`MFCreatePresentationClock` too) has no time source until a topology is set.
+- On Linux a decoder's flush is a fresh GStreamer pipeline, its sequence header given again with the next sample (a pipeline flushed in place could block its next pull).
+
+**The sample grabber sink** (`Session/MFSampleGrabberSink.cs`, `MFCreateSampleGrabberSinkActivate`): one stream whose
+handler takes a type of the given type's attributes; the clock given to the callback and its starts, stops and pauses
+passed on; each sample handed to `OnProcessSample` at its presentation time (at once with
+MF_SAMPLEGRABBERSINK_IGNORE_CLOCK), three asked for ahead.
+
+**The audio renderer** (`Session/MFAudioRenderer.cs`, `MFCreateAudioRendererActivate`): its stream takes the device's
+shared mix format (float, 48 kHz, stereo), so the loader puts the resampler before it, as Windows' does; as the source
+starts, the session passes on its MEExtendedType of the endpoint. Its samples are played a tenth of a second ahead of
+their times on the system's output (`Session/AudioOutput.cs`): AudioQueue on macOS and iOS, PulseAudio's simple API on
+Linux (the system's libpulse-simple), AAudio on Android, WebAudio in the browser. The volumes are its services:
+`IMFSimpleAudioVolume` (MR_POLICY_VOLUME_SERVICE) and `IMFAudioStreamVolume` (MR_STREAM_VOLUME_SERVICE). Where there is
+no output, its activate gives MF_E_NO_AUDIO_PLAYBACK_DEVICE.
+
+`TheSession_PlaysToSampleGrabbersAsWindowsDoes` and `TheSession_PlaysToTheAudioRendererAsWindowsDoes` compare the
+reports with Windows', but for times and the endpoint's id; the second is skipped where there is no audio output.
+
 ## Capture devices
 
 **The cameras** (`Capture/MFCaptureSource.cs`), as Windows' device source behaves. It was probed with the test VM's
@@ -710,7 +758,7 @@ on macOS and in the Ubuntu VM.
 - The video processor's conversions through its own color pipeline (its 10-bit, 16-bit and float subtypes, RGB to RGB
   of another format) and the color converter's dithered RGB8, to the byte; the scaling filter stays within its
   tolerance (by choice).
-- The media session.
+- The media session's video renderer (EVR, `MFCreateVideoRendererActivate`): into the application's window.
 - Audio capture (`MFEnumDeviceSources` of `AUDCAP`).
 - Running Windows' Media Foundation on the shim's `ID3D11VideoDecoder` on a GPU with a decoder: blocked on hardware
   (the test VM has none).

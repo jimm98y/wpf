@@ -18,5 +18,6 @@ namespace WgpuInterop.WasmMedia
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern int Sig_IIIIIIII(int a0, int a1, int a2, int a3, int a4, int a5, int a6);
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern int Sig_IIIIILL(int a0, int a1, int a2, int a3, long a4, long a5);
         [DllImport("wpfwebgpu-calli-signatures")] internal static extern int Sig_IIIL(int a0, int a1, long a2);
+        [DllImport("wpfwebgpu-calli-signatures")] internal static extern int Sig_IIILI(int a0, int a1, long a2, int a3);
     }
 }

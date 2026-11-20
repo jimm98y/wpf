@@ -402,8 +402,10 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                     {
                         case 0:                                      // MFT_MESSAGE_COMMAND_FLUSH
                             d._ready?.Dispose(); d._ready = null;
-                            d._decoder?.Flush();
                             d._draining = false;
+                            // of a decoder that is flushed as a new one (GStreamer's), a new one: the type's sequence header given to it again
+                            if (d._decoder?.FlushByReset == true) { d.ResetDecoder(); d._headerAgain = true; }
+                            else d._decoder?.Flush();
                             return MF.S_OK;
                         case 1:                                      // MFT_MESSAGE_COMMAND_DRAIN
                             d._decoder?.BeginDrain();
@@ -436,6 +438,8 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
         }
 
         private PlatformVideoDecoder? Decoder => _decoder ??= _in != null ? PlatformVideoDecoder.Create(_info.Codec, LowLatency, _in.FrameSize.W, _in.FrameSize.H) : null;
+
+        private bool _headerAgain;
 
         private void ResetDecoder()
         {
@@ -484,6 +488,12 @@ namespace Microsoft.Wpf.Interop.WebGpu.MediaFoundation
                         if (((delegate* unmanaged<IntPtr, long*, int>)Com.Fn(sample, 37))(sample, &t) >= 0) dur = t;
                     }
                     // the input's duration, the frame of its time to carry it (Windows' decoders keep it)
+                    // after a flush, the type's sequence header first: of this sample's time (the parser gives it to the picture after it)
+                    if (d._headerAgain)
+                    {
+                        d._headerAgain = false;
+                        if (d._in.Attributes.Get(MF.MF_MT_MPEG_SEQUENCE_HEADER) is { Type: MF.VT_BLOB, B: { Length: > 0 } header }) dec.Push(header, time);
+                    }
                     if (dur > 0) { d._durations[time] = dur; if (d._durations.Count > 64) d._durations.Remove(d._durations.Keys.Min()); }
                     dec.Push(bytes, time);
                 }
