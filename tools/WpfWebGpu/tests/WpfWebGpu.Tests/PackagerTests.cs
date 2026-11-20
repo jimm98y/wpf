@@ -170,6 +170,33 @@ public class PackagerTests
     }
 
     [Fact]
+    public void Linux_SQL_Server_comes_with_a_browser_that_names_its_instance()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "shell scripts");
+        var manifest = new PackageManifest();
+        manifest.Product.Name = "Prod";
+        manifest.SqlServer.Instance = "SQLEXPRESS2025";
+        manifest.SqlServer.Port = 1433;
+        var sql = WpfWebGpu.Packager.SqlServer.SqlServerImage.ForLinux("x64");
+        string unit = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlBrowserUnit(manifest);
+        Assert.Contains("ExecStart=/opt/Prod/runtime/dotnet/dotnet /opt/Prod/runtime/launcher/wpfrun.dll sqlbrowser --instances /var/lib/wpfwebgpu/sqlbrowser", unit);
+        Assert.Contains("User=nobody", unit);
+        Assert.Contains("AmbientCapabilities=CAP_NET_BIND_SERVICE", unit);    // UDP 1434, below 1024
+
+        string postinst = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerPostInst(manifest, sql, "p");
+        string postrm = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerPostRm(sql, "p");
+        string un = WpfWebGpu.Packager.Desktop.LinuxPackager.SqlServerUninstallStep("x64", "p");
+        Assert.Contains("printf '%s %s\\n' \"SQLEXPRESS2025\" \"1433\" > /var/lib/wpfwebgpu/sqlbrowser/p", postinst);
+        Assert.Contains("systemctl enable p-sqlserver.service p-sqlbrowser.service", postinst);
+        foreach (string script in new[] { postrm, un })
+        {
+            Assert.Contains("p-sqlbrowser.service", script);
+            Assert.Contains("rm -f /var/lib/wpfwebgpu/sqlbrowser/p", script);
+        }
+        foreach (string script in new[] { postinst, postrm, un }) ShellSyntax(script);
+    }
+
+    [Fact]
     public void Finds_the_installation_s_folder_in_the_registry_s_paths()
     {
         var mappings = Scanner.DetectMappings(RegText.Parse(Reg), Install());

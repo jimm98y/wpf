@@ -29,6 +29,10 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
     folders, so the uninstaller finds it.
   - On macOS, the startup agent is booted out of every logged-in session.
 - **SQL Server's container** (macOS, Linux) is removed. Its databases stay.
+- **The SQL Server Browser** (macOS, Linux) is stopped and removed, with this installation's line in the instances
+  file every installation's browser reads (`/Library/Application Support/WpfWebGpu/SqlBrowser`,
+  `/var/lib/wpfwebgpu/sqlbrowser`). The browser answers UDP 1434 as Windows' SQL Server Browser does, so a
+  connection string naming the instance (`(local)\SQLEXPRESS`) finds the container's port. It runs as `nobody`.
 
 ## The full uninstall (the default), besides
 

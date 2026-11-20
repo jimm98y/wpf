@@ -6,6 +6,10 @@
 //                                            Express on x64, Azure SQL Edge on Arm), its databases in the volume
 //                                            <pkg>-sqlserver-data
 //   /etc/<pkg>/sqlserver.env                 its sa password, made on the first install, readable by root only
+//   /lib/systemd/system/<pkg>-sqlbrowser.service  the SQL Server Browser (wpfrun sqlbrowser, as nobody): names the
+//                                            instance's port on UDP 1434, so (local)\<instance> finds it, as on
+//                                            Windows; its line in /var/lib/wpfwebgpu/sqlbrowser/<pkg>, every
+//                                            installation's browser answering for all (the one that has the port)
 //
 // The image is pulled from Microsoft's registry as the package is installed (the package carries none: an image is a
 // Linux system, its userland GPL); without the network then, the service pulls it when it starts. It listens on
@@ -21,6 +25,12 @@ public static partial class LinuxPackager
 {
     /// <summary>The SQL Server package's name for the installation's.</summary>
     public static string SqlServerPackageName(string pkg) => pkg + "-sqlserver";
+
+    /// <summary>The SQL Server Browser's unit for the installation's.</summary>
+    public static string SqlBrowserUnitName(string pkg) => pkg + "-sqlbrowser";
+
+    /// <summary>The instances every installation's SQL Server Browser answers for, a file an installation.</summary>
+    public const string SqlBrowserInstances = "/var/lib/wpfwebgpu/sqlbrowser";
 
     /// <summary>Writes &lt;pkg&gt;-sqlserver_&lt;version&gt;_&lt;arch&gt;.deb.</summary>
     public static string BuildSqlServer(PackageManifest manifest, string arch, string outDir, Action<string> log)
@@ -56,7 +66,7 @@ public static partial class LinuxPackager
 
                 """, executable: false);
             tar.AddText("./postinst", "#!/bin/sh\nset -e\n" + SqlServerPostInst(manifest, sql, pkg) + "exit 0\n", executable: true);
-            tar.AddText("./prerm", $"#!/bin/sh\n[ -d /run/systemd/system ] && systemctl stop {spkg}.service 2>/dev/null || true\nexit 0\n", executable: true);
+            tar.AddText("./prerm", $"#!/bin/sh\n[ -d /run/systemd/system ] && systemctl stop {SqlBrowserUnitName(pkg)}.service {spkg}.service 2>/dev/null || true\nexit 0\n", executable: true);
             tar.AddText("./postrm", "#!/bin/sh\n" + SqlServerPostRm(sql, pkg) + "exit 0\n", executable: true);
             tar.Finish();
         }
@@ -80,6 +90,7 @@ public static partial class LinuxPackager
         string pkg = PackageName(manifest.Product.Name), spkg = SqlServerPackageName(pkg);
         var tar = new TarTree(output);
         tar.AddText($"/lib/systemd/system/{spkg}.service", SqlServerUnit(manifest, SqlServerImage.ForLinux(arch), pkg), executable: false);
+        tar.AddText($"/lib/systemd/system/{SqlBrowserUnitName(pkg)}.service", SqlBrowserUnit(manifest), executable: false);
         tar.Finish();
     }
 
@@ -110,10 +121,37 @@ public static partial class LinuxPackager
             """;
     }
 
+    // the SQL Server Browser: the installation's own wpfrun, as nobody (allowed UDP 1434, a port below 1024, and
+    // nothing else)
+    internal static string SqlBrowserUnit(PackageManifest manifest)
+    {
+        string root = "/opt/" + manifest.Product.Name;
+        return $"""
+            [Unit]
+            Description=SQL Server Browser ({manifest.Product.Name})
+            After=network.target
+
+            [Service]
+            Type=simple
+            ExecStart={Quote(root + "/runtime/dotnet/dotnet")} {Quote(root + "/runtime/launcher/wpfrun.dll")} sqlbrowser --instances {SqlBrowserInstances}
+            User=nobody
+            AmbientCapabilities=CAP_NET_BIND_SERVICE
+            CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+            NoNewPrivileges=yes
+            Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+            Restart=always
+            RestartSec=30
+
+            [Install]
+            WantedBy=multi-user.target
+
+            """;
+    }
+
     // the sa password on the first install (random, meeting SQL Server's policy: letters of both cases, digits, a
     // symbol), the image pulled (or, without the network, left for the service to pull as it starts), the service
     // started; the password said where it can be read again
-    private static string SqlServerPostInst(PackageManifest manifest, SqlServerImage sql, string pkg)
+    internal static string SqlServerPostInst(PackageManifest manifest, SqlServerImage sql, string pkg)
     {
         string spkg = SqlServerPackageName(pkg);
         return $$"""
@@ -130,12 +168,17 @@ public static partial class LinuxPackager
             if ! podman pull -q --platform {{sql.Platform}} {{sql.Image}} >/dev/null; then
               echo "  not pulled now (no network?): the service pulls it as it starts" >&2
             fi
+            # the instance, for the SQL Server Browser of whichever installation answers UDP 1434
+            mkdir -p {{SqlBrowserInstances}}
+            printf '%s %s\n' "{{manifest.SqlServer.Instance}}" "{{manifest.SqlServer.Port}}" > {{SqlBrowserInstances}}/{{pkg}}
+            chmod 755 {{SqlBrowserInstances}}; chmod 644 {{SqlBrowserInstances}}/{{pkg}}
             if [ -d /run/systemd/system ]; then
               systemctl daemon-reload || true
-              systemctl enable {{spkg}}.service || true
+              systemctl enable {{spkg}}.service {{SqlBrowserUnitName(pkg)}}.service || true
               systemctl start --no-block {{spkg}}.service || true
+              systemctl restart --no-block {{SqlBrowserUnitName(pkg)}}.service || true
             fi
-            echo "{{sql.Engine}} for {{manifest.Product.Name}}: 127.0.0.1,{{manifest.SqlServer.Port}} (login sa)"
+            echo "{{sql.Engine}} for {{manifest.Product.Name}}: 127.0.0.1,{{manifest.SqlServer.Port}} or (local)\\{{manifest.SqlServer.Instance}} (login sa)"
             if [ -n "$NEW" ]; then echo "  sa password: $PW"; fi
             echo "  the password is kept in $ENVFILE (readable by root)"
             echo "  point {{manifest.Product.Name}}'s SQL configuration at 127.0.0.1,{{manifest.SqlServer.Port}} with that login"
@@ -145,13 +188,14 @@ public static partial class LinuxPackager
 
     // remove keeps the databases and the password (a reinstall finds them), as Windows keeps SQL Server's databases
     // when it is uninstalled; purge removes them, the image and the password
-    private static string SqlServerPostRm(SqlServerImage sql, string pkg)
+    internal static string SqlServerPostRm(SqlServerImage sql, string pkg)
     {
         string spkg = SqlServerPackageName(pkg);
         return $$"""
             if [ "$1" = remove ] || [ "$1" = purge ]; then
-              [ -d /run/systemd/system ] && { systemctl disable {{spkg}}.service >/dev/null 2>&1 || true; systemctl daemon-reload || true; }
+              [ -d /run/systemd/system ] && { systemctl disable {{spkg}}.service {{SqlBrowserUnitName(pkg)}}.service >/dev/null 2>&1 || true; systemctl daemon-reload || true; }
               command -v podman >/dev/null && podman rm -f -i {{spkg}} >/dev/null 2>&1 || true
+              rm -f {{SqlBrowserInstances}}/{{pkg}}; rmdir {{SqlBrowserInstances}} /var/lib/wpfwebgpu 2>/dev/null || true
             fi
             if [ "$1" = purge ]; then
               if command -v podman >/dev/null; then
@@ -196,14 +240,15 @@ public static partial class LinuxPackager
 
     // uninstall.sh's part: the service stopped and its container gone (its files go with the rest of the list); the
     // databases and the password kept with --keep-data
-    private static string SqlServerUninstallStep(string arch, string pkg)
+    internal static string SqlServerUninstallStep(string arch, string pkg)
     {
         var sql = SqlServerImage.ForLinux(arch);
         string spkg = SqlServerPackageName(pkg);
         return $$"""
             if [ -f /lib/systemd/system/{{spkg}}.service ]; then
-              [ -d /run/systemd/system ] && systemctl disable --now {{spkg}}.service 2>/dev/null || true
+              [ -d /run/systemd/system ] && systemctl disable --now {{SqlBrowserUnitName(pkg)}}.service {{spkg}}.service 2>/dev/null || true
               command -v podman >/dev/null && podman rm -f -i {{spkg}} >/dev/null 2>&1 || true
+              rm -f {{SqlBrowserInstances}}/{{pkg}}; rmdir {{SqlBrowserInstances}} /var/lib/wpfwebgpu 2>/dev/null || true
               if [ -n "$ALL" ] && command -v podman >/dev/null; then
                 podman volume rm -f {{spkg}}-data >/dev/null 2>&1 || true
                 podman rmi -f {{sql.Image}} >/dev/null 2>&1 || true
