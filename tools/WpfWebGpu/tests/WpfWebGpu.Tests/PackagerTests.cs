@@ -142,7 +142,6 @@ public class PackagerTests
         Assert.Contains($"D=\"{dir}\"", post);
         Assert.Contains("if [ ! -f \"$D/sqlserver.env\" ]; then", post);                  // made once, by the first installation
         Assert.Contains("lsof -nP -iTCP:\"$P\" -sTCP:LISTEN", post);                     // the next free port where 1433 is taken
-        Assert.Contains("touch \"$D/installations/com.example.p\"", post);
         Assert.Contains("/Library/LaunchDaemons/com.wpfwebgpu.sqlserver.sqlexpress2025.plist", post);
         Assert.Contains("p-sqlserver-data", post);                                         // an earlier version's databases taken
         // the instance's own uninstall: its daemon, container, databases; Apple's container where nothing else uses it
@@ -151,6 +150,14 @@ public class PackagerTests
         Assert.Contains("container\" delete --force sqlserver-sqlexpress2025", un.Replace("\"$C\"", "container\""));
         Assert.Contains("uninstall-container.sh -d", un);
         Assert.Contains("! -name sqlserver.env", un);                                     // --keep-data: the password, port, volume
+        // its uninstaller app, next to it: asked first (who still uses it said), then uninstall.sh as an administrator
+        Assert.Contains($"APP=\"$D/Uninstall SQL Server SQLEXPRESS2025.app\"", post);
+        Assert.Contains("printf '%s\\n' \"P\" > \"$D/installations/com.example.p\"", post);
+        string app = WpfWebGpu.Packager.Desktop.MacPackager.SqlInstanceUninstallApp("SQLExpress2025");
+        ShellSyntax(app);
+        Assert.Contains($"D=\"{dir}\"", app);
+        Assert.Contains("with administrator privileges", app);
+        Assert.Contains("--keep-data", app);
     }
 
     private static void ShellSyntax(string script)

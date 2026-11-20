@@ -15,8 +15,11 @@
 //           run.sh                                        the daemon's script
 //           sqlserver.env                                 its sa password, port and databases' volume (root only)
 //           sqlserver.txt                                 the same for the Mac's administrators to read
-//           installations/<id>                            the installations that use it
+//           installations/<id>                            the installations that use it (each its product's name)
 //           uninstall.sh                                  removes it (and Apple's container, where nothing else uses it)
+//           Uninstall SQL Server <INSTANCE>.app           asks, then runs uninstall.sh as an administrator: the
+//                                                         uninstaller next to what it removes, as a database server's
+//                                                         own on a Mac is (Windows: its entry in Apps & features)
 //       /Library/Application Support/WpfWebGpu/SqlBrowser/<instance>     "<instance> <port>", for the browsers
 //
 // The port is the installation's configured one (1433) where it is free, else the next free one, as a named instance
@@ -213,6 +216,44 @@ public static partial class MacPackager
             """;
     }
 
+    /// <summary>The instance's uninstaller app, in its folder.</summary>
+    internal static string SqlInstanceUninstallAppName(string instance) => $"Uninstall SQL Server {instance.ToUpperInvariant()}.app";
+
+    // the app's program: asked first -- which installations still use the instance said -- then uninstall.sh run as an
+    // administrator (the databases kept with "Keep Databases")
+    internal static string SqlInstanceUninstallApp(string instance)
+    {
+        string dir = SqlServerFolder(instance), name = instance.ToUpperInvariant();
+        return $$"""
+            #!/bin/sh
+            # Uninstall SQL Server's instance {{name}}: asked first, then its uninstall.sh run as an administrator
+            D="{{dir}}"
+            users=$(cat "$D/installations/"* 2>/dev/null | tr -d '"\\' | paste -sd, - | sed 's/,/, /g')
+            used=""; [ -n "$users" ] && used="\n\nUsed by $users, which reach no database until it is installed again."
+            choice=$(osascript -e "button returned of (display dialog \"Remove SQL Server's instance {{name}} from this Mac?$used\n\nIts databases can be kept for a later install, or removed with it.\" buttons {\"Cancel\", \"Keep Databases\", \"Remove Everything\"} default button \"Remove Everything\" cancel button \"Cancel\" with title \"Uninstall SQL Server {{name}}\" with icon caution)" 2>/dev/null) || exit 0
+            arg=""; [ "$choice" = "Keep Databases" ] && arg=" --keep-data"
+            osascript -e "do shell script \"'$D/uninstall.sh'$arg\" with administrator privileges" >/dev/null 2>&1 \
+              && osascript -e 'display dialog "SQL Server'"'"'s instance {{name}} was removed." buttons {"OK"} default button "OK" with title "Uninstall SQL Server {{name}}"' >/dev/null 2>&1
+            exit 0
+
+            """;
+    }
+
+    private static string SqlInstanceUninstallInfo(string instance, string version) => $"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>CFBundleIdentifier</key><string>{X("com.wpfwebgpu.sqlserver." + DesktopCommon.SqlInstanceKey(instance) + ".uninstall")}</string>
+          <key>CFBundleName</key><string>{X("Uninstall SQL Server " + instance.ToUpperInvariant())}</string>
+          <key>CFBundleExecutable</key><string>uninstall</string>
+          <key>CFBundlePackageType</key><string>APPL</string>
+          <key>CFBundleShortVersionString</key><string>{X(version)}</string>
+          <key>LSMinimumSystemVersion</key><string>12.0</string>
+        </dict>
+        </plist>
+        """;
+
     // the instance made where it is not there yet -- the installation's own SQL Server of before taken over (its
     // password and databases), the port the configured one where free, else the next free one -- its daemon, run
     // script and uninstall written, Rosetta where it is missing, container started (fetching its kernel), the image
@@ -256,7 +297,7 @@ public static partial class MacPackager
             . "$D/sqlserver.env"
             printf '{{sql.Engine}}, instance {{instance}}\nserver: (local)\\{{instance}} or 127.0.0.1,%s\nlogin: sa\npassword: %s\n' "$SQL_PORT" "$MSSQL_SA_PASSWORD" > "$D/sqlserver.txt"
             chown root:admin "$D/sqlserver.txt"; chmod 640 "$D/sqlserver.txt"
-            touch "$D/installations/{{id}}"
+            printf '%s\n' "{{manifest.Product.Name}}" > "$D/installations/{{id}}"
             # the daemon, its script and the instance's uninstall, as this version writes them
             cat > "$D/run.sh.new" <<'RUN'
             {{SqlServerRun(sql, instance)}}RUN
@@ -271,6 +312,14 @@ public static partial class MacPackager
             cat > "$D/uninstall.sh" <<'UNINSTALL'
             {{SqlInstanceUninstall(instance)}}UNINSTALL
             chmod 755 "$D/uninstall.sh"
+            APP="$D/{{SqlInstanceUninstallAppName(instance)}}"
+            rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS"
+            cat > "$APP/Contents/MacOS/uninstall" <<'APPRUN'
+            {{SqlInstanceUninstallApp(instance)}}APPRUN
+            cat > "$APP/Contents/Info.plist" <<'APPINFO'
+            {{SqlInstanceUninstallInfo(instance, "2025.1")}}
+            APPINFO
+            chmod 755 "$APP/Contents/MacOS/uninstall"
             # the instance, for the SQL Server Browser of whichever installation answers UDP 1434
             mkdir -p "{{SqlBrowserInstances}}"
             printf '%s %s\n' "{{instance}}" "$SQL_PORT" > "{{SqlBrowserInstances}}/{{key}}"
@@ -308,7 +357,7 @@ public static partial class MacPackager
         rm -f /Library/LaunchDaemons/{{SqlBrowserLabel(id)}}.plist "{{SqlServerFolder(instance)}}/installations/{{id}}"
         pkgutil --forget "{{id}}.sqlserver" >/dev/null 2>&1 || true
         if [ -x "{{SqlServerFolder(instance)}}/uninstall.sh" ]; then
-          echo "SQL Server's instance {{instance}} stays, with its databases: sudo '{{SqlServerFolder(instance)}}/uninstall.sh' removes it"
+          echo "SQL Server's instance {{instance}} stays, with its databases: '{{SqlServerFolder(instance)}}/{{SqlInstanceUninstallAppName(instance)}}' (or its uninstall.sh) removes it"
         fi
 
         """;
