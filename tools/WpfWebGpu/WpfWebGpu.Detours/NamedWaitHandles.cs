@@ -317,6 +317,16 @@ public static class NamedWaitHandles
     public static int Wait(WaitHandle self, int timeoutMs) =>
         s_shared.TryGetValue(self, out Shared? s) ? (s.Wait(timeoutMs) ? 1 : 0) : -1;
 
+    // the public waits too: code compiled before the hooks (WaitOne at tier 1, the core inlined in it) never reaches
+    // the core's entry; -1 where the argument is .NET's to reject (or the handle not a named one)
+    public static int WaitOneTimeout(WaitHandle self, int timeoutMs) => timeoutMs >= -1 ? Wait(self, timeoutMs) : -1;
+    public static int WaitOneInfinite(WaitHandle self) => Wait(self, Timeout.Infinite);
+    public static int WaitOneSpan(WaitHandle self, TimeSpan timeout)
+    {
+        long ms = (long)timeout.TotalMilliseconds;
+        return ms is >= -1 and <= int.MaxValue ? Wait(self, (int)ms) : -1;
+    }
+
     internal static Shared? Of(WaitHandle h) => s_shared.TryGetValue(h, out Shared? s) ? s : null;
 
     // ---- installing -------------------------------------------------------------------------------------------
@@ -344,6 +354,13 @@ public static class NamedWaitHandles
 
         // the single wait: WaitOneNoCheck(timeout, ...) -> bool
         HookPrefixResult(typeof(WaitHandle).GetMethods(Any).Single(m => m.Name == "WaitOneNoCheck"), typeof(NamedWaitHandles).GetMethod(nameof(Wait))!, 0, 1);
+        // and WaitOne itself, whose compiled code may hold the core inlined (it was hot before these hooks)
+        foreach (MethodInfo waitOne in typeof(WaitHandle).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Where(m => m.Name == "WaitOne"))
+        {
+            Type[] p = waitOne.GetParameters().Select(x => x.ParameterType).ToArray();
+            string? hook = p.Length == 0 ? nameof(WaitOneInfinite) : p[0] == typeof(int) ? nameof(WaitOneTimeout) : p[0] == typeof(TimeSpan) ? nameof(WaitOneSpan) : null;
+            if (hook != null) HookPrefixResult(waitOne, typeof(NamedWaitHandles).GetMethod(hook)!, p.Length == 0 ? new[] { 0 } : new[] { 0, 1 });
+        }
 
         s_hooks.Add(new Hook(typeof(EventWaitHandle).GetMethod("Set", BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes)!,
             (Func<EventWaitHandle, bool> orig, EventWaitHandle self) =>
