@@ -151,7 +151,7 @@ namespace MS.Internal.Interop.WebView
             {
                 _wasReady = true;
 
-                DocumentTitleChanged?.Invoke(this, EventArgs.Empty);
+                RaiseTitleChangedIfChanged();
                 // As WebView2: content handed over as a string has no source to change to, and
                 // WebBrowser raises Navigated for it from NavigationCompleted -- answering both
                 // made it raise Navigated twice.
@@ -170,6 +170,14 @@ namespace MS.Internal.Interop.WebView
             {
                 _wasReady = false;
                 ContentLoading?.Invoke(this, EventArgs.Empty);
+            }
+
+            // The title as it changes, as WebView2 raises DocumentTitleChanged -- a script's
+            // document.title too, which the browser tells an embedder nothing of: it is compared on
+            // every tick of a loaded document.
+            if (_wasReady)
+            {
+                RaiseTitleChangedIfChanged();
             }
 
             // Messages, sixteen per tick at most so a chatty page cannot starve the frame. Each
@@ -191,6 +199,20 @@ namespace MS.Internal.Interop.WebView
                     WebMessageAsJson = WebViewScript.WriteJsonString(body),
                     WebMessageAsString = body,
                 });
+            }
+        }
+
+        // the title last reported: DocumentTitleChanged is raised when it changes, not on every navigation
+        private string _reportedTitle = string.Empty;
+
+        private void RaiseTitleChangedIfChanged()
+        {
+            string title = DocumentTitle ?? string.Empty;
+
+            if (title != _reportedTitle)
+            {
+                _reportedTitle = title;
+                DocumentTitleChanged?.Invoke(this, EventArgs.Empty);
             }
         }
 
