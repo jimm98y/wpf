@@ -2392,10 +2392,8 @@ public sealed class ClipboardProvider : ContentProvider
 /// </summary>
 /// <remarks>
 /// A web view is a view of the activity's, laid over its window: placed at the window's client position
-/// plus the control's, above the window's view, moving and hiding with the window. A full-screen window's
-/// surface is composed under the activity's views, so the page shows over it as a player's controls show
-/// over its video; a floating window's surface is composed above them (a media overlay), so a web view in
-/// a floating window is not seen yet.
+/// plus the control's, above the window's view in the view order, moving and hiding with the window --
+/// in the full-screen window and in a floating one (a dialog) alike, as the emulator shows (Android 15).
 ///
 /// The page's side is the window.chrome.webview the other heads give it: postMessage reaches the host
 /// through prompt() (WebChromeClient.onJsPrompt answers it at once), which needs nothing but the

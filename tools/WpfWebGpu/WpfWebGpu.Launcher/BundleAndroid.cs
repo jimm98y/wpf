@@ -463,6 +463,10 @@ internal static partial class Bundle
                 protected override void OnCreate(Bundle savedInstanceState)
                 {
                     base.OnCreate(savedInstanceState);
+                    // the temporary folder (Path.GetTempPath, Windows' %TEMP%) the app's own, as every Windows
+                    // program has a writable one: .NET's default here is /tmp, which an app may not write to
+                    if (string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("TMPDIR")) && CacheDir?.AbsolutePath is { } cache)
+                        System.Environment.SetEnvironmentVariable("TMPDIR", cache);
                     // the diagnostics' variables and the machine's registry and data before the stack starts
                     WpfRunBundleHost.ApplyEnvironment();
                     WpfRunBundleHost.MachineEnvironment(Assets, FilesDir.AbsolutePath);
