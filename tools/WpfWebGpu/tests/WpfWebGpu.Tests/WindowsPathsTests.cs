@@ -131,6 +131,51 @@ public sealed class OSIdentityRewriteTests
         Assert.Equal("\"/opt/p/launcher/wpfrun.dll\" run \"/opt/p/app/Setup_ARM64.exe\" run=Workbench", psi.Arguments);
     }
 
+    private static object? Call(string method, params object?[] args) =>
+        typeof(WpfWebGpu.ComInterop.WindowsPaths).GetMethod(method, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, args);
+
+    [Fact]
+    public void A_command_line_is_split_as_a_Windows_program_reads_it()
+    {
+        List<string> Split(string line) => (List<string>)Call("SplitArguments", line)!;
+        Assert.Equal(new[] { "run=GwxConfigurator" }, Split("run=GwxConfigurator"));
+        Assert.Equal(new[] { "a b", "c" }, Split("\"a b\"  c"));
+        Assert.Equal(new[] { @"C:\dir\", "x" }, Split(@"""C:\dir\\"" x"));      // a backslash before a closing quote, doubled
+        Assert.Equal(new[] { "say \"hi\"" }, Split(@"""say \""hi\""""") );        // escaped quotes
+        Assert.Equal(new[] { @"a\\b" }, Split(@"a\\b"));                         // backslashes alone are themselves
+        Assert.Equal(new[] { "" }, Split("\"\""));
+        Assert.Empty(Split("   "));
+    }
+
+    [Fact]
+    public void A_program_started_as_Explorer_starts_one_opens_as_the_installation_s_app_on_macOS()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS");
+        // the installation's stub for the program, as the package puts it in /Applications/<Product>
+        string apps = TestEnvironment.NewDirectory("stubs");
+        string exe = "/Library/Application Support/P/app/Tools/Setup_ARM64.exe";
+        string stub = Path.Combine(apps, "Setup.app");
+        Directory.CreateDirectory(Path.Combine(stub, "Contents", "MacOS"));
+        File.WriteAllText(Path.Combine(stub, "Contents", "MacOS", "run"),
+            $"#!/bin/sh\nexport WPFRUN_APP_BUNDLES=\"{apps}\"\nexec \"/Library/Application Support/P/runtime/run\" \"{exe}\" \"$@\"\n");
+        string? before = Environment.GetEnvironmentVariable("WPFRUN_APP_BUNDLES");
+        Environment.SetEnvironmentVariable("WPFRUN_APP_BUNDLES", apps);
+        try
+        {
+            var launched = new System.Diagnostics.ProcessStartInfo("/opt/p/runtime/dotnet");
+            var open = (System.Diagnostics.ProcessStartInfo?)Call("AsMacApp", launched, exe, true, new List<string> { "run=Workbench" });
+            Assert.NotNull(open);
+            Assert.Equal("/usr/bin/open", open!.FileName);
+            Assert.Equal(new[] { "-n", stub, "--args", "run=Workbench" }, open.ArgumentList);
+
+            // a start the app makes as a process of its own (not ShellExecute), or whose output it reads: the app's
+            Assert.Null(Call("AsMacApp", launched, exe, false, new List<string>()));
+            Assert.Null(Call("AsMacApp", new System.Diagnostics.ProcessStartInfo("/opt/p/runtime/dotnet") { RedirectStandardOutput = true }, exe, true, new List<string>()));
+        }
+        finally { Environment.SetEnvironmentVariable("WPFRUN_APP_BUNDLES", before); }
+    }
+
     [Fact]
     public void An_ASP_NET_app_s_served_folder_is_found_as_Windows_finds_it()
     {

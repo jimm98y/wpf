@@ -291,6 +291,8 @@ public static partial class MacPackager
             # the user's files of this product, under its name: an upgrade and the uninstall find them there
             export WPFRUN_CACHE="$HOME/Library/Caches/{Path.GetFileName(root)}"
             export WPFRUN_LOGS="$HOME/Library/Logs/{Path.GetFileName(root)}"
+            # the installation's apps: a program this one starts as Explorer starts one opens as its app (WindowsPaths.MacApps)
+            export WPFRUN_APP_BUNDLES="/Applications/{Path.GetFileName(root)}"
             exec "{root}/runtime/run" "{root}/app/{app.Exe}" "$@"
 
             """);

@@ -21,7 +21,7 @@ using System.Xml.Linq;
 
 namespace WpfWebGpu.ComInterop;
 
-public static class WindowsPaths
+public static partial class WindowsPaths
 {
     private static readonly bool s_windows = OperatingSystem.IsWindows();
 
@@ -362,6 +362,8 @@ public static class WindowsPaths
             Console.Error.WriteLine($"[process] start '{psi.FileName}' args='{psi.Arguments}' shell={psi.UseShellExecute} verb='{psi.Verb}' -> " +
                 (string.IsNullOrEmpty(launcher) ? "as is (no launcher)" : managed ? "through the launcher" : File.Exists(exe) ? "as is (not a .NET program)" : "as is (no such file)"));
         if (string.IsNullOrEmpty(launcher) || !managed) return psi;
+        bool shellExecute = psi.UseShellExecute;
+        var appArgs = psi.ArgumentList.Count > 0 ? psi.ArgumentList.ToList() : SplitArguments(psi.Arguments);
         psi.FileName = launcher;
         // the launcher hosted by dotnet (the installed runtime): its dll first
         string? dll = Environment.GetEnvironmentVariable("WPFWEBGPU_LAUNCHER_DLL");
@@ -383,7 +385,8 @@ public static class WindowsPaths
         if (s_windows && elevate) return psi;
         psi.UseShellExecute = false;
         if (elevate) Elevated(psi);
-        return psi;
+        // macOS: as an app of its own, as ShellExecute starts one (WindowsPaths.MacApps.cs)
+        return AsMacApp(psi, exe, shellExecute, appArgs) ?? psi;
     }
 
     // The "runas" verb (ShellExecute's elevation: the UAC prompt, then the program as an administrator), as the system
