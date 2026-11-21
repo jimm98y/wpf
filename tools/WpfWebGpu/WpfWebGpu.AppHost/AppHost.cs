@@ -26,13 +26,15 @@ internal static class AppHost
             int code => code,
             Task<int> task => task.GetAwaiter().GetResult(),
             Task task => Await(task),
-            _ => 0,
+            // a void Main: the process exits with Environment.ExitCode, as .NET's own host exits it (what WPF's
+            // Application.Shutdown(code) and an app's own ExitCode set)
+            _ => Environment.ExitCode,
         };
     }
 
     private static int Await(Task task)
     {
         task.GetAwaiter().GetResult();
-        return 0;
+        return Environment.ExitCode;
     }
 }

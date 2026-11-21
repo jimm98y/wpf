@@ -115,12 +115,10 @@ public static class Builder
         }
         foreach (var t in targets.Where(t => t is not (Target.Android or Target.Quest or Target.MacOS or Target.Linux or Target.Windows or Target.IOS or Target.VisionOS)))
             log($"{t}: not made yet by this Packager");
-        // the pages are in the packages now: a gigabyte or more each, not left in the work folder
-        foreach (string dir in new[] { "web", "web-work" })
-        {
-            string path = Path.Combine(outDir, ".work", dir);
-            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
-        }
+        // what was staged and built on the way (the state, the pages -- a gigabyte or more each) is in the packages
+        // now: nothing is left beside them
+        string work = Path.Combine(outDir, ".work");
+        if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
         return made;
     }
 
