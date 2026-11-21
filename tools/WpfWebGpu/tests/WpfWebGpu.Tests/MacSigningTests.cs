@@ -104,6 +104,23 @@ public class MacSigningTests
     }
 
     [Fact]
+    public void A_package_allows_the_macOS_its_runtime_needs()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "compared with vtool's");
+        // the runtime the tests run on: its Mach-O files' highest minimum, as vtool reads each
+        string runtime = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+        Version highest = new(0, 0);
+        foreach (string file in Directory.EnumerateFiles(runtime))
+        {
+            if (!file.EndsWith(".dylib", StringComparison.Ordinal) && Path.GetFileName(file) != "createdump") continue;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(Tool("/usr/bin/xcrun", "vtool", "-show-build", file).Output, @"minos (\d+\.\d+)"))
+                if (Version.Parse(m.Groups[1].Value) > highest) highest = Version.Parse(m.Groups[1].Value);
+        }
+        Assert.True(highest > new Version(0, 0));
+        Assert.Equal($"{highest.Major}.{highest.Minor}", MacPackager.MinimumMacOs(runtime));
+    }
+
+    [Fact]
     public void A_package_signed_as_productsign_signs_it()
     {
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "verified by pkgutil");

@@ -165,7 +165,8 @@ public static partial class MacPackager
             packages.Add(("sqlserver.pkg", id + ".sqlserver", manifest.Product.Version, sqlKBytes));
             log($"  {sqlPack["engine"]}: a choice, chosen by default (its image downloaded when installing)");
         }
-        var dist = Distribution(id, manifest.Product.Version, packages, arch == "arm64" ? "arm64" : "x86_64");
+        var dist = Distribution(id, manifest.Product.Version, packages, arch == "arm64" ? "arm64" : "x86_64",
+            MinimumMacOs(Path.Combine(runtimePack.Directory, "runtime")));
         if (sqlPack != null)
         {
             SqlServerChoices(dist, product, id, sqlPack["package"]);
@@ -565,7 +566,7 @@ public static partial class MacPackager
     /// under the default one, the packages' versions and sizes, and the product's id and version -- for the one
     /// architecture the package's runtime is built for.</summary>
     private static System.Xml.Linq.XDocument Distribution(string id, string version, List<(string File, string Id, string Version, long KBytes)> packages,
-        string hostArchitecture)
+        string hostArchitecture, string? minimumOs = null)
     {
         static System.Xml.Linq.XElement E(string name, params object[] content) => new(name, content);
         static System.Xml.Linq.XAttribute A(string name, object value) => new(name, value);
@@ -574,6 +575,8 @@ public static partial class MacPackager
         // the Mac the package's runtime runs on: Installer refuses another, saying why (an Intel Mac's runtime would run
         // in Rosetta on Apple silicon, but the Apple silicon package is the one to install there)
         root.Add(E("options", A("customize", "never"), A("require-scripts", "false"), A("hostArchitectures", hostArchitecture)));
+        // ...and the macOS it runs on: Installer refuses an older one, saying so, rather than installing what cannot start
+        if (minimumOs != null) root.Add(E("allowed-os-versions", E("os-version", A("min", minimumOs))));
         var line = E("line", A("choice", "default"));
         foreach (var p in packages) line.Add(E("line", A("choice", p.Id)));
         root.Add(E("choices-outline", line), E("choice", A("id", "default")));
@@ -589,6 +592,60 @@ public static partial class MacPackager
         }
         root.Add(E("product", A("id", id), A("version", version)));
         return new System.Xml.Linq.XDocument(new System.Xml.Linq.XDeclaration("1.0", "utf-8", "yes"), root);
+    }
+
+    /// <summary>The oldest macOS every Mach-O file under <paramref name="folder"/> runs on (LC_BUILD_VERSION's minos,
+    /// LC_VERSION_MIN_MACOSX's version; a universal file's every slice), as "12.0"; null: none says.</summary>
+    internal static string? MinimumMacOs(string folder)
+    {
+        uint highest = 0;
+        foreach (string file in Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+        {
+            byte[] f;
+            try
+            {
+                using (var s = File.OpenRead(file))
+                {
+                    if (s.Length < 32) continue;
+                    var magic = new byte[4];
+                    s.ReadExactly(magic);
+                    if (BitConverter.ToUInt32(magic) is not (0xFEEDFACF or 0xBEBAFECA)) continue;
+                }
+                f = File.ReadAllBytes(file);
+            }
+            catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
+            foreach (int slice in Slices(f))
+                highest = Math.Max(highest, MachOMinimum(f, slice));
+        }
+        return highest == 0 ? null : $"{highest >> 16}.{(highest >> 8) & 0xff}";
+
+        // a universal file's slices' offsets (fat_arch, big-endian), a thin file's 0
+        static IEnumerable<int> Slices(byte[] f)
+        {
+            if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(f) != 0xCAFEBABE) { yield return 0; yield break; }
+            int count = (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(f.AsSpan(4));
+            for (int i = 0; i < count && 8 + i * 20 + 20 <= f.Length; i++)
+                yield return (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(f.AsSpan(8 + i * 20 + 8));
+        }
+    }
+
+    // a thin 64-bit Mach-O's minimum macOS (0xXXXXYYZZ); 0 where it names none, or is not a macOS one
+    private static uint MachOMinimum(byte[] f, int at)
+    {
+        if (at < 0 || at + 32 > f.Length || BitConverter.ToUInt32(f, at) != 0xFEEDFACF) return 0;
+        int ncmds = (int)BitConverter.ToUInt32(f, at + 16);
+        int p = at + 32;
+        for (int i = 0; i < ncmds && p + 16 <= f.Length; i++)
+        {
+            uint cmd = BitConverter.ToUInt32(f, p);
+            int size = (int)BitConverter.ToUInt32(f, p + 4);
+            if (cmd == 0x32) return BitConverter.ToUInt32(f, p + 8) == 1 ? BitConverter.ToUInt32(f, p + 12) : 0;   // LC_BUILD_VERSION: PLATFORM_MACOS's minos
+            if (cmd == 0x24) return BitConverter.ToUInt32(f, p + 8);                                               // LC_VERSION_MIN_MACOSX
+            if (size <= 0) break;
+            p += size;
+        }
+        return 0;
     }
 
     private static void Run(string tool, params string[] args)
