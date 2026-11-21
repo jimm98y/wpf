@@ -14,6 +14,7 @@ Phone, tablet and headset apps live in their sandbox, and the system removes the
 | | Everything (the default) | Data kept |
 |---|---|---|
 | **Windows** (`Setup.exe`) | Apps & features, or `uninstall.exe /uninstall`: it asks, yes the default (`/quiet` for no questions) | `uninstall.exe /uninstall /keepdata` |
+| **Windows** (`.msi`) | Apps & features, or `msiexec /x <package or product code>` | `msiexec /x <package or product code> KEEPDATA=1` ([the MSI](packager-windows-installer.md)) |
 | **macOS** (`.pkg`) | `/Applications/<Product>/Uninstall <Product>.app`: Remove Everything, the default; or `sudo "/Library/Application Support/<Product>/uninstall.sh"` | the same app, Keep Data; or `uninstall.sh --keep-data` |
 | **Linux** (`.deb`) | `apt purge <pkg>` | `apt remove <pkg>` (Debian's own distinction: remove keeps, purge removes all) |
 | **Linux** (`.tar.gz`) | `sudo /opt/<Product>/uninstall.sh` | `sudo /opt/<Product>/uninstall.sh --keep-data` |

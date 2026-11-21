@@ -30,6 +30,12 @@ internal static partial class Program
     {
         s_quiet = args.Any(a => a.Equals("/quiet", StringComparison.OrdinalIgnoreCase));
         s_args = args;
+        // Windows Installer's custom actions (Msi.cs): no console to answer, and no prompt at the end
+        if (args.Length > 0 && args[0].Equals("/msi", StringComparison.OrdinalIgnoreCase))
+        {
+            try { return Msi(args[1..]); }
+            catch (Exception e) { Console.Error.WriteLine("Setup failed: " + e); return 1; }
+        }
         try
         {
             if (!OperatingSystem.IsWindows()) throw new InvalidOperationException("Setup.exe installs on Windows.");
@@ -128,45 +134,19 @@ internal static partial class Program
         }
         Console.WriteLine($"  registry: {values} values");
 
-        // the services: each program run as the service control manager's own process (wpfrun prepare: the dotnet
-        // exec command wpfrun would run it with), so its ServiceBase talks to the manager itself
-        string wpfrunCache = Path.Combine(programData, info.Product, "wpfrun");
-        foreach (var service in info.Services)
+        InstallServices(info, root, programData, record, zip.Entries.Where(e => e.FullName.StartsWith("programdata/", StringComparison.Ordinal))
+            .Select(e => e.FullName["programdata/".Length..].Split('/')[0]), sql: () =>
         {
-            string name = ServiceName(info, service);
-            var (runtime, processor) = RuntimeOf(info, service.Exe);
-            string command = Prepare(root, runtime, processor, wpfrunCache, service.Exe, service.Args);
-            Services.CreateOrUpdate(name, service.DisplayName.Length > 0 ? service.DisplayName : service.Name, command, service.Start,
-                service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment, service.Account,
-                service.StartName, service.Description, service.DelayedAutoStart, service.Security);
-            Console.WriteLine($"  service {name}{(service.Account != "LocalSystem" ? $" ({service.Account})" : "")}");
-        }
-        // what a service running as NETWORK SERVICE or LOCAL SERVICE writes -- its data in ProgramData, wpfrun's
-        // caches and logs -- writable by that account, as the product's own installer grants it on Windows
-        var accounts = info.Services.Select(s => s.Account).Where(a => a != "LocalSystem").Distinct().ToList();
-        if (accounts.Count > 0)
-        {
-            var folders = zip.Entries.Where(e => e.FullName.StartsWith("programdata/", StringComparison.Ordinal))
-                .Select(e => e.FullName["programdata/".Length..].Split('/')[0]).Where(f => f.Length > 0).Distinct()
-                .Select(f => Path.Combine(programData, f)).Append(Path.Combine(programData, info.Product)).Where(Directory.Exists);
-            foreach (string folder in folders)
-                foreach (string account in accounts)
-                {
-                    var sid = account == "NetworkService" ? System.Security.Principal.WellKnownSidType.NetworkServiceSid : System.Security.Principal.WellKnownSidType.LocalServiceSid;
-                    Grant(folder, sid);
-                    record.Acls.Add(new AclItem(folder, new System.Security.Principal.SecurityIdentifier(sid, null).Value));
-                }
-        }
-        // the database server the services keep their configuration in, before they start; the accounts they run as
-        // (which exist now, a service's virtual account with it) log in to it as Windows users, as on the machine the
-        // installation was made on
-        record.SqlInstance ??= SqlServer.Install(zip, info, s_args, s_quiet, info.Services.Select(s => s.StartName.Length > 0 ? s.StartName : s.Account switch
-        {
-            "NetworkService" => @"NT AUTHORITY\NETWORK SERVICE",
-            "LocalService" => @"NT AUTHORITY\LOCAL SERVICE",
-            _ => "LocalSystem",
-        }));
-        foreach (var service in info.Services.Where(s => s.Start == "Auto")) Services.Start(ServiceName(info, service));
+            // the database server the services keep their configuration in, before they start; the accounts they run as
+            // (which exist now, a service's virtual account with it) log in to it as Windows users, as on the machine the
+            // installation was made on
+            record.SqlInstance ??= SqlServer.Install(zip, info, s_args, s_quiet, info.Services.Select(s => s.StartName.Length > 0 ? s.StartName : s.Account switch
+            {
+                "NetworkService" => @"NT AUTHORITY\NETWORK SERVICE",
+                "LocalService" => @"NT AUTHORITY\LOCAL SERVICE",
+                _ => "LocalSystem",
+            }));
+        });
 
         string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), info.Product);
         Directory.CreateDirectory(menu);
@@ -220,6 +200,43 @@ internal static partial class Program
         return 0;
     }
 
+    /// <summary>The installation's services registered with the service control manager (an upgrade's updated), the
+    /// access rules their accounts need, the database server they need (Setup's own install only), and the automatic
+    /// ones started.</summary>
+    private static void InstallServices(SetupInfo info, string root, string programData, InstallRecord record, IEnumerable<string> programDataFolders, Action? sql = null)
+    {
+        // the services: each program run as the service control manager's own process (wpfrun prepare: the dotnet
+        // exec command wpfrun would run it with), so its ServiceBase talks to the manager itself
+        string wpfrunCache = Path.Combine(programData, info.Product, "wpfrun");
+        foreach (var service in info.Services)
+        {
+            string name = ServiceName(info, service);
+            var (runtime, processor) = RuntimeOf(info, service.Exe);
+            string command = Prepare(root, runtime, processor, wpfrunCache, service.Exe, service.Args);
+            Services.CreateOrUpdate(name, service.DisplayName.Length > 0 ? service.DisplayName : service.Name, command, service.Start,
+                service.DependsOn.Select(d => ServiceName(info, new SetupService { Name = d })).ToList(), service.Environment, service.Account,
+                service.StartName, service.Description, service.DelayedAutoStart, service.Security);
+            Console.WriteLine($"  service {name}{(service.Account != "LocalSystem" ? $" ({service.Account})" : "")}");
+        }
+        // what a service running as NETWORK SERVICE or LOCAL SERVICE writes -- its data in ProgramData, wpfrun's
+        // caches and logs -- writable by that account, as the product's own installer grants it on Windows
+        var accounts = info.Services.Select(s => s.Account).Where(a => a != "LocalSystem").Distinct().ToList();
+        if (accounts.Count > 0)
+        {
+            var folders = programDataFolders.Where(f => f.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(f => Path.Combine(programData, f)).Append(Path.Combine(programData, info.Product)).Where(Directory.Exists);
+            foreach (string folder in folders)
+                foreach (string account in accounts)
+                {
+                    var sid = account == "NetworkService" ? System.Security.Principal.WellKnownSidType.NetworkServiceSid : System.Security.Principal.WellKnownSidType.LocalServiceSid;
+                    Grant(folder, sid);
+                    record.Acls.Add(new AclItem(folder, new System.Security.Principal.SecurityIdentifier(sid, null).Value));
+                }
+        }
+        sql?.Invoke();
+        foreach (var service in info.Services.Where(s => s.Start == "Auto")) Services.Start(ServiceName(info, service));
+    }
+
     // the runtime folder of the processor a program runs as by default (runtime\: Setup's own)
     private static (string Folder, string? Processor) RuntimeOf(SetupInfo info, string exe) =>
         info.Programs.TryGetValue(exe, out string? processor) && info.Runtimes.TryGetValue(processor, out string? folder) ? (folder, processor) : ("runtime", null);
@@ -267,9 +284,7 @@ internal static partial class Program
         foreach (string name in services) Services.Stop(name);
         foreach (string name in services) { Services.Delete(name); Console.WriteLine($"  service {name} removed"); }
         // (the apps run as their own <App>.exe in each user's cache: ProgramHost)
-        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        var caches = Profiles().Select(profile => Path.Combine(profile, "AppData", "Local", FileName(info.Product)))
-            .Append(Path.Combine(programData, info.Product, "wpfrun")).ToList();
+        var caches = Caches(info);
         StopPrograms(caches.Prepend(root));
 
         string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), info.Product);
@@ -279,16 +294,7 @@ internal static partial class Program
 
         if (all)
         {
-            int values = RegistryImport.Remove(record);
-            Console.WriteLine($"  registry: {values} values removed");
-            foreach (var acl in record.Acls) Ungrant(acl.Folder, acl.Sid);
-            foreach (string file in record.ProgramDataFiles) { try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
-            foreach (string folder in record.ProgramDataFolders) Remove(folder);
-            // the folders the files were in, where nothing else is left in them
-            foreach (string? dir in record.ProgramDataFiles.Select(Path.GetDirectoryName).Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(d => d?.Length ?? 0))
-                for (string? d = dir; d != null && d.Length > programData.Length && d.StartsWith(programData, StringComparison.OrdinalIgnoreCase); d = Path.GetDirectoryName(d))
-                    if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); else break;
-            Console.WriteLine($"  ProgramData: {record.ProgramDataFiles.Count} files, {record.ProgramDataFolders.Count} folders removed");
+            RemoveData(record);
             InstallRecord.Delete(info.Id);
         }
 
@@ -306,6 +312,31 @@ internal static partial class Program
         if (record.SqlInstance is { } instance)
             Console.WriteLine($"  SQL Server's instance {instance} stays, with its databases: Apps & features removes it (Microsoft SQL Server).");
         return 0;
+    }
+
+    /// <summary>Every user's caches and logs of the installation's apps (wpfrun.env), and wpfrun's own of it.</summary>
+    private static List<string> Caches(SetupInfo info)
+    {
+        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        return Profiles().Select(profile => Path.Combine(profile, "AppData", "Local", FileName(info.Product)))
+            .Append(Path.Combine(programData, info.Product, "wpfrun")).ToList();
+    }
+
+    /// <summary>What the record lists the installation added: its registry values and keys, its access rules, its
+    /// ProgramData files and folders.</summary>
+    private static void RemoveData(InstallRecord record)
+    {
+        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        int values = RegistryImport.Remove(record);
+        Console.WriteLine($"  registry: {values} values removed");
+        foreach (var acl in record.Acls) Ungrant(acl.Folder, acl.Sid);
+        foreach (string file in record.ProgramDataFiles) { try { File.Delete(file); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+        foreach (string folder in record.ProgramDataFolders) Remove(folder);
+        // the folders the files were in, where nothing else is left in them
+        foreach (string? dir in record.ProgramDataFiles.Select(Path.GetDirectoryName).Distinct(StringComparer.OrdinalIgnoreCase).OrderByDescending(d => d?.Length ?? 0))
+            for (string? d = dir; d != null && d.Length > programData.Length && d.StartsWith(programData, StringComparison.OrdinalIgnoreCase); d = Path.GetDirectoryName(d))
+                if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); else break;
+        Console.WriteLine($"  ProgramData: {record.ProgramDataFiles.Count} files, {record.ProgramDataFolders.Count} folders removed");
     }
 
     private static bool Ask(string question)

@@ -22,6 +22,7 @@ public static class Authenticode
 {
     private const string SpcIndirectDataOid = "1.3.6.1.4.1.311.2.1.4";
     private const string SpcPeImageDataOid = "1.3.6.1.4.1.311.2.1.15";
+    private const string SpcSipInfoOid = "1.3.6.1.4.1.311.2.1.30";
     private const string SpcSpOpusInfoOid = "1.3.6.1.4.1.311.2.1.12";
     private const string SpcStatementTypeOid = "1.3.6.1.4.1.311.2.1.11";
     private const string SpcIndividualCodeSigningOid = "1.3.6.1.4.1.311.2.1.21";
@@ -59,7 +60,7 @@ public static class Authenticode
         WriteDirectory(file, pe, 0, 0);
 
         byte[] hash = ImageHash(file, pe, padded);
-        byte[] signature = SignHash(hash, certificate, timestampUrl);
+        byte[] signature = SignContent(IndirectData(hash), certificate, timestampUrl);
         int length = 8 + signature.Length;
         int aligned = (length + 7) & ~7;
         if (padded + aligned > uint.MaxValue) throw new PackagerError($"{Path.GetFileName(path)}: a signed file is under 4 GB, this is {(padded + aligned) >> 20} MB");
@@ -135,9 +136,14 @@ public static class Authenticode
 
     // ---- the signature ----------------------------------------------------------------------------------
 
-    private static byte[] SignHash(byte[] hash, X509Certificate2 certificate, string timestampUrl)
+    /// <summary>A Windows Installer database's signature (its "\u0005DigitalSignature" stream) of its content digest
+    /// (CompoundFile.ContentDigest): the same SignedData, its SpcIndirectDataContent's data the MSI subject interface
+    /// package's SpcSipInfo.</summary>
+    public static byte[] MsiSignature(byte[] digest, X509Certificate2 certificate, string timestampUrl = "") =>
+        SignContent(MsiIndirectData(digest), certificate, timestampUrl);
+
+    private static byte[] SignContent(byte[] content, X509Certificate2 certificate, string timestampUrl)
     {
-        byte[] content = IndirectData(hash);
         // the message digest: of the content's SEQUENCE's contents, without its tag and length (PKCS #7, as Authenticode has it)
         AsnDecoder.ReadEncodedValue(content, AsnEncodingRules.DER, out int contentsOffset, out int contentsLength, out _);
         byte[] digest = SHA256.HashData(content.AsSpan(contentsOffset, contentsLength));
@@ -245,6 +251,26 @@ public static class Authenticode
                 using (w.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 0)))   // [0] EXPLICIT SpcLink: file [2] SpcString
                 using (w.PushSequence(new Asn1Tag(TagClass.ContextSpecific, 2)))
                     w.WriteCharacterString(UniversalTagNumber.BMPString, "<<<Obsolete>>>", new Asn1Tag(TagClass.ContextSpecific, 0));
+            }
+        }
+        using (w.PushSequence())
+        {
+            using (w.PushSequence()) { w.WriteObjectIdentifier(Sha256Oid); w.WriteNull(); }
+            w.WriteOctetString(hash);
+        }
+    });
+
+    // SpcIndirectDataContent with SpcSipInfo { 1, the MSI SIP's GUID {000C10F1-0000-0000-C000-000000000046}, 0, 0, 0, 0, 0 }
+    private static byte[] MsiIndirectData(byte[] hash) => Sequence(w =>
+    {
+        using (w.PushSequence())
+        {
+            w.WriteObjectIdentifier(SpcSipInfoOid);
+            using (w.PushSequence())
+            {
+                w.WriteInteger(1);
+                w.WriteOctetString(new byte[] { 0xF1, 0x10, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46 });
+                for (int i = 0; i < 5; i++) w.WriteInteger(0);
             }
         }
         using (w.PushSequence())

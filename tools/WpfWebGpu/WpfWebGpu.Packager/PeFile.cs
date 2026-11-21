@@ -72,23 +72,8 @@ public sealed class PeFile
         {
             using var stream = File.OpenRead(path);
             using var pe = new PEReader(stream);
-            var dir = pe.PEHeaders.PEHeader?.ResourceTableDirectory;
-            if (dir is not { RelativeVirtualAddress: > 0 } d) return null;
-            // the directory's offsets are from its own start; a leaf's data is at an RVA
-            var root = pe.GetSectionData(d.RelativeVirtualAddress).GetContent().ToArray();
-
-            byte[]? Data(int type, int? id)
-            {
-                int typeDir = Find(root, 0, type);
-                if (typeDir < 0) return null;
-                int nameDir = id is int i ? Find(root, typeDir, i) : First(root, typeDir);
-                if (nameDir < 0) return null;
-                int leaf = First(root, nameDir);            // the first language
-                if (leaf < 0 || leaf + 8 > root.Length) return null;
-                int rva = BitConverter.ToInt32(root, leaf), size = BitConverter.ToInt32(root, leaf + 4);
-                var data = pe.GetSectionData(rva);
-                return size <= 0 || data.Length < size ? null : data.GetContent(0, size).ToArray();
-            }
+            if (ResourceRoot(pe) is not { } root) return null;
+            byte[]? Data(int type, int? id) => Resource(pe, root, type, id);
 
             byte[]? group = Data(RtGroupIcon, null);
             if (group == null || group.Length < 6) return null;
@@ -117,30 +102,76 @@ public sealed class PeFile
             foreach (var (_, image) in images) w.Write(image);
             return ico.ToArray();
 
-            // IMAGE_RESOURCE_DIRECTORY: 16 bytes, then its named entries, then its id entries (8 bytes each).
-            // An entry's offset has its top bit set when it is another directory.
-            static int Find(byte[] r, int at, int id)
-            {
-                if (at + 16 > r.Length) return -1;
-                int named = BitConverter.ToUInt16(r, at + 12), ids = BitConverter.ToUInt16(r, at + 14);
-                for (int e = named; e < named + ids; e++)
-                {
-                    int p = at + 16 + e * 8;
-                    if (p + 8 > r.Length) return -1;
-                    if (BitConverter.ToInt32(r, p) == id) return BitConverter.ToInt32(r, p + 4) & 0x7fffffff;
-                }
-                return -1;
-            }
-            static int First(byte[] r, int at)
-            {
-                if (at + 24 > r.Length) return -1;
-                int named = BitConverter.ToUInt16(r, at + 12), ids = BitConverter.ToUInt16(r, at + 14);
-                return named + ids == 0 ? -1 : BitConverter.ToInt32(r, at + 20) & 0x7fffffff;
-            }
         }
         catch (Exception e) when (e is BadImageFormatException or IOException or ArgumentException or InvalidOperationException)
         {
             return null;
         }
+    }
+
+    // the resource directory (its offsets are from its own start; a leaf's data is at an RVA)
+    private static byte[]? ResourceRoot(PEReader pe)
+    {
+        var dir = pe.PEHeaders.PEHeader?.ResourceTableDirectory;
+        return dir is { RelativeVirtualAddress: > 0 } d ? pe.GetSectionData(d.RelativeVirtualAddress).GetContent().ToArray() : null;
+    }
+
+    // a resource of the type: the id's, or the first; its first language
+    private static byte[]? Resource(PEReader pe, byte[] root, int type, int? id)
+    {
+        int typeDir = Find(root, 0, type);
+        if (typeDir < 0) return null;
+        int nameDir = id is int i ? Find(root, typeDir, i) : First(root, typeDir);
+        if (nameDir < 0) return null;
+        int leaf = First(root, nameDir);
+        if (leaf < 0 || leaf + 8 > root.Length) return null;
+        int rva = BitConverter.ToInt32(root, leaf), size = BitConverter.ToInt32(root, leaf + 4);
+        var data = pe.GetSectionData(rva);
+        return size <= 0 || data.Length < size ? null : data.GetContent(0, size).ToArray();
+    }
+
+    /// <summary>The file version of its version resource (VS_FIXEDFILEINFO: "a.b.c.d"), or null when it has none --
+    /// what Windows Installer compares a versioned file by.</summary>
+    public static string? ReadFileVersion(string path)
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var pe = new PEReader(stream);
+            if (ResourceRoot(pe) is not { } root || Resource(pe, root, 16, null) is not { } info) return null;
+            for (int at = 0; at + 52 <= info.Length; at += 4)
+            {
+                if (BitConverter.ToUInt32(info, at) != 0xFEEF04BD) continue;
+                uint ms = BitConverter.ToUInt32(info, at + 8), ls = BitConverter.ToUInt32(info, at + 12);
+                return $"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}";
+            }
+            return null;
+        }
+        catch (Exception e) when (e is BadImageFormatException or IOException or ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    // IMAGE_RESOURCE_DIRECTORY: 16 bytes, then its named entries, then its id entries (8 bytes each).
+    // An entry's offset has its top bit set when it is another directory.
+    private static int Find(byte[] r, int at, int id)
+    {
+        if (at + 16 > r.Length) return -1;
+        int named = BitConverter.ToUInt16(r, at + 12), ids = BitConverter.ToUInt16(r, at + 14);
+        for (int e = named; e < named + ids; e++)
+        {
+            int p = at + 16 + e * 8;
+            if (p + 8 > r.Length) return -1;
+            if (BitConverter.ToInt32(r, p) == id) return BitConverter.ToInt32(r, p + 4) & 0x7fffffff;
+        }
+        return -1;
+    }
+
+    private static int First(byte[] r, int at)
+    {
+        if (at + 24 > r.Length) return -1;
+        int named = BitConverter.ToUInt16(r, at + 12), ids = BitConverter.ToUInt16(r, at + 14);
+        return named + ids == 0 ? -1 : BitConverter.ToInt32(r, at + 20) & 0x7fffffff;
     }
 }

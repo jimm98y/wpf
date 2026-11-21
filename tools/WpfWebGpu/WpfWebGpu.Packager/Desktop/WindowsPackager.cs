@@ -15,12 +15,14 @@ public static class WindowsPackager
     /// none: Setup offers it, chosen by default</param>
     /// <param name="otherRuntime">the runtime pack of another processor its programs run as (Windows on Arm emulates
     /// x64 and x86, Windows x64 x86), or null where the packs folder has none</param>
-    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, PackFile setupPack, string outDir, Action<string> log,
-        PackFile? sqlPack = null, Func<Processor, PackFile?>? otherRuntime = null)
+    /// <summary>What a Windows installer of the installation installs, Setup.exe's and the MSI's alike.</summary>
+    internal sealed record Plan(SetupInfo Info, string Arch, Processor Machine, Dictionary<Processor, (string Folder, PackFile Pack)> Runtimes,
+        Func<AppEntry, List<Processor>> On);
+
+    internal static Plan PlanOf(PackageManifest manifest, PackFile runtimePack, Action<string> log, PackFile? sqlPack, Func<Processor, PackFile?>? otherRuntime)
     {
         string product = manifest.Product.Name;
         string arch = runtimePack["rid"].Split('-')[1];
-        var excludes = new GlobSet(manifest.Exclude);
 
         // the processors the programs run as here, and the runtime each needs: runtime\ this machine's own, the others
         // runtime-<processor>\ where the packs folder has them (a program whose default is not falls back to the next)
@@ -54,7 +56,37 @@ public static class WindowsPackager
                 Engine = sqlPack["engine"], Media = "SQLEXPR_x64_ENU.exe", Instance = manifest.SqlServer.Instance,
             },
         };
+        return new Plan(info, arch, machine, runtimes, On);
+    }
 
+    /// <summary>The files of the installation folder: app\ (the Program Files tree), the runtimes (their programs signed
+    /// where they are not), by their paths in it ('/'-separated).</summary>
+    internal static IEnumerable<(string Source, string Target)> InstallationFiles(PackageManifest manifest, Plan plan,
+        System.Security.Cryptography.X509Certificates.X509Certificate2? certificate, string outDir, Action<string> log)
+    {
+        var excludes = new GlobSet(manifest.Exclude);
+        foreach (string f in Directory.EnumerateFiles(manifest.Inputs.InstallDir, "*", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(manifest.Inputs.InstallDir, f).Replace('\\', '/');
+            if (excludes.Matches(rel) || Path.GetFileName(f) == ".DS_Store") continue;
+            yield return (f, "app/" + rel);
+        }
+        foreach (var (p, (folder, pack)) in plan.Runtimes)
+        {
+            string runtime = Path.Combine(pack.Directory, "runtime");
+            foreach (string f in Directory.EnumerateFiles(runtime, "*", SearchOption.AllDirectories))
+                yield return (Signed(f, certificate, manifest.Signing.TimestampUrl, outDir), folder + "/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
+            if (p != plan.Machine) log($"  the {Processors.Name(p)} runtime ({folder}\\): {string.Join(", ", manifest.Apps.Where(a => plan.On(a).Contains(p)).Select(a => DesktopCommon.AppName(a) + (plan.On(a)[0] == p ? "" : " (to fall back on)")))}");
+        }
+    }
+
+    public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, PackFile setupPack, string outDir, Action<string> log,
+        PackFile? sqlPack = null, Func<Processor, PackFile?>? otherRuntime = null)
+    {
+        var plan = PlanOf(manifest, runtimePack, log, sqlPack, otherRuntime);
+        var info = plan.Info;
+        string product = manifest.Product.Name;
+        string arch = plan.Arch;
         Directory.CreateDirectory(outDir);
         string setup = Path.Combine(outDir, $"{DesktopCommon.FileName(product)}-{manifest.Product.Version}-windows-{arch}-Setup.exe");
         log($"Windows ({arch}): {setup}");
@@ -68,19 +100,10 @@ public static class WindowsPackager
             {
                 using (var s = zip.CreateEntry("setup.json", CompressionLevel.Optimal).Open()) info.Write(s);
                 int files = 0;
-                foreach (string f in Directory.EnumerateFiles(manifest.Inputs.InstallDir, "*", SearchOption.AllDirectories))
+                foreach (var (source, target) in InstallationFiles(manifest, plan, certificate, outDir, log))
                 {
-                    string rel = Path.GetRelativePath(manifest.Inputs.InstallDir, f).Replace('\\', '/');
-                    if (excludes.Matches(rel) || Path.GetFileName(f) == ".DS_Store") continue;
-                    Add(zip, f, "app/" + rel);
-                    files++;
-                }
-                foreach (var (p, (folder, pack)) in runtimes)
-                {
-                    string runtime = Path.Combine(pack.Directory, "runtime");
-                    foreach (string f in Directory.EnumerateFiles(runtime, "*", SearchOption.AllDirectories))
-                        Add(zip, Signed(f, certificate, manifest.Signing.TimestampUrl, outDir), folder + "/" + Path.GetRelativePath(runtime, f).Replace('\\', '/'));
-                    if (p != machine) log($"  the {Processors.Name(p)} runtime ({folder}\\): {string.Join(", ", manifest.Apps.Where(a => On(a).Contains(p)).Select(a => DesktopCommon.AppName(a) + (On(a)[0] == p ? "" : " (to fall back on)")))}");
+                    Add(zip, source, target);
+                    if (target.StartsWith("app/", StringComparison.Ordinal)) files++;
                 }
                 foreach (var (source, target) in staged.ProgramDataFiles) Add(zip, source, "programdata/" + target);
                 foreach (string hive in Directory.EnumerateFiles(staged.RegistryDir, "*.reg")) Add(zip, hive, "registry/" + Path.GetFileName(hive));

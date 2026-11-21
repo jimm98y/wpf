@@ -3,39 +3,48 @@
 // already has is left as it is: an upgrade keeps what the machine has made of its settings. What it sets, and the keys
 // it makes, go into the installation's record (InstallRecord.cs) for uninstall /all; Remove takes them away again.
 
-using System.Globalization;
-using System.Text;
 using Microsoft.Win32;
 
 namespace WpfWebGpu.Setup;
 
 internal static class RegistryImport
 {
-    private static RegistryKey? Root(string hive) => hive switch
+    private static RegistryKey? Root(string hive, string? userSid = null)
     {
-        "HKEY_LOCAL_MACHINE" => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64),
-        "HKEY_CURRENT_USER" => RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64),
-        "HKEY_CLASSES_ROOT" => RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry64),
-        "HKEY_USERS" => RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Registry64),
-        _ => null,
-    };
+        // the installing user's, where this runs as another (Windows Installer's custom actions run as SYSTEM)
+        if (hive == "HKEY_CURRENT_USER" && userSid is { Length: > 0 } && userSid != System.Security.Principal.WindowsIdentity.GetCurrent().User?.Value)
+        {
+            using var users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Registry64);
+            return users.OpenSubKey(userSid, writable: true);
+        }
+        return hive switch
+        {
+            "HKEY_LOCAL_MACHINE" => RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64),
+            "HKEY_CURRENT_USER" => RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Registry64),
+            "HKEY_CLASSES_ROOT" => RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry64),
+            "HKEY_USERS" => RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Registry64),
+            _ => null,
+        };
+    }
 
-    public static int Import(string hive, string text, IReadOnlyDictionary<string, string> tokens, InstallRecord record)
+    /// <summary>The hive's keys and values into the registry, what the machine has not yet into the record. With
+    /// <paramref name="write"/> false only the record (what an MSI's Registry table is about to write); with
+    /// <paramref name="kinds"/> only the values of those kinds written (what the table cannot carry).</summary>
+    public static int Import(string hive, string text, IReadOnlyDictionary<string, string> tokens, InstallRecord record,
+        bool write = true, string? userSid = null, Func<string, bool>? kinds = null)
     {
-        RegistryKey? root = Root(hive);
+        RegistryKey? root = Root(hive, userSid);
         if (root == null) return 0;
         string currentPath = "";
         int n = 0;
         RegistryKey? current = null;
-        foreach (string raw in text.Split('\n'))
+        string Resolve(string s) { foreach (var (t, v) in tokens) s = s.Replace(t, v, StringComparison.Ordinal); return s; }
+        foreach (var line in HiveText.Read(text))
         {
-            string line = raw.TrimEnd('\r');
-            if (line.Length == 0 || line[0] == '#') continue;
-            if (line[0] == '[' && line[^1] == ']')
+            if (line.Name == null)
             {
                 current?.Dispose();
-                string path = line[1..^1];
-                if (path.Length == 0) { current = null; continue; }
+                string path = line.Key;
                 // the keys it makes, from the outermost not there yet
                 string[] parts = path.Split('\\');
                 for (int i = 1; i <= parts.Length; i++)
@@ -44,31 +53,27 @@ internal static class RegistryImport
                     using var existing = root.OpenSubKey(sub);
                     if (existing == null) { record.RegistryKeys.Add(new RegistryItem(hive, sub, null)); break; }
                 }
-                current = root.CreateSubKey(path, writable: true);
+                current = write ? root.CreateSubKey(path, writable: true) : root.OpenSubKey(path);
                 currentPath = path;
                 continue;
             }
-            if (current == null || line[0] != '"') continue;
-            int eq = line.IndexOf("\"=", StringComparison.Ordinal);
-            if (eq < 0) continue;
-            string name = Unescape(line[1..eq]);
-            string rest = line[(eq + 2)..];
-            int colon = rest.IndexOf(':');
-            if (colon < 0) continue;
-            string kind = rest[..colon], payload = rest[(colon + 1)..];
-            if (current.GetValue(name) != null) continue;
-            string Resolve(string s) { foreach (var (t, v) in tokens) s = s.Replace(t, v, StringComparison.Ordinal); return s; }
-            switch (kind)
+            if (kinds != null && !kinds(line.Kind!)) continue;
+            if (current?.GetValue(line.Name) != null) continue;
+            if (write && current != null)
             {
-                case "str": current.SetValue(name, Resolve(Unescape(payload)), RegistryValueKind.String); break;
-                case "expand": current.SetValue(name, Resolve(Unescape(payload)), RegistryValueKind.ExpandString); break;
-                case "dword": current.SetValue(name, unchecked((int)uint.Parse(payload, NumberStyles.HexNumber, CultureInfo.InvariantCulture)), RegistryValueKind.DWord); break;
-                case "qword": current.SetValue(name, unchecked((long)ulong.Parse(payload, NumberStyles.HexNumber, CultureInfo.InvariantCulture)), RegistryValueKind.QWord); break;
-                case "multi": current.SetValue(name, Unescape(payload).Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(Resolve).ToArray(), RegistryValueKind.MultiString); break;
-                case "bin": current.SetValue(name, Convert.FromBase64String(payload), RegistryValueKind.Binary); break;
-                default: continue;
+                switch (line.Kind)
+                {
+                    case "str": current.SetValue(line.Name, Resolve(HiveText.Text(line)), RegistryValueKind.String); break;
+                    case "expand": current.SetValue(line.Name, Resolve(HiveText.Text(line)), RegistryValueKind.ExpandString); break;
+                    case "dword": current.SetValue(line.Name, unchecked((int)HiveText.Dword(line)), RegistryValueKind.DWord); break;
+                    case "qword": current.SetValue(line.Name, unchecked((long)HiveText.Qword(line)), RegistryValueKind.QWord); break;
+                    case "multi": current.SetValue(line.Name, HiveText.Text(line).Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(Resolve).ToArray(), RegistryValueKind.MultiString); break;
+                    case "bin": current.SetValue(line.Name, HiveText.Binary(line), RegistryValueKind.Binary); break;
+                    default: continue;
+                }
             }
-            record.RegistryValues.Add(new RegistryItem(hive, currentPath, name));
+            else if (line.Kind is not ("str" or "expand" or "dword" or "qword" or "multi" or "bin")) continue;
+            record.RegistryValues.Add(new RegistryItem(hive, currentPath, line.Name));
             n++;
         }
         current?.Dispose();
@@ -107,21 +112,5 @@ internal static class RegistryImport
             catch (UnauthorizedAccessException) { Console.WriteLine($"  could not remove {k.Hive}\\{k.Key}"); }
         }
         return n;
-    }
-
-    private static string Unescape(string s)
-    {
-        if (s.IndexOf('%') < 0) return s;
-        var sb = new StringBuilder(s.Length);
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (s[i] == '%' && i + 2 < s.Length && int.TryParse(s.AsSpan(i + 1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out int c))
-            {
-                sb.Append((char)c);
-                i += 2;
-            }
-            else sb.Append(s[i]);
-        }
-        return sb.ToString();
     }
 }

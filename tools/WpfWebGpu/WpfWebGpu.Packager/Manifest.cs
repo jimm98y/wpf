@@ -180,6 +180,8 @@ public sealed class OutputSection
     public bool Aot { get; set; }
     /// <summary>Packages for testing: nothing compressed, made as fast as they can be written.</summary>
     public bool Fast { get; set; }
+    /// <summary>What the Windows target makes: "setup" (Setup.exe) and "msi" (a Windows Installer package).</summary>
+    public List<string> WindowsFormats { get; set; } = new() { "setup", "msi" };
 }
 
 public sealed class SqlServerSection

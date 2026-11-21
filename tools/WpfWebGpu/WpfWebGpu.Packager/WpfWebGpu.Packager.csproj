@@ -32,6 +32,8 @@
     <Compile Include="$(WpfWebGpuRepoRoot)src/Microsoft.DotNet.Wpf/src/WgpuInterop/Composition/PngReader.cs" Link="Shared/PngReader.cs" />
     <!-- Setup.exe's payload format, which the Windows packager writes and Setup reads -->
     <Compile Include="../WpfWebGpu.Setup/Payload.cs" Link="Shared/Payload.cs" />
+    <!-- the staged hives' format, which the MSI's Registry table is written from and Setup imports -->
+    <Compile Include="../WpfWebGpu.Setup/HiveText.cs" Link="Shared/HiveText.cs" />
   </ItemGroup>
 
 </Project>

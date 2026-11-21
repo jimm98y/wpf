@@ -89,9 +89,15 @@ public static class Builder
             if (rids.Count == 0) throw new PackagerError($"no desktop-win-<arch>.pack and setup-win-<arch>.pack in {packsFolder}: the Windows runtime is not installed");
             PackFile? Runtime(Processor p) =>
                 File.Exists(Path.Combine(packsFolder, "desktop-" + Processors.Rid(p) + ".pack")) ? PackFile.Open(packsFolder, "desktop-" + Processors.Rid(p)) : null;
+            bool Format(string f) => manifest.Output.WindowsFormats.Count == 0 || manifest.Output.WindowsFormats.Contains(f, StringComparer.OrdinalIgnoreCase);
             foreach (string rid in rids)
-                made.Add(Desktop.WindowsPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log,
-                    SqlServerPack(manifest, packsFolder, "win-x64"), Runtime));
+            {
+                if (Format("setup"))
+                    made.Add(Desktop.WindowsPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log,
+                        SqlServerPack(manifest, packsFolder, "win-x64"), Runtime));
+                if (Format("msi"))
+                    made.Add(Desktop.MsiPackager.Build(manifest, staged, PackFile.Open(packsFolder, "desktop-" + rid), PackFile.Open(packsFolder, "setup-" + rid), Path.Combine(outDir, "windows"), log, Runtime));
+            }
         }
         if (targets.Contains(Target.IOS))
         {
