@@ -20,9 +20,9 @@
 // with no Android type in it, and is therefore testable on any machine, exactly as
 // DragDropBackendTests tests Android's drag sequencing on a developer's laptop.
 //
-// NOT YET RUN ON A DEVICE, and it cannot be until a head payload implements the commands in
-// AndroidWebViewCommands. Until one does, IsAvailable is false and the control reports that this
-// application has no web-view implementation -- which is the truth, and is actionable.
+// The payload is AndroidHost.cs's AndroidWebViewHost, which every Android head compiles in and which
+// registers itself; an app's own head that does not have it reports that it has no web-view
+// implementation -- which is the truth, and is actionable.
 //
 
 using System;
@@ -79,6 +79,11 @@ namespace MS.Internal.Interop.WebView
 
             _attached = true;
 
+            // The payload raises its events on Android's main thread, which is not the control's: the
+            // app runs on a UI thread of its own (AndroidHost.RunApp). They are taken to the thread that
+            // attached the view, as the browser head takes its pump's.
+            _owner = System.Threading.SynchronizationContext.Current;
+
             // The payload raises everything through one sink. Registered before anything can
             // navigate, so the first page's events are not missed.
             AndroidWebViewRegistration.Invoke(
@@ -121,8 +126,28 @@ namespace MS.Internal.Interop.WebView
         /// payload and this file are compiled separately and ship separately, so a new event must
         /// not break an older payload, and an unrecognised one must be ignored rather than fatal.
         /// </summary>
+        private System.Threading.SynchronizationContext _owner;
+
         private void OnHeadEvent(string kind, string payload)
         {
+            System.Threading.SynchronizationContext owner = _owner;
+
+            if (owner is not null && owner != System.Threading.SynchronizationContext.Current)
+            {
+                owner.Post(_ => OnHeadEventOnOwner(kind, payload), null);
+                return;
+            }
+
+            OnHeadEventOnOwner(kind, payload);
+        }
+
+        private void OnHeadEventOnOwner(string kind, string payload)
+        {
+            if (!_attached)
+            {
+                return;
+            }
+
             switch (kind)
             {
                 case AndroidWebViewEvents.NavigationStarting:

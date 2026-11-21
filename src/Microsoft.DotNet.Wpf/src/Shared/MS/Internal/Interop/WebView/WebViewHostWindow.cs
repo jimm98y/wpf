@@ -98,8 +98,9 @@ namespace MS.Internal.Interop.WebView
 
         /// <summary>The heads whose engine is laid over the owner window's own view, with no host window
         /// of its own: macOS (a WKWebView in the content NSView), iOS (a WKWebView in the window's UIView),
-        /// Linux's Wayland head (a wl_subsurface). The control tells the engine where it is in the window.</summary>
-        internal static bool OverlaysOwnerView => OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() || IsWaylandHead;
+        /// Linux's Wayland head (a wl_subsurface), Android (a WebView over the window's view, AndroidHost.cs).
+        /// The control tells the engine where it is in the window.</summary>
+        internal static bool OverlaysOwnerView => OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() || IsWaylandHead || OperatingSystem.IsAndroid();
 
         /// <summary>Linux's own head (Android is Linux to OperatingSystem too).</summary>
         internal static bool IsWaylandHead => OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();

@@ -178,6 +178,10 @@ namespace System.Windows.Forms
                 // sees the first document.
                 EnsureSinkCreated();
 
+                // window.external before the first document, as WPF's WebBrowser installs it: a page may
+                // call it as it loads
+                InstallScriptingBridge();
+
                 Action pending = _pending;
                 _pending = null;
                 pending?.Invoke();
@@ -343,9 +347,11 @@ namespace System.Windows.Forms
             {
                 _objectForScripting = value;
 
-                if (value is not null)
+                // now if the engine is up, else as it comes up (Attached) -- not through WhenReady, whose
+                // one pending request is the navigation's: an object set after a Url took its place
+                if (value is not null && _backend is not null && _backend.IsAttached)
                 {
-                    WhenReady(InstallScriptingBridge);
+                    InstallScriptingBridge();
                 }
             }
         }

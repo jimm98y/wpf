@@ -1147,6 +1147,37 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         _activity = activity;
         _root = root;
         _handler = new Android.OS.Handler(Android.OS.Looper.MainLooper!);
+        // the web views (WebView2, WebBrowser): android.webkit.WebView, which the seam reaches through
+        // AppContext (AndroidWebViewRegistration) -- this activity's, the latest one's
+        _webViews = new AndroidWebViewHost(this);
+        AppContext.SetData("MS.Internal.Interop.WebView.Android.Invoke", (Func<string, object[], object?>)_webViews.Invoke);
+    }
+
+    private readonly AndroidWebViewHost _webViews;
+
+    // ---- for the web views (AndroidWebViewHost) ----------------------------------
+
+    internal Activity Activity => _activity;
+
+    internal FrameLayout Root => _root;
+
+    internal T RunOnMain<T>(Func<T> work) => OnMain(work);
+
+    internal void Post(Action work) => _handler.Post(work);
+
+    /// <summary>Where a window's client area is in the activity, in device pixels, whether it is shown,
+    /// and its view; false when the handle names no window.</summary>
+    internal bool WindowPlace(IntPtr handle, out int x, out int y, out bool visible, out View? view)
+    {
+        x = y = 0; visible = false; view = null;
+        if (!_views.TryGetValue(handle, out view) || view is null) return false;
+        if (view.LayoutParameters is FrameLayout.LayoutParams lp && lp.Width != ViewGroup.LayoutParams.MatchParent)
+        {
+            x = lp.LeftMargin;
+            y = lp.TopMargin;
+        }
+        visible = view.Visibility == ViewStates.Visible;
+        return true;
     }
 
     // ---- the hardware keyboard -------------------------------------------------
@@ -1292,8 +1323,11 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // a floating window's surface is composed above the app's own (SurfaceViews are layers of their
         // own, stacked by this rather than by the view order); a popup's is on top already
         if (view is WpfSurfaceView { FillsScreen: false, IsPopup: false } surface) surface.SetZOrderMediaOverlay(true);
-        // its child windows come with it, just above it (SetViewParent)...
+        // its child windows come with it, just above it (SetViewParent), and its web views over it --
+        // a SurfaceView's own pixels in the view order are a hole through to its surface, which covered
+        // a web view left under it...
         RaiseChildren(handle);
+        _webViews.RaiseOver(handle);
         // ...and the popups stay above it, as they are drawn: a popup's surface is on top of every
         // window's (or its pixels composed over every window, WpfPopupView), so its view must lie over
         // theirs too, for touches go by the view order -- under a window brought to the front, a menu or
@@ -1472,6 +1506,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         lp.Height = height;
         view.LayoutParameters = lp;
         PlaceFrame(handle);
+        _webViews.WindowMoved(handle);
     }
 
     public void SetViewVisible(IntPtr handle, bool visible) => OnMain(() => SetViewVisibleCore(handle, visible));
@@ -1483,6 +1518,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
         // and a hidden WPF window must not intercept touches meant for what is behind it.
         view.Visibility = visible ? ViewStates.Visible : ViewStates.Gone;
         PlaceFrame(handle);
+        _webViews.WindowMoved(handle);
         UpdateModalAccessibility();
     }
 
@@ -1669,6 +1705,7 @@ internal sealed class AndroidHost : IAndroidHost, IAndroidAccessibilityHost, IAn
     private void DestroyViewCore(IntPtr handle)
     {
         if (!_views.Remove(handle, out View? view)) return;
+        _webViews.WindowDestroyed(handle);
         if (view is WpfSurfaceView surfaceView) surfaceView.Detached = true;
         // a modal window closing gives the windows under it back to TalkBack
         _modal.Remove(handle);
@@ -2346,4 +2383,355 @@ public sealed class ClipboardProvider : ContentProvider
     public override int Delete(Android.Net.Uri uri, string? selection, string[]? selectionArgs) => 0;
 
     public override int Update(Android.Net.Uri uri, ContentValues? values, string? selection, string[]? selectionArgs) => 0;
+}
+
+/// <summary>
+/// The web views of the app's windows: android.webkit.WebView, for the seam's AndroidWebViewBackend
+/// (WebView2, WebBrowser), which reaches it through AppContext data with the commands named in
+/// AndroidWebViewCommands (AndroidWebViewRegistration explains why not an interface).
+/// </summary>
+/// <remarks>
+/// A web view is a view of the activity's, laid over its window: placed at the window's client position
+/// plus the control's, above the window's view, moving and hiding with the window. A full-screen window's
+/// surface is composed under the activity's views, so the page shows over it as a player's controls show
+/// over its video; a floating window's surface is composed above them (a media overlay), so a web view in
+/// a floating window is not seen yet.
+///
+/// The page's side is the window.chrome.webview the other heads give it: postMessage reaches the host
+/// through prompt() (WebChromeClient.onJsPrompt answers it at once), which needs nothing but the
+/// platform -- no Java method exported to the page -- and the host's messages and scripts go in through
+/// evaluateJavascript. That shim and the document scripts are run as each page starts (onPageStarted),
+/// and for content handed over as a string they are put before it, so its own scripts find them.
+///
+/// Every command comes from the app's UI thread and is done on the main Looper's (the caller waits for
+/// an answer); every event is raised on the main thread, and the backend takes it to the control's.
+/// </remarks>
+internal sealed class AndroidWebViewHost
+{
+    private const string MessageMarker = "__wpfWebMessage";
+
+    private const string Shim = @"(function () {
+    if (window.chrome && window.chrome.webview) { return; }
+    var listeners = [];
+    window.chrome = window.chrome || {};
+    window.chrome.webview = {
+        postMessage: function (m) { prompt('" + MessageMarker + @"', typeof m === 'string' ? m : JSON.stringify(m)); },
+        addEventListener: function (t, f) { if (t === 'message') { listeners.push(f); } },
+        removeEventListener: function (t, f) {
+            if (t !== 'message') { return; }
+            var i = listeners.indexOf(f); if (i >= 0) { listeners.splice(i, 1); }
+        },
+        __deliver: function (data) {
+            var e = { data: data };
+            for (var i = 0; i < listeners.length; i++) { listeners[i](e); }
+        }
+    };
+})();";
+
+    private sealed class Entry
+    {
+        public Android.Webkit.WebView View = null!;
+        public IntPtr Parent;
+        public int X, Y, Width = 1, Height = 1;
+        public bool Visible = true;
+        public Action<string, string>? Sink;
+        public readonly List<string> DocumentScripts = new();
+        public string? StartedByLink;
+        public bool Failed;
+    }
+
+    private readonly AndroidHost _host;
+    private readonly Dictionary<int, Entry> _entries = new();
+    private int _nextId;
+
+    internal AndroidWebViewHost(AndroidHost host) => _host = host;
+
+    /// <summary>A command of AndroidWebViewCommands, from the app's thread.</summary>
+    internal object? Invoke(string command, object[] args) => _host.RunOnMain(() => InvokeOnMain(command, args));
+
+    private object? InvokeOnMain(string command, object[] args)
+    {
+        if (command == "create")
+            return Create((IntPtr)args[0], (int)args[1], (int)args[2], (int)args[3], (int)args[4]);
+
+        if (!_entries.TryGetValue((int)args[0], out Entry? e)) return null;
+        Android.Webkit.WebView view = e.View;
+        switch (command)
+        {
+            case "destroy": Destroy((int)args[0]); return null;
+            case "setBounds": e.X = (int)args[1]; e.Y = (int)args[2]; e.Width = (int)args[3]; e.Height = (int)args[4]; Place(e); return null;
+            case "setVisible": e.Visible = (bool)args[1]; Place(e); return null;
+            case "navigate": view.LoadUrl((string)args[1]); return null;
+            case "navigateToString":
+                // the shim and the document scripts before the content's own scripts
+                view.LoadDataWithBaseURL(null, "<script>" + StartScript(e) + "</script>" + (string)args[1], "text/html", "utf-8", null);
+                return null;
+            case "navigateWithPost":
+            {
+                string uri = (string)args[1];
+                byte[]? body = args[2] as byte[];
+                string? headers = args[3] as string;
+                if (body is { Length: > 0 }) view.PostUrl(uri, body);
+                else view.LoadUrl(uri, Headers(headers));
+                return null;
+            }
+            case "reload":
+                if ((bool)args[1]) view.ClearCache(false);
+                view.Reload();
+                return null;
+            case "stop": view.StopLoading(); return null;
+            case "goBack": view.GoBack(); return null;
+            case "goForward": view.GoForward(); return null;
+            case "canGoBack": return view.CanGoBack();
+            case "canGoForward": return view.CanGoForward();
+            case "getSource": return view.Url;
+            case "getTitle": return view.Title;
+            case "executeScript":
+            {
+                var completed = (Action<string>)args[2];
+                view.EvaluateJavascript((string)args[1], new ScriptResult(completed));
+                return null;
+            }
+            case "addDocumentScript":
+                e.DocumentScripts.Add((string)args[1]);
+                return null;
+            case "postMessage":
+                view.EvaluateJavascript("window.chrome && window.chrome.webview && window.chrome.webview.__deliver(" + (string)args[1] + ");", null);
+                return null;
+            case "setZoom":
+                if (view.Settings is { } zoom) zoom.TextZoom = (int)Math.Round((double)args[1] * 100);
+                return null;
+            case "clearData":
+                view.ClearCache(true);
+                Android.Webkit.CookieManager.Instance?.RemoveAllCookies(null);
+                Android.Webkit.WebStorage.Instance?.DeleteAllData();
+                return null;
+            case "capturePreview": Capture(e, (bool)args[1], (Action<byte[]?>)args[2]); return null;
+            case "setEventSink": e.Sink = (Action<string, string>)args[1]; return null;
+            default: throw new NotSupportedException("web view command " + command);
+        }
+    }
+
+    private int Create(IntPtr parent, int x, int y, int width, int height)
+    {
+        if (!_host.WindowPlace(parent, out _, out _, out _, out View? window)) return 0;
+        var e = new Entry { Parent = parent, X = x, Y = y, Width = Math.Max(1, width), Height = Math.Max(1, height) };
+        var view = new Android.Webkit.WebView(_host.Activity);
+        if (view.Settings is { } settings)
+        {
+            settings.JavaScriptEnabled = true;
+            settings.DomStorageEnabled = true;
+            settings.SetSupportMultipleWindows(true);
+            settings.JavaScriptCanOpenWindowsAutomatically = true;
+            settings.MediaPlaybackRequiresUserGesture = false;
+        }
+        e.View = view;
+        int id = ++_nextId;
+        view.SetWebViewClient(new Client(this, id));
+        view.SetWebChromeClient(new Chrome(this, id));
+        view.SetDownloadListener(new Downloads(this, id));
+        _entries[id] = e;
+        // above its window, as a child window is over its parent's client area
+        _host.Root.AddView(view, _host.Root.IndexOfChild(window) + 1, new FrameLayout.LayoutParams(e.Width, e.Height) { Gravity = GravityFlags.Top | GravityFlags.Left });
+        Place(e);
+        return id;
+    }
+
+    private void Destroy(int id)
+    {
+        if (!_entries.Remove(id, out Entry? e)) return;
+        _host.Root.RemoveView(e.View);
+        e.View.StopLoading();
+        e.View.Destroy();
+    }
+
+    /// <summary>A window moved, was resized, shown or hidden: its web views with it.</summary>
+    internal void WindowMoved(IntPtr window)
+    {
+        foreach (Entry e in _entries.Values)
+            if (e.Parent == window) Place(e);
+    }
+
+    /// <summary>A window was brought to the front: its web views over it.</summary>
+    internal void RaiseOver(IntPtr window)
+    {
+        foreach (Entry e in _entries.Values)
+            if (e.Parent == window) e.View.BringToFront();
+    }
+
+    /// <summary>A window is gone, and its web views with it.</summary>
+    internal void WindowDestroyed(IntPtr window)
+    {
+        foreach (int id in new List<int>(_entries.Keys))
+            if (_entries[id].Parent == window) Destroy(id);
+    }
+
+    private void Place(Entry e)
+    {
+        bool shown = _host.WindowPlace(e.Parent, out int wx, out int wy, out bool windowVisible, out View? window) && windowVisible && e.Visible;
+        // over its window in the view order (see RaiseOver)
+        if (window is not null && _host.Root.IndexOfChild(e.View) < _host.Root.IndexOfChild(window)) e.View.BringToFront();
+        var lp = (FrameLayout.LayoutParams)e.View.LayoutParameters!;
+        if (lp.LeftMargin != wx + e.X || lp.TopMargin != wy + e.Y || lp.Width != e.Width || lp.Height != e.Height)
+        {
+            lp.LeftMargin = wx + e.X;
+            lp.TopMargin = wy + e.Y;
+            lp.Width = e.Width;
+            lp.Height = e.Height;
+            e.View.LayoutParameters = lp;
+        }
+        e.View.Visibility = shown ? ViewStates.Visible : ViewStates.Gone;
+    }
+
+    private static string StartScript(Entry e) => Shim + string.Concat(e.DocumentScripts.ConvertAll(s => "\n;" + s));
+
+    private static IDictionary<string, string> Headers(string? headers)
+    {
+        var map = new Dictionary<string, string>();
+        foreach (string line in (headers ?? "").Split('\n'))
+        {
+            int colon = line.IndexOf(':');
+            if (colon > 0) map[line.Substring(0, colon).Trim()] = line.Substring(colon + 1).Trim();
+        }
+        return map;
+    }
+
+    private void Raise(int id, string kind, string payload)
+    {
+        if (_entries.TryGetValue(id, out Entry? e)) e.Sink?.Invoke(kind, payload ?? "");
+    }
+
+    // the view drawn into a bitmap, compressed off the main thread
+    private void Capture(Entry e, bool png, Action<byte[]?> completed)
+    {
+        Bitmap? bitmap = null;
+        try
+        {
+            bitmap = Bitmap.CreateBitmap(Math.Max(1, e.View.Width), Math.Max(1, e.View.Height), Bitmap.Config.Argb8888!);
+            e.View.Draw(new Canvas(bitmap));
+        }
+        catch (Exception) { completed(null); return; }
+        Task.Run(() =>
+        {
+            try
+            {
+                using var stream = new System.IO.MemoryStream();
+                bitmap.Compress(png ? Bitmap.CompressFormat.Png! : Bitmap.CompressFormat.Jpeg!, 90, stream);
+                completed(stream.ToArray());
+            }
+            catch (Exception) { completed(null); }
+            finally { bitmap.Recycle(); }
+        });
+    }
+
+    private sealed class ScriptResult : Java.Lang.Object, Android.Webkit.IValueCallback
+    {
+        private readonly Action<string> _completed;
+        public ScriptResult(Action<string> completed) => _completed = completed;
+        public void OnReceiveValue(Java.Lang.Object? value) => _completed(value?.ToString() ?? "null");
+    }
+
+    private sealed class Client : Android.Webkit.WebViewClient
+    {
+        private readonly AndroidWebViewHost _owner;
+        private readonly int _id;
+        public Client(AndroidWebViewHost owner, int id) { _owner = owner; _id = id; }
+
+        public override bool ShouldOverrideUrlLoading(Android.Webkit.WebView? view, Android.Webkit.IWebResourceRequest? request)
+        {
+            string url = request?.Url?.ToString() ?? "";
+            if (request?.IsForMainFrame == true && _owner._entries.TryGetValue(_id, out Entry? e))
+            {
+                e.StartedByLink = url;
+                _owner.Raise(_id, "navigationStarting", url);
+            }
+            return false;
+        }
+
+        public override void OnPageStarted(Android.Webkit.WebView? view, string? url, Bitmap? favicon)
+        {
+            if (!_owner._entries.TryGetValue(_id, out Entry? e)) return;
+            e.Failed = false;
+            // a navigation the page did not start itself (a Navigate, a reload) has had no NavigationStarting
+            if (e.StartedByLink != url) _owner.Raise(_id, "navigationStarting", url ?? "");
+            e.StartedByLink = null;
+            view?.EvaluateJavascript(StartScript(e), null);
+            _owner.Raise(_id, "contentLoading", url ?? "");
+        }
+
+        public override void OnPageFinished(Android.Webkit.WebView? view, string? url)
+        {
+            if (!_owner._entries.TryGetValue(_id, out Entry? e) || e.Failed) return;
+            _owner.Raise(_id, "navigationCompleted", url ?? "");
+        }
+
+        public override void OnReceivedError(Android.Webkit.WebView? view, Android.Webkit.IWebResourceRequest? request, Android.Webkit.WebResourceError? error)
+        {
+            if (request?.IsForMainFrame != true || !_owner._entries.TryGetValue(_id, out Entry? e)) return;
+            e.Failed = true;
+            _owner.Raise(_id, "navigationFailed", error?.DescriptionFormatted?.ToString() ?? "");
+        }
+    }
+
+    private sealed class Chrome : Android.Webkit.WebChromeClient
+    {
+        private readonly AndroidWebViewHost _owner;
+        private readonly int _id;
+        public Chrome(AndroidWebViewHost owner, int id) { _owner = owner; _id = id; }
+
+        // window.chrome.webview.postMessage
+        public override bool OnJsPrompt(Android.Webkit.WebView? view, string? url, string? message, string? defaultValue, Android.Webkit.JsPromptResult? result)
+        {
+            if (message != MessageMarker) return base.OnJsPrompt(view, url, message, defaultValue, result);
+            result?.Confirm("");
+            _owner.Raise(_id, "webMessage", defaultValue ?? "");
+            return true;
+        }
+
+        public override void OnReceivedTitle(Android.Webkit.WebView? view, string? title) => _owner.Raise(_id, "titleChanged", title ?? "");
+
+        // window.open, a target=_blank link: the address it asks for, found by a view of its own that only listens
+        public override bool OnCreateWindow(Android.Webkit.WebView? view, bool isDialog, bool isUserGesture, Message? resultMsg)
+        {
+            if (resultMsg?.Obj is not Android.Webkit.WebView.WebViewTransport transport) return false;
+            var probe = new Android.Webkit.WebView(_owner._host.Activity);
+            probe.SetWebViewClient(new NewWindowProbe(_owner, _id, probe));
+            transport.WebView = probe;
+            resultMsg.SendToTarget();
+            return true;
+        }
+    }
+
+    private sealed class NewWindowProbe : Android.Webkit.WebViewClient
+    {
+        private readonly AndroidWebViewHost _owner;
+        private readonly int _id;
+        private readonly Android.Webkit.WebView _probe;
+        public NewWindowProbe(AndroidWebViewHost owner, int id, Android.Webkit.WebView probe) { _owner = owner; _id = id; _probe = probe; }
+
+        public override bool ShouldOverrideUrlLoading(Android.Webkit.WebView? view, Android.Webkit.IWebResourceRequest? request)
+        {
+            _owner.Raise(_id, "newWindow", request?.Url?.ToString() ?? "");
+            _owner._host.Post(() => _probe.Destroy());
+            return true;
+        }
+
+        public override void OnPageStarted(Android.Webkit.WebView? view, string? url, Bitmap? favicon)
+        {
+            if (string.IsNullOrEmpty(url) || url == "about:blank") return;
+            view?.StopLoading();
+            _owner.Raise(_id, "newWindow", url);
+            _owner._host.Post(() => _probe.Destroy());
+        }
+    }
+
+    private sealed class Downloads : Java.Lang.Object, Android.Webkit.IDownloadListener
+    {
+        private readonly AndroidWebViewHost _owner;
+        private readonly int _id;
+        public Downloads(AndroidWebViewHost owner, int id) { _owner = owner; _id = id; }
+
+        public void OnDownloadStart(string? url, string? userAgent, string? contentDisposition, string? mimetype, long contentLength)
+            => _owner.Raise(_id, "downloadStarting", url ?? "");
+    }
 }
