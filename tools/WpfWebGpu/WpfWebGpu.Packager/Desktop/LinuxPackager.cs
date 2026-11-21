@@ -33,6 +33,8 @@ public static partial class LinuxPackager
         string pkg = PackageName(product);
         string root = "/opt/" + product, state = "/var/opt/" + product + "/state";
         string work = Path.Combine(outDir, ".work", "linux-" + arch);
+        string license = manifest.Product.License.Length > 0 ? License.Text(manifest.Product.License) : "";
+        string question = license.Length > 0 ? LicenseQuestion(pkg, license) : "";
         if (Directory.Exists(work)) Directory.Delete(work, recursive: true);
         Directory.CreateDirectory(work);
         var excludes = new GlobSet(manifest.Exclude);
@@ -159,6 +161,11 @@ public static partial class LinuxPackager
                 tar.AddText(WebViewPinPath(pkg), WebViewPin, executable: false);
                 log("  web content: WPE WebKit, from Debian's archive pinned to its packages");
             }
+            if (license.Length > 0)
+            {
+                tar.AddText($"/usr/share/doc/{pkg}/copyright", license + "\n", executable: false);
+                log("  the license agreement: asked by debconf before installing, by install.sh in the .tar.gz");
+            }
             tar.Finish();
         }
 
@@ -168,11 +175,16 @@ public static partial class LinuxPackager
         using (var gz = new GZipStream(file, CompressionLevel.Optimal))
         {
             var tar = new TarTree(gz, directories: false);
-            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlServer, webView), executable: false);
+            tar.AddText("./control", Control(manifest, pkg, arch, installedBytes, sqlServer, webView, license.Length > 0), executable: false);
+            if (license.Length > 0)
+            {
+                tar.AddText("./templates", LicenseTemplates(question, product, license), executable: false);
+                tar.AddText("./config", LicenseConfig(question), executable: true);
+            }
             tar.AddText("./postinst", PostInst(root, state, units, maskedUnits, Accounts(manifest, pkg), webView ? WebViewPostInst(pkg, WebViewRecord(state)) : ""), executable: true);
-            tar.AddText("./preinst", PreInst(pkg), executable: true);
+            tar.AddText("./preinst", PreInst(pkg, license.Length > 0 ? LicensePreInst(question, product) : ""), executable: true);
             tar.AddText("./prerm", PreRm(units, root), executable: true);
-            tar.AddText("./postrm", PostRm(state, units, maskedUnits, pkg, webView), executable: true);
+            tar.AddText("./postrm", PostRm(state, units, maskedUnits, pkg, webView, license.Length > 0), executable: true);
             tar.Finish();
         }
 
@@ -197,7 +209,9 @@ public static partial class LinuxPackager
         {
             var tar = new TarTree(gz, directories: false);
             tar.AddText($"./{folder}/install.sh", Install(pkg, root, state, units, maskedUnits, Accounts(manifest, pkg),
-                (sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : "") + (webView ? WebViewInstallStep(pkg, WebViewRecord(state)) : "")), executable: true);
+                (sqlServer ? SqlServerInstallStep(manifest, arch, pkg) : "") + (webView ? WebViewInstallStep(pkg, WebViewRecord(state)) : ""),
+                license.Length > 0 ? LicenseInstallStep(product) : ""), executable: true);
+            if (license.Length > 0) tar.AddText($"./{folder}/license.txt", license + "\n", executable: false);
             tar.AddText($"./{folder}/uninstall.sh", UninstallScript(pkg, root, state, units, maskedUnits,
                 sqlServer ? SqlServerUninstallStep(manifest) : "", webView), executable: true);
             tar.AddFile(data, $"./{folder}/files.tar.gz", executable: false);
@@ -215,12 +229,12 @@ public static partial class LinuxPackager
     }
 
     internal static string Install(string pkg, string root, string state, List<(string Name, bool Enable)> units, List<string> masked, string accounts,
-        string sqlServerStep) => $$"""
+        string sqlServerStep, string licenseStep = "") => $$"""
         #!/bin/sh
         # Installs {{pkg}} on a Linux without dpkg: its files into / (the list kept for uninstall.sh), then as the .deb's
         # postinst does -- the machine's state on the first install, the services enabled and started.
         set -e
-        [ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+        {{licenseStep}}[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
         cd "$(dirname "$0")"
         if [ -d /run/systemd/system ]; then :
         {{string.Concat(units.Select(u => $"  systemctl stop {u.Name} 2>/dev/null || true\n"))}}fi
@@ -482,12 +496,12 @@ public static partial class LinuxPackager
 
         """;
 
-    private static string Control(PackageManifest manifest, string pkg, string arch, long bytes, bool sqlServer, bool webView) => $"""
+    private static string Control(PackageManifest manifest, string pkg, string arch, long bytes, bool sqlServer, bool webView, bool license) => $"""
         Package: {pkg}
         Version: {DebVersion(manifest.Product.Version)}
         Architecture: {arch}
         Maintainer: {(manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : manifest.Product.Name)} <noreply@localhost>
-        Installed-Size: {Math.Max(1, bytes / 1024)}
+        Installed-Size: {Math.Max(1, bytes / 1024)}{(license ? "\nPre-Depends: debconf (>= 0.5) | debconf-2.0" : "")}
         Depends: libc6, zlib1g, libstdc++6, libgcc-s1, libssl3 | libssl1.1, libicu78 | libicu77 | libicu76 | libicu75 | libicu74 | libicu72 | libicu70 | libicu67 | libicu66, acl
         Recommends: libvulkan1, mesa-vulkan-drivers, libwayland-client0, libxkbcommon0, libfontconfig1{(sqlServer ? ", " + SqlServerPackageName(manifest) : "")}{(webView ? ", debian-archive-keyring, " + WpePackages.Replace(" ", ", ") : "")}
         Section: misc
@@ -579,8 +593,9 @@ public static partial class LinuxPackager
         for h in /root /home/*; do [ -d "$h/.cache/{{pkg}}" ] && rm -rf "$h/.cache/{{pkg}}"; done
         """;
 
-    private static string PreInst(string pkg) => $$"""
+    internal static string PreInst(string pkg, string licenseStep = "") => $$"""
         #!/bin/sh
+        {{licenseStep}}
         # an upgrade: what the previous version prepared for its programs goes
         if [ "$1" = upgrade ]; then
         {{Caches(pkg)}}
@@ -616,7 +631,7 @@ public static partial class LinuxPackager
     private static string EreLiteral(string text) =>
         System.Text.RegularExpressions.Regex.Replace(text, @"[.^$*+?()\[\]{}|\\]", @"\$0");
 
-    internal static string PostRm(string state, List<(string Name, bool Enable)> units, List<string> masked, string pkg, bool webView) => $"""
+    internal static string PostRm(string state, List<(string Name, bool Enable)> units, List<string> masked, string pkg, bool webView, bool license = false) => $"""
         #!/bin/sh
         # remove takes the caches and logs (the machine's and every user's) and keeps the machine's state (the registry,
         # ProgramData), as Windows keeps ProgramData; purge removes that too, the service accounts and what the install
@@ -627,7 +642,7 @@ public static partial class LinuxPackager
         {RemovedTogether(pkg, masked)}
         fi
         if [ "$1" = purge ]; then
-        {Purged(pkg, state, webView, background: true)}
+        {(license ? LicensePurge(pkg) : "")}{Purged(pkg, state, webView, background: true)}
         fi
         exit 0
 

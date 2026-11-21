@@ -210,6 +210,59 @@ public class PackagerTests
     }
 
     [Fact]
+    public void Linux_packages_install_only_with_the_license_accepted()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "shell scripts");
+        const string text = "Terms of use\n\nYou may use it.\n  - indented, kept as it is\n\tand a tab\n1. one,\nwrapped\n2. two";
+        string q = WpfWebGpu.Packager.Desktop.LinuxPackager.LicenseQuestion("p", text);
+        Assert.Matches("^p/license-[0-9a-f]{12}$", q);
+        Assert.NotEqual(q, WpfWebGpu.Packager.Desktop.LinuxPackager.LicenseQuestion("p", text + "."));   // a new text is asked again
+        // debconf's templates: a boolean, refused unless answered, the text its long description
+        string templates = WpfWebGpu.Packager.Desktop.LinuxPackager.LicenseTemplates(q, "P", text);
+        Assert.StartsWith($"Template: {q}\nType: boolean\nDefault: false\nDescription: Do you accept the terms of the license agreement of P?\n Terms of use\n .\n You may use it.\n   - indented, kept as it is\n     and a tab\n", templates);
+        Assert.DoesNotContain("\n\n", templates);
+        Assert.Contains("\n .\n 1. one,\n wrapped\n .\n 2. two\n", templates);   // a list's items paragraphs of their own
+        // the maintainer scripts
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.LicenseConfig(q));
+        string preinst = WpfWebGpu.Packager.Desktop.LinuxPackager.PreInst("p", WpfWebGpu.Packager.Desktop.LinuxPackager.LicensePreInst(q, "P"));
+        ShellSyntax(preinst);
+        Assert.Contains("exit 1", preinst);
+        string postrm = WpfWebGpu.Packager.Desktop.LinuxPackager.PostRm("/var/opt/P/state", new(), new(), "p", webView: false, license: true);
+        ShellSyntax(postrm);
+        Assert.Contains("echo PURGE | debconf-communicate p", postrm);
+        var none = new List<(string Name, bool Enable)>();
+        ShellSyntax(WpfWebGpu.Packager.Desktop.LinuxPackager.Install("p", "/opt/P", "/var/opt/P/state", none, new List<string>(), "", "",
+            WpfWebGpu.Packager.Desktop.LinuxPackager.LicenseInstallStep("P")));
+
+        // install.sh: the text shown, then [y/N]; no, or no answer, installs nothing
+        string dir = TestEnvironment.NewDirectory("license");
+        File.WriteAllText(Path.Combine(dir, "license.txt"), text + "\n");
+        string script = Path.Combine(dir, "install.sh");
+        File.WriteAllText(script, "#!/bin/sh\nset -e\n" + WpfWebGpu.Packager.Desktop.LinuxPackager.LicenseInstallStep("P") + "echo \"INSTALLING $*\"\n");
+        (int Code, string Out) Run(string input, params string[] args)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh", new[] { script }.Concat(args)) { RedirectStandardInput = true, RedirectStandardOutput = true };
+            var p = System.Diagnostics.Process.Start(psi)!;
+            p.StandardInput.Write(input);
+            p.StandardInput.Close();
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            return (p.ExitCode, output);
+        }
+        var no = Run("n\n");
+        Assert.Equal(1, no.Code);
+        Assert.Contains("You may use it.", no.Out);
+        Assert.DoesNotContain("INSTALLING", no.Out);
+        Assert.Equal(1, Run("").Code);
+        var yes = Run("y\n", "--sqlserver");
+        Assert.Equal(0, yes.Code);
+        Assert.Contains("INSTALLING --accept-license --sqlserver", yes.Out);   // (and so not asked again under sudo)
+        var given = Run("", "--accept-license");
+        Assert.Equal(0, given.Code);
+        Assert.DoesNotContain("You may use it.", given.Out);
+    }
+
+    [Fact]
     public void Linux_SQL_Server_comes_with_a_browser_that_names_its_instance()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "shell scripts");

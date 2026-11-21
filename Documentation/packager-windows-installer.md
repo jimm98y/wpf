@@ -50,6 +50,8 @@ installer that asks before installing shows it:
 | The MSI | The wizard's License Agreement page. Next stays disabled until "I accept" is ticked. `msiexec /qn` accepts it. |
 | `Setup.exe` | Printed in the console, then "Do you accept the terms of the license agreement? [y/N]". Anything but `y`, or no answer, installs nothing, and Setup exits with 1602 (cancelled by the user, as Windows Installer's). `/quiet` or `/acceptlicense` accepts it. An `.rtf` is shown as its text. |
 | macOS `.pkg` | Installer's License page: Continue, then Agree. The command line's `installer` agrees on its own. |
+| Linux `.deb` | A debconf question: the text, then "Do you accept the terms of the license agreement? [yes/no]". `apt` asks it while it preconfigures, before anything is unpacked, and `dpkg -i` asks it in `preinst`. "no" installs nothing (preinst fails), and the next attempt asks again. The answer is kept, so an upgrade asks again only when the text changed; purge forgets it. Where debconf cannot ask (no terminal, `DEBIAN_FRONTEND=noninteractive`), it is accepted, as `/qn` accepts it. Preseeding `<pkg>/license-<hash> boolean false` with `debconf-set-selections` refuses it unattended instead. The text is also installed as `/usr/share/doc/<pkg>/copyright`. |
+| Linux `.tar.gz` | `install.sh` shows `license.txt`, then asks "[y/N]" before it asks sudo for the password. Anything but `y`, or no answer, installs nothing. `--accept-license` accepts it. |
 
 ## Installing and removing the MSI
 
