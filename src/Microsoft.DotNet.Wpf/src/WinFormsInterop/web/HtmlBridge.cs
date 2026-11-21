@@ -141,7 +141,10 @@ namespace System.Windows.Forms
                 Application.DoEvents();
                 PresentationHost.Current?.Pump();
 
-                System.Threading.Thread.Sleep(1);
+                // the message loop's own wait, as each head has it: on iOS UIKit's run loop, where the
+                // engine's answer is delivered (a plain sleep there never let it arrive: every read was
+                // empty), the compositor's on Linux, the WPF work of the thread on Android
+                PresentationHost.Idle(1);
             }
 
             if (!pending.IsCompleted || pending.IsFaulted)
