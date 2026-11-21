@@ -266,15 +266,16 @@ internal static partial class Program
         var services = info.Services.Select(sv => ServiceName(info, sv)).Concat(Services.Of(root)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         foreach (string name in services) Services.Stop(name);
         foreach (string name in services) { Services.Delete(name); Console.WriteLine($"  service {name} removed"); }
-        StopPrograms(root);
+        // (the apps run as their own <App>.exe in each user's cache: ProgramHost)
+        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        var caches = Profiles().Select(profile => Path.Combine(profile, "AppData", "Local", FileName(info.Product)))
+            .Append(Path.Combine(programData, info.Product, "wpfrun")).ToList();
+        StopPrograms(caches.Prepend(root));
 
         string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), info.Product);
         if (Directory.Exists(menu)) Directory.Delete(menu, recursive: true);
         // every user's caches and logs of the installation's apps (wpfrun.env), and wpfrun's own of the installation
-        foreach (string profile in Profiles())
-            Remove(Path.Combine(profile, "AppData", "Local", FileName(info.Product)));
-        string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
-        Remove(Path.Combine(programData, info.Product, "wpfrun"));
+        foreach (string cache in caches) Remove(cache);
 
         if (all)
         {
@@ -326,30 +327,47 @@ internal static partial class Program
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             foreach (string f in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)) Remove(f);
             foreach (string d in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length).Append(path))
-                try { Directory.Delete(d); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { if (MoveFileExW(d, null, MOVEFILE_DELAY_UNTIL_REBOOT)) s_delayed++; }
+                Retried(() => Directory.Delete(d), d);
         }
         else if (File.Exists(path))
+            Retried(() => { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); }, path);
+    }
+
+    // A file still in use, retried for a while before it is left for Windows' restart: a program just ended lets go
+    // of its files a moment later (on Windows on Arm an x64 program's stay held for some seconds after it has
+    // exited). One grace period for the whole uninstall, from the first file found in use.
+    private static DateTime s_busyUntil;
+
+    private static void Retried(Action delete, string path)
+    {
+        while (true)
         {
-            try { File.SetAttributes(path, FileAttributes.Normal); File.Delete(path); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { if (MoveFileExW(path, null, MOVEFILE_DELAY_UNTIL_REBOOT)) s_delayed++; }
+            try { delete(); return; }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                if (s_busyUntil == default) s_busyUntil = DateTime.UtcNow.AddSeconds(15);
+                if (DateTime.UtcNow < s_busyUntil) { Thread.Sleep(250); continue; }
+                if (MoveFileExW(path, null, MOVEFILE_DELAY_UNTIL_REBOOT)) s_delayed++;
+                return;
+            }
         }
     }
 
     private const uint MOVEFILE_DELAY_UNTIL_REBOOT = 4;
     [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool MoveFileExW(string from, string? to, uint flags);
 
-    /// <summary>Every program running from the installation's folder (its apps, the runtime's dotnet and wpfrun),
-    /// ended.</summary>
-    private static void StopPrograms(string root)
+    /// <summary>Ends every program running from <paramref name="folders"/>: the installation's, and the apps' own
+    /// executables in each user's cache (ProgramHost: an app runs as its own &lt;App&gt;.exe there).</summary>
+    private static void StopPrograms(IEnumerable<string> folders)
     {
-        string prefix = root.TrimEnd('\\') + "\\";
+        var prefixes = folders.Select(f => f.TrimEnd('\\') + "\\").ToList();
         foreach (var p in Process.GetProcesses())
         {
             try
             {
                 if (p.Id == Environment.ProcessId) continue;
                 string? path = p.MainModule?.FileName;
-                if (path == null || !path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                if (path == null || !prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))) continue;
                 Console.WriteLine($"  ending {Path.GetFileName(path)} ({p.Id})");
                 p.Kill(entireProcessTree: true);
                 p.WaitForExit(5000);
