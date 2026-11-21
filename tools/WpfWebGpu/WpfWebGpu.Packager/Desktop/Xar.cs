@@ -9,11 +9,18 @@
 //
 // A file's data is read twice, once for its checksum and once into the archive, so that a payload of gigabytes is
 // never held: the TOC, before it, has to know where everything is.
+//
+// Signed (a Developer ID Installer's package), as productsign signs one: after the checksum in the heap, an RSA
+// signature of it (PKCS#1, the checksum as a SHA-1 digest), then a detached CMS of it (SHA-1, its signing time, and
+// the time-stamp server's token) -- the TOC naming both, with the certificates, before the files' data. The TOC holds
+// the CMS's size and the CMS signs the TOC's checksum: the TOC is written again until the size it names is the
+// CMS's.
 
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Security;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Xml.Linq;
 
@@ -78,12 +85,19 @@ internal sealed class XarWriter
         Walk(toc.Root!.Element("toc")!, folder);
     }
 
-    public void Write(string output)
+    public void Write(string output, Apple.MachOSigner.Identity? signer = null)
     {
         // the data first, in memory where it is compressed (small files) or as a promise to copy (the rest), with offsets
-        long offset = 20;                                       // after the TOC's checksum
+        // from where the files' data starts (after the checksum, and the signatures)
+        long offset = 0;
+        var offsets = new List<(XElement Element, long Relative)>();
         var placed = new List<(Node Node, byte[]? Bytes, long Offset, long Length, long Size, string Archived, string Extracted)>();
         int id = 0;
+        XElement Placed(XElement data, long relative)
+        {
+            offsets.Add((data.Element("offset")!, relative));
+            return data;
+        }
         XElement Element(Node node)
         {
             var file = new XElement("file", new XAttribute("id", ++id), new XElement("name", node.Name));
@@ -118,13 +132,13 @@ internal sealed class XarWriter
                         }
                     }
                     placed.Add((node, bytes, offset, length, size, archived, extracted));
-                    file.Add(new XElement("type", "file"), Owner(d.Mode), DataElement(offset, length, size, d.Compress ? "application/x-gzip" : "application/octet-stream", archived, extracted));
+                    file.Add(new XElement("type", "file"), Owner(d.Mode), Placed(DataElement(offset, length, size, d.Compress ? "application/x-gzip" : "application/octet-stream", archived, extracted), offset));
                     offset += length;
                     break;
                 }
                 case Copied c:
                     placed.Add((node, null, offset, c.Length, c.Size, c.Archived, c.Extracted));
-                    file.Add(new XElement("type", "file"), Owner(0b110_100_100), DataElement(offset, c.Length, c.Size, c.Encoding, c.Archived, c.Extracted));
+                    file.Add(new XElement("type", "file"), Owner(0b110_100_100), Placed(DataElement(offset, c.Length, c.Size, c.Encoding, c.Archived, c.Extracted), offset));
                     offset += c.Length;
                     break;
             }
@@ -134,14 +148,42 @@ internal sealed class XarWriter
         var toc = new XElement("toc",
             new XElement("checksum", new XAttribute("style", "sha1"), new XElement("offset", 0), new XElement("size", 20)),
             new XElement("creation-time", DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)));
+        System.Security.Cryptography.RSA? key = null;
+        XElement? cmsSize = null;
+        int rsaLength = 0, cmsLength = 0;
+        if (signer != null)
+        {
+            key = signer.Certificate.GetRSAPrivateKey() ?? throw new PackagerError("a package is signed with an RSA key (a Developer ID Installer certificate's)");
+            rsaLength = key.KeySize / 8;
+            cmsLength = Cms(new byte[20], signer).Length;
+            var certificates = new[] { signer.Certificate }.Concat(signer.Chain).ToList();
+            toc.Add(new XElement("signature", new XAttribute("style", "RSA"), new XElement("offset", 20), new XElement("size", rsaLength), KeyInfo(certificates)));
+            toc.Add(new XElement("x-signature", new XAttribute("style", "CMS"), new XElement("offset", 20 + rsaLength), cmsSize = new XElement("size", cmsLength), KeyInfo(certificates)));
+        }
         foreach (Node child in _root.Children) toc.Add(Element(child));
         var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), new XElement("xar", toc));
-        byte[] xml = Encoding.UTF8.GetBytes(doc.Declaration + "\n" + doc.Root!.ToString());
-        byte[] compressedToc;
-        using (var ms = new MemoryStream())
+
+        byte[] xml, compressedToc, checksum;
+        byte[] rsa = Array.Empty<byte>(), cms = Array.Empty<byte>();
+        for (int attempt = 0; ; attempt++)
         {
-            using (var z = new ZLibStream(ms, CompressionLevel.Optimal, leaveOpen: true)) z.Write(xml);
-            compressedToc = ms.ToArray();
+            long dataStart = 20 + rsaLength + cmsLength;
+            foreach (var (element, relative) in offsets) element.Value = (dataStart + relative).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            xml = Encoding.UTF8.GetBytes(doc.Declaration + "\n" + doc.Root!.ToString());
+            using (var ms = new MemoryStream())
+            {
+                using (var z = new ZLibStream(ms, CompressionLevel.Optimal, leaveOpen: true)) z.Write(xml);
+                compressedToc = ms.ToArray();
+            }
+            checksum = SHA1.HashData(compressedToc);
+            if (signer == null) break;
+            rsa = key!.SignHash(checksum, HashAlgorithmName.SHA1, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+            cms = Cms(checksum, signer);
+            if (cms.Length == cmsLength) break;
+            // a time stamp a few bytes longer or shorter than the last: the TOC names its size again
+            if (attempt == 8) throw new PackagerError("the package's signature did not settle on a size");
+            cmsLength = cms.Length;
+            cmsSize!.Value = cmsLength.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         using var file = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20);
@@ -154,7 +196,9 @@ internal sealed class XarWriter
         BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(24), 1);         // SHA-1
         file.Write(header);
         file.Write(compressedToc);
-        file.Write(SHA1.HashData(compressedToc));
+        file.Write(checksum);
+        file.Write(rsa);
+        file.Write(cms);
         foreach (var p in placed)
         {
             switch (p.Node)
@@ -172,6 +216,28 @@ internal sealed class XarWriter
                     break;
             }
         }
+    }
+
+    private static readonly XNamespace s_dsig = "http://www.w3.org/2000/09/xmldsig#";
+
+    private static XElement KeyInfo(IEnumerable<System.Security.Cryptography.X509Certificates.X509Certificate2> certificates) =>
+        new(s_dsig + "KeyInfo", new XElement(s_dsig + "X509Data",
+            certificates.Select(c => new XElement(s_dsig + "X509Certificate", Convert.ToBase64String(c.RawData, Base64FormattingOptions.InsertLineBreaks)))));
+
+    // the detached CMS of the TOC's checksum, as productsign makes it: SHA-1, the signing time, the token of a time stamp
+    private static byte[] Cms(byte[] checksum, Apple.MachOSigner.Identity signer)
+    {
+        var cms = new System.Security.Cryptography.Pkcs.SignedCms(new System.Security.Cryptography.Pkcs.ContentInfo(checksum), detached: true);
+        var info = new System.Security.Cryptography.Pkcs.CmsSigner(System.Security.Cryptography.Pkcs.SubjectIdentifierType.IssuerAndSerialNumber, signer.Certificate)
+        {
+            DigestAlgorithm = new System.Security.Cryptography.Oid("1.3.14.3.2.26"),
+            IncludeOption = System.Security.Cryptography.X509Certificates.X509IncludeOption.EndCertOnly,
+        };
+        info.Certificates.AddRange(signer.Chain);
+        info.SignedAttributes.Add(new System.Security.Cryptography.Pkcs.Pkcs9SigningTime(DateTime.UtcNow));
+        cms.ComputeSignature(info, silent: true);
+        if (signer.TimestampUrl != null) Timestamps.Stamp(cms, HashAlgorithmName.SHA1, signer.TimestampUrl);
+        return cms.Encode();
     }
 
     private static XElement[] Owner(int mode) => new[]

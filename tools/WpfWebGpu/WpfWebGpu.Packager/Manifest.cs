@@ -207,9 +207,11 @@ public sealed class SigningSection
     /// <summary>The keychain identity a device .ipa is signed with ("Apple Distribution: Name (TEAM)").</summary>
     public string AppleSigningIdentity { get; set; } = "";
     public string AppleProvisioningProfile { get; set; } = "";
-    /// <summary>The keychain identity a Mac installation's code is signed with ("Developer ID Application: Name (TEAM)").</summary>
+    /// <summary>The .p12 a Mac installation's code is signed with (its "Developer ID Application: Name (TEAM)"
+    /// certificate and key, exported from the keychain); its password WPFPKG_DEVELOPERID_PASSWORD.</summary>
     public string DeveloperIdCertificate { get; set; } = "";
-    /// <summary>The keychain identity a macOS package is signed with ("Developer ID Installer: Name (TEAM)").</summary>
+    /// <summary>The .p12 a macOS package is signed with (its "Developer ID Installer: Name (TEAM)" certificate and
+    /// key); its password WPFPKG_DEVELOPERID_INSTALLER_PASSWORD.</summary>
     public string DeveloperIdInstaller { get; set; } = "";
     /// <summary>The App Store Connect API key (AuthKey_&lt;id&gt;.p8) a Mac package is notarized with, its key id and
     /// issuer id; none: not notarized.</summary>

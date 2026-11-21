@@ -238,7 +238,7 @@ public partial class MainWindow : Window
         string field = (string)((Button)sender).Tag;
         string filter = field switch
         {
-            "AuthenticodeCertificate" => "Certificates with their key (*.pfx;*.p12)|*.pfx;*.p12",
+            "AuthenticodeCertificate" or "DeveloperIdCertificate" or "DeveloperIdInstaller" => "Certificates with their key (*.pfx;*.p12)|*.pfx;*.p12",
             "NotaryKey" => "App Store Connect API keys (*.p8)|*.p8",
             "AppleProvisioningProfile" => "Provisioning profiles (*.mobileprovision;*.provisionprofile)|*.mobileprovision;*.provisionprofile",
             _ => "Keystores (*.jks;*.keystore;*.p12;*.pfx)|*.jks;*.keystore;*.p12;*.pfx",

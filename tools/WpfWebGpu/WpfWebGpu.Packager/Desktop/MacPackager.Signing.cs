@@ -1,11 +1,18 @@
-// A Mac installation as Gatekeeper takes it from the internet: its code signed with the publisher's Developer ID
-// (signing.developerIdCertificate, a keychain identity "Developer ID Application: Name (TEAM)") -- every Mach-O of
-// the payload, then the app stubs' bundles, each with the hardened runtime and a secure time stamp, as notarization
-// requires; the programs with the entitlements .NET needs under the hardened runtime (its JIT's executable memory, the
-// runtime's native libraries and an app's own, which are not the publisher's) -- the package signed as Developer ID
-// Installer (signing.developerIdInstaller), and the whole notarized by Apple (signing.notaryKey: an App Store
-// Connect API key, AuthKey_<id>.p8, with notaryKeyId and notaryIssuer) and the ticket stapled to it, so that it
-// installs on a Mac that is offline too. codesign, notarytool and stapler come with macOS's command line tools.
+// A Mac installation as Gatekeeper takes it from the internet, signed in managed code on any machine (Apple's
+// MachOSigner, the xar's signatures): every Mach-O of the payload with the publisher's Developer ID Application
+// certificate (signing.developerIdCertificate, a .p12; its password WPFPKG_DEVELOPERID_PASSWORD) -- the hardened
+// runtime and a secure time stamp from Apple's server, as notarization requires; the programs with the entitlements
+// .NET needs under the hardened runtime (its JIT's executable memory, the runtime's native libraries and an app's
+// own, which are not the publisher's) -- and the package with its Developer ID Installer certificate
+// (signing.developerIdInstaller, a .p12; WPFPKG_DEVELOPERID_INSTALLER_PASSWORD). Notarized by Apple
+// (signing.notaryKey: an App Store Connect API key, AuthKey_<id>.p8, with notaryKeyId and notaryIssuer) through
+// notarytool, and the ticket stapled to it so that it installs on a Mac that is offline too: that is a Mac's.
+//
+// The app stubs (/Applications/<Product>/<App>.app) are shell scripts that start the signed runtime: a script's
+// signature lives in its extended attributes, which a package's payload does not carry, so they are not signed --
+// as Installer puts them there, they are not quarantined, and Gatekeeper does not assess them.
+
+using WpfWebGpu.Packager.Apple;
 
 namespace WpfWebGpu.Packager.Desktop;
 
@@ -24,31 +31,49 @@ public static partial class MacPackager
         </plist>
         """;
 
-    /// <summary>Signs the payload's code with the Developer ID: the Mach-O files outside bundles (deepest first), then
-    /// the bundles.</summary>
-    private static void SignPayload(string payload, string identity, string work, Action<string> log)
+    /// <summary>A Developer ID certificate's identity from its .p12 (its password the environment variable named), time
+    /// stamped by Apple's server; null where none is named.</summary>
+    private static MachOSigner.Identity? DeveloperId(string p12, string passwordVariable)
     {
-        string entitlements = Path.Combine(work, "hardened-runtime.entitlements");
-        File.WriteAllText(entitlements, HardenedRuntimeEntitlements);
-        // an app bundle: <name>.app with its Contents (not .NET's shared framework folders, Microsoft.AspNetCore.App,
-        // which the file system's case-blind match also finds)
-        var bundles = Directory.EnumerateDirectories(payload, "*.app", SearchOption.AllDirectories)
-            .Where(d => d.EndsWith(".app", StringComparison.Ordinal) && File.Exists(Path.Combine(d, "Contents", "Info.plist"))).ToList();
-        int signed = 0;
-        foreach (string file in Directory.EnumerateFiles(payload, "*", SearchOption.AllDirectories)
-                     .Where(f => !bundles.Any(b => f.StartsWith(b + "/", StringComparison.Ordinal)))
-                     .OrderByDescending(f => f.Count(c => c == '/')))
+        if (p12.Length == 0) return null;
+        if (!p12.EndsWith(".p12", StringComparison.OrdinalIgnoreCase) && !p12.EndsWith(".pfx", StringComparison.OrdinalIgnoreCase))
+            throw new PackagerError($"{p12}: a Developer ID certificate is named by its .p12 (exported from the keychain with its private key)");
+        var loaded = MachOSigner.Identity.Load(p12, Environment.GetEnvironmentVariable(passwordVariable));
+        return new MachOSigner.Identity { Certificate = loaded.Certificate, Chain = loaded.Chain, TeamId = loaded.TeamId, TimestampUrl = Timestamps.Apple };
+    }
+
+    /// <summary>Signs every Mach-O of the payload with the Developer ID: its programs with the hardened runtime's
+    /// entitlements, its libraries without.</summary>
+    internal static void SignPayload(string payload, MachOSigner.Identity identity, Action<string> log)
+    {
+        var entitlements = (PlistDict)Plist.Read(System.Text.Encoding.UTF8.GetBytes(HardenedRuntimeEntitlements));
+        int programs = 0, libraries = 0;
+        foreach (string file in Directory.EnumerateFiles(payload, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
         {
             if (MachOKind(file) is not { } kind) continue;
-            var args = new List<string> { "--force", "--options", "runtime", "--timestamp", "--sign", identity };
-            if (kind == MachOExecute) { args.Add("--entitlements"); args.Add(entitlements); }
-            args.Add(file);
-            Run("/usr/bin/codesign", args.ToArray());
-            signed++;
+            // an app bundle's own code is sealed with its bundle, which the payload's are not (their executables scripts)
+            string? bundle = BundleOf(payload, file);
+            if (bundle != null && kind == MachOExecute)
+                throw new PackagerError($"{Path.GetRelativePath(payload, bundle)}: an app bundle with a program of its own is not signed here");
+            bool program = kind == MachOExecute;
+            MachOSigner.Sign(file, new MachOSigner.Options
+            {
+                // codesign's identifier: the file's name without its extension
+                Identifier = Path.GetFileNameWithoutExtension(file),
+                HardenedRuntime = true,
+                MainExecutable = program,
+                Entitlements = program ? entitlements : null,
+            }, identity);
+            if (program) programs++; else libraries++;
         }
-        foreach (string bundle in bundles.OrderByDescending(b => b.Length))
-            Run("/usr/bin/codesign", "--force", "--options", "runtime", "--timestamp", "--sign", identity, "--entitlements", entitlements, bundle);
-        log($"  signed: {signed} programs and libraries, {bundles.Count} apps ({identity})");
+        log($"  signed: {programs} programs, {libraries} libraries ({identity.Certificate.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false)}), time-stamped by Apple");
+    }
+
+    private static string? BundleOf(string payload, string file)
+    {
+        for (string? d = Path.GetDirectoryName(file); d != null && d.Length > payload.Length; d = Path.GetDirectoryName(d))
+            if (d.EndsWith(".app", StringComparison.Ordinal) && File.Exists(Path.Combine(d, "Contents", "Info.plist"))) return d;
+        return null;
     }
 
     /// <summary>Has Apple notarize the package and staples the ticket to it.</summary>

@@ -223,7 +223,7 @@ public static partial class LinuxPackager
             }
             tar.Finish();
         }
-        Directory.Delete(work, recursive: true);
+        DesktopCommon.RemoveWork(work);
         log($"{archive} ({new FileInfo(archive).Length / (1024 * 1024)} MB)");
         return deb;
     }

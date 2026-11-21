@@ -216,10 +216,12 @@
               <Button Grid.Column="2" Content="Browse…" Tag="AuthenticodeCertificate" Click="OnBrowseSigningFile" />
               <TextBlock Grid.Row="1" Style="{StaticResource Label}" Text="Time-stamp server" />
               <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Signing.TimestampUrl}" />
-              <TextBlock Grid.Row="2" Style="{StaticResource Label}" Text="macOS: Developer ID Application" />
+              <TextBlock Grid.Row="2" Style="{StaticResource Label}" Text="macOS: Developer ID Application (.p12)" />
               <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Signing.DeveloperIdCertificate}" />
-              <TextBlock Grid.Row="3" Style="{StaticResource Label}" Text="macOS: Developer ID Installer" />
+              <Button Grid.Row="2" Grid.Column="2" Content="Browse…" Tag="DeveloperIdCertificate" Click="OnBrowseSigningFile" />
+              <TextBlock Grid.Row="3" Style="{StaticResource Label}" Text="macOS: Developer ID Installer (.p12)" />
               <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Signing.DeveloperIdInstaller}" />
+              <Button Grid.Row="3" Grid.Column="2" Content="Browse…" Tag="DeveloperIdInstaller" Click="OnBrowseSigningFile" />
               <TextBlock Grid.Row="4" Style="{StaticResource Label}" Text="Notary API key (.p8)" />
               <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Signing.NotaryKey}" />
               <Button Grid.Row="4" Grid.Column="2" Content="Browse…" Tag="NotaryKey" Click="OnBrowseSigningFile" />

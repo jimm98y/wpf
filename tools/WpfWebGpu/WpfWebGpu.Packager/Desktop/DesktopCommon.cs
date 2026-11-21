@@ -6,6 +6,15 @@ namespace WpfWebGpu.Packager.Desktop;
 
 internal static class DesktopCommon
 {
+    /// <summary>A target's work folder removed, and the output's .work with it once no other target's is in it.</summary>
+    public static void RemoveWork(string work)
+    {
+        Directory.Delete(work, recursive: true);
+        string parent = Path.GetDirectoryName(work)!;
+        if (Path.GetFileName(parent) == ".work" && Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any())
+            Directory.Delete(parent);
+    }
+
     /// <summary>A name as an identifier's segment: lower case letters, digits and '-'.</summary>
     public static string Segment(string s) => WpfWebGpu.Services.ServiceUnits.Segment(s);
 

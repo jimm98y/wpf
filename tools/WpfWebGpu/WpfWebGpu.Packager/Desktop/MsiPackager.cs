@@ -301,7 +301,7 @@ public static class MsiPackager
             log($"  signed: {certificate.Subject}{(manifest.Signing.TimestampUrl.Length > 0 ? ", time-stamped" : "")}");
         }
         cf.Write(msiPath);
-        Directory.Delete(work, recursive: true);
+        DesktopCommon.RemoveWork(work);
 
         log($"  {files.Count(f => f.Target.StartsWith("app/", StringComparison.Ordinal))} files of the installation, {programData.Count} of ProgramData, {registryValues} registry values"
             + (skipped > 0 ? $" ({skipped} more by Setup's custom action)" : "") + $", {info.Services.Count} services, {info.Apps.Count} Start menu entries");

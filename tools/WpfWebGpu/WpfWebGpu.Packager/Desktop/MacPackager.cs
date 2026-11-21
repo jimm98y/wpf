@@ -29,9 +29,11 @@ public static partial class MacPackager
     public static string Build(PackageManifest manifest, StagedState staged, PackFile runtimePack, string outDir, Action<string> log,
         IReadOnlyList<WebPages.Page>? pages = null, PackFile? sqlPack = null)
     {
-        // made on any machine; what signs it (codesign, productsign) and notarizes it is a Mac's for now
-        bool signs = manifest.Signing.DeveloperIdCertificate.Length > 0 || manifest.Signing.DeveloperIdInstaller.Length > 0 || manifest.Signing.NotaryKey.Length > 0;
-        if (signs && !OperatingSystem.IsMacOS()) throw new PackagerError("a macOS package is signed and notarized on a Mac (codesign, productsign, notarytool): leave signing.developerId* and notaryKey out to make it unsigned here");
+        // made and signed on any machine (MacPackager.Signing.cs); notarized by Apple's notarytool, on a Mac
+        if (manifest.Signing.NotaryKey.Length > 0 && !OperatingSystem.IsMacOS())
+            throw new PackagerError("a macOS package is notarized on a Mac (notarytool): leave signing.notaryKey out to make it signed, not notarized, here");
+        var codeIdentity = DeveloperId(manifest.Signing.DeveloperIdCertificate, "WPFPKG_DEVELOPERID_PASSWORD");
+        var installerIdentity = DeveloperId(manifest.Signing.DeveloperIdInstaller, "WPFPKG_DEVELOPERID_INSTALLER_PASSWORD");
         string product = manifest.Product.Name;
         // the folders an upgrade clears are named by it: never /Applications itself
         if (product.Trim().Length == 0 || product.Contains('/') || product is "." or "..")
@@ -138,7 +140,7 @@ public static partial class MacPackager
         Executable(Path.Combine(scripts, "postinstall"));
 
         // the package gives the installed files their modes itself (MacComponent: readable by all, code runnable)
-        if (manifest.Signing.DeveloperIdCertificate.Length > 0) SignPayload(payload, manifest.Signing.DeveloperIdCertificate, work, log);
+        if (codeIdentity != null) SignPayload(payload, codeIdentity, log);
         // what pkgbuild makes, with the payload compressed on every core (MacComponent); the app stubs installed
         // where they belong, not relocatable: the installer would otherwise update whatever copy of a bundle it
         // finds instead (another folder, or <App>.localized/ beside the old one)
@@ -184,20 +186,15 @@ public static partial class MacPackager
         if (resources != null)
             foreach (string f in Directory.EnumerateFiles(resources, "*", SearchOption.AllDirectories))
                 archive.AddFile("Resources/" + Path.GetRelativePath(resources, f).Replace('\\', '/'), f, compress: true);
-        archive.Write(pkg);
-        if (manifest.Signing.DeveloperIdInstaller.Length > 0)
-        {
-            // signed by productsign (the xar's signature over its table of contents), for now
-            string signed = pkg + ".signed";
-            Run("/usr/bin/productsign", "--sign", manifest.Signing.DeveloperIdInstaller, pkg, signed);
-            File.Move(signed, pkg, overwrite: true);
-        }
+        // signed as productsign signs it: the xar's signatures over its table of contents (Xar.cs)
+        archive.Write(pkg, installerIdentity);
+        if (installerIdentity != null) log($"  the package signed: {installerIdentity.Certificate.GetNameInfo(System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false)}, time-stamped by Apple");
         if (manifest.Signing.NotaryKey.Length > 0)
         {
-            if (manifest.Signing.DeveloperIdInstaller.Length == 0) throw new PackagerError("a notarized package is signed: signing.developerIdInstaller");
+            if (installerIdentity == null) throw new PackagerError("a notarized package is signed: signing.developerIdInstaller");
             Notarize(pkg, manifest.Signing, log);
         }
-        Directory.Delete(work, recursive: true);
+        DesktopCommon.RemoveWork(work);
         log($"{pkg} ({new FileInfo(pkg).Length / (1024 * 1024)} MB)");
         return pkg;
     }

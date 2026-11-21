@@ -15,7 +15,10 @@
 //                                 a plist of cdhashes; .9.2, the hash by algorithm) and the certificate chain
 //
 // All of it big-endian; the page hashes cover the load commands, so the signature's size is settled first and
-// written into LC_CODE_SIGNATURE and __LINKEDIT before anything is hashed.
+// written into LC_CODE_SIGNATURE and __LINKEDIT before anything is hashed. With the hardened runtime the
+// CodeDirectory is version 0x20500, naming the SDK the code was built with (its runtime version), as codesign writes
+// it; with a time-stamp server the CMS carries its token (codesign --timestamp). A universal file is signed slice by
+// slice, each slice at its alignment again.
 
 using System.Buffers.Binary;
 using System.Formats.Asn1;
@@ -58,6 +61,11 @@ public static class MachOSigner
         public X509Certificate2Collection Chain { get; init; } = new();
         /// <summary>The team identifier (an Apple-issued certificate's organizational unit); null for others.</summary>
         public string? TeamId { get; init; }
+        /// <summary>The RFC 3161 server each signature is time-stamped by (<see cref="Timestamps.Apple"/>, as
+        /// notarization requires); null: not stamped.</summary>
+        public string? TimestampUrl { get; init; }
+        // the room a token takes in a signature, measured with the first one
+        internal int? TokenRoom;
 
         /// <summary>The identity in a .p12, its chain completed from the issuers the certificate names (its AIA).</summary>
         public static Identity Load(string p12, string? password)
@@ -88,9 +96,57 @@ public static class MachOSigner
     public static void Sign(string path, Options options, Identity? identity)
     {
         byte[] file = File.ReadAllBytes(path);
-        if (BinaryPrimitives.ReadUInt32LittleEndian(file) != 0xfeedfacf)
-            throw new PackagerError($"{Path.GetFileName(path)}: not a thin 64-bit Mach-O (a universal one is signed slice by slice)");
+        if (BinaryPrimitives.ReadUInt32BigEndian(file) == FatMagic)
+            File.WriteAllBytes(path, SignUniversal(file, options, identity, Path.GetFileName(path)));
+        else if (BinaryPrimitives.ReadUInt32LittleEndian(file) == 0xfeedfacf)
+            File.WriteAllBytes(path, SignThin(file, options, identity));
+        else
+            throw new PackagerError($"{Path.GetFileName(path)}: not a 64-bit Mach-O");
+    }
 
+    private const uint FatMagic = 0xcafebabe;
+
+    // a universal file: its slices (fat_arch: cputype, cpusubtype, offset, size, align as a power of two, big-endian)
+    // each signed, then laid out again at their alignment
+    private static byte[] SignUniversal(byte[] file, Options options, Identity? identity, string name)
+    {
+        int count = (int)BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(4));
+        var slices = new List<(uint Cpu, uint Sub, uint Align, byte[] Bytes)>();
+        for (int i = 0; i < count; i++)
+        {
+            int at = 8 + i * 20;
+            uint offset = BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(at + 8)), size = BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(at + 12));
+            byte[] slice = file.AsSpan((int)offset, (int)size).ToArray();
+            if (BinaryPrimitives.ReadUInt32LittleEndian(slice) != 0xfeedfacf) throw new PackagerError($"{name}: a slice that is not 64-bit");
+            slices.Add((BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(at)), BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(at + 4)),
+                BinaryPrimitives.ReadUInt32BigEndian(file.AsSpan(at + 16)), SignThin(slice, options, identity)));
+        }
+        long length = 8 + count * 20;
+        var offsets = new long[count];
+        for (int i = 0; i < count; i++)
+        {
+            long align = 1L << (int)slices[i].Align;
+            offsets[i] = (length + align - 1) / align * align;
+            length = offsets[i] + slices[i].Bytes.Length;
+        }
+        var output = new byte[length];
+        W32(output, 0, FatMagic);
+        W32(output, 4, (uint)count);
+        for (int i = 0; i < count; i++)
+        {
+            int at = 8 + i * 20;
+            W32(output, at, slices[i].Cpu);
+            W32(output, at + 4, slices[i].Sub);
+            W32(output, at + 8, (uint)offsets[i]);
+            W32(output, at + 12, (uint)slices[i].Bytes.Length);
+            W32(output, at + 16, slices[i].Align);
+            slices[i].Bytes.CopyTo(output, offsets[i]);
+        }
+        return output;
+    }
+
+    private static byte[] SignThin(byte[] file, Options options, Identity? identity)
+    {
         var macho = Layout.Read(file);
         // what the signature covers: the file up to it, 16-byte aligned (the old signature dropped)
         int codeLimit = macho.SignatureOffset > 0 ? macho.SignatureOffset : (file.Length + 15) & ~15;
@@ -103,14 +159,15 @@ public static class MachOSigner
         int nCode = (codeLimit + PageSize - 1) / PageSize;
         byte[] ident = Encoding.UTF8.GetBytes(options.Identifier + "\0");
         byte[] team = identity?.TeamId is { Length: > 0 } t ? Encoding.UTF8.GetBytes(t + "\0") : Array.Empty<byte>();
-        const int cdHeader = 88;                                                                 // version 0x20400
+        // version 0x20400 (the exec segment), or 0x20500 (and the runtime version) for the hardened runtime
+        int cdHeader = options.HardenedRuntime ? 96 : 88;
         int hashOffset = cdHeader + ident.Length + team.Length + nSpecial * HashSize;
         int cdLength = hashOffset + nCode * HashSize;
 
         // the CMS's room is settled before the pages are hashed (its size is in the load commands they cover): a
         // signature over a CodeDirectory of the same length, and some to spare (a signing time, an ECDSA signature's
         // length vary by a few bytes)
-        int cmsRoom = identity == null ? 8 : Blob(MagicBlobWrapper, Cms(new byte[cdLength], identity)).Length + 64;
+        int cmsRoom = identity == null ? 8 : Blob(MagicBlobWrapper, Cms(new byte[cdLength], identity, stamp: false)).Length + 64 + TokenRoom(identity, cdLength);
 
         var blobs = new List<(uint Slot, int Length)> { (0, cdLength), (2, requirements.Length) };
         if (entitlements != null) blobs.Add((5, entitlements.Length));
@@ -137,10 +194,10 @@ public static class MachOSigner
         var cd = new byte[cdLength];
         W32(cd, 0, MagicCodeDirectory);
         W32(cd, 4, (uint)cdLength);
-        W32(cd, 8, 0x20400);
+        W32(cd, 8, options.HardenedRuntime ? 0x20500u : 0x20400u);
         W32(cd, 12, (identity == null ? CsAdhoc : 0) | (options.HardenedRuntime ? CsRuntime : 0));
         W32(cd, 16, (uint)hashOffset);
-        W32(cd, 20, cdHeader);                       // identOffset
+        W32(cd, 20, (uint)cdHeader);                       // identOffset
         W32(cd, 24, (uint)nSpecial);
         W32(cd, 28, (uint)nCode);
         W32(cd, 32, (uint)codeLimit);
@@ -153,6 +210,7 @@ public static class MachOSigner
         W64(cd, 64, macho.TextFileOffset);           // execSegBase
         W64(cd, 72, macho.TextFileSize);             // execSegLimit
         W64(cd, 80, options.MainExecutable ? 1ul : 0ul);   // CS_EXECSEG_MAIN_BINARY
+        if (options.HardenedRuntime) W32(cd, 88, macho.Sdk);   // runtime; preEncryptOffset (92) 0
         ident.CopyTo(cd, cdHeader);
         team.CopyTo(cd, cdHeader + ident.Length);
         for (int i = 0; i < nSpecial; i++) special[i].CopyTo(cd, hashOffset - (i + 1) * HashSize);
@@ -163,7 +221,7 @@ public static class MachOSigner
         }
 
         // the CMS over the finished CodeDirectory, in the room kept for it (the rest of the room is padding)
-        byte[] cms = Blob(MagicBlobWrapper, identity == null ? Array.Empty<byte>() : Cms(cd, identity));
+        byte[] cms = Blob(MagicBlobWrapper, identity == null ? Array.Empty<byte>() : Cms(cd, identity, stamp: true));
         if (cms.Length > cmsRoom) throw new PackagerError("the CMS signature came out larger than the room kept for it");
         superLength += cms.Length - cmsRoom;
         blobs[^1] = (0x10000, cms.Length);
@@ -184,7 +242,16 @@ public static class MachOSigner
             contents[blobs[i].Slot].CopyTo(output, at + offset);
             offset += blobs[i].Length;
         }
-        File.WriteAllBytes(path, output);
+        return output;
+    }
+
+    // what a time-stamp token adds to a signature: measured once (a token of a signature over a CodeDirectory of
+    // this size), with room to spare for the next ones' few bytes more
+    private static int TokenRoom(Identity identity, int cdLength)
+    {
+        if (identity.TimestampUrl == null) return 0;
+        identity.TokenRoom ??= Cms(new byte[cdLength], identity, stamp: true).Length - Cms(new byte[cdLength], identity, stamp: false).Length + 512;
+        return identity.TokenRoom.Value;
     }
 
     /// <summary>The CodeDirectory's hash (the cdhash: its first 20 bytes name the signature) of a signed file.</summary>
@@ -208,7 +275,7 @@ public static class MachOSigner
 
     // ---- the CMS signature -------------------------------------------------------------------------------------
 
-    private static byte[] Cms(byte[] codeDirectory, Identity identity)
+    private static byte[] Cms(byte[] codeDirectory, Identity identity, bool stamp)
     {
         byte[] full = SHA256.HashData(codeDirectory);
         var signer = new CmsSigner(SubjectIdentifierType.IssuerAndSerialNumber, identity.Certificate)
@@ -231,6 +298,7 @@ public static class MachOSigner
         signer.SignedAttributes.Add(new AsnEncodedData(new Oid("1.2.840.113635.100.9.2"), byAlgorithm.Encode()));
         var cms = new SignedCms(new ContentInfo(codeDirectory), detached: true);
         cms.ComputeSignature(signer, silent: true);
+        if (stamp && identity.TimestampUrl != null) Timestamps.Stamp(cms, HashAlgorithmName.SHA256, identity.TimestampUrl);
         return cms.Encode();
     }
 
@@ -282,6 +350,8 @@ public static class MachOSigner
         public int SignatureCommand = -1, LinkEdit = -1, HeaderEnd, CommandsEnd, Ncmds;
         public int SignatureOffset;
         public ulong TextFileOffset, TextFileSize;
+        /// <summary>The SDK the code was built with (LC_BUILD_VERSION's, LC_VERSION_MIN_*'s), as 0xXXXXYYZZ; 0: none named.</summary>
+        public uint Sdk;
 
         public static Layout Read(byte[] f)
         {
@@ -299,6 +369,8 @@ public static class MachOSigner
                     l.SignatureCommand = at;
                     l.SignatureOffset = (int)BinaryPrimitives.ReadUInt32LittleEndian(f.AsSpan(at + 8));
                 }
+                else if (cmd == 0x32) l.Sdk = BinaryPrimitives.ReadUInt32LittleEndian(f.AsSpan(at + 16));                     // LC_BUILD_VERSION
+                else if (cmd is 0x24 or 0x25 or 0x2f or 0x30) l.Sdk = BinaryPrimitives.ReadUInt32LittleEndian(f.AsSpan(at + 12));  // LC_VERSION_MIN_*
                 else if (cmd == LcSegment64)
                 {
                     string name = Encoding.ASCII.GetString(f, at + 8, 16).TrimEnd('\0');

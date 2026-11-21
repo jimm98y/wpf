@@ -107,7 +107,7 @@ public static partial class LinuxPackager
             using (var c = File.OpenRead(control)) ArMember(output, "control.tar.gz", c);
             using (var d = File.OpenRead(data)) ArMember(output, "data.tar.gz", d);
         }
-        Directory.Delete(work, recursive: true);
+        DesktopCommon.RemoveWork(work);
         log($"{deb}: {sql.Engine}, instance {manifest.SqlServer.Instance} ({sql.Image}, pulled when installed)");
         return deb;
     }

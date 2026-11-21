@@ -288,17 +288,7 @@ public static class Authenticode
     }
 
     // an RFC 3161 time stamp of the signature (its encrypted digest), the token as the server gives it (a SignedData)
-    private static byte[] Timestamp(byte[] signature, string url)
-    {
-        var request = Rfc3161TimestampRequest.CreateFromData(signature, HashAlgorithmName.SHA256, requestSignerCertificates: true, nonce: RandomNumberGenerator.GetBytes(8));
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
-        using var body = new ByteArrayContent(request.Encode());
-        body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/timestamp-query");
-        using var response = http.PostAsync(url, body).GetAwaiter().GetResult();
-        if (!response.IsSuccessStatusCode) throw new PackagerError($"{url}: {(int)response.StatusCode} {response.ReasonPhrase}");
-        var token = request.ProcessResponse(response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult(), out _);
-        return token.AsSignedCms().Encode();
-    }
+    private static byte[] Timestamp(byte[] signature, string url) => Timestamps.Token(signature, HashAlgorithmName.SHA256, url);
 
     // ---- the PE file ------------------------------------------------------------------------------------
 
