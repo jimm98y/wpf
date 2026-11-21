@@ -117,7 +117,7 @@ public static class Icons
     }
 
     // A box filter over premultiplied colour: each target pixel the mean of the source area it covers.
-    private static byte[] Scale(byte[] src, int sw, int sh, int dw, int dh)
+    internal static byte[] Scale(byte[] src, int sw, int sh, int dw, int dh)
     {
         var dst = new byte[dw * dh * 4];
         double fx = (double)sw / dw, fy = (double)sh / dh;

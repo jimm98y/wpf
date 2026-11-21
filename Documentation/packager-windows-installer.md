@@ -7,13 +7,37 @@ its registry, its services and its Start menu entries. Every program runs on the
 | | `<Product>-<version>-windows-<arch>-Setup.exe` | `<Product>-<version>-windows-<arch>.msi` |
 |---|---|---|
 | What it is | Our own setup program with the installation appended to it | A Windows Installer package |
-| For | Installing by hand: it asks its questions in a console window | Deployment tools (Group Policy, Intune, Configuration Manager), `msiexec /qn`, repair and rollback |
+| For | Installing by hand: it asks its questions in a console window | Installing by hand, with Windows Installer's wizard; deployment tools (Group Policy, Intune, Configuration Manager), `msiexec /qn`, repair and rollback |
 | SQL Server | Brings SQL Server Express and installs it, unless told not to | Not included: install it first (see [SQL Server](#sql-server)) |
 | Uninstall | Apps & features, or `uninstall.exe /uninstall` | Apps & features, or `msiexec /x <product code>` |
 
 The manifest's `output.windowsFormats` chooses which ones are written: `["setup", "msi"]` by default.
 
 Both are written in managed code (no WiX, no signtool), so they can be built on macOS and Linux as well as Windows.
+
+## The wizard
+
+Opened by double-click, the MSI shows the standard installer wizard:
+
+| | Pages |
+|---|---|
+| First install | Welcome → License Agreement → Destination Folder (with **Change...**, a folder browser) → Ready to Install → progress → Completed |
+| Upgrade | Welcome ("will update … to version …") → License Agreement → Ready to Install. The folder stays the one installed to, since the installation's settings and data point there. |
+| Already installed | **Repair** or **Remove** → Ready to Repair / Ready to Remove → progress → Completed. Ready to Remove has **Keep the settings and data**, which is `KEEPDATA=1`. |
+
+The other pages are the usual ones: the "are you sure" box when Cancel is clicked, the error box, out of disk space,
+and the pages for an installation that was interrupted or ended by an error. Windows asks for an administrator's
+consent (UAC) when Install is clicked.
+
+- **The license:** the License Agreement page is there when the manifest's `product.license` names a file, relative
+  to the manifest. Use an `.rtf` as it is, or a text file, which is shown as plain text. Next stays disabled until
+  the license is accepted.
+- **The pictures:** the white banner and the welcome page's band carry the product's icon: `product.icon`, else the
+  first window app's.
+- **The folder installed to** is kept in `HKLM\SOFTWARE\<id>\InstallDir`. An upgrade finds it there, and
+  `msiexec /i … INSTALLDIR=D:\Apps\Product\ /qn` chooses one without the wizard.
+- **Repair** writes the installation's files, shortcuts and registry values again, but not values or ProgramData
+  files the machine already has. It stops the services and the programs first, then starts the services again.
 
 ## Installing and removing the MSI
 
@@ -79,5 +103,4 @@ signature valid after the certificate expires. External cabinets are not covered
   under 1.6 GB of uncompressed data, so a large installation is split across several cabinets.
 - The product version is `major.minor.build`, at most `255.255.65535`. A fourth field is kept, but Windows Installer
   ignores it when comparing versions.
-- No dialogs: opened by double-click, the MSI shows Windows Installer's progress window only. Setup.exe is the
-  installer that asks questions.
+- The wizard is in English.

@@ -145,6 +145,11 @@ public static class MsiPackager
         // ---- the Start menu ----
         string menu = tables.Next("c");
         db["Registry"].Add("rMenu", 2, Formatted($@"Software\{info.Id}"), "StartMenu", "#1", menu);
+        // the folder installed to, which an upgrade's AppSearch finds again (its data points there)
+        db["Registry"].Add("rDir", 2, Formatted($@"Software\{info.Id}"), "InstallDir", "[INSTALLDIR]", menu);
+        db["RegLocator"].Add("WpfFindDir", 2, $@"Software\{info.Id}", "InstallDir", 2 | 0x10);   // the raw value, 64-bit
+        db["AppSearch"].Add("INSTALLDIR", "WpfFindDir");
+        _ = db["Signature"];   // AppSearch reads it, though a registry search has no row there
         db["Component"].Add(menu, NameGuid("menu:" + upgradeCode), "WPFMENU", componentBits | 0x4, null, "rMenu");
         db["RemoveFile"].Add("rmMenu", menu, null, "WPFMENU", 2);
         tables.Feature(menu);
@@ -226,16 +231,16 @@ public static class MsiPackager
         db["CustomAction"].Add("WpfRecord", 2 | 0x400 | 0x800, "WpfSetup", $"/msi record {installDir} \"[UserSID]\"");
         db["CustomAction"].Add("WpfRollback", 2 | 0x400 | 0x100 | 0x800, "WpfSetup", $"/msi rollback {installDir}");
         db["CustomAction"].Add("WpfInstall", 2 | 0x400 | 0x800, "WpfSetup", $"/msi install {installDir} \"[UserSID]\"");
-        db["CustomAction"].Add("WpfStop", 2 | 0x400 | 0x800 | 0x40, "WpfSetup", $"/msi stop {installDir} \"[UPGRADINGPRODUCTCODE]\"");
+        db["CustomAction"].Add("WpfStop", 2 | 0x400 | 0x800 | 0x40, "WpfSetup", $"/msi stop {installDir} \"[UPGRADINGPRODUCTCODE][REINSTALL]\"");
         db["CustomAction"].Add("WpfCleanup", 2 | 0x400 | 0x800 | 0x40, "WpfSetup", $"/msi cleanup {installDir} \"[KEEPDATA]\"");
         const string installing = "NOT (REMOVE=\"ALL\")", removing = "REMOVE=\"ALL\"";
         var execute = new (string Action, string? Condition, int Sequence)[]
         {
-            ("FindRelatedProducts", null, 25), ("LaunchConditions", null, 100), ("ValidateProductID", null, 700),
+            ("FindRelatedProducts", null, 25), ("AppSearch", null, 50), ("LaunchConditions", null, 100), ("ValidateProductID", null, 700),
             ("CostInitialize", null, 800), ("FileCost", null, 900), ("CostFinalize", null, 1000),
             ("WpfSetAppDir", null, 1010), ("WpfSetProgramData", null, 1011), ("WpfSetLocation", null, 1012),
             ("InstallValidate", null, 1400), ("RemoveExistingProducts", null, 1450), ("InstallInitialize", null, 1500),
-            ("WpfStop", removing, 1510), ("WpfRecord", installing, 1520),
+            ("WpfStop", removing + " OR REINSTALL", 1510), ("WpfRecord", installing, 1520),
             ("ProcessComponents", null, 1600), ("UnpublishFeatures", null, 1800), ("RemoveRegistryValues", null, 2600),
             ("RemoveShortcuts", null, 3200), ("RemoveFiles", null, 3500), ("RemoveFolders", null, 3600),
             ("WpfCleanup", removing + " AND NOT UPGRADINGPRODUCTCODE", 3650),
@@ -247,7 +252,7 @@ public static class MsiPackager
         foreach (var (action, condition, sequence) in execute) db["InstallExecuteSequence"].Add(action, condition, sequence);
         var ui = new (string Action, int Sequence)[]
         {
-            ("FindRelatedProducts", 25), ("LaunchConditions", 100), ("ValidateProductID", 700), ("CostInitialize", 800), ("FileCost", 900),
+            ("FindRelatedProducts", 25), ("AppSearch", 50), ("LaunchConditions", 100), ("ValidateProductID", 700), ("CostInitialize", 800), ("FileCost", 900),
             ("CostFinalize", 1000), ("WpfSetAppDir", 1010), ("WpfSetProgramData", 1011), ("WpfSetLocation", 1012), ("ExecuteAction", 1300),
         };
         foreach (var (action, sequence) in ui) db["InstallUISequence"].Add(action, null, sequence);
@@ -265,10 +270,13 @@ public static class MsiPackager
             ("ProductCode", productCode), ("UpgradeCode", upgradeCode), ("ProductName", product), ("ProductVersion", version),
             ("Manufacturer", manifest.Product.Publisher.Length > 0 ? manifest.Product.Publisher : product), ("ProductLanguage", "1033"),
             ("ALLUSERS", "1"), ("ARPNOMODIFY", "1"), ("MSIRESTARTMANAGERCONTROL", "Disable"),
-            ("SecureCustomProperties", "WPFOLDER;WPFNEWER;KEEPDATA"),
+            ("SecureCustomProperties", "INSTALLDIR;WPFOLDER;WPFNEWER;KEEPDATA"),
         };
         if (productIcon != null) properties.Add(("ARPPRODUCTICON", productIcon));
         foreach (var (name, value) in properties) db["Property"].Add(name, value);
+        // opened by double-click: the wizard
+        MsiUi.Add(db, manifest.Product.License.Length > 0 ? MsiUi.LicenseRtf(manifest.Product.License) : null,
+            DesktopCommon.Icon(manifest) ?? DesktopCommon.Icon(manifest, manifest.Apps.FirstOrDefault(a => a.Kind == AppKind.Gui)));
 
         // ---- the package ----
         db.Codepage = AllIn1252(db) ? 1252 : 65001;

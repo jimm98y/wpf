@@ -281,5 +281,20 @@ public static class MsiSchema
         ["RemoveFile"] = new[] { S("FileKey", 72, key: true), S("Component_", 72), S("FileName", 255, nullable: true, localizable: true), S("DirProperty", 72), I2("InstallMode") },
         ["CreateFolder"] = new[] { S("Directory_", 72, key: true), S("Component_", 72, key: true) },
         ["ServiceControl"] = new[] { S("ServiceControl", 72, key: true), S("Name", 255, localizable: true), I2("Event"), S("Arguments", 255, nullable: true, localizable: true), I2("Wait", nullable: true), S("Component_", 72) },
+        ["AppSearch"] = new[] { S("Property", 72, key: true), S("Signature_", 72, key: true) },
+        ["Signature"] = new[] { S("Signature", 72, key: true), S("FileName", 255, localizable: true), S("MinVersion", 20, nullable: true), S("MaxVersion", 20, nullable: true), I4("MinSize", nullable: true), I4("MaxSize", nullable: true), I4("MinDate", nullable: true), I4("MaxDate", nullable: true), S("Languages", 255, nullable: true) },
+        ["RegLocator"] = new[] { S("Signature_", 72, key: true), I2("Root"), S("Key", 255), S("Name", 255, nullable: true), I2("Type", nullable: true) },
+
+        // the dialogs
+        ["Dialog"] = new[] { S("Dialog", 72, key: true), I2("HCentering"), I2("VCentering"), I2("Width"), I2("Height"), I4("Attributes", nullable: true), S("Title", 128, nullable: true, localizable: true), S("Control_First", 50), S("Control_Default", 50, nullable: true), S("Control_Cancel", 50, nullable: true) },
+        ["Control"] = new[] { S("Dialog_", 72, key: true), S("Control", 50, key: true), S("Type", 20), I2("X"), I2("Y"), I2("Width"), I2("Height"), I4("Attributes", nullable: true), S("Property", 72, nullable: true), S("Text", 0, nullable: true, localizable: true), S("Control_Next", 50, nullable: true), S("Help", 50, nullable: true, localizable: true) },
+        ["ControlEvent"] = new[] { S("Dialog_", 72, key: true), S("Control_", 50, key: true), S("Event", 50, key: true), S("Argument", 255, key: true), S("Condition", 255, key: true, nullable: true), I2("Ordering", nullable: true) },
+        ["ControlCondition"] = new[] { S("Dialog_", 72, key: true), S("Control_", 50, key: true), S("Action", 50, key: true), S("Condition", 255, key: true) },
+        ["EventMapping"] = new[] { S("Dialog_", 72, key: true), S("Control_", 50, key: true), S("Event", 50, key: true), S("Attribute", 50) },
+        ["CheckBox"] = new[] { S("Property", 72, key: true), S("Value", 64, nullable: true) },
+        ["TextStyle"] = new[] { S("TextStyle", 72, key: true), S("FaceName", 32), I2("Size"), I4("Color", nullable: true), I2("StyleBits", nullable: true) },
+        ["UIText"] = new[] { S("Key", 72, key: true), S("Text", 255, nullable: true, localizable: true) },
+        ["ActionText"] = new[] { S("Action", 72, key: true), S("Description", 0, nullable: true, localizable: true), S("Template", 0, nullable: true, localizable: true) },
+        ["Error"] = new[] { I2("Error", key: true), S("Message", 0, nullable: true, localizable: true) },
     };
 }

@@ -307,4 +307,69 @@ public class MsiWriterTests
         var summary = msi.File.Read(SummaryInformation.StreamName)!;
         Assert.Contains("Arm64;1033", Encoding.Latin1.GetString(summary));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_wizard_s_dialogs_hold_together(bool withLicense)
+    {
+        string root = TestEnvironment.NewDirectory("msiui");
+        string install = Directory.CreateDirectory(Path.Combine(root, "install")).FullName;
+        File.WriteAllText(Path.Combine(install, "readme.txt"), "hello");
+        string runtimePack = Directory.CreateDirectory(Path.Combine(root, "desktop-win-arm64", "runtime")).Parent!.FullName;
+        string setupPack = Directory.CreateDirectory(Path.Combine(root, "setup-win-arm64")).FullName;
+        File.WriteAllBytes(Path.Combine(setupPack, "Setup.exe"), new byte[100]);
+        string license = Path.Combine(root, "license.txt");
+        File.WriteAllText(license, "Terms {of use}\nno\\warranty, café");
+        var manifest = new PackageManifest
+        {
+            Inputs = new InputsSection { InstallDir = install },
+            Product = new ProductSection { Name = "Product", Version = "1.0.0", License = withLicense ? license : "" },
+        };
+        PackFile Pack(string kind, string dir) => new() { Kind = kind, Directory = dir, Info = new Dictionary<string, string> { ["rid"] = "win-arm64" } };
+        string msiPath = MsiPackager.Build(manifest, new StagedState { RegistryDir = Path.Combine(root, "none"), ProgramDataFiles = Array.Empty<(string, string)>() },
+            Pack("desktop-win-arm64", runtimePack), Pack("setup-win-arm64", setupPack), Path.Combine(root, "out"), _ => { });
+
+        var msi = new MsiReader(File.ReadAllBytes(msiPath));
+        var dialogs = msi.Rows("Dialog").ToDictionary(d => (string)d[0]!);
+        var controls = msi.Rows("Control").ToLookup(c => (string)c[0]!);
+        Assert.Equal(withLicense, dialogs.ContainsKey("LicenseAgreementDlg"));
+        foreach (var (name, d) in dialogs)
+        {
+            var mine = controls[name].ToDictionary(c => (string)c[1]!);
+            Assert.Contains((string)d[7]!, mine.Keys);                           // its first control
+            if (d[8] is string def) Assert.Contains(def, mine.Keys);
+            if (d[9] is string cancel) Assert.Contains(cancel, mine.Keys);
+            // the tab order: a cycle through every control in it
+            var chained = mine.Values.Where(c => c[10] != null).ToList();
+            string at = (string)chained[0][1]!;
+            var seen = new HashSet<string>();
+            while (seen.Add(at)) at = (string)mine[at][10]!;
+            Assert.Equal(chained.Count, seen.Count);
+        }
+        foreach (var e in msi.Rows("ControlEvent"))
+        {
+            Assert.Contains((string)e[1]!, controls[(string)e[0]!].Select(c => (string)c[1]!));
+            if ((string)e[2]! is "NewDialog" or "SpawnDialog") Assert.Contains((string)e[3]!, dialogs.Keys);
+        }
+        foreach (var c in msi.Rows("ControlCondition").Concat(msi.Rows("EventMapping")))
+            Assert.Contains((string)c[1]!, controls[(string)c[0]!].Select(x => (string)x[1]!));
+        var binaries = msi.Rows("Binary").Select(b => (string)b[0]!).ToHashSet();
+        foreach (var c in controls.SelectMany(g => g).Where(c => (string)c[2]! is "Bitmap" or "Icon"))
+            Assert.Contains((string)c[9]!, binaries);
+        var ui = msi.Rows("InstallUISequence").ToDictionary(a => (string)a[0]!, a => (int)a[2]!);
+        foreach (var (action, sequence) in ui.Where(a => a.Key.EndsWith("Dlg") || a.Key is "ExitDialog" or "UserExit" or "FatalError"))
+            Assert.Contains(action, dialogs.Keys);
+        Assert.True(ui["CostFinalize"] < ui["WelcomeDlg"] && ui["ProgressDlg"] < ui["ExecuteAction"]);
+        var props = msi.Rows("Property").ToDictionary(r => (string)r[0]!, r => (string?)r[1]);
+        Assert.Equal("ErrorDlg", props["ErrorDialog"]);
+        Assert.Contains("INSTALLDIR", props["SecureCustomProperties"]!.Split(';'));
+        if (withLicense)
+        {
+            string rtf = (string)controls["LicenseAgreementDlg"].Single(c => (string)c[1]! == "LicenseText")[9]!;
+            Assert.StartsWith(@"{\rtf1", rtf);
+            Assert.Contains(@"Terms \{of use\}\par", rtf);
+            Assert.Contains(@"no\\warranty, caf\u233?", rtf);
+        }
+    }
 }
