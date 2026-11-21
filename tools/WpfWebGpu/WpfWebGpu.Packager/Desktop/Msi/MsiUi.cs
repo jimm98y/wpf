@@ -398,28 +398,4 @@ internal static class MsiUi
             }
         return b;
     }
-
-    /// <summary>The license agreement as the license page shows it: an .rtf as it is, a text file made RTF.</summary>
-    public static string LicenseRtf(string path)
-    {
-        if (!File.Exists(path)) throw new PackagerError($"no such license file: {path}");
-        if (path.EndsWith(".rtf", StringComparison.OrdinalIgnoreCase))
-        {
-            string rtf = File.ReadAllText(path, Encoding.Latin1);
-            if (!rtf.StartsWith(@"{\rtf", StringComparison.Ordinal)) throw new PackagerError($"{path}: not an RTF document");
-            return rtf;
-        }
-        var sb = new StringBuilder(@"{\rtf1\ansi\ansicpg1252\deff0\uc1{\fonttbl{\f0\fswiss Tahoma;}}\viewkind4\pard\f0\fs16 ");
-        foreach (char c in File.ReadAllText(path).Replace("\r\n", "\n").TrimEnd())
-            sb.Append(c switch
-            {
-                '\\' or '{' or '}' => "\\" + c,
-                '\n' => "\\par\n",
-                '\t' => "\\tab ",
-                '\r' => "",
-                > (char)127 => $"\\u{(short)c}?",
-                _ => c.ToString(),
-            });
-        return sb.Append('}').ToString();
-    }
 }

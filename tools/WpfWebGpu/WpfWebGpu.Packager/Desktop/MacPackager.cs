@@ -170,6 +170,15 @@ public static partial class MacPackager
             resources = Path.Combine(work, "resources");
             SqlServerConclusion(dist, manifest, resources);
         }
+        if (manifest.Product.License.Length > 0)
+        {
+            // the license agreement: Installer's License page, Continue then Agree before installing (`installer` agrees)
+            resources ??= Path.Combine(work, "resources");
+            Directory.CreateDirectory(resources);
+            File.WriteAllText(Path.Combine(resources, "License.rtf"), License.Rtf(manifest.Product.License, "Helvetica", 26), System.Text.Encoding.Latin1);
+            dist.Root!.Add(new System.Xml.Linq.XElement("license", new System.Xml.Linq.XAttribute("file", "License.rtf"), new System.Xml.Linq.XAttribute("mime-type", "text/rtf")));
+            log("  the license agreement: Installer's License page");
+        }
         dist.Root!.AddFirst(new System.Xml.Linq.XElement("title", product));
         archive.AddBytes("Distribution", System.Text.Encoding.UTF8.GetBytes(dist.Declaration + "\n" + dist.Root!.ToString()), compress: true);
         if (resources != null)

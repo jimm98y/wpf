@@ -11,6 +11,8 @@
 //                             (/all: everything, without asking)
 //   /quiet                    no prompt at the end, nor the questions (their defaults taken: everything removed)
 //   /sql, /nosql              the SQL Server it brings installed, or left out, without asking (SqlServer.cs)
+//   /acceptlicense            the license agreement accepted without showing it (/quiet accepts it too, as
+//                             msiexec /qn does); otherwise it is shown and must be accepted, or nothing is installed
 
 using System.ComponentModel;
 using System.Diagnostics;
@@ -40,7 +42,7 @@ internal static partial class Program
         {
             if (!OperatingSystem.IsWindows()) throw new InvalidOperationException("Setup.exe installs on Windows.");
             int code = args.Any(a => a.Equals("/uninstall", StringComparison.OrdinalIgnoreCase)) ? Uninstall() : Install();
-            Done(code == 0 ? "Done." : "Failed.");
+            Done(code == 0 ? "Done." : code == 1602 ? "Cancelled." : "Failed.");
             return code;
         }
         catch (Exception e)
@@ -81,6 +83,11 @@ internal static partial class Program
         SetupInfo info;
         using (var s = (zip.GetEntry("setup.json") ?? throw new InvalidOperationException("no setup.json")).Open()) info = SetupInfo.Read(s);
 
+        if (zip.GetEntry("license.txt") is { } license && !AcceptLicense(info, license))
+        {
+            Console.WriteLine("The license agreement was not accepted: nothing was installed.");
+            return 1602;     // as Windows Installer's: cancelled by the user
+        }
         string root = InstallRoot(info);
         string programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
         Console.WriteLine($"Installing {info.Product} {info.Version} into {root}");
@@ -337,6 +344,28 @@ internal static partial class Program
             for (string? d = dir; d != null && d.Length > programData.Length && d.StartsWith(programData, StringComparison.OrdinalIgnoreCase); d = Path.GetDirectoryName(d))
                 if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); else break;
         Console.WriteLine($"  ProgramData: {record.ProgramDataFiles.Count} files, {record.ProgramDataFolders.Count} folders removed");
+    }
+
+    /// <summary>The license agreement shown, and accepted by a "y" (no answer, or no console to answer in, refuses it);
+    /// accepted without asking with /quiet or /acceptlicense.</summary>
+    private static bool AcceptLicense(SetupInfo info, ZipArchiveEntry license)
+    {
+        if (s_quiet || s_args.Any(a => a.Equals("/acceptlicense", StringComparison.OrdinalIgnoreCase)))
+        {
+            Console.WriteLine($"The license agreement of {info.Product}: accepted ({(s_quiet ? "/quiet" : "/acceptlicense")}).");
+            return true;
+        }
+        string text;
+        using (var reader = new StreamReader(license.Open(), Encoding.UTF8)) text = reader.ReadToEnd();
+        string rule = new('-', 78);
+        Console.WriteLine($"{info.Product} {info.Version}: the license agreement");
+        Console.WriteLine(rule);
+        Console.WriteLine(text);
+        Console.WriteLine(rule);
+        Console.Write("Do you accept the terms of the license agreement? [y/N] ");
+        string? answer = Console.ReadLine()?.Trim();
+        if (answer == null) Console.WriteLine();
+        return answer != null && (answer.StartsWith('y') || answer.StartsWith('Y'));
     }
 
     private static bool Ask(string question)

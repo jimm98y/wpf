@@ -99,6 +99,10 @@ public static class WindowsPackager
             using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
             {
                 using (var s = zip.CreateEntry("setup.json", CompressionLevel.Optimal).Open()) info.Write(s);
+                // the license agreement, which Setup shows and asks to be accepted before installing
+                if (manifest.Product.License.Length > 0)
+                    using (var w = new StreamWriter(zip.CreateEntry("license.txt", CompressionLevel.Optimal).Open(), new System.Text.UTF8Encoding(false)))
+                        w.Write(License.Text(manifest.Product.License));
                 int files = 0;
                 foreach (var (source, target) in InstallationFiles(manifest, plan, certificate, outDir, log))
                 {

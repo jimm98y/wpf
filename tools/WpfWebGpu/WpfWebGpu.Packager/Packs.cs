@@ -25,6 +25,9 @@ public sealed class PackFile
         string file = Path.Combine(packsFolder, kind + ".pack");
         if (!File.Exists(file)) throw new PackagerError($"no {kind}.pack in {packsFolder}: the template for this target is not installed");
         var fi = new FileInfo(file);
+        // a pack linked into the folder: the file it is (a link's own size and time stay as they were when a rebuilt
+        // pack replaces its target)
+        if (fi.ResolveLinkTarget(returnFinalTarget: true) is FileInfo target) fi = target;
         string stamp = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}")))[..16];
         string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WpfWebGpu", "packager", "packs", kind + "-" + stamp);
         if (!File.Exists(Path.Combine(dir, ".complete")))

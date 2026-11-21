@@ -10,6 +10,7 @@ its registry, its services and its Start menu entries. Every program runs on the
 | For | Installing by hand: it asks its questions in a console window | Installing by hand, with Windows Installer's wizard; deployment tools (Group Policy, Intune, Configuration Manager), `msiexec /qn`, repair and rollback |
 | SQL Server | Brings SQL Server Express and installs it, unless told not to | Not included: install it first (see [SQL Server](#sql-server)) |
 | Uninstall | Apps & features, or `uninstall.exe /uninstall` | Apps & features, or `msiexec /x <product code>` |
+| License agreement | Shown in the console before installing, accepted with `y`; `/quiet` or `/acceptlicense` accepts it | The wizard's License Agreement page; `/qn` accepts it |
 
 The manifest's `output.windowsFormats` chooses which ones are written: `["setup", "msi"]` by default.
 
@@ -31,13 +32,24 @@ consent (UAC) when Install is clicked.
 
 - **The license:** the License Agreement page is there when the manifest's `product.license` names a file, relative
   to the manifest. Use an `.rtf` as it is, or a text file, which is shown as plain text. Next stays disabled until
-  the license is accepted.
+  the license is accepted. See [The license agreement](#the-license-agreement) for the other installers.
 - **The pictures:** the white banner and the welcome page's band carry the product's icon: `product.icon`, else the
   first window app's.
 - **The folder installed to** is kept in `HKLM\SOFTWARE\<id>\InstallDir`. An upgrade finds it there, and
   `msiexec /i … INSTALLDIR=D:\Apps\Product\ /qn` chooses one without the wizard.
 - **Repair** writes the installation's files, shortcuts and registry values again, but not values or ProgramData
   files the machine already has. It stops the services and the programs first, then starts the services again.
+
+## The license agreement
+
+`product.license` in the manifest is the product's license agreement: an `.rtf`, or a text file. Every desktop
+installer that asks before installing shows it:
+
+| Installer | How it is shown |
+|---|---|
+| The MSI | The wizard's License Agreement page. Next stays disabled until "I accept" is ticked. `msiexec /qn` accepts it. |
+| `Setup.exe` | Printed in the console, then "Do you accept the terms of the license agreement? [y/N]". Anything but `y`, or no answer, installs nothing, and Setup exits with 1602 (cancelled by the user, as Windows Installer's). `/quiet` or `/acceptlicense` accepts it. An `.rtf` is shown as its text. |
+| macOS `.pkg` | Installer's License page: Continue, then Agree. The command line's `installer` agrees on its own. |
 
 ## Installing and removing the MSI
 

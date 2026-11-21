@@ -275,7 +275,7 @@ public static class MsiPackager
         if (productIcon != null) properties.Add(("ARPPRODUCTICON", productIcon));
         foreach (var (name, value) in properties) db["Property"].Add(name, value);
         // opened by double-click: the wizard
-        MsiUi.Add(db, manifest.Product.License.Length > 0 ? MsiUi.LicenseRtf(manifest.Product.License) : null,
+        MsiUi.Add(db, manifest.Product.License.Length > 0 ? License.Rtf(manifest.Product.License, "Tahoma", 16) : null,
             DesktopCommon.Icon(manifest) ?? DesktopCommon.Icon(manifest, manifest.Apps.FirstOrDefault(a => a.Kind == AppKind.Gui)));
 
         // ---- the package ----
