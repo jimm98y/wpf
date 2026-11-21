@@ -333,6 +333,7 @@ public static partial class MacPackager
             {{SqlInstanceUninstallInfo(instance, "2025.1")}}
             APPINFO
             chmod 755 "$APP/Contents/MacOS/uninstall"
+            /usr/bin/codesign --force --sign - "$APP" >/dev/null 2>&1 || true
             chown -R root:admin "{{SqlUninstallApps}}"
             # the instance, for the SQL Server Browser of whichever installation answers UDP 1434
             mkdir -p "{{SqlBrowserInstances}}"

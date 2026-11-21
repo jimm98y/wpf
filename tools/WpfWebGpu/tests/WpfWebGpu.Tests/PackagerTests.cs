@@ -30,6 +30,44 @@ public class PackagerTests
     }
 
     [Fact]
+    public void A_macOS_installation_s_apps_are_signed_where_they_are_installed()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "codesign");
+        // an installation's app stub (its program a script, as the package installs it) under a test's root
+        string target = TestEnvironment.NewDirectory("macpost");
+        string app = Path.Combine(target, "Applications", "P", "P.app");
+        Directory.CreateDirectory(Path.Combine(app, "Contents", "MacOS"));
+        File.WriteAllText(Path.Combine(app, "Contents", "MacOS", "run"), "#!/bin/sh\nexit 0\n");
+        File.SetUnixFileMode(Path.Combine(app, "Contents", "MacOS", "run"), (UnixFileMode)Convert.ToInt32("755", 8));
+        File.WriteAllText(Path.Combine(app, "Contents", "Info.plist"), "<?xml version=\"1.0\"?><plist version=\"1.0\"><dict>" +
+            "<key>CFBundleExecutable</key><string>run</string><key>CFBundleIdentifier</key><string>com.example.p</string>" +
+            "<key>CFBundlePackageType</key><string>APPL</string></dict></plist>");
+        string script = Path.Combine(target, "postinstall");
+        File.WriteAllText(script, WpfWebGpu.Packager.Desktop.MacPackager.PostInstall("/Library/Application Support/P", new List<string>(), new List<string>(), ""));
+        File.SetUnixFileMode(script, (UnixFileMode)Convert.ToInt32("755", 8));
+
+        var psi = new System.Diagnostics.ProcessStartInfo("/bin/sh") { RedirectStandardError = true, RedirectStandardOutput = true };
+        psi.ArgumentList.Add(script);
+        psi.Environment["WPFPKG_ROOT"] = target;
+        using (var p = System.Diagnostics.Process.Start(psi)!)
+        {
+            string error = p.StandardError.ReadToEnd();
+            p.WaitForExit();
+            Assert.True(p.ExitCode == 0, error);
+        }
+        // signed ad hoc, so that the system can name the app (Background Task Management) and leaves what it starts running
+        var verify = new System.Diagnostics.ProcessStartInfo("/usr/bin/codesign") { RedirectStandardError = true };
+        foreach (string a in new[] { "-dv", app }) verify.ArgumentList.Add(a);
+        using var v = System.Diagnostics.Process.Start(verify)!;
+        string details = v.StandardError.ReadToEnd();
+        v.WaitForExit();
+        Assert.Contains("Signature=adhoc", details);
+        Assert.Contains("Identifier=com.example.p", details);
+        // and nothing made outside the test's root
+        Assert.True(Directory.Exists(Path.Combine(target, "Library", "Logs", "P")));
+    }
+
+    [Fact]
     public void A_product_some_of_whose_programs_are_told_they_run_on_Windows_tells_them_all()
     {
         var manifest = new PackageManifest();

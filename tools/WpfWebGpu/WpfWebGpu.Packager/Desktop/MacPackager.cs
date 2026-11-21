@@ -418,7 +418,7 @@ public static partial class MacPackager
         return sb.ToString();
     }
 
-    private static string PostInstall(string root, List<string> daemons, List<string> disabled, string accounts) => $$"""
+    internal static string PostInstall(string root, List<string> daemons, List<string> disabled, string accounts) => $$"""
         #!/bin/sh
         # The machine's state made from the seed on the first install -- the registry's paths made this installation's --
         # and kept on an upgrade; then the services started. WPFPKG_ROOT: a test's root in place of /.
@@ -457,7 +457,14 @@ public static partial class MacPackager
         chmod -R -N "$STATE" 2>/dev/null || true
         find "$STATE" -type d -exec chmod +a "group:staff allow list,add_file,search,add_subdirectory,delete_child,readattr,writeattr,readextattr,writeextattr,readsecurity,file_inherit,directory_inherit" {} + 2>/dev/null || true
         find "$STATE" -type f -exec chmod +a "group:staff allow read,write,append,delete,readattr,writeattr,readextattr,writeextattr,readsecurity" {} + 2>/dev/null || true
-        mkdir -p "/Library/Logs/{{Path.GetFileName(root)}}" 2>/dev/null || true
+        mkdir -p "${TARGET%/}/Library/Logs/{{Path.GetFileName(root)}}" 2>/dev/null || true
+        # the apps signed ad hoc, here: a bundle whose program is a script keeps its signature in extended attributes,
+        # which a package's payload does not carry. Unsigned, Background Task Management cannot name the app, and when
+        # an app the user started quits, loginwindow ends what it started (a client's setup tool it opened) -- where
+        # Windows leaves a program another started running.
+        for a in "${TARGET%/}/Applications/{{Path.GetFileName(root)}}"/*.app; do
+          if [ -d "$a" ]; then /usr/bin/codesign --force --sign - "$a" >/dev/null 2>&1 || true; fi
+        done
         # a service started, again while launchd is still letting go of the previous version's (up to ten seconds)
         start() {
           launchctl enable system/"$1" 2>/dev/null
@@ -469,6 +476,7 @@ public static partial class MacPackager
           done
         }
         if [ -z "$WPFPKG_ROOT" ]; then
+          :   # (an installation without services has nothing here)
         {{accounts}}
         {{string.Concat(daemons.Select(d => $"  start {d}\n"))}}{{string.Concat(disabled.Select(d => $"  launchctl disable system/{d}\n"))}}fi
         exit 0

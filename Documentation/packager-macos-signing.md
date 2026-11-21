@@ -22,9 +22,12 @@ are never stored in the manifest.
   replaced, as `codesign --force` does.
 - **The package.** The xar's table of contents is signed as productsign signs it: an RSA signature of its
   checksum, and a CMS signature with Apple's timestamp. The certificates go into the table of contents.
-- **Not signed: the app stubs.** These are `/Applications/<Product>/<App>.app`, shell scripts that start the signed
-  runtime. A script's signature is kept in extended attributes, which a package's payload does not carry. Installer
-  does not quarantine what it installs, so Gatekeeper does not check them.
+- **The app stubs: signed ad hoc on the Mac.** These are `/Applications/<Product>/<App>.app`, shell scripts that
+  start the signed runtime. A script's signature is kept in extended attributes, which a package's payload does not
+  carry, so the package's postinstall signs them ad hoc where they are installed (`codesign --sign -`, which comes with
+  macOS). Unsigned, Background Task Management cannot name an app, and when an app the user started quits,
+  loginwindow ends the programs it started (a client starting its setup tool, then quitting), where Windows leaves
+  them running. Installer does not quarantine what it installs, so Gatekeeper does not check them.
 
 Signing needs a connection to Apple's timestamp server. An unsigned package needs nothing.
 
