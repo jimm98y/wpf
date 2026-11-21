@@ -22,8 +22,8 @@
 //   5. Developer tools are `inspectable` (iOS 16.4 and later), not `developerExtrasEnabled`, and are
 //      set through the KVC path so an older system simply ignores them rather than throwing.
 //
-// NOT YET RUN ON A DEVICE. It compiles into every head; the selectors were taken from the WebKit and
-// UIKit headers rather than recalled, but nothing here has been exercised against a real WKWebView.
+// Run in the iOS simulator (iOS 26.5, an iPad): the view over its WPF window, navigation, messages
+// both ways, script and the title. Not yet on a device.
 //
 
 using System;
@@ -121,6 +121,12 @@ namespace MS.Internal.Interop.WebView
             SendVoidPtr(_webView, Sel("setNavigationDelegate:"), _navigationDelegate);
             SendVoidPtr(_webView, Sel("setUIDelegate:"), _uiDelegate);
 
+            // The title as it changes (key-value observing of WKWebView.title), as WebView2 raises
+            // DocumentTitleChanged: a page's <title> arrives after the navigation has finished on iOS,
+            // and a script's document.title at any time.
+            SendVoidPtrPtrNUIntPtr(_webView, Sel("addObserver:forKeyPath:options:context:"),
+                                   _navigationDelegate, NSString("title"), 0, IntPtr.Zero);
+
             // Above the Metal-backed view. There is no positioned:relativeTo: on iOS, so the layer's
             // zPosition is the whole of the ordering.
             IntPtr layer = Send(_webView, Sel("layer"));
@@ -143,6 +149,11 @@ namespace MS.Internal.Interop.WebView
         {
             if (_webView != IntPtr.Zero)
             {
+                if (_navigationDelegate != IntPtr.Zero)
+                {
+                    SendVoidPtrPtr(_webView, Sel("removeObserver:forKeyPath:"), _navigationDelegate, NSString("title"));
+                }
+
                 SendVoidPtr(_webView, Sel("setNavigationDelegate:"), IntPtr.Zero);
                 SendVoidPtr(_webView, Sel("setUIDelegate:"), IntPtr.Zero);
                 Send(_webView, Sel("removeFromSuperview"));
@@ -645,6 +656,27 @@ namespace MS.Internal.Interop.WebView
             invoke(decisionHandler, cancel ? 0 : 1);
         }
 
+        // the title last reported: DocumentTitleChanged is raised when it changes, not on every navigation
+        private string _reportedTitle = string.Empty;
+
+        private void RaiseTitleChangedIfChanged()
+        {
+            string title = DocumentTitle ?? string.Empty;
+
+            if (title != _reportedTitle)
+            {
+                _reportedTitle = title;
+                DocumentTitleChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        // observeValueForKeyPath:ofObject:change:context: -- the only key path observed is the web view's title
+        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
+        private static void ObserveValue(IntPtr self, IntPtr sel, IntPtr keyPath, IntPtr obj, IntPtr change, IntPtr context)
+        {
+            FromDelegate(self)?.RaiseTitleChangedIfChanged();
+        }
+
         [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
         private static void DidCommitNavigation(IntPtr self, IntPtr sel, IntPtr webView, IntPtr navigation)
         {
@@ -662,7 +694,7 @@ namespace MS.Internal.Interop.WebView
                 return;
             }
 
-            b.DocumentTitleChanged?.Invoke(b, EventArgs.Empty);
+            b.RaiseTitleChangedIfChanged();
             b.NavigationCompleted?.Invoke(b, new WebViewNavigationCompletedEventArgs
             {
                 IsSuccess = true,
@@ -820,6 +852,9 @@ namespace MS.Internal.Interop.WebView
             class_addMethod(cls, Sel("webView:decidePolicyForNavigationAction:decisionHandler:"),
                 (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, IntPtr, void>)&DecidePolicyForNavigationAction,
                 "v@:@@@");
+            class_addMethod(cls, Sel("observeValueForKeyPath:ofObject:change:context:"),
+                (IntPtr)(delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, IntPtr, IntPtr, void>)&ObserveValue,
+                "v@:@@@^v");
 
             objc_registerClassPair(cls);
             return s_navigationDelegateClass = cls;
@@ -968,6 +1003,7 @@ namespace MS.Internal.Interop.WebView
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtr(IntPtr r, IntPtr s, IntPtr a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtrPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b, IntPtr c);
+        [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidPtrPtrNUIntPtr(IntPtr r, IntPtr s, IntPtr a, IntPtr b, nuint c, IntPtr d);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern void SendVoidBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
         [DllImport(ObjC, EntryPoint = "objc_msgSend")] private static extern IntPtr SendPtrBool(IntPtr r, IntPtr s, [MarshalAs(UnmanagedType.I1)] bool a);
 

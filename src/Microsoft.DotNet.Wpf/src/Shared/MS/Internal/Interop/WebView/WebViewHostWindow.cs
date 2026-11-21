@@ -49,7 +49,9 @@ namespace MS.Internal.Interop.WebView
             // the owner's own view would have it move and size the whole window as its "child". Without a
             // handle Workbench's Knowledge Base found no engine and took the app down with it.
             // Linux likewise: its engine is a wl_subsurface of the owner window's surface (LinuxWebViewBackend).
-            if (OperatingSystem.IsBrowser() || (OperatingSystem.IsMacOS() || IsWaylandHead) && parentIsContentView)
+            // iOS too: a WPF window is a UIView of the app's one UIWindow, and the engine a WKWebView laid
+            // over it (IOSWebViewBackend), moving with the window as a subview does.
+            if (OperatingSystem.IsBrowser() || OverlaysOwnerView && parentIsContentView)
             {
                 // No window to make: the browser head's overlay is an <iframe> the backend creates
                 // in the DOM, keyed by this handle. All that is needed here is a value that is
@@ -89,9 +91,15 @@ namespace MS.Internal.Interop.WebView
         private static readonly System.Collections.Generic.Dictionary<IntPtr, IntPtr> s_browserParents = new();
 
         /// <summary>What a backend attaches to for the host window <paramref name="window"/>: the owner's
-        /// content view on macOS, where the engine is an overlay inside it; the window itself elsewhere.</summary>
+        /// window on the heads whose engine is an overlay inside it (<see cref="OverlaysOwnerView"/>); the
+        /// window itself elsewhere.</summary>
         internal static IntPtr AttachTarget(IntPtr window)
-            => OperatingSystem.IsMacOS() || IsWaylandHead ? BrowserParentOf(window) : window;
+            => OverlaysOwnerView ? BrowserParentOf(window) : window;
+
+        /// <summary>The heads whose engine is laid over the owner window's own view, with no host window
+        /// of its own: macOS (a WKWebView in the content NSView), iOS (a WKWebView in the window's UIView),
+        /// Linux's Wayland head (a wl_subsurface). The control tells the engine where it is in the window.</summary>
+        internal static bool OverlaysOwnerView => OperatingSystem.IsMacOS() || OperatingSystem.IsIOS() || IsWaylandHead;
 
         /// <summary>Linux's own head (Android is Linux to OperatingSystem too).</summary>
         internal static bool IsWaylandHead => OperatingSystem.IsLinux() && !OperatingSystem.IsAndroid();
@@ -147,7 +155,7 @@ namespace MS.Internal.Interop.WebView
         /// </summary>
         internal static void Destroy(IntPtr window)
         {
-            if (window != IntPtr.Zero && (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS()))
+            if (window != IntPtr.Zero && (OperatingSystem.IsBrowser() || OverlaysOwnerView))
             {
                 lock (s_browserParents)
                 {

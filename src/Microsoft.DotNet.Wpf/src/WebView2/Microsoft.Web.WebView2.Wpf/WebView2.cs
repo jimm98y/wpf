@@ -159,7 +159,7 @@ namespace Microsoft.Web.WebView2.Wpf
             _ready = _backend.AttachAsync(WebViewHostWindow.AttachTarget(_hostWindow));
             _coreWebView2 = new CoreWebView2(_backend);
 
-            if (OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS() || WebViewHostWindow.IsWaylandHead)
+            if (OperatingSystem.IsBrowser() || WebViewHostWindow.OverlaysOwnerView)
             {
                 // HwndHost hides its window to follow IsVisible; the iframe (the WKWebView, the subsurface) is not that window.
                 _backend.SetVisible(IsVisible);
@@ -219,7 +219,7 @@ namespace Microsoft.Web.WebView2.Wpf
             // window (as WebBrowser's ActiveXHost does).
             base.OnWindowPositionChanged(rcBoundingBox);
 
-            bool placedInWindow = OperatingSystem.IsBrowser() || OperatingSystem.IsMacOS() || WebViewHostWindow.IsWaylandHead;
+            bool placedInWindow = OperatingSystem.IsBrowser() || WebViewHostWindow.OverlaysOwnerView;
             _backend?.SetBounds(
                 placedInWindow ? (int)Math.Round(rcBoundingBox.X) : 0,
                 placedInWindow ? (int)Math.Round(rcBoundingBox.Y) : 0,

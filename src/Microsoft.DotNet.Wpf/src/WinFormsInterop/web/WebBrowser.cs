@@ -128,11 +128,11 @@ namespace System.Windows.Forms
                     "No web engine is available on this platform, so web content cannot be hosted.");
             }
 
-            // macOS: the host's window is the form's content view, which the engine (a WKWebView) is laid over --
+            // macOS and iOS: the host's window is the form's view, which the engine (a WKWebView) is laid over --
             // there is no child window to make, as for WPF's WebView2 there
             _hostWindow = WebViewHostWindow.Create(parentWindow,
                                                    Math.Max(1, Width), Math.Max(1, Height),
-                                                   parentIsContentView: OperatingSystem.IsMacOS());
+                                                   parentIsContentView: OperatingSystem.IsMacOS() || OperatingSystem.IsIOS());
 
             if (_hostWindow == IntPtr.Zero)
             {
@@ -506,7 +506,7 @@ namespace System.Windows.Forms
 
             // filling its host window; on macOS, where the engine is laid over the window itself, at the control's
             // place in it
-            bool placedInWindow = OperatingSystem.IsMacOS();
+            bool placedInWindow = OperatingSystem.IsMacOS() || OperatingSystem.IsIOS();
             _backend.SetBounds(placedInWindow ? device.X : 0, placedInWindow ? device.Y : 0, device.Width, device.Height, scale);
             _backend.SetVisible(Visible && shown);
         }
