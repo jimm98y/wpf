@@ -31,6 +31,8 @@
        samples/wpf-gallery-android rather than copied; see the file's own remarks. -->
   <ItemGroup>
     <Compile Include="../../../Shared/MS/Internal/Interop/AndroidHost.cs" Link="AndroidHost.cs" />
+    <!-- AndroidHost's web views: document-start scripts -->
+    <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.18.0" />
   </ItemGroup>
 
   <!-- The same fonts the iOS and browser heads bundle. Android's /system/fonts has no Segoe

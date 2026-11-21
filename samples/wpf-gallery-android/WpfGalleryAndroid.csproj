@@ -39,6 +39,8 @@
        with the spike; see the file's own remarks for why it lives beside AndroidWindow.cs. -->
   <ItemGroup>
     <Compile Include="../../src/Microsoft.DotNet.Wpf/src/Shared/MS/Internal/Interop/AndroidHost.cs" Link="AndroidHost.cs" />
+    <!-- AndroidHost's web views: document-start scripts -->
+    <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.18.0" />
   </ItemGroup>
 
   <!-- The same fonts the iOS and browser heads bundle. Android's /system/fonts has no Segoe

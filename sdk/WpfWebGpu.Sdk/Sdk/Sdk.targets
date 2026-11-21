@@ -1078,6 +1078,8 @@
        Mono.Android. WpfWebGpuAndroidHost=false for a head that brings its own. -->
   <ItemGroup Condition="'$(_WpfWebGpuAndroid)' == 'true' and '$(_WpfWebGpuUseWpf)' == 'true' and '$(TargetFramework)' != '' and '$(WpfWebGpuAndroidHost)' != 'false'">
     <Compile Include="$(WpfWebGpuSdkRoot)android/AndroidHost.cs" Link="WpfWebGpu/AndroidHost.cs" Visible="false" />
+    <!-- its web views' document-start scripts (WebViewCompat.addDocumentStartJavaScript; MIT AND Apache-2.0) -->
+    <PackageReference Include="Xamarin.AndroidX.WebKit" Version="1.18.0" />
   </ItemGroup>
 
   <!-- ...and, for an app with an immersive activity (WpfWebGpuAndroidXr=true), the same for an OpenXR headset

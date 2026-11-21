@@ -2398,8 +2398,10 @@ public sealed class ClipboardProvider : ContentProvider
 /// The page's side is the window.chrome.webview the other heads give it: postMessage reaches the host
 /// through prompt() (WebChromeClient.onJsPrompt answers it at once), which needs nothing but the
 /// platform -- no Java method exported to the page -- and the host's messages and scripts go in through
-/// evaluateJavascript. That shim and the document scripts are run as each page starts (onPageStarted),
-/// and for content handed over as a string they are put before it, so its own scripts find them.
+/// evaluateJavascript. That shim and the document scripts run before any of a document's own, in every
+/// frame, as WebView2's do: through the WebView's document-start scripts (AndroidX WebKit's
+/// addDocumentStartJavaScript, WebView 87 and later). On an older WebView, as each page starts
+/// (onPageStarted), and for content handed over as a string put before it.
 ///
 /// Every command comes from the app's UI thread and is done on the main Looper's (the caller waits for
 /// an answer); every event is raised on the main thread, and the backend takes it to the control's.
@@ -2434,6 +2436,8 @@ internal sealed class AndroidWebViewHost
         public bool Visible = true;
         public Action<string, string>? Sink;
         public readonly List<string> DocumentScripts = new();
+        // the WebView runs them before the document's own (else: at onPageStarted)
+        public bool DocumentStart;
         public string? StartedByLink;
         public bool Failed;
     }
@@ -2462,7 +2466,7 @@ internal sealed class AndroidWebViewHost
             case "navigate": view.LoadUrl((string)args[1]); return null;
             case "navigateToString":
                 // the shim and the document scripts before the content's own scripts
-                view.LoadDataWithBaseURL(null, "<script>" + StartScript(e) + "</script>" + (string)args[1], "text/html", "utf-8", null);
+                view.LoadDataWithBaseURL(null, (e.DocumentStart ? "" : "<script>" + StartScript(e) + "</script>") + (string)args[1], "text/html", "utf-8", null);
                 return null;
             case "navigateWithPost":
             {
@@ -2492,6 +2496,7 @@ internal sealed class AndroidWebViewHost
             }
             case "addDocumentScript":
                 e.DocumentScripts.Add((string)args[1]);
+                if (e.DocumentStart) AddDocumentStart(view, (string)args[1]);
                 return null;
             case "postMessage":
                 view.EvaluateJavascript("window.chrome && window.chrome.webview && window.chrome.webview.__deliver(" + (string)args[1] + ");", null);
@@ -2524,6 +2529,8 @@ internal sealed class AndroidWebViewHost
             settings.MediaPlaybackRequiresUserGesture = false;
         }
         e.View = view;
+        e.DocumentStart = AndroidX.WebKit.WebViewFeature.IsFeatureSupported(AndroidX.WebKit.WebViewFeature.DocumentStartScript);
+        if (e.DocumentStart) AddDocumentStart(view, Shim);
         int id = ++_nextId;
         view.SetWebViewClient(new Client(this, id));
         view.SetWebChromeClient(new Chrome(this, id));
@@ -2580,6 +2587,10 @@ internal sealed class AndroidWebViewHost
         }
         e.View.Visibility = shown ? ViewStates.Visible : ViewStates.Gone;
     }
+
+    // in every frame of every origin, before the document's own scripts
+    private static void AddDocumentStart(Android.Webkit.WebView view, string script)
+        => AndroidX.WebKit.WebViewCompat.AddDocumentStartJavaScript(view, script, new HashSet<string> { "*" });
 
     private static string StartScript(Entry e) => Shim + string.Concat(e.DocumentScripts.ConvertAll(s => "\n;" + s));
 
@@ -2653,7 +2664,7 @@ internal sealed class AndroidWebViewHost
             // a navigation the page did not start itself (a Navigate, a reload) has had no NavigationStarting
             if (e.StartedByLink != url) _owner.Raise(_id, "navigationStarting", url ?? "");
             e.StartedByLink = null;
-            view?.EvaluateJavascript(StartScript(e), null);
+            if (!e.DocumentStart) view?.EvaluateJavascript(StartScript(e), null);
             _owner.Raise(_id, "contentLoading", url ?? "");
         }
 
