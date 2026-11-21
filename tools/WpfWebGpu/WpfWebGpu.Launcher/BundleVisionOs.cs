@@ -19,6 +19,10 @@ internal static partial class Bundle
     private const int VisionOsPlatform = 11;            // PLATFORM_XROS
     private const int VisionOsSimulatorPlatform = 12;   // PLATFORM_XROS_SIMULATOR
     private const int VisionDeviceFamily = 7;
+    // the oldest visionOS the app runs on: what its code needs, not the SDK it was built with -- an app marked with the
+    // SDK's version installs on no Vision Pro older than the Xcode that made it. The iOS build needs iOS 14, which every
+    // visionOS is past; the immersive shim needs 26 (LayerRenderer.queryDrawables), which swiftc checks against this.
+    internal const string VisionOsMinimum = "26.0";
 
     /// <summary>An iOS .app (the simulator's, or with <paramref name="device"/> a device's) made a visionOS one; signed
     /// ad hoc unless <paramref name="sign"/> is false (the Packager's template, which it signs as it fills).</summary>
@@ -27,7 +31,7 @@ internal static partial class Bundle
         string sdkName = device ? "xros" : "xrsimulator";
         string sdk = Tool("xcrun", "--sdk", sdkName, "--show-sdk-version").Trim();
         if (string.IsNullOrEmpty(sdk)) throw new UserError($"no visionOS SDK (xcrun --sdk {sdkName}); install the visionOS platform in Xcode.");
-        string minimum = sdk.Split('.')[0] + ".0";
+        string minimum = VisionOsMinimum;
 
         var binaries = new List<string>();
         foreach (string file in Directory.EnumerateFiles(appDir, "*", SearchOption.AllDirectories))
