@@ -217,10 +217,11 @@ namespace System.Windows.Interop
                 // on screen, only how big its own window is.
                 base.OnWindowPositionChanged(bounds);
 
-                // Except in the browser: there the overlay is an <iframe> in the page, with no host
-                // window around it for HwndHost to move, so it has to be told where the control is
-                // within the WPF window (device pixels, as bounds are).
-                bool placedInWindow = OperatingSystem.IsBrowser();
+                // Except in the browser and where the engine is laid over the window's own view
+                // (macOS, iOS, Linux): there is no host window around it for HwndHost to move, so it
+                // has to be told where the control is within the WPF window (device pixels, as
+                // bounds are).
+                bool placedInWindow = OperatingSystem.IsBrowser() || MS.Internal.Interop.WebView.WebViewHostWindow.OverlaysOwnerView;
                 _webViewBackend?.SetBounds(
                     placedInWindow ? (int)Math.Round(bounds.X) : 0,
                     placedInWindow ? (int)Math.Round(bounds.Y) : 0,
@@ -314,10 +315,13 @@ namespace System.Windows.Interop
                 throw new PlatformNotSupportedException(SR.WebBrowserNoEngine);
             }
 
+            // parentIsContentView: an HwndHost's parent is a WPF window, whose own view the engine is
+            // laid over on macOS, iOS and Linux (WebViewHostWindow.OverlaysOwnerView)
             IntPtr host = MS.Internal.Interop.WebView.WebViewHostWindow.Create(
                 hwndParent.Handle,
                 (int)Math.Max(1, _boundRect.Width),
-                (int)Math.Max(1, _boundRect.Height));
+                (int)Math.Max(1, _boundRect.Height),
+                parentIsContentView: true);
 
             if (host == IntPtr.Zero)
             {
@@ -327,13 +331,13 @@ namespace System.Windows.Interop
             }
 
             _webViewHostWindow = new HandleRef(this, host);
-            _webViewReady = _webViewBackend.AttachAsync(host);
+            _webViewReady = _webViewBackend.AttachAsync(MS.Internal.Interop.WebView.WebViewHostWindow.AttachTarget(host));
 
-            if (OperatingSystem.IsBrowser())
+            if (OperatingSystem.IsBrowser() || MS.Internal.Interop.WebView.WebViewHostWindow.OverlaysOwnerView)
             {
-                // HwndHost shows and hides its window to follow IsVisible; the browser's iframe is
-                // not that window, so it has to be told directly or a collapsed WebBrowser (or one
-                // on a hidden tab) keeps covering the page.
+                // HwndHost shows and hides its window to follow IsVisible; the browser's iframe (the
+                // WKWebView, the subsurface) is not that window, so it has to be told directly or a
+                // collapsed WebBrowser (or one on a hidden tab) keeps covering the page.
                 _webViewBackend.SetVisible(IsVisible);
                 IsVisibleChanged += (s, e) => _webViewBackend?.SetVisible((bool)e.NewValue);
             }

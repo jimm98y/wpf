@@ -106,6 +106,7 @@
     <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewTypes.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/IWebViewBackend.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewScript.cs" />
+    <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewExternal.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewBackendFactory.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/WebViewHostWindow.cs" />
     <Compile Include="../Shared/MS/Internal/Interop/WebView/Platform/WindowsWebViewInterop.cs" />

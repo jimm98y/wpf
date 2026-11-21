@@ -33,7 +33,7 @@ namespace Microsoft.Web.WebView2.Core
             _backend = backend;
             _hostWindow = hostWindow;
             CoreWebView2 = new CoreWebView2(backend);
-            Ready = backend.AttachAsync(hostWindow);
+            Ready = backend.AttachAsync(WebViewHostWindow.AttachTarget(hostWindow));
         }
 
         /// <summary>
@@ -50,7 +50,9 @@ namespace Microsoft.Web.WebView2.Core
                 return null;
             }
 
-            IntPtr host = WebViewHostWindow.Create(parentWindow, width, height);
+            // the parent is the native window a WinForms form is presented in (EmbeddedScenes), whose
+            // own view the engine is laid over on macOS, iOS and Linux
+            IntPtr host = WebViewHostWindow.Create(parentWindow, width, height, parentIsContentView: true);
 
             if (host == IntPtr.Zero)
             {
@@ -76,6 +78,13 @@ namespace Microsoft.Web.WebView2.Core
         /// pixels) need. It was always 1, so on a 2x display those drew the page at double size.</summary>
         internal void Move(int x, int y, int width, int height, double scale = 1.0)
         {
+            if (WebViewHostWindow.OverlaysOwnerView)
+            {
+                // no host window to move: the engine itself is placed within the owner window
+                _backend?.SetBounds(x, y, Math.Max(1, width), Math.Max(1, height), scale);
+                return;
+            }
+
             WebViewHostWindow.Move(_hostWindow, x, y, width, height);
             _backend?.SetBounds(0, 0, Math.Max(1, width), Math.Max(1, height), scale);
         }

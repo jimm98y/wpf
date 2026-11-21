@@ -128,11 +128,11 @@ namespace System.Windows.Forms
                     "No web engine is available on this platform, so web content cannot be hosted.");
             }
 
-            // macOS and iOS: the host's window is the form's view, which the engine (a WKWebView) is laid over --
-            // there is no child window to make, as for WPF's WebView2 there
+            // macOS, iOS and Linux: the host's window is the form's view, which the engine (a WKWebView, a
+            // subsurface) is laid over -- there is no child window to make, as for WPF's WebView2 there
             _hostWindow = WebViewHostWindow.Create(parentWindow,
                                                    Math.Max(1, Width), Math.Max(1, Height),
-                                                   parentIsContentView: OperatingSystem.IsMacOS() || OperatingSystem.IsIOS());
+                                                   parentIsContentView: true);
 
             if (_hostWindow == IntPtr.Zero)
             {
@@ -265,7 +265,18 @@ namespace System.Windows.Forms
 
         /// <summary>The document's title.</summary>
         [Browsable(false)]
-        public string DocumentTitle => _backend?.DocumentTitle ?? string.Empty;
+        public string DocumentTitle
+        {
+            get
+            {
+                // WebKit reports a page's title only after its navigation has finished, where the WebOC
+                // had it by DocumentCompleted: until the engine has one, the document's own
+                string title = _backend?.DocumentTitle;
+                return !string.IsNullOrEmpty(title) || _backend is null || !_backend.IsAttached
+                    ? title ?? string.Empty
+                    : _bridge.EvalString("document.title") ?? string.Empty;
+            }
+        }
 
         /// <summary>
         /// The document as text. Reading it asks the page for its markup; assigning it navigates to
@@ -506,7 +517,7 @@ namespace System.Windows.Forms
 
             // filling its host window; on macOS, where the engine is laid over the window itself, at the control's
             // place in it
-            bool placedInWindow = OperatingSystem.IsMacOS() || OperatingSystem.IsIOS();
+            bool placedInWindow = WebViewHostWindow.OverlaysOwnerView;
             _backend.SetBounds(placedInWindow ? device.X : 0, placedInWindow ? device.Y : 0, device.Width, device.Height, scale);
             _backend.SetVisible(Visible && shown);
         }
@@ -751,6 +762,11 @@ namespace System.Windows.Forms
                 return;
             }
 
+            if (message is not null && AnswerExternal(message))
+            {
+                return;
+            }
+
             if (message is null || !message.StartsWith(StatusMessagePrefix, StringComparison.Ordinal))
             {
                 return;
@@ -807,10 +823,15 @@ namespace System.Windows.Forms
 
         // ---- window.external ------------------------------------------------------------------------------
 
+        private const string ExternalMessagePrefix = "__wfExternal:";
+
+        private bool _externalOnEveryDocument;
+
         /// <summary>
-        /// Re-create window.external over the message channel: the page's call becomes a message, the
-        /// host resolves it by reflection, and the answer goes back as JSON. Installed on every
-        /// document because the object must survive navigation.
+        /// Re-create window.external over the message channel (WebViewExternal): the page's call becomes
+        /// a message, the host resolves it by reflection, and the answer goes back as JSON. Installed for
+        /// every document before its own scripts run, as the object must survive navigation and a page
+        /// may call it as it loads, and into the document already there.
         /// </summary>
         private void InstallScriptingBridge()
         {
@@ -819,35 +840,37 @@ namespace System.Windows.Forms
                 return;
             }
 
-            _ = _backend.ExecuteScriptAsync(ExternalBridgeScript);
+            string script = WebViewExternal.Script(ExternalMessagePrefix, "__wf");
+
+            if (!_externalOnEveryDocument)
+            {
+                _externalOnEveryDocument = true;
+                _backend.AddScriptToExecuteOnDocumentCreated(script);
+            }
+
+            _ = _backend.ExecuteScriptAsync(script);
         }
 
-        private const string ExternalBridgeScript = @"
-(function () {
-    if (window.external && window.external.__wf) { return; }
-    var pending = {}, next = 0;
-    window.chrome.webview.addEventListener('message', function (e) {
-        var d = e.data;
-        if (typeof d !== 'string' || d.indexOf('__wfExternal:') !== 0) { return; }
-        var reply = JSON.parse(d.substring(13));
-        var slot = pending[reply.id];
-        if (!slot) { return; }
-        delete pending[reply.id];
-        if (reply.error) { slot.reject(new Error(reply.error)); } else { slot.resolve(reply.result); }
-    });
-    window.external = new Proxy({ __wf: true }, {
-        get: function (target, name) {
-            if (name in target) { return target[name]; }
-            return function () {
-                var id = ++next, a = Array.prototype.slice.call(arguments);
-                var p = new Promise(function (res, rej) { pending[id] = { resolve: res, reject: rej }; });
-                window.chrome.webview.postMessage('__wfExternal:' +
-                    JSON.stringify({ id: id, member: String(name), args: a }));
-                return p;
-            };
+        /// <summary>A page's call of window.external answered on the object for scripting.</summary>
+        private bool AnswerExternal(string message)
+        {
+            if (!message.StartsWith(ExternalMessagePrefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (_objectForScripting is not null && _backend is not null)
+            {
+                string reply = WebViewExternal.Answer(_objectForScripting, message.Substring(ExternalMessagePrefix.Length));
+
+                if (reply is not null)
+                {
+                    _backend.PostWebMessageAsString(ExternalMessagePrefix + reply);
+                }
+            }
+
+            return true;
         }
-    });
-})();";
 
         // ---- lifetime ---------------------------------------------------------------------------------------
 
