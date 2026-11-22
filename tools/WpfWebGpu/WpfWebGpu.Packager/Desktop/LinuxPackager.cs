@@ -75,16 +75,16 @@ public static partial class LinuxPackager
             }
             log($"  {files} files of the installation, {staged.ProgramDataFiles.Count} of ProgramData");
 
-            // the installation's web sites, as IIS serves them on its machine (iis.json, installed into the machine's state
-            // on every install), and the web server's daemon, root, which claims their URLs from http.sys
+            // the installation's web sites, as IIS serves them on its machine (the machine's applicationHost.config, installed
+            // into its state, an upgrade's merged in), and the web server's daemon, root, which claims their URLs from http.sys
             // the apps' pages for the browser, which the web server serves (web/<folder>, one application each)
             foreach (var page in pages ?? Array.Empty<WebPages.Page>())
                 foreach (string f in Directory.EnumerateFiles(page.Built, "*", SearchOption.AllDirectories))
                     installedBytes += tar.AddFile(f, $"{root}/web/{page.Folder}/{Path.GetRelativePath(page.Built, f).Replace('\\', '/')}", executable: false);
-            string? iis = DesktopCommon.IisConfiguration(manifest, root, state, pages);
+            string? iis = DesktopCommon.ApplicationHostConfig(manifest, root, state, pages);
             if (iis != null)
             {
-                tar.AddText($"{root}/iis.json", iis, executable: false);
+                tar.AddText($"{root}/inetsrv/applicationHost.config", iis, executable: false);
                 tar.AddText($"/lib/systemd/system/{pkg}-iis.service", SystemUnit(manifest, pkg, root, state, "iis", "web server"), executable: false);
                 log("  web server: the installation's IIS sites");
             }
@@ -560,7 +560,7 @@ public static partial class LinuxPackager
         fi
         # the service manager's database: the services this version registers, replaced on every install
         if [ -f "{{root}}/services.json" ]; then cp "{{root}}/services.json" "$STATE/services.json"; fi
-        if [ -f "{{root}}/iis.json" ]; then cp "{{root}}/iis.json" "$STATE/iis.json"; fi
+        {{DesktopCommon.IisInstallStep(root)}}
         # every user's, as Windows' ProgramData and HKLM are writable by its users' programs: an inherited access list
         # (as the product's own folder has on Windows), so what any account makes there -- a display a user saves, a
         # file the elevated setup writes -- stays every account's whatever its umask. Ubuntu puts no desktop user in

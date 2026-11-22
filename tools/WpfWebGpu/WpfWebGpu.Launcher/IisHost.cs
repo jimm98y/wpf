@@ -1,6 +1,7 @@
-// wpfrun iis: the machine's web server, as IIS serves an installation's web applications -- its configuration taken
-// from the installation's machine (iis.json in the machine's state: the sites, their bindings, applications and virtual
-// directories, the application pools). It is IIS's two system parts in one daemon: the web publishing service, which
+// wpfrun iis: the machine's web server, as IIS serves an installation's web applications -- its configuration the
+// machine's applicationHost.config (in the machine's state, made from the installation's machine's: the sites, their
+// bindings, applications and virtual directories, the application pools; iis.json for an earlier installation), served
+// again from a new start when IIS's configuration system changes it. It is IIS's two system parts in one daemon: the web publishing service, which
 // claims each application's URLs from http.sys (the sites' bindings and the application's path, registered with the
 // machine's http.sys service, so they share their ports with every other process's prefixes, as on Windows), and the
 // process activation, which starts an application's worker under its pool's account.
@@ -391,6 +392,12 @@ internal static class IisCommand
 {
     public static int Run(string[] args)
     {
+        // an upgrade's applicationHost.config merged into the machine's (the packages' postinstall)
+        if (args is ["--merge", var upgrade, var machine])
+        {
+            File.WriteAllText(machine, IisConfiguration.MergeApplicationHost(File.ReadAllText(upgrade), File.ReadAllText(machine)));
+            return 0;
+        }
         string? config = IisConfiguration.DefaultPath();
         if (config == null)
         {
@@ -402,6 +409,26 @@ internal static class IisCommand
         using var stop = new CancellationTokenSource();
         using var term = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGTERM, c => { c.Cancel = true; stop.Cancel(); });
         using var intr = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGINT, c => { c.Cancel = true; stop.Cancel(); });
-        return IisHost.Run(config, line => Console.Error.WriteLine($"{DateTime.Now:HH:mm:ss} {line}"), stop.Token).GetAwaiter().GetResult();
+        Action<string> log = line => Console.Error.WriteLine($"{DateTime.Now:HH:mm:ss} {line}");
+        // a change of the configuration (IIS's configuration system committing a binding) served as IIS serves it: the
+        // server started again with it -- it ends, and launchd or systemd, which keep it running, start it again
+        bool changed = false;
+        using var watcher = new FileSystemWatcher(Path.GetDirectoryName(Path.GetFullPath(config))!, Path.GetFileName(config))
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+        };
+        void Changed(object? s, FileSystemEventArgs e)
+        {
+            if (changed) return;
+            changed = true;
+            log($"iis: {config} changed: serving it from a new start");
+            stop.CancelAfter(TimeSpan.FromMilliseconds(500));
+        }
+        watcher.Changed += Changed;
+        watcher.Created += Changed;
+        watcher.Renamed += (s, e) => Changed(s, e);
+        watcher.EnableRaisingEvents = true;
+        int code = IisHost.Run(config, log, stop.Token).GetAwaiter().GetResult();
+        return changed ? 75 : code;   // EX_TEMPFAIL: to be started again
     }
 }

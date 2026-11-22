@@ -90,15 +90,17 @@ public static partial class MacPackager
             daemons.Insert(0, label);
         }
 
-        // the installation's web sites, as IIS serves them on its machine: their configuration (iis.json, installed into
-        // the machine's state on every install) and the web server's daemon, root, which claims their URLs from http.sys
+        // the installation's web sites, as IIS serves them on its machine: their configuration (the machine's
+        // applicationHost.config, installed into its state, an upgrade's merged in) and the web server's daemon, root,
+        // which claims their URLs from http.sys
         // the apps' pages for the browser, which the web server serves (web/<folder>, one application each)
         foreach (var page in pages ?? Array.Empty<WebPages.Page>())
             CloneTree(page.Built, Path.Combine(home, "web", page.Folder), new GlobSet(Array.Empty<string>()));
-        string? iis = DesktopCommon.IisConfiguration(manifest, root, root + "/state", pages);
+        string? iis = DesktopCommon.ApplicationHostConfig(manifest, root, root + "/state", pages);
         if (iis != null)
         {
-            File.WriteAllText(Path.Combine(home, "iis.json"), iis);
+            Directory.CreateDirectory(Path.Combine(home, "inetsrv"));
+            File.WriteAllText(Path.Combine(home, "inetsrv", "applicationHost.config"), iis);
             string label = id + ".iis";
             Directory.CreateDirectory(Path.Combine(payload, "Library", "LaunchDaemons"));
             File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), SystemDaemon(label, root, product, "iis", "iis.log"));
@@ -448,9 +450,9 @@ public static partial class MacPackager
               -e "s|\${WPFRUN_APPDIR}|{{root}}/app|g" "$SEED/paths.json" > "$STATE/paths.json"
         fi
         rm -rf "$SEED"
-        # the service manager's database and the web server's sites: this version's, replaced on every install
+        # the service manager's database: this version's, replaced on every install
         [ -f "$ROOT/services.json" ] && cp "$ROOT/services.json" "$STATE/services.json"
-        [ -f "$ROOT/iis.json" ] && cp "$ROOT/iis.json" "$STATE/iis.json"
+        {{DesktopCommon.IisInstallStep("$ROOT")}}
         # every user's, as Windows' ProgramData and HKLM are writable by its users' programs: an inherited access list
         # (as the product's own folder has on Windows), so what any account makes there -- a file the elevated setup
         # writes as root, a display a user saves -- stays every user's whatever its mode

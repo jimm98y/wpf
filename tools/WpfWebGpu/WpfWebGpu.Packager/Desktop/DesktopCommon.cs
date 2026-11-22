@@ -80,12 +80,30 @@ internal static class DesktopCommon
         finally { File.Delete(path); }
     }
 
+    /// <summary>The postinstall's step for the machine's IIS configuration (<paramref name="root"/>: the shell's expression for
+    /// the installation's folder): this version's applicationHost.config on a first install; on an upgrade its applications
+    /// merged into the machine's, whose bindings and settings are kept (wpfrun iis --merge).</summary>
+    public static string IisInstallStep(string root) => $$"""
+        # the machine's IIS configuration (applicationHost.config, where IIS keeps it): this version's on a first install;
+        # on an upgrade its applications merged into the machine's, whose bindings and settings (an HTTPS binding) stay
+        if [ -f "{{root}}/inetsrv/applicationHost.config" ]; then
+          mkdir -p "$STATE/inetsrv/config"
+          if [ -f "$STATE/inetsrv/config/applicationHost.config" ]; then
+            "{{root}}/runtime/dotnet/dotnet" "{{root}}/runtime/launcher/wpfrun.dll" iis --merge "{{root}}/inetsrv/applicationHost.config" "$STATE/inetsrv/config/applicationHost.config" || true
+          else
+            cp "{{root}}/inetsrv/applicationHost.config" "$STATE/inetsrv/config/applicationHost.config"
+          fi
+          rm -f "$STATE/iis.json"
+        fi
+        """;
+
     /// <summary>
-    /// The installation's web sites (iis.json, installed into the machine's state): its machine's IIS configuration,
-    /// each virtual directory's folder where the installation (under <paramref name="root"/>) or its ProgramData
-    /// (under <paramref name="state"/>) puts it; null where there is none to serve.
+    /// The installation's web sites: the machine's applicationHost.config (installed into the machine's state, where IIS's
+    /// configuration system and the web server read it), made from its machine's -- each virtual directory's folder where
+    /// the installation (under <paramref name="root"/>) or its ProgramData (under <paramref name="state"/>) puts it --
+    /// with the apps' pages its applications; null where there is nothing of the installation's to serve.
     /// </summary>
-    public static string? IisConfiguration(PackageManifest manifest, string root, string state, IReadOnlyList<WebPages.Page>? pages = null)
+    public static string? ApplicationHostConfig(PackageManifest manifest, string root, string state, IReadOnlyList<WebPages.Page>? pages = null)
     {
         bool hasIis = manifest.Inputs.IisConfig.Length > 0 && File.Exists(manifest.Inputs.IisConfig);
         if (!hasIis && (pages == null || pages.Count == 0)) return null;
@@ -98,27 +116,10 @@ internal static class DesktopCommon
             if (mapped.StartsWith(PathTokens.ProgramData, StringComparison.Ordinal)) return state + "/ProgramData" + rest(PathTokens.ProgramData);
             return null;
         }
-        var config = hasIis ? WpfWebGpu.Services.IisConfiguration.Parse(File.ReadAllText(manifest.Inputs.IisConfig), Local) : new WpfWebGpu.Services.IisConfiguration();
-        // the apps' pages: applications of the site that serves port 80 (IIS's Default Web Site), made where there is none
-        if (pages is { Count: > 0 })
-        {
-            var site = config.Sites.FirstOrDefault(s => s.Bindings.Any(b => b.Protocol == "http" && b.Port == 80));
-            if (site == null)
-            {
-                site = new WpfWebGpu.Services.IisSite { Name = "Default Web Site", Id = config.Sites.Count == 0 ? 1 : config.Sites.Max(s => s.Id) + 1 };
-                site.Bindings.Add(new WpfWebGpu.Services.IisBinding { Protocol = "http", Address = "*", Port = 80 });
-                config.Sites.Add(site);
-            }
-            if (!config.Pools.Any(p => p.Name == "DefaultAppPool")) config.Pools.Add(new WpfWebGpu.Services.IisPool { Name = "DefaultAppPool" });
-            foreach (var page in pages)
-            {
-                site.Applications.RemoveAll(a => a.Path.Equals(page.UrlPath, StringComparison.OrdinalIgnoreCase));
-                var app = new WpfWebGpu.Services.IisApplication { Path = page.UrlPath, Pool = "DefaultAppPool" };
-                app.VirtualDirectories.Add(new WpfWebGpu.Services.IisVirtualDirectory { Path = "/", PhysicalPath = root + "/web/" + page.Folder });
-                site.Applications.Add(app);
-            }
-        }
-        return config.Sites.Any(s => s.Applications.Any(a => a.VirtualDirectories.Any(v => v.PhysicalPath != null))) ? config.ToJson() : null;
+        string xml = WpfWebGpu.Services.IisConfiguration.ApplicationHostConfig(hasIis ? File.ReadAllText(manifest.Inputs.IisConfig) : null, Local,
+            (pages ?? Array.Empty<WebPages.Page>()).Select(p => (p.UrlPath, root + "/web/" + p.Folder)));
+        var served = WpfWebGpu.Services.IisConfiguration.Parse(xml, p => p.StartsWith('/') ? p : null);
+        return served.Sites.Any(s => s.Applications.Any(a => a.VirtualDirectories.Any(v => v.PhysicalPath != null))) ? xml : null;
     }
 
     /// <summary>
