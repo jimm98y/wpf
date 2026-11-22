@@ -102,7 +102,7 @@ public static unsafe partial class Com
             case VT_CY: return decimal.FromOACurrency(*(long*)d);
             case VT_DATE: return DateTime.FromOADate(*(double*)d);
             case VT_BSTR: return *(IntPtr*)d == IntPtr.Zero ? null : Marshal.PtrToStringBSTR(*(IntPtr*)d);
-            case VT_UNKNOWN: case VT_DISPATCH: return *(IntPtr*)d == IntPtr.Zero ? null : ComObject.Get(*(IntPtr*)d);
+            case VT_UNKNOWN: case VT_DISPATCH: return *(IntPtr*)d == IntPtr.Zero ? null : Com.Wrap(*(IntPtr*)d);
             case VT_DECIMAL:
             {
                 byte* p = (byte*)v;

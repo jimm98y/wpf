@@ -52,14 +52,16 @@ public static class RewriteSteps
 
     /// <summary>Rewrites what of <paramref name="inputs"/> needs it into <paramref name="outDir"/>, under the same
     /// file names; and <paramref name="primitives"/>, given, made its Windows build there too.</summary>
-    public static List<BuildRewrite.Rewritten> Rewrite(IReadOnlyList<string> inputs, IReadOnlyList<string> search, string outDir, string? primitives, Action<string> log)
+    /// <param name="includeStack">the stack's own assemblies (WpfWebGpu.*) rewritten too: a COM server of the stack's,
+    /// whose interfaces are declared as COM imports so that the rewrite gives them their vtables (WpfWebGpu.IisAdmin)</param>
+    public static List<BuildRewrite.Rewritten> Rewrite(IReadOnlyList<string> inputs, IReadOnlyList<string> search, string outDir, string? primitives, Action<string> log, bool includeStack = false)
     {
         var all = inputs.ToList();
         // System.Drawing.Primitives made its Windows build (SystemColorsPatch): its user32 GetSysColor is
         // then rewritten with the app's P/Invokes, onto the stack's user32
         if (primitives != null && SystemColorsPatch.Write(primitives, Path.Combine(outDir, ".primitives"), log) is { } patched)
             all.Add(patched);
-        var done = BuildRewrite.Run(all, search, outDir, name => name.StartsWith("WpfWebGpu.", StringComparison.Ordinal), log);
+        var done = BuildRewrite.Run(all, search, outDir, name => !includeStack && name.StartsWith("WpfWebGpu.", StringComparison.Ordinal), log);
         log($"wpf-rewrite: {all.Count} assemblies read, {done.Count} rewritten");
         return done;
     }

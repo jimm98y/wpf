@@ -244,7 +244,7 @@ public static partial class ComRewriter
         private readonly MethodReference _toVariant, _fromVariant, _clearVariant;
         private readonly MethodReference _toSafeArray, _fromSafeArray, _takeSafeArray, _destroySafeArray;
         private readonly MethodReference _dispInvoke, _dispatchResult, _borrowDispatch, _eventProvider, _registerGenerated, _takeEnumerable, _takeEnumerator,
-            _activatorCreate1, _activatorCreate2;
+            _activatorCreate1, _activatorCreate2, _activatorCreateOf;
         private readonly MethodReference _structToNative, _newStruct, _structFromNative, _freeStruct, _structBack, _structArrayToNative, _structArrayFromNative,
             _freeStructArray, _lengthOf, _customMarshaler, _customToNative, _customFromNative, _customCleanUp, _sbToNative, _sbFromNative, _freeCoTaskMem,
             _elemToNative, _elemFromNative, _freeElem, _blitFromNativeN, _blitToNative, _elemFromNativeN, _elemBack, _structFromNativeN, _structArrayBack, _takeElemArray,
@@ -293,6 +293,7 @@ public static partial class ComRewriter
             _takeEnumerable = Imp(nameof(Com.TakeEnumerable), typeof(IntPtr));
             _activatorCreate1 = Imp(nameof(Com.ActivatorCreateInstance), typeof(Type));
             _activatorCreate2 = Imp(nameof(Com.ActivatorCreateInstance), typeof(Type), typeof(bool));
+            _activatorCreateOf = m.ImportReference(com.GetMethod(nameof(Com.ActivatorCreateInstanceOf)) ?? throw new MissingMethodException(nameof(Com.ActivatorCreateInstanceOf)));
             _takeEnumerator = Imp(nameof(Com.TakeEnumerator), typeof(IntPtr));
             _registerGenerated = Imp(nameof(Com.RegisterGenerated), typeof(RuntimeTypeHandle), typeof(RuntimeTypeHandle), typeof(RuntimeTypeHandle));
             _structToNative = Imp(nameof(Com.StructToNative), typeof(object), typeof(RuntimeTypeHandle));
@@ -2220,6 +2221,18 @@ public static partial class ComRewriter
                     {
                         ins.OpCode = OpCodes.Call;
                         ins.Operand = mr.Parameters.Count == 1 ? _activatorCreate1 : _activatorCreate2;
+                        _r.CallSites++;
+                        continue;
+                    }
+                    // new T() where T : new() -- Activator.CreateInstance<T>() -- may make one of them too (Microsoft.Web.Administration
+                    // creates its admin managers so: CreateAdminManager<AppHostWritableAdminManager, ...>)
+                    if (mr is GenericInstanceMethod gim && gim.DeclaringType.FullName == "System.Activator" && gim.Name == "CreateInstance"
+                        && gim.Parameters.Count == 0 && gim.GenericArguments.Count == 1 && _comTypes.Any(t => !t.IsInterface))
+                    {
+                        var of = new GenericInstanceMethod(_activatorCreateOf);
+                        of.GenericArguments.Add(gim.GenericArguments[0]);
+                        ins.OpCode = OpCodes.Call;
+                        ins.Operand = of;
                         _r.CallSites++;
                         continue;
                     }

@@ -12,7 +12,7 @@ namespace WpfWebGpu.ComInterop;
 
 /// <summary>An object of a COM server this runs itself: a cast to a COM interface it does not implement reaches it
 /// through its CCW, as the server's own object would be reached through its interfaces.</summary>
-internal interface IComServerObject { }
+public interface IComServerObject { }
 
 /// <summary>WScript.Shell (IWshShell3).</summary>
 [Guid("72C24DD5-D70A-438B-8A42-98424B88AFB8"), ComVisible(true)]
@@ -468,6 +468,14 @@ internal interface IWshURLShortcut
 public static class ComServers
 {
     private static readonly Dictionary<Guid, Type> s_builtIn = new() { [typeof(WshShell).GUID] = typeof(WshShell) };
+
+    // servers of the stack's own assemblies beside this one, by CLSID: IIS's configuration system (ahadmin's admin managers,
+    // WpfWebGpu.IisAdmin), which Microsoft.Web.Administration creates
+    private static readonly Dictionary<Guid, (string Assembly, string Type)> s_stackServers = new()
+    {
+        [new Guid("2B72133B-3F5B-4602-8952-803546CE3344")] = ("WpfWebGpu.IisAdmin", "WpfWebGpu.IisAdmin.AppHostWritableAdminManager"),
+        [new Guid("228FB8F7-FB53-4FD5-8C7B-FF59DE606C5B")] = ("WpfWebGpu.IisAdmin", "WpfWebGpu.IisAdmin.AppHostAdminManager"),
+    };
     private static readonly Dictionary<string, Guid> s_progIds = new(StringComparer.OrdinalIgnoreCase)
     {
         ["WScript.Shell"] = typeof(WshShell).GUID, ["WScript.Shell.1"] = typeof(WshShell).GUID,
@@ -497,6 +505,8 @@ public static class ComServers
     private static Type? ClassOf(Guid clsid)
     {
         if (s_builtIn.TryGetValue(clsid, out var t)) return t;
+        if (s_stackServers.TryGetValue(clsid, out var stack) && StackAssembly(stack.Assembly)?.GetType(stack.Type, throwOnError: false) is { } served)
+            return served;
         // a .NET class registered for COM (RegAsm's InprocServer32: Class, Assembly, CodeBase)
         try
         {
@@ -509,6 +519,20 @@ public static class ComServers
             return server.GetValue("Assembly") is string assembly ? Type.GetType(cls + ", " + assembly, throwOnError: false) : null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException or System.Security.SecurityException) { return null; }
+    }
+
+    // a stack assembly beside this one, loaded where this one was
+    private static System.Reflection.Assembly? StackAssembly(string name)
+    {
+        try
+        {
+            var context = System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(typeof(ComServers).Assembly) ?? System.Runtime.Loader.AssemblyLoadContext.Default;
+            var loaded = context.Assemblies.FirstOrDefault(a => a.GetName().Name == name);
+            if (loaded != null) return loaded;
+            string file = Path.Combine(Path.GetDirectoryName(typeof(ComServers).Assembly.Location) ?? AppContext.BaseDirectory, name + ".dll");
+            return File.Exists(file) ? context.LoadFromAssemblyPath(file) : context.LoadFromAssemblyName(new System.Reflection.AssemblyName(name));
+        }
+        catch (Exception e) when (e is IOException or BadImageFormatException) { return null; }
     }
 
     // HKCR\ProgID\CLSID, following a version-independent ProgID's CurVer

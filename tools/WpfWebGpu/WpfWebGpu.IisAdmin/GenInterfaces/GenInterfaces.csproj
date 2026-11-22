@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Writes ../AppHostInterfaces.g.cs: IIS's configuration interfaces as Microsoft.Web.Administration declares them (their
+       IIDs and vtables), from the package's assembly. Not part of the build; run by hand when they change:
+         dotnet run in this folder -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Mono.Cecil" Version="0.11.6" />
+    <PackageReference Include="Microsoft.Web.Administration" Version="11.1.0" ExcludeAssets="all" GeneratePathProperty="true" />
+    <AssemblyMetadata Include="MicrosoftWebAdministration" Value="$(PkgMicrosoft_Web_Administration)/lib/netstandard1.5/Microsoft.Web.Administration.dll" />
+    <AssemblyMetadata Include="Output" Value="$(MSBuildThisFileDirectory)../AppHostInterfaces.g.cs" />
+  </ItemGroup>
+
+</Project>

@@ -261,7 +261,7 @@ public static unsafe partial class Com
         VT_CY => decimal.FromOACurrency(*(long*)p),
         VT_DATE => DateTime.FromOADate(*(double*)p),
         VT_BSTR => *(IntPtr*)p == IntPtr.Zero ? null : Marshal.PtrToStringBSTR(*(IntPtr*)p),
-        VT_UNKNOWN or VT_DISPATCH => *(IntPtr*)p == IntPtr.Zero ? null : ComObject.Get(*(IntPtr*)p),
+        VT_UNKNOWN or VT_DISPATCH => *(IntPtr*)p == IntPtr.Zero ? null : Com.Wrap(*(IntPtr*)p),
         VT_VARIANT => FromVariant((IntPtr)p),
         VT_DECIMAL => ReadDecimal(p),
         _ => throw Unsupported("SAFEARRAY", $"elements of VARTYPE {vt}"),

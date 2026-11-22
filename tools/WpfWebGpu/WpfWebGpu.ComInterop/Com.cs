@@ -63,7 +63,7 @@ public static unsafe partial class Com
     public static object? Take(IntPtr p)
     {
         if (p == IntPtr.Zero) return null;
-        try { return ComObject.Get(p); }
+        try { return ServerObject(p) ?? ComObject.Get(p); }
         finally { Marshal.Release(p); }
     }
 
@@ -236,7 +236,10 @@ public static unsafe partial class Com
             // an object of a COM server run here (WScript.Shell's shortcut): reached through its CCW, as the
             // server's own object is reached through the interfaces it answers
             if (o is not IComServerObject || !t.IsInterface) return o;   // the cast that follows decides
-            c = (ComObject)Take(CcwUnknown(o))!;
+            // (a ComObject over its CCW, which the cast reaches the server through: not the object itself, as Take gives)
+            IntPtr unknown = CcwUnknown(o);
+            try { c = ComObject.Get(unknown); }
+            finally { Marshal.Release(unknown); }
         }
         if (dynamic && t.IsInstanceOfType(c)) return c;
         if (!c.Implements(t, throwIfNot)) return throwIfNot ? o : null;
@@ -248,7 +251,7 @@ public static unsafe partial class Com
     public static object? GetObjectForIUnknown(IntPtr p)
     {
         if (p == IntPtr.Zero) throw new ArgumentNullException(nameof(p));
-        return ComObject.Get(p);
+        return Wrap(p);   // a CCW of this process's: its object, as Marshal's gives
     }
 
     public static object? GetTypedObjectForIUnknown(IntPtr p, Type t) => GetObjectForIUnknown(p);
@@ -308,6 +311,17 @@ public static unsafe partial class Com
     public static object? ActivatorCreateInstance(Type type) => IsRewrittenCoClass(type) ? CreateInstance(type.GUID) : Activator.CreateInstance(type);
 
     public static object? ActivatorCreateInstance(Type type, bool nonPublic) => IsRewrittenCoClass(type) ? CreateInstance(type.GUID) : Activator.CreateInstance(type, nonPublic);
+
+    /// <summary>Activator.CreateInstance&lt;T&gt;() -- new T() under a new() constraint -- rewritten: one of the module's COM
+    /// classes co-created, as built-in COM makes it.
+    /// The object is a COM object, not an instance of the class (whose rewritten copy has nothing of its own): it is handed back
+    /// as the class unchecked, as new C() rewritten hands it back, and the cast to an interface that follows reaches it.</summary>
+    public static T ActivatorCreateInstanceOf<T>()
+    {
+        if (!IsRewrittenCoClass(typeof(T))) return Activator.CreateInstance<T>();
+        object made = CreateInstance(typeof(T).GUID);
+        return System.Runtime.CompilerServices.Unsafe.As<object, T>(ref made);
+    }
 
     private static bool IsRewrittenCoClass(Type type) => type.IsClass && type.GetNestedType("ComCoClass", BindingFlags.Public | BindingFlags.NonPublic) != null;
 

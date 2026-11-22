@@ -15,11 +15,13 @@
     <PackageReference Include="Microsoft.Testing.Platform" Version="1.7.3" />
     <!-- an app's serial ports, by the package's own Unix build (SerialPortTests) -->
     <PackageReference Include="System.IO.Ports" Version="10.0.7" />
+    <PackageReference Include="Microsoft.Web.Administration" Version="11.1.0" ExcludeAssets="all" GeneratePathProperty="true" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../WpfWebGpu.Launcher/WpfWebGpu.Launcher.csproj" />
     <ProjectReference Include="../../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
+    <ProjectReference Include="../../WpfWebGpu.IisAdmin/WpfWebGpu.IisAdmin.csproj" />
     <ProjectReference Include="../../WpfWebGpu.Detours/WpfWebGpu.Detours.csproj" />
     <!-- rewritten by ComRewriterTests, which load the result on their own -->
     <ProjectReference Include="../ComImportFixture/ComImportFixture.csproj" ReferenceOutputAssembly="false" />
@@ -32,6 +34,8 @@
     <AssemblyMetadata Include="PInvokeFixture" Value="$(MSBuildThisFileDirectory)../PInvokeFixture/bin/$(Configuration)/net10.0/PInvokeFixture.dll" />
     <AssemblyMetadata Include="PInvokeImplFixture" Value="$(MSBuildThisFileDirectory)../PInvokeImplFixture/bin/$(Configuration)/net10.0/PInvokeImplFixture.dll" />
     <!-- the real export table, when WpfWebGpu.Win32 has been built (it needs the WebGPU SDK) -->
+    <!-- IIS's configuration client as programs ship it, run against the configuration system here (IisAdminTests) -->
+    <AssemblyMetadata Include="MicrosoftWebAdministration" Value="$(PkgMicrosoft_Web_Administration)/lib/netstandard1.5/Microsoft.Web.Administration.dll" />
     <AssemblyMetadata Include="WpfWebGpuWin32" Value="$(MSBuildThisFileDirectory)../../WpfWebGpu.Win32/bin/$(Configuration)/net10.0/WpfWebGpu.Win32.dll" />
     <Compile Include="../../WpfWebGpu.Bootstrap/CompatLog.cs" Link="Bootstrap/CompatLog.cs" />
     <ProjectReference Include="$(WpfWebGpuRepoRoot)shims/Microsoft.Win32.Registry/Microsoft.Win32.Registry.csproj" Aliases="RegistryShim" />

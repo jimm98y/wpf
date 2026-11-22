@@ -40,7 +40,12 @@ public static unsafe partial class Com
 
     /// <summary>An interface argument a native caller passed to a managed method: the object for it (the
     /// caller keeps its reference).</summary>
-    public static object? Wrap(IntPtr p) => p == IntPtr.Zero ? null : ComObject.Get(p);
+    public static object? Wrap(IntPtr p) => p == IntPtr.Zero ? null : ServerObject(p) ?? ComObject.Get(p);
+
+    /// <summary>An object of a COM server run here (IComServerObject: IIS's configuration system's elements) handed back
+    /// through its CCW: that object again, as built-in COM unwraps a CCW -- so the server finds its own element where a
+    /// client passes it back (AddElement). Any other object stays the ComObject it is reached through.</summary>
+    internal static object? ServerObject(IntPtr p) => ComWrappers.TryGetObject(p, out object? managed) && managed is IComServerObject ? managed : null;
 
     private sealed class Ccw : ComWrappers
     {

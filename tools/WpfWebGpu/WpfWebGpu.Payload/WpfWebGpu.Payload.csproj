@@ -41,6 +41,8 @@
     <ProjectReference Include="../WpfWebGpu.Detours/WpfWebGpu.Detours.csproj" />
     <!-- What app assemblies the launcher rewrote off built-in COM call (Documentation/comimport-rewriter.md). -->
     <ProjectReference Include="../WpfWebGpu.ComInterop/WpfWebGpu.ComInterop.csproj" />
+    <!-- IIS's configuration system, a COM server ComServers creates (Microsoft.Web.Administration's admin managers) -->
+    <ProjectReference Include="../WpfWebGpu.IisAdmin/WpfWebGpu.IisAdmin.csproj" />
     <!-- ...and the rewriter itself (COM, P/Invokes): the startup hook rewrites them as they load. -->
     <ProjectReference Include="../WpfWebGpu.ComRewrite/WpfWebGpu.ComRewrite.csproj" />
   </ItemGroup>

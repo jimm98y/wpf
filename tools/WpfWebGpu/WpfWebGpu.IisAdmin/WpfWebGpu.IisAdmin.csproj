@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- IIS's configuration system (ahadmin's AppHostWritableAdminManager), as a COM server run here: what a program's
+       Microsoft.Web.Administration (its own copy, unchanged) or its own interop configures IIS through, over the
+       machine's applicationHost.config. ComServers creates it by its CLSID.
+
+       Its interfaces are declared as COM imports (AppHostInterfaces.g.cs) and the assembly is run through the COM-import
+       rewriter after it is built (wpf-rewrite), which gives each interface the vtable a client calls it through: the
+       server's objects implement them in plain C#. -->
+  <PropertyGroup>
+    <AssemblyName>WpfWebGpu.IisAdmin</AssemblyName>
+    <RootNamespace>WpfWebGpu.IisAdmin</RootNamespace>
+    <NoWarn>$(NoWarn);CS0108;CS8603;CS8613;CS8766</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../WpfWebGpu.ComInterop/WpfWebGpu.ComInterop.csproj" />
+    <!-- built first: it rewrites this assembly -->
+    <ProjectReference Include="../WpfWebGpu.Rewrite/WpfWebGpu.Rewrite.csproj" ReferenceOutputAssembly="false" Private="false" />
+    <Compile Remove="GenInterfaces/**" />
+    <None Remove="GenInterfaces/**" />
+  </ItemGroup>
+
+  <!-- the built assembly (obj) rewritten into the output folder, every build -->
+  <Target Name="WpfWebGpuRewriteComServer" AfterTargets="CopyFilesToOutputDirectory">
+    <MSBuild Projects="../WpfWebGpu.Rewrite/WpfWebGpu.Rewrite.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" PropertyName="_WpfRewriteDll" />
+    </MSBuild>
+    <PropertyGroup>
+      <_WpfRewriteOut>$(IntermediateOutputPath)rewritten/</_WpfRewriteOut>
+    </PropertyGroup>
+    <RemoveDir Directories="$(_WpfRewriteOut)" />
+    <Exec Command="dotnet &quot;$(_WpfRewriteDll)&quot; --include-stack --out &quot;$(_WpfRewriteOut.TrimEnd('/'))&quot; --search &quot;$(OutDir.TrimEnd('/'))&quot; &quot;@(IntermediateAssembly->'%(FullPath)')&quot;" />
+    <Copy SourceFiles="$(_WpfRewriteOut)$(TargetFileName)" DestinationFolder="$(OutDir)" Condition="Exists('$(_WpfRewriteOut)$(TargetFileName)')" />
+    <Error Text="wpf-rewrite left $(TargetFileName) unrewritten" Condition="!Exists('$(_WpfRewriteOut)$(TargetFileName)')" />
+  </Target>
+
+</Project>

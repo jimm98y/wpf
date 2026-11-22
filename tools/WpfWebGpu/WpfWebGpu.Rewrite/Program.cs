@@ -12,7 +12,7 @@ using WpfWebGpu.ComRewrite;
 var inputs = new List<string>();
 var search = new List<string>();
 var publishedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-bool placeholdersOnly = false;
+bool placeholdersOnly = false, includeStack = false;
 string? outDir = null, primitives = null;
 var queue = new Queue<string>(args);
 while (queue.Count > 0)
@@ -30,6 +30,8 @@ while (queue.Count > 0)
     else if (a.StartsWith("--primitives=", StringComparison.Ordinal)) primitives = a["--primitives=".Length..];
     else if (a.StartsWith("--published=", StringComparison.Ordinal)) publishedNames.Add(a["--published=".Length..]);
     else if (a == "--placeholders") placeholdersOnly = true;
+    // a COM server of the stack's own (WpfWebGpu.*), which the rewrite otherwise leaves alone
+    else if (a == "--include-stack") includeStack = true;
     else inputs.Add(a);
 }
 if (outDir == null)
@@ -50,7 +52,7 @@ try
         RewriteSteps.Placeholders(inputs, publishedNames, search, outDir, Console.WriteLine);
         return 0;
     }
-    RewriteSteps.Rewrite(inputs, search, outDir, primitives, Console.WriteLine);
+    RewriteSteps.Rewrite(inputs, search, outDir, primitives, Console.WriteLine, includeStack);
     return 0;
 }
 catch (Exception e)
