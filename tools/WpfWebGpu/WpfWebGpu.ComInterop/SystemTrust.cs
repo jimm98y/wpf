@@ -3,7 +3,9 @@
 // stores are the installation's (MachineCertificateStore), and a root added there is also given to the system's own
 // trust, which only an administrator may change -- as a setup adds it on Windows, elevated:
 //
-//   macOS   the System keychain, as a trusted root (security add-trusted-cert -d), an administrator's password asked for
+//   macOS   the System keychain, as a trusted root (security add-trusted-cert -d, run as the user: macOS changes the
+//           administrators' trust settings only with the user's confirmation, its own prompt -- as root, with no one to
+//           confirm, it adds the certificate and refuses the trust)
 //   Linux   the system's CA bundle (Debian's /usr/local/share/ca-certificates and update-ca-certificates, Fedora's
 //           /etc/pki/ca-trust/source/anchors and update-ca-trust), polkit asking for an administrator's password
 //
@@ -32,8 +34,10 @@ internal static class SystemTrust
             if (OperatingSystem.IsMacOS())
             {
                 File.WriteAllBytes(file, cert.Export(X509ContentType.Cert));
-                AsAdministrator($"/usr/bin/security add-trusted-cert -d -r trustRoot -k {Q(Keychain)} {Q(file)}",
-                    $"{Program()} wants to make the certificate “{Name(cert)}” trusted on this Mac.");
+                // as the user: macOS asks them to confirm (its own prompt), and adds it to the System keychain
+                var (code, output) = Run("/usr/bin/security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", Keychain, file);
+                if (code != 0 || !IsTrusted(cert))
+                    throw new System.Security.Cryptography.CryptographicException($"Access is denied: the certificate was not made trusted ({output.Trim()}).");
             }
             else if (LinuxBundle() is { } bundle)
             {
@@ -59,8 +63,10 @@ internal static class SystemTrust
             {
                 if (!InSystemKeychain(cert)) return;
                 File.WriteAllBytes(file, cert.Export(X509ContentType.Cert));
-                AsAdministrator($"/usr/bin/security remove-trusted-cert -d {Q(file)}; /usr/bin/security delete-certificate -Z {cert.Thumbprint} {Q(Keychain)}",
-                    $"{Program()} wants to remove the certificate “{Name(cert)}” from this Mac's trusted certificates.");
+                // its trust taken away as it was given (the user confirming), then the certificate out of the keychain
+                Run("/usr/bin/security", "remove-trusted-cert", "-d", file);
+                AsAdministrator($"/usr/bin/security delete-certificate -Z {cert.Thumbprint} {Q(Keychain)}",
+                    $"{Program()} wants to remove the certificate “{Name(cert)}” from this Mac.");
             }
             else if (LinuxBundle() is { } bundle && File.Exists(Path.Combine(bundle.Folder, AnchorName(cert))))
             {
