@@ -149,7 +149,7 @@ public sealed class OSIdentityRewriteTests
     }
 
     [Fact]
-    public void A_program_started_as_Explorer_starts_one_opens_as_the_installation_s_app_on_macOS()
+    public void A_program_an_app_starts_opens_as_the_installation_s_app_on_macOS()
     {
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS");
         // the installation's stub for the program, as the package puts it in /Applications/<Product>
@@ -164,14 +164,13 @@ public sealed class OSIdentityRewriteTests
         try
         {
             var launched = new System.Diagnostics.ProcessStartInfo("/opt/p/runtime/dotnet");
-            var open = (System.Diagnostics.ProcessStartInfo?)Call("AsMacApp", launched, exe, true, new List<string> { "run=Workbench" });
+            var open = (System.Diagnostics.ProcessStartInfo?)Call("AsMacApp", launched, exe, new List<string> { "run=Workbench" });
             Assert.NotNull(open);
             Assert.Equal("/usr/bin/open", open!.FileName);
             Assert.Equal(new[] { "-n", stub, "--args", "run=Workbench" }, open.ArgumentList);
 
-            // a start the app makes as a process of its own (not ShellExecute), or whose output it reads: the app's
-            Assert.Null(Call("AsMacApp", launched, exe, false, new List<string>()));
-            Assert.Null(Call("AsMacApp", new System.Diagnostics.ProcessStartInfo("/opt/p/runtime/dotnet") { RedirectStandardOutput = true }, exe, true, new List<string>()));
+            // one whose output the app reads: the app's child
+            Assert.Null(Call("AsMacApp", new System.Diagnostics.ProcessStartInfo("/opt/p/runtime/dotnet") { RedirectStandardOutput = true }, exe, new List<string>()));
         }
         finally { Environment.SetEnvironmentVariable("WPFRUN_APP_BUNDLES", before); }
     }

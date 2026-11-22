@@ -1,7 +1,8 @@
-// A Windows program an app starts as Explorer starts one (ShellExecute), started on macOS as an app of its own.
+// A Windows program an app starts, started on macOS as an app of its own.
 //
-// On Windows the program ShellExecute starts is a process of its own: the app that started it may quit at once (a
-// client starting its setup tool, then quitting) and the program runs on, on the taskbar under its own name. On macOS a
+// On Windows a program an app starts is a process of its own, through ShellExecute or CreateProcess alike: the app that
+// started it may quit at once (a client starting its setup tool, then quitting; the tool starting the client again when
+// it is done) and the program runs on, on the taskbar under its own name. On macOS a
 // process an app starts is that app's: the Dock keeps the app "running in the background" while it lives, and clicking
 // it starts the app again. So the program is started through LaunchServices instead (open -n), as an app of its own:
 // the installation's own app for it where it has one (the stubs the package puts in /Applications/<Product>, whose
@@ -9,9 +10,10 @@
 // bundle made for it under the user's caches, which runs it with the app's environment, folder and arguments. Either
 // is signed ad hoc, so that the system can name it (MacPackager's postinstall signs the stubs).
 //
-// Only a start that ShellExecute would make (UseShellExecute), whose output the app does not read, from an app (not a
-// service: no session for apps there). The Process that comes back is open's, which ends once the program is started,
-// as a ShellExecute that hands the program to a running instance returns none of its own.
+// Every program of the installation an app starts so, console and window programs alike -- but one whose standard
+// input or output the app reads or writes, which LaunchServices cannot hand back (that one stays the app's child), and
+// any a service starts (no session for apps there). The Process that comes back is open's, which ends once the program
+// is started, as a ShellExecute that hands the program to a running instance returns none of its own.
 
 using System.Linq;
 using System.Text;
@@ -22,9 +24,9 @@ public static partial class WindowsPaths
 {
     /// <summary>The start info that opens the Windows program as an app of its own (macOS), or null where it is started
     /// as a process of the app's.</summary>
-    private static System.Diagnostics.ProcessStartInfo? AsMacApp(System.Diagnostics.ProcessStartInfo psi, string exe, bool shellExecute, List<string> appArgs)
+    private static System.Diagnostics.ProcessStartInfo? AsMacApp(System.Diagnostics.ProcessStartInfo psi, string exe, List<string> appArgs)
     {
-        if (!OperatingSystem.IsMacOS() || !shellExecute || psi.RedirectStandardInput || psi.RedirectStandardOutput || psi.RedirectStandardError
+        if (!OperatingSystem.IsMacOS() || psi.RedirectStandardInput || psi.RedirectStandardOutput || psi.RedirectStandardError
             || Environment.GetEnvironmentVariable("WPFWEBGPU_SERVICE_ACCOUNT") != null || geteuid() == 0)
             return null;
         try
