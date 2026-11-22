@@ -113,6 +113,7 @@ internal static class Program
                 "sqlbrowser" => SqlBrowser.Run(args[1..]),
                 "iis" => IisCommand.Run(args[1..]),
                 "where" => Where(),
+                "as" => RunAs.Run(args[1..]),
                 _ => throw new UserError($"unknown command '{args[0]}'.\n\n{Usage}"),
             };
         }

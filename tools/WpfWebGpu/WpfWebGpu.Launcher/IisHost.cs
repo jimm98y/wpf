@@ -350,10 +350,16 @@ internal sealed class IisHost
         string? account = PoolAccount(app.Pool.Identity);
         if (app.Pool.Identity == "LocalService") env[WpfWebGpu.Services.ServiceUnits.AccountVariable] = "LocalService";
         var psi = new ProcessStartInfo { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = app.Root! };
-        if (account != null && WindowsAccounts.CurrentUid() == 0 && WindowsAccounts.Uid(account) != null && File.Exists("/usr/bin/sudo"))
+        if (account != null && WindowsAccounts.CurrentUid() == 0 && WindowsAccounts.Uid(account) != null)
         {
-            psi.FileName = "/usr/bin/sudo";
-            foreach (string a in new[] { "-n", "-u", account, "--", "/usr/bin/env" }) psi.ArgumentList.Add(a);
+            // as its pool's account (wpfrun as, as launchd and systemd start a service), in the group the installation's
+            // services run in (macOS: staff, their daemons' GroupName), through which the machine's state -- ProgramData,
+            // the registry -- is every account's, as it is the pool account's on Windows
+            psi.FileName = dotnet;
+            var runAs = new List<string> { launcher, "as", account };
+            if (OperatingSystem.IsMacOS()) runAs.Add(WpfWebGpu.Services.ServiceUnits.MacServiceGroup);
+            runAs.AddRange(new[] { "--", "/usr/bin/env" });
+            foreach (string a in runAs) psi.ArgumentList.Add(a);
             foreach (var (k, v) in env) psi.ArgumentList.Add($"{k}={v}");
             foreach (string a in command) psi.ArgumentList.Add(a);
         }

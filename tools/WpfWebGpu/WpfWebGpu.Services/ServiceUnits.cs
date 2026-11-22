@@ -94,6 +94,10 @@ public static class ServiceUnits
     /// account an installer made, macOS lets no uninstaller delete again), with the state's group (staff). Which of the
     /// two a daemon stands for is in its environment (<see cref="AccountVariable"/>: LocalService; else NETWORK SERVICE).</summary>
     public const string MacServiceUser = "nobody";
+
+    /// <summary>The group a service runs in on macOS (its daemon's GroupName): the one the machine's state is every
+    /// account's through (its access list), which nobody's own group is not.</summary>
+    public const string MacServiceGroup = "staff";
     public const string AccountVariable = "WPFWEBGPU_SERVICE_ACCOUNT";
 
     /// <summary>Where the system service is installed: a daemon's plist, a unit file (a package's under /lib, one the
@@ -129,7 +133,7 @@ public static class ServiceUnits
             {string.Concat(d.Environment.Select(e => $"    <key>{X(e.Key)}</key><string>{X(e.Value)}</string>\n"))}{(d.WindowsAccount is { } wa && d.Account != null ? $"    <key>{AccountVariable}</key><string>{X(wa)}</string>\n" : "")}
               </dict>
               <key>WorkingDirectory</key><string>{X(d.WorkingDirectory)}</string>
-              {(d.Account is { } user ? $"<key>UserName</key><string>{X(user)}</string>\n  <key>GroupName</key><string>staff</string>" : "")}
+              {(d.Account is { } user ? $"<key>UserName</key><string>{X(user)}</string>\n  <key>GroupName</key><string>{MacServiceGroup}</string>" : "")}
               <key>RunAtLoad</key><{(d.Start == ServiceStart.Auto ? "true" : "false")}/>
               {KeepAlive(d)}<key>ThrottleInterval</key><integer>{(d.RestartAfterFailure > 0 ? d.RestartAfterFailure : 10)}</integer>
               <key>ExitTimeOut</key><integer>30</integer>
