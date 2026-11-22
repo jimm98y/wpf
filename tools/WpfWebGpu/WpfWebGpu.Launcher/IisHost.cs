@@ -1,7 +1,7 @@
 // wpfrun iis: the machine's web server, as IIS serves an installation's web applications -- its configuration the
 // machine's applicationHost.config (in the machine's state, made from the installation's machine's: the sites, their
-// bindings, applications and virtual directories, the application pools; iis.json for an earlier installation), served
-// again from a new start when IIS's configuration system changes it. It is IIS's two system parts in one daemon: the web publishing service, which
+// bindings, applications and virtual directories, the application pools; iis.json for an earlier installation), a change
+// of it (IIS's configuration system committing a binding) taken up in place, as IIS takes one up. It is IIS's two system parts in one daemon: the web publishing service, which
 // claims each application's URLs from http.sys (the sites' bindings and the application's path, registered with the
 // machine's http.sys service, so they share their ports with every other process's prefixes, as on Windows), and the
 // process activation, which starts an application's worker under its pool's account.
@@ -80,15 +80,11 @@ internal sealed class IisHost
             }
     }
 
-    public static async Task<int> Run(string configPath, Action<string> log, CancellationToken stop)
+    /// <summary>Serves the configuration at <paramref name="configPath"/>, and again each time <paramref name="changed"/>
+    /// is released (IIS's configuration system committing a binding): its applications and URLs taken up in place, as IIS
+    /// takes a change up -- the workers of the applications that stay kept, the others ended, the URLs claimed anew.</summary>
+    public static async Task<int> Run(string configPath, Action<string> log, CancellationToken stop, SemaphoreSlim? changed = null)
     {
-        var host = new IisHost(IisConfiguration.Load(configPath), log);
-        if (host._apps.Count == 0)
-        {
-            log($"iis: no application of the installation to serve ({configPath})");
-            try { await Task.Delay(Timeout.Infinite, stop); } catch (OperationCanceledException) { }
-            return 0;
-        }
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
         builder.WebHost.UseKestrelCore();
         builder.WebHost.ConfigureKestrel(k =>
@@ -101,31 +97,74 @@ internal sealed class IisHost
         builder.Services.AddHttpForwarder();
         var web = builder.Build();
         var forwarder = web.Services.GetRequiredService<IHttpForwarder>();
-        web.Run(context => host.Serve(context, forwarder));
+        IisHost host = new(IisConfiguration.Load(configPath), log);
+        web.Run(context => Volatile.Read(ref host).Serve(context, forwarder));
         await web.StartAsync(stop);
         int local = new Uri(web.Urls.First()).Port;
 
-        // the applications' URLs, claimed from http.sys: each binding's scheme, host and port, and the application's path
-        var prefixes = new List<SharedPrefix>();
+        IDisposable? registration = host.Claim(local, log, stop);
+        try
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                if (changed == null) { await Task.Delay(Timeout.Infinite, stop); break; }
+                await changed.WaitAsync(stop);
+                await Task.Delay(100, stop);   // a commit's writes settled
+                while (changed.CurrentCount > 0) changed.Wait(0);
+                log($"iis: {configPath} changed: taken up");
+                var next = new IisHost(IisConfiguration.Load(configPath), log);
+                next.Adopt(host);
+                Volatile.Write(ref host, next);
+                // the URLs claimed anew: the registration rewritten in place (one file, replaced at once), so what both
+                // configurations serve is never unclaimed; let go where nothing is left to serve
+                var claimed = next.Claim(local, log, stop);
+                if (claimed == null) registration?.Dispose();
+                registration = claimed;
+            }
+        }
+        catch (OperationCanceledException) { }
+        registration?.Dispose();
         foreach (var app in host._apps)
+            try { if (app.Worker?.Process is { HasExited: false } p) p.Kill(entireProcessTree: true); } catch (Exception) { }
+        await web.StopAsync();
+        return 0;
+    }
+
+    // the applications' URLs, claimed from http.sys: each binding's scheme, host and port, and the application's path;
+    // and the pools that start with the server started
+    private IDisposable? Claim(int local, Action<string> log, CancellationToken stop)
+    {
+        if (_apps.Count == 0)
+        {
+            log("iis: no application of the installation to serve");
+            return null;
+        }
+        var prefixes = new List<SharedPrefix>();
+        foreach (var app in _apps)
             foreach (var b in app.Site.Bindings)
             {
                 var prefix = new SharedPrefix(b.Protocol == "https", b.Host.Length > 0 ? b.Host : "*", b.Port, app.Path + "/");
                 prefixes.Add(prefix);
                 log($"iis: {prefix.FullPrefix} -> {app.Root ?? "(its virtual directories)"}{(app.Module != null ? " (ASP.NET Core, pool " + app.Pool.Name + ")" : "")}");
             }
-        using var registration = HttpSysRegistry.Register(local, prefixes);
+        var registration = HttpSysRegistry.Register(local, prefixes);
         HttpSysClient.EnsureRunning(prefixes.Select(p => p.Port), m => log("iis: " + m));
+        foreach (var app in _apps.Where(a => a.Module != null && a.Pool.AutoStart && a.Worker == null))
+            _ = Task.Run(() => EnsureWorker(app, stop));
+        return registration;
+    }
 
-        // the pools that start with the server
-        foreach (var app in host._apps.Where(a => a.Module != null && a.Pool.AutoStart))
-            _ = Task.Run(() => host.EnsureWorker(app, stop));
-
-        try { await Task.Delay(Timeout.Infinite, stop); } catch (OperationCanceledException) { }
-        foreach (var app in host._apps)
-            try { if (app.Worker?.Process is { HasExited: false } p) p.Kill(entireProcessTree: true); } catch (Exception) { }
-        await web.StopAsync();
-        return 0;
+    // the running workers of the applications the new configuration keeps as they were (the same site, path, folder and
+    // pool), and the others' ended
+    private void Adopt(IisHost previous)
+    {
+        foreach (var old in previous._apps)
+        {
+            var same = _apps.FirstOrDefault(a => a.Worker == null && a.Site.Name == old.Site.Name && a.Path == old.Path && a.Root == old.Root
+                && a.Pool.Name == old.Pool.Name && a.Pool.Identity == old.Pool.Identity);
+            if (same != null) same.Worker = old.Worker;
+            else try { if (old.Worker?.Process is { HasExited: false } p) p.Kill(entireProcessTree: true); } catch (Exception) { }
+        }
     }
 
     // ---- requests ---------------------------------------------------------------------------------------------
@@ -410,25 +449,17 @@ internal static class IisCommand
         using var term = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGTERM, c => { c.Cancel = true; stop.Cancel(); });
         using var intr = System.Runtime.InteropServices.PosixSignalRegistration.Create(System.Runtime.InteropServices.PosixSignal.SIGINT, c => { c.Cancel = true; stop.Cancel(); });
         Action<string> log = line => Console.Error.WriteLine($"{DateTime.Now:HH:mm:ss} {line}");
-        // a change of the configuration (IIS's configuration system committing a binding) served as IIS serves it: the
-        // server started again with it -- it ends, and launchd or systemd, which keep it running, start it again
-        bool changed = false;
+        // a change of the configuration (IIS's configuration system committing a binding) taken up in place, as IIS does
+        using var changed = new SemaphoreSlim(0);
         using var watcher = new FileSystemWatcher(Path.GetDirectoryName(Path.GetFullPath(config))!, Path.GetFileName(config))
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
         };
-        void Changed(object? s, FileSystemEventArgs e)
-        {
-            if (changed) return;
-            changed = true;
-            log($"iis: {config} changed: serving it from a new start");
-            stop.CancelAfter(TimeSpan.FromMilliseconds(500));
-        }
+        void Changed(object? s, FileSystemEventArgs e) => changed.Release();
         watcher.Changed += Changed;
         watcher.Created += Changed;
         watcher.Renamed += (s, e) => Changed(s, e);
         watcher.EnableRaisingEvents = true;
-        int code = IisHost.Run(config, log, stop.Token).GetAwaiter().GetResult();
-        return changed ? 75 : code;   // EX_TEMPFAIL: to be started again
+        return IisHost.Run(config, log, stop.Token, changed).GetAwaiter().GetResult();
     }
 }
