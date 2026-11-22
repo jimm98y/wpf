@@ -3,9 +3,9 @@
 // stores are the installation's (MachineCertificateStore), and a root added there is also given to the system's own
 // trust, which only an administrator may change -- as a setup adds it on Windows, elevated:
 //
-//   macOS   the System keychain, as a trusted root (security add-trusted-cert -d, run as the user: macOS changes the
-//           administrators' trust settings only with the user's confirmation, its own prompt -- as root, with no one to
-//           confirm, it adds the certificate and refuses the trust)
+//   macOS   the System keychain, as a trusted root: added there as an administrator (only one may write it), then
+//           trusted as the user (security add-trusted-cert -d), whom macOS asks to confirm -- it changes the
+//           administrators' trust settings only so; as root, with no one to confirm, it refuses
 //   Linux   the system's CA bundle (Debian's /usr/local/share/ca-certificates and update-ca-certificates, Fedora's
 //           /etc/pki/ca-trust/source/anchors and update-ca-trust), polkit asking for an administrator's password
 //
@@ -34,10 +34,22 @@ internal static class SystemTrust
             if (OperatingSystem.IsMacOS())
             {
                 File.WriteAllBytes(file, cert.Export(X509ContentType.Cert));
-                // as the user: macOS asks them to confirm (its own prompt), and adds it to the System keychain
-                var (code, output) = Run("/usr/bin/security", "add-trusted-cert", "-d", "-r", "trustRoot", "-k", Keychain, file);
+                // into the System keychain, the machine's, which only an administrator may write ("Write permissions
+                // error" as the user)...
+                if (!InSystemKeychain(cert))
+                    AsAdministrator($"/usr/bin/security add-certificates -k {Q(Keychain)} {Q(file)}",
+                        $"{Program()} wants to add the certificate “{Name(cert)}” to this Mac.");
+                // ...then trusted as the user, whom macOS asks to confirm (its own prompt); it keeps a copy in the user's
+                // keychain, taken out again where the user had none
+                string login = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Library", "Keychains", "login.keychain-db");
+                bool hadCopy = InKeychain(cert, login);
+                var (code, output) = Run("/usr/bin/security", "add-trusted-cert", "-d", "-r", "trustRoot", file);
+                if (!hadCopy && InKeychain(cert, login)) Run("/usr/bin/security", "delete-certificate", "-Z", cert.Thumbprint, login);
                 if (code != 0 || !IsTrusted(cert))
+                {
+                    Com.LogOnce("trust:" + cert.Thumbprint, $"the certificate “{Name(cert)}” was not made trusted: {output.Trim()}");
                     throw new System.Security.Cryptography.CryptographicException($"Access is denied: the certificate was not made trusted ({output.Trim()}).");
+                }
             }
             else if (LinuxBundle() is { } bundle)
             {
@@ -93,9 +105,11 @@ internal static class SystemTrust
         catch (Exception) { return false; }
     }
 
-    private static bool InSystemKeychain(X509Certificate2 cert)
+    private static bool InSystemKeychain(X509Certificate2 cert) => InKeychain(cert, Keychain);
+
+    private static bool InKeychain(X509Certificate2 cert, string keychain)
     {
-        var (code, output) = Run("/usr/bin/security", "find-certificate", "-a", "-Z", Keychain);
+        var (code, output) = Run("/usr/bin/security", "find-certificate", "-a", "-Z", keychain);
         return code == 0 && output.Contains(cert.Thumbprint, StringComparison.OrdinalIgnoreCase);
     }
 
