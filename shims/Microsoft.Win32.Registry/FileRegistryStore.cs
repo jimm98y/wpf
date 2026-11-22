@@ -29,6 +29,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
 
 namespace Microsoft.Win32
 {
@@ -39,6 +40,109 @@ namespace Microsoft.Win32
         private bool _resolved;
         private readonly object _gate = new object();
         private bool _broken;           // one failed write is enough; stop trying and stay in memory
+
+        // ---- shared by every process, as the registry is ----------------------------------------
+        //
+        // The file is the hive of every process of the machine (its services, its apps), as Windows' registry is one
+        // store: what one process writes another reads. So a process is told when the file changes (a watcher: FSEvents
+        // on macOS, inotify on Linux -- a read costs nothing until then) and reads it again, where its time and size are
+        // not what this process last read or wrote; where no watcher can be had (the browser, a sandbox) it looks at
+        // the file at most every 50 ms instead. A write is made under a lock every process takes (a file beside the
+        // hive, flock'd), over the file as it is then -- looked at, not told -- never over what this process read
+        // earlier, which would undo what the others wrote since.
+        private (long Time, long Length) _stamp;
+        private long _checkedAt;
+        private FileSystemWatcher _watcher;
+        private volatile bool _told;        // the watcher said the file changed
+        private readonly object _writeGate = new object();
+        private int _lockDepth;
+        private FileStream _lockFile;
+
+        private (long, long) CurrentStamp()
+        {
+            try
+            {
+                var info = new FileInfo(_path);
+                return info.Exists ? (info.LastWriteTimeUtc.Ticks, info.Length) : (0, 0);
+            }
+            catch { return _stamp; }
+        }
+
+        /// <summary>Whether the file changed since this process last read or wrote it; looked at at most every 50 ms
+        /// unless <paramref name="now"/>.</summary>
+        internal bool ChangedOnDisk(bool now = false)
+        {
+            if (!Available) return false;
+            if (!now && _watcher != null)
+            {
+                if (!_told) return false;
+                _told = false;              // this process's own saves are told too: their stamp is the one it keeps
+                return CurrentStamp() != _stamp;
+            }
+            long tick = Environment.TickCount64;
+            if (!now && tick - Volatile.Read(ref _checkedAt) < 50) return false;
+            Volatile.Write(ref _checkedAt, tick);
+            return CurrentStamp() != _stamp;
+        }
+
+        // told when the file changes, from the first read on; where none can be had, looked at instead (ChangedOnDisk)
+        private void Watch()
+        {
+            if (_watcher != null) return;
+            try
+            {
+                var w = new FileSystemWatcher(Path.GetDirectoryName(_path), Path.GetFileName(_path))
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
+                };
+                FileSystemEventHandler told = (_, _) => _told = true;
+                w.Changed += told;
+                w.Created += told;
+                w.Deleted += told;
+                w.Renamed += (_, _) => _told = true;     // the temp file moved over the hive: how every save lands
+                w.Error += (_, _) => _told = true;
+                w.EnableRaisingEvents = true;
+                _watcher = w;
+            }
+            catch { _watcher = null; }
+        }
+
+        /// <summary>The hive's write lock, every process's (reentrant in this one): <paramref name="onLocked"/> runs once
+        /// it is taken, to read the file again where another process changed it.</summary>
+        internal IDisposable Lock(Action onLocked)
+        {
+            if (!Available) return null;
+            Monitor.Enter(_writeGate);
+            if (_lockDepth++ == 0)
+            {
+                var until = Environment.TickCount64 + 5000;
+                while (_lockFile == null)
+                {
+                    try { _lockFile = new FileStream(_path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+                    catch (IOException) when (Environment.TickCount64 < until) { Thread.Sleep(5); }
+                    catch { break; }        // no lock to be had (read-only): write as before
+                }
+                try { onLocked(); } catch { }
+            }
+            return new Unlock(this);
+        }
+
+        private sealed class Unlock : IDisposable
+        {
+            private FileRegistryStore _store;
+            public Unlock(FileRegistryStore store) => _store = store;
+            public void Dispose()
+            {
+                var s = Interlocked.Exchange(ref _store, null);
+                if (s == null) return;
+                if (--s._lockDepth == 0)
+                {
+                    s._lockFile?.Dispose();
+                    s._lockFile = null;
+                }
+                Monitor.Exit(s._writeGate);
+            }
+        }
 
         internal FileRegistryStore(string hiveName)
         {
@@ -109,6 +213,9 @@ namespace Microsoft.Win32
             {
                 try
                 {
+                    Watch();
+                    _stamp = CurrentStamp();
+                    _checkedAt = Environment.TickCount64;
                     if (!File.Exists(_path)) return;
 
                     RegistryKey current = root;
@@ -204,6 +311,7 @@ namespace Microsoft.Win32
                     string temp = _path + ".tmp";
                     File.WriteAllText(temp, sb.ToString());
                     File.Move(temp, _path, overwrite: true);
+                    _stamp = CurrentStamp();
                 }
                 catch
                 {

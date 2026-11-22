@@ -83,7 +83,13 @@ namespace Microsoft.Win32
 
         private void EnsureLoaded()
         {
-            if (_hive._loaded || _hive._store == null) return;
+            if (_hive._store == null) return;
+            if (_hive._loaded)
+            {
+                // another process wrote the hive since this one read it: read again, in place
+                if (!_hive._loading && _hive._store.ChangedOnDisk()) _hive.ReloadInPlace();
+                return;
+            }
             _hive._loaded = true;                 // set first: Load() calls back in through CreateSubKey
             _hive._loading = true;
             try
@@ -95,6 +101,38 @@ namespace Microsoft.Win32
                 _hive._loading = false;
             }
         }
+
+        /// <summary>The file read again into this hive, in place: the keys already open stay the same objects, with what
+        /// the file has now (a key another process deleted is no longer in the tree).</summary>
+        private void ReloadInPlace()
+        {
+            var fresh = new RegistryKey(Name);
+            _loading = true;
+            try { _store.Load(fresh); }
+            finally { _loading = false; }
+            Merge(this, fresh);
+        }
+
+        private void Merge(RegistryKey into, RegistryKey from)
+        {
+            into._values.Clear();
+            foreach (var kv in from._values) into._values[kv.Key] = kv.Value;
+            foreach (string name in new List<string>(into._subKeys.Keys))
+                if (!from._subKeys.ContainsKey(name)) into._subKeys.Remove(name);
+            foreach (var kv in from._subKeys)
+            {
+                if (!into._subKeys.TryGetValue(kv.Key, out RegistryKey mine))
+                {
+                    mine = new RegistryKey(into.Name + "\\" + kv.Key, _hive);
+                    into._subKeys[kv.Key] = mine;
+                }
+                Merge(mine, kv.Value);
+            }
+        }
+
+        // a change made under the hive's lock, over the file as it is now (another process's writes kept)
+        private IDisposable Writing() =>
+            _hive._store?.Lock(() => { if (_hive._loaded && _hive._store.ChangedOnDisk(now: true)) _hive.ReloadInPlace(); });
 
         private void Persist()
         {
@@ -235,6 +273,7 @@ namespace Microsoft.Win32
                 return h == IntPtr.Zero ? null : new RegistryKey(Name + "\\" + name, h, predefined: false);
             }
 
+            using var writing = Writing();
             EnsureLoaded();
             RegistryKey k = this;
             bool created = false;
@@ -291,6 +330,7 @@ namespace Microsoft.Win32
         public void SetValue(string name, object value, RegistryValueKind kind)
         {
             if (Native) { Win32Registry.SetValue(_hKey, name ?? string.Empty, value, kind); return; }
+            using var writing = Writing();
             EnsureLoaded();
             _values[name ?? string.Empty] = value;
             Persist();
@@ -299,6 +339,7 @@ namespace Microsoft.Win32
         public void DeleteValue(string name)
         {
             if (Native) { Win32Registry.DeleteValue(_hKey, name ?? string.Empty); return; }
+            using var writing = Writing();
             EnsureLoaded();
             if (_values.Remove(name ?? string.Empty)) Persist();
         }
@@ -334,6 +375,7 @@ namespace Microsoft.Win32
         public void DeleteSubKey(string name)
         {
             if (Native) { Win32Registry.DeleteKey(_hKey, name ?? string.Empty, tree: false); return; }
+            using var writing = Writing();
             EnsureLoaded();
             if (RemoveSubKeyPath(name)) Persist();
         }
@@ -343,6 +385,7 @@ namespace Microsoft.Win32
         public void DeleteSubKeyTree(string name)
         {
             if (Native) { Win32Registry.DeleteKey(_hKey, name ?? string.Empty, tree: true); return; }
+            using var writing = Writing();
             EnsureLoaded();
             if (RemoveSubKeyPath(name)) Persist();
         }
