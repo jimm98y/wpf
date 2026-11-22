@@ -14,6 +14,8 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" PrivateAssets="all" />
     <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
     <ProjectReference Include="../WpfWebGpu.Services/WpfWebGpu.Services.csproj" />
+    <!-- the machine's certificate stores, as the installation's programs open them (MachineCertificateStore) -->
+    <ProjectReference Include="../WpfWebGpu.ComInterop/WpfWebGpu.ComInterop.csproj" />
     <InternalsVisibleTo Include="WpfWebGpu.Tests" />
   </ItemGroup>
 

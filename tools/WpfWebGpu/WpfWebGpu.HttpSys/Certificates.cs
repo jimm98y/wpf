@@ -41,8 +41,9 @@ internal sealed class Certificates(ILogger logger)
                 using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(path);
                 if (key?.GetValue("SslCertHash") is not byte[] hash) continue;
                 string storeName = key.GetValue("SslCertStoreName") as string ?? "MY";
+                // the machine's store as the installation's programs open it (the certificate a setup added)
                 using var store = new X509Store(storeName, StoreLocation.LocalMachine);
-                store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+                WpfWebGpu.ComInterop.MachineCertificateStore.Open(store, OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
                 var found = store.Certificates.Find(X509FindType.FindByThumbprint, Convert.ToHexString(hash), validOnly: false);
                 if (found.Count > 0 && found[0].HasPrivateKey) return found[0];
             }

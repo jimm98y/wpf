@@ -11,6 +11,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="WpfWebGpu.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- the app an executable starts (App_ARM64.exe's apphost starts App.dll), as the Packager reads it -->
     <Compile Include="../WpfWebGpu.Packager/AppHost.cs" Link="Shared/AppHost.cs" />
   </ItemGroup>
