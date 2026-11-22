@@ -95,6 +95,19 @@ internal static class DesktopCommon
           fi
           rm -f "$STATE/iis.json"
         fi
+        # IIS's web folders (inetpub: the Default Web Site's wwwroot and its start page), the machine's from then on
+        if [ -d "{{root}}/inetpub" ] && [ ! -d "$STATE/inetpub" ]; then cp -R "{{root}}/inetpub" "$STATE/inetpub"; fi
+        """;
+
+    /// <summary>The Default Web Site's start page (inetpub/wwwroot/iisstart.htm), as IIS's setup puts one there: what its
+    /// root answers with until a site of the installation's own is there.</summary>
+    public static string StartPage(string product) => $$"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>{{System.Net.WebUtility.HtmlEncode(product)}}</title>
+        <style>body{font-family:-apple-system,"Segoe UI",sans-serif;margin:4em auto;max-width:40em;color:#222}h1{font-weight:500}</style></head>
+        <body><h1>{{System.Net.WebUtility.HtmlEncode(product)}}</h1><p>The web server is running.</p></body>
+        </html>
         """;
 
     /// <summary>
@@ -114,6 +127,9 @@ internal static class DesktopCommon
             string rest(string token) => mapped[token.Length..].Replace('\\', '/').TrimEnd('/');
             if (mapped.StartsWith(PathTokens.InstallDir, StringComparison.Ordinal)) return root + "/app" + rest(PathTokens.InstallDir);
             if (mapped.StartsWith(PathTokens.ProgramData, StringComparison.Ordinal)) return state + "/ProgramData" + rest(PathTokens.ProgramData);
+            // IIS's own web folders (C:\inetpub: the Default Web Site's wwwroot), the machine's, which the package brings
+            if (windows.StartsWith(@"C:\inetpub", StringComparison.OrdinalIgnoreCase) && (windows.Length == 10 || windows[10] == '\\'))
+                return state + "/inetpub" + windows[10..].Replace('\\', '/').TrimEnd('/');
             return null;
         }
         string xml = WpfWebGpu.Services.IisConfiguration.ApplicationHostConfig(hasIis ? File.ReadAllText(manifest.Inputs.IisConfig) : null, Local,

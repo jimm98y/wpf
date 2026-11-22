@@ -146,6 +146,8 @@ namespace WpfWebGpu.Paths
                 return Under(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), 2);
             }
             if (Is(0, "Windows") && Is(1, "Temp")) return Under(Path.GetTempPath().TrimEnd('/'), 2);
+            // IIS's web folders (inetpub: wwwroot, the Default Web Site's), the machine's
+            if (Is(0, "inetpub") && state != null) return Under(Path.Combine(state, "inetpub"), 1);
             // IIS's configuration (inetsrv\config: applicationHost.config), the machine's as its registry is
             if (Is(0, "Windows") && Is(1, "System32") && Is(2, "inetsrv") && state != null) return Under(Path.Combine(state, "inetsrv"), 3);
             return null;

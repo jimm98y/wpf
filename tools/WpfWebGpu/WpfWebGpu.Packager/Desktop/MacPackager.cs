@@ -101,6 +101,8 @@ public static partial class MacPackager
         {
             Directory.CreateDirectory(Path.Combine(home, "inetsrv"));
             File.WriteAllText(Path.Combine(home, "inetsrv", "applicationHost.config"), iis);
+            Directory.CreateDirectory(Path.Combine(home, "inetpub", "wwwroot"));
+            File.WriteAllText(Path.Combine(home, "inetpub", "wwwroot", "iisstart.htm"), DesktopCommon.StartPage(product));
             string label = id + ".iis";
             Directory.CreateDirectory(Path.Combine(payload, "Library", "LaunchDaemons"));
             File.WriteAllText(Path.Combine(payload, "Library", "LaunchDaemons", label + ".plist"), SystemDaemon(label, root, product, "iis", "iis.log"));

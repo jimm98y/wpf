@@ -85,6 +85,7 @@ public static partial class LinuxPackager
             if (iis != null)
             {
                 tar.AddText($"{root}/inetsrv/applicationHost.config", iis, executable: false);
+                tar.AddText($"{root}/inetpub/wwwroot/iisstart.htm", DesktopCommon.StartPage(manifest.Product.Name), executable: false);
                 tar.AddText($"/lib/systemd/system/{pkg}-iis.service", SystemUnit(manifest, pkg, root, state, "iis", "web server"), executable: false);
                 log("  web server: the installation's IIS sites");
             }
